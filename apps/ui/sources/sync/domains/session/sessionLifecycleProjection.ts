@@ -2,14 +2,17 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { resolveMergedSessionRuntimeActivityProjectionFields } from '@/sync/engine/sessions/sessionRuntimeActivityProjection';
 import { isTerminalPrimaryTurnStatus } from './attention/deriveSessionRuntimePresentationState';
 
-type SessionLifecycleProjection = Pick<Session,
-    | 'seq' | 'updatedAt' | 'meaningfulActivityAt'
-    | 'active' | 'activeAt' | 'thinking' | 'thinkingAt'
-    | 'latestTurnId' | 'latestTurnStatus' | 'latestTurnStatusObservedAt'
-    | 'pendingVersion' | 'pendingCount' | 'pendingBlockedCount' | 'pendingActivationAuthorization'
-    | 'latestReadyEventSeq' | 'latestReadyEventAt'
-    | 'runtimeActivityState' | 'runtimeActivityActiveCount' | 'runtimeActivityObservedAt' | 'runtimeActivityRevision'
-> & Partial<Pick<Session, 'presence'>>;
+const sessionLifecycleFields = [
+    'seq', 'updatedAt', 'meaningfulActivityAt',
+    'active', 'activeAt', 'thinking', 'thinkingAt',
+    'latestTurnId', 'latestTurnStatus', 'latestTurnStatusObservedAt',
+    'pendingVersion', 'pendingCount', 'pendingBlockedCount', 'pendingActivationAuthorization',
+    'latestReadyEventSeq', 'latestReadyEventAt',
+    'runtimeActivityState', 'runtimeActivityActiveCount', 'runtimeActivityObservedAt', 'runtimeActivityRevision',
+] as const satisfies readonly (keyof Session)[];
+
+type SessionLifecycleProjection = Pick<Session, typeof sessionLifecycleFields[number]>
+    & Partial<Pick<Session, 'presence'>>;
 
 export function normalizeSessionOrderingNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value)
@@ -24,6 +27,14 @@ type SessionRequestProjection = Partial<Pick<Session,
     hasPendingPermissionRequests?: boolean;
     hasPendingUserActionRequests?: boolean;
 };
+
+// These facts have their own ordering contracts. An older enclosing update can still carry
+// a newer observation; only fields outside this set follow the enclosing update's ordering.
+const independentlyOrderedSessionFields = new Set<PropertyKey>([
+    ...sessionLifecycleFields, 'presence', 'metadata', 'metadataVersion',
+    'agentState', 'agentStateVersion', 'pendingPermissionRequestCount', 'pendingUserActionRequestCount',
+    'pendingRequestObservedAt', 'hasPendingPermissionRequests', 'hasPendingUserActionRequests',
+]);
 
 export function shouldPreserveSessionRequestProjection(
     previous: SessionRequestProjection | undefined,
@@ -164,13 +175,23 @@ export function reconcileSessionLifecycleProjection<T extends SessionLifecyclePr
     return next;
 }
 
-type SessionSnapshotProjection = SessionLifecycleProjection & SessionRequestProjection & Pick<Session, 'metadata' | 'metadataVersion'>;
+type SessionSnapshotProjection = SessionLifecycleProjection & SessionRequestProjection & {
+    metadata: unknown;
+    metadataVersion: number;
+};
 
 /** Apply the independent lifecycle, request, and metadata ordering rules to a whole snapshot. */
 export function reconcileSessionSnapshot<T extends SessionSnapshotProjection>(
-    previous: SessionSnapshotProjection | undefined,
+    previous: T | undefined,
     incoming: T,
+    options?: Readonly<{ preserveUnversionedFields?: boolean }>,
 ): T {
+    if (previous && options?.preserveUnversionedFields) {
+        incoming = { ...incoming };
+        for (const key of Object.keys(incoming) as Array<keyof T>) {
+            if (!independentlyOrderedSessionFields.has(key)) incoming[key] = previous[key];
+        }
+    }
     let next = reconcileSessionRequestProjection(previous, incoming);
     const previousMetadataVersion = normalizeSessionOrderingNumber(previous?.metadataVersion);
     const incomingMetadataVersion = normalizeSessionOrderingNumber(incoming.metadataVersion);

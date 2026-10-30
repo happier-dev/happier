@@ -210,8 +210,18 @@ const cacheOnlySessionUpdateProjectionPatchCoalescer = createSessionListRenderab
     readRenderable: (sessionId) => storage.getState().sessionListRenderables[sessionId],
     buildPatch: ({ payload, renderable }) => {
         const previousSeq = cacheOnlySessionUpdateSeqBySession.get(renderable.id) ?? 0;
+        const patchUpdatedAt = finiteNumber(payload.patch.updatedAt);
+        const currentUpdatedAt = finiteNumber(renderable.updatedAt) ?? 0;
+        const patchSeq = finiteNumber(payload.patch.seq);
+        const acceptsUnversionedFields = patchUpdatedAt === null
+            || patchUpdatedAt > currentUpdatedAt
+            || (patchUpdatedAt === currentUpdatedAt && (
+                payload.updateSeq > previousSeq
+                || (patchSeq !== null && patchSeq > renderable.seq)
+            ));
         cacheOnlySessionUpdateSeqBySession.set(renderable.id, Math.max(previousSeq, Math.trunc(payload.updateSeq)));
-        return payload.patch;
+        if (acceptsUnversionedFields) return payload.patch;
+        return applySessionListRenderablePatch(renderable, payload.patch, { preserveUnversionedFields: true });
     },
     applyPatches: (patches) => storage.getState().applySessionListRenderablePatches(patches),
 });
@@ -771,37 +781,11 @@ function applyCacheOnlySessionUpdateProjectionPatch(params: Readonly<{
         pendingPermission: classification.pendingPermission ? 1 : 0,
         pendingUserAction: classification.pendingUserAction ? 1 : 0,
     }));
-    const patchUpdatedAt = finiteNumber(params.patch.updatedAt);
-    const patchSeq = finiteNumber(params.patch.seq);
-    const patchMetadataVersion = finiteNumber(params.patch.metadataVersion);
-    const patchRequestVersion = finiteNumber(params.patch.agentStateVersion);
-    const shouldContinue = () => {
-        if (params.shouldContinue && !params.shouldContinue()) return false;
-        const currentRenderable = storage.getState().sessionListRenderables[params.sessionId];
-        if (
-            patchMetadataVersion !== null
-            && patchMetadataVersion > (finiteNumber(currentRenderable?.metadataVersion) ?? 0)
-        ) {
-            return true;
-        }
-        if (patchRequestVersion !== null && patchRequestVersion > (finiteNumber(currentRenderable?.agentStateVersion) ?? 0)) {
-            return true;
-        }
-        if (patchUpdatedAt === null) return true;
-        const currentUpdatedAt = finiteNumber(currentRenderable?.updatedAt) ?? 0;
-        if (currentUpdatedAt < patchUpdatedAt) return true;
-        if (currentUpdatedAt > patchUpdatedAt) return false;
-        const currentUpdateSeq = cacheOnlySessionUpdateSeqBySession.get(params.sessionId) ?? 0;
-        if (currentUpdateSeq < params.updateSeq) return true;
-        if (patchSeq === null) return false;
-        const currentSeq = finiteNumber(currentRenderable?.seq) ?? 0;
-        return currentSeq < patchSeq;
-    };
     cacheOnlySessionUpdateProjectionPatchCoalescer.enqueue(
         params.sessionId,
         { patch: params.patch, updateSeq: params.updateSeq },
         {
-            shouldContinue,
+            shouldContinue: params.shouldContinue,
             deferLeadingPatch: !forceImmediate,
             forceImmediate,
         },

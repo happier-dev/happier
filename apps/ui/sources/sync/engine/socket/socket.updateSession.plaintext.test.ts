@@ -2204,6 +2204,79 @@ describe('socket update handling: plaintext update-session', () => {
         }));
     });
 
+    it.each([
+        { kind: 'runtime-activity', createdAt: 300 },
+        { kind: 'turn', createdAt: 300 },
+        { kind: 'ready', createdAt: 300 },
+        { kind: 'runtime-activity', createdAt: 400 },
+    ] as const)('accepts independently newer $kind facts behind an unrelated row timestamp ($createdAt)', async ({ kind, createdAt }) => {
+        vi.useFakeTimers();
+        const sessionId = 's_independent_projection_ordering';
+        storage.getState().replaceSessionListRenderables([{
+            ...buildSession(sessionId), updatedAt: 400, activeAt: 10_000,
+            latestTurnId: 'turn-1', latestTurnStatus: kind === 'turn' ? 'in_progress' : 'completed',
+            latestTurnStatusObservedAt: 100,
+            runtimeActivityState: kind === 'runtime-activity' ? 'active' : 'idle',
+            runtimeActivityActiveCount: kind === 'runtime-activity' ? 1 : 0,
+            runtimeActivityObservedAt: 100, runtimeActivityRevision: 1,
+            latestReadyEventSeq: 1, latestReadyEventAt: 100,
+            archivedAt: null, lastViewedSessionSeq: 1, hasUnreadMessages: false,
+        }]);
+        const params = buildBaseParams();
+        if (createdAt === 400) {
+            await handleUpdateContainer({ ...params, updateData: { id: 'newer-envelope', seq: 6, createdAt,
+                body: { t: 'update-session', id: sessionId, archivedAt: null } } });
+            await vi.advanceTimersByTimeAsync(100);
+        }
+        const lifecycle = kind === 'runtime-activity'
+            ? { runtimeActivityState: 'idle' as const, runtimeActivityActiveCount: 0,
+                runtimeActivityObservedAt: 300, runtimeActivityRevision: 2 }
+            : kind === 'turn'
+                ? { latestTurnStatus: 'completed' as const, latestTurnStatusObservedAt: 300 }
+                : { latestReadyEventSeq: 2, latestReadyEventAt: 300 };
+        await handleUpdateContainer({
+            ...params,
+            updateData: { id: 'independently-newer', seq: 4, createdAt,
+                body: { t: 'update-session', id: sessionId, archivedAt: 250, ...lifecycle } },
+        });
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(storage.getState().sessionListRenderables[sessionId]).toMatchObject({
+            ...lifecycle, updatedAt: 400, archivedAt: null,
+        });
+        if (kind === 'ready') expect(storage.getState().sessionListRenderables[sessionId].hasUnreadMessages).toBe(true);
+        else expect(deriveSessionRuntimePresentationState(storage.getState().sessionListRenderables[sessionId], 10_000).working).toBe(false);
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+
+        const settledRow = storage.getState().sessionListRenderables[sessionId];
+        let rowNotifications = 0;
+        const unsubscribe = storage.subscribe((state, previous) => {
+            if (state.sessionListRenderables[sessionId] !== previous.sessionListRenderables[sessionId]) rowNotifications++;
+        });
+        try {
+            await handleUpdateContainer({ ...params, updateData: { id: 'duplicate-lifecycle', seq: 4, createdAt,
+                body: { t: 'update-session', id: sessionId, archivedAt: 250, ...lifecycle } } });
+            await vi.advanceTimersByTimeAsync(100);
+            expect(storage.getState().sessionListRenderables[sessionId]).toBe(settledRow);
+            expect(rowNotifications).toBe(0);
+        } finally {
+            unsubscribe();
+        }
+
+        // A later envelope cannot roll back independently ordered facts either.
+        await handleUpdateContainer({
+            ...params,
+            updateData: { id: 'older-lifecycle-newer-envelope', seq: 7, createdAt: 500,
+                body: { t: 'update-session', id: sessionId,
+                    runtimeActivityState: 'active', runtimeActivityActiveCount: 1,
+                    runtimeActivityObservedAt: 50, runtimeActivityRevision: 0,
+                    latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: 50,
+                    latestReadyEventSeq: 0, latestReadyEventAt: 50 } },
+        });
+        await vi.advanceTimersByTimeAsync(100);
+        expect(storage.getState().sessionListRenderables[sessionId]).toMatchObject({ ...lifecycle, updatedAt: 500 });
+    });
+
     it('updates cache-only renderables for runtime activity projection payloads without forcing hydration', async () => {
         storage.getState().replaceSessionListRenderables([
             {

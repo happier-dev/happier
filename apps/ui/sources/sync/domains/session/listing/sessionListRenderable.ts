@@ -35,7 +35,7 @@ import {
     resolveSessionListUnreadEntryActivityAt,
 } from './placement/sessionListPlacementProjection';
 import { didSessionListWorkingRetentionInputsChange } from './placement/sessionListWorkingRetention';
-import { reconcileSessionLifecycleProjection, reconcileSessionRequestProjection } from '../sessionLifecycleProjection';
+import { reconcileSessionSnapshot } from '../sessionLifecycleProjection';
 import {
     deriveSessionRuntimePresentationState,
     resolveSessionRuntimePresenceFields,
@@ -217,16 +217,21 @@ export function deriveSessionListRenderableHasUnreadMessagesFromPatch(params: Re
         && Number.isFinite(params.explicitReadableSeq)
         ? Math.max(0, Math.trunc(params.explicitReadableSeq))
         : null;
+    const lastViewedSessionSeq = resolveLastViewedSessionSeq({
+        metadata: nextMetadata, lastViewedSessionSeq: nextLastViewedSessionSeq,
+    });
+    // A compact row can lack the transcript activity that proved it unread. Without
+    // that evidence, keep the known unread state until the accepted read cursor advances.
+    if (explicitReadableSeq === null && renderable.hasUnreadMessages === true
+        && (lastViewedSessionSeq ?? 0) < (patch.seq ?? renderable.seq)
+        && (lastViewedSessionSeq ?? 0) <= (resolveLastViewedSessionSeq(renderable) ?? 0)) return true;
 
     return computeHasUnreadActivity({
         sessionSeq: explicitReadableSeq === null
             ? projectedReadableSeq
             : Math.max(projectedReadableSeq, explicitReadableSeq),
         pendingActivityAt: 0,
-        lastViewedSessionSeq: resolveLastViewedSessionSeq({
-            metadata: nextMetadata,
-            lastViewedSessionSeq: nextLastViewedSessionSeq,
-        }),
+        lastViewedSessionSeq,
         lastViewedPendingActivityAt: nextMetadata?.readStateV1?.pendingActivityAt,
     });
 }
@@ -453,14 +458,32 @@ function preserveSessionListRenderableMissingPendingFlags(
     };
 }
 
+function reconcileSessionListRenderableSnapshot(
+    previous: SessionListRenderableSession | undefined,
+    incoming: SessionListRenderableSession,
+    options?: Readonly<{ preserveUnversionedFields?: boolean }>,
+): SessionListRenderableSession {
+    const next = reconcileSessionSnapshot(previous, incoming, options);
+    if (!previous) return next;
+    const unreadInputsChanged = (left: SessionListRenderableSession, right: SessionListRenderableSession) =>
+        left.metadata !== right.metadata || left.seq !== right.seq
+        || (left.latestReadyEventSeq ?? null) !== (right.latestReadyEventSeq ?? null)
+        || (left.latestTurnStatus ?? null) !== (right.latestTurnStatus ?? null)
+        || (left.lastViewedSessionSeq ?? null) !== (right.lastViewedSessionSeq ?? null);
+    if (!unreadInputsChanged(incoming, next)
+        && !(options?.preserveUnversionedFields && unreadInputsChanged(previous, next))) return next;
+    const reconciled = { ...next, hasUnreadMessages: deriveSessionListRenderableHasUnreadMessagesFromPatch({
+        renderable: previous, patch: next, recomputeUnread: true,
+    }) };
+    reconciled.unreadSince = resolveSessionListRenderableUnreadSince(previous, reconciled);
+    return reconciled;
+}
+
 export function preserveSessionListRenderableStaleFields(
     previous: SessionListRenderableSession | undefined,
     next: SessionListRenderableSession,
 ): SessionListRenderableSession {
-    next = preserveSessionListRenderableMissingPendingFlags(previous, reconcileSessionLifecycleProjection(
-        previous,
-        reconcileSessionRequestProjection(previous, next),
-    ));
+    next = preserveSessionListRenderableMissingPendingFlags(previous, reconcileSessionListRenderableSnapshot(previous, next));
     // A projection pass re-derives every renderable, so an unchanged session still arrives as a
     // fresh object. Handing that object on defeats identity all the way up the session list: the
     // row is rebuilt around it, then the array, then the whole list re-renders. Returning the
@@ -586,6 +609,7 @@ export function areSessionListRenderablesEqual(
 export function applySessionListRenderablePatch(
     renderable: SessionListRenderableSession,
     patch: SessionListRenderablePatchFields,
+    options?: Readonly<{ preserveUnversionedFields?: boolean }>,
 ): SessionListRenderableSession {
     const patched = {
         ...renderable,
@@ -596,10 +620,7 @@ export function applySessionListRenderablePatch(
     // entry fact is re-stamped from the latest activity; keep the row's
     // existing entry time so an unread row does not move on every message.
     patched.unreadSince = resolveSessionListRenderableUnreadSince(renderable, patched);
-    return preserveSessionListRenderableMissingPendingFlags(renderable, reconcileSessionLifecycleProjection(
-        renderable,
-        reconcileSessionRequestProjection(renderable, patched),
-    ));
+    return preserveSessionListRenderableMissingPendingFlags(renderable, reconcileSessionListRenderableSnapshot(renderable, patched, options));
 }
 
 export function isSessionListRenderablePatchNoop(
