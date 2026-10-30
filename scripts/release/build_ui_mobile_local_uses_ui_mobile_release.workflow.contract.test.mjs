@@ -81,9 +81,18 @@ test('native mobile artifact names distinguish environment, platform, and effect
 
 test('build-ui-mobile-local workflow delegates local builds to ui-mobile-release pipeline command', () => {
   const src = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'build-ui-mobile-local.yml'), 'utf8');
+  const workflow = YAML.parse(src);
+  assert.equal(workflow.env.NATIVE_ACTION, "${{ inputs.action == 'build_and_submit' && 'native_submit' || 'native' }}");
+  assert.equal(workflow.jobs.submit_android, undefined);
+  assert.equal(workflow.jobs.submit_ios, undefined);
+  for (const platform of ['android', 'ios']) {
+    const build = workflow.jobs[`build_${platform}`].steps.find((step) => step.name === 'EAS build (local runner) (pipeline)');
+    assert.match(build.run, /--action "\$NATIVE_ACTION"/);
+    assert.match(build.run, /ui-mobile-release/);
+    assert.match(build.run, /--native-build-mode local/);
+  }
   assert.match(src, /node \.mobile-control\/scripts\/pipeline\/run\.mjs ui-mobile-release/);
   assert.match(src, /--native-build-mode local/);
-  assert.match(src, /--action "\$\{\{\s*inputs\.action == 'build_and_submit' && 'native_submit' \|\| 'native'\s*\}\}"/);
   assert.match(src, /--publish-apk-release false/);
   assert.match(src, /APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS:\s*\$\{\{\s*vars\.APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS\s*\}\}/);
   assert.match(src, /APP_STORE_CONNECT_PREVIEW_EXTERNAL_GROUPS:\s*\$\{\{\s*vars\.APP_STORE_CONNECT_PREVIEW_EXTERNAL_GROUPS\s*\}\}/);
