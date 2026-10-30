@@ -29,7 +29,7 @@ function redactCapturedText(input: string): string {
   // Avoid leaking auth/session tokens into logs.
   return input
     .replace(/"token":"[^"]+"/g, '"token":"<redacted>"')
-    .replace(/Bearer\\s+[A-Za-z0-9._-]+/g, 'Bearer <redacted>');
+    .replace(/Bearer\s+[A-Za-z0-9._+\/=-]+/g, 'Bearer <redacted>');
 }
 
 function truncateCapturedFrame(decoded: string, maxChars: number): string {

@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { describe, expect, it } from 'vitest';
 
 import { collectTransferRelayV2Traffic } from './transferRelayV2TrafficCapture';
@@ -27,6 +28,33 @@ function createPageHarness() {
 }
 
 describe('collectTransferRelayV2Traffic', () => {
+  it('redacts synthetic Bearer and token credentials from captured frames and HTTP evidence', async () => {
+    const harness = createPageHarness();
+    // Only Playwright's external event boundary is replaced; capture and redaction stay real.
+    const traffic = collectTransferRelayV2Traffic(harness.page as unknown as Page);
+    const websocketHarness = createPageHarness();
+    const bearerSentinel = 'synthetic-Bearer._-+/=';
+    const tokenSentinel = 'synthetic-token+/=';
+    const payload = JSON.stringify({ kind: 'chunk', authorization: `Bearer ${bearerSentinel}`, token: tokenSentinel });
+    const redacted = JSON.stringify({ kind: 'chunk', authorization: 'Bearer <redacted>', token: '<redacted>' });
+    const url = 'https://example.test/v1/updates/session-1';
+
+    harness.emit('websocket', websocketHarness.page);
+    websocketHarness.emit('framesent', { payload });
+    websocketHarness.emit('framereceived', { payload: Buffer.from(payload) });
+    harness.emit('request', { url: () => url, method: () => 'POST', postData: () => payload });
+    harness.emit('response', { url: () => url, status: () => 200, text: async () => payload });
+    await Promise.resolve();
+
+    expect(traffic.frames).toEqual([redacted, redacted]);
+    expect(traffic.updateBodies).toEqual([`[request POST] ${url}\n${redacted}`, `[response 200] ${url}\n${redacted}`]);
+    for (const entry of [...traffic.frames, ...traffic.updateBodies]) {
+      expect(entry).not.toContain(bearerSentinel);
+      expect(entry).not.toContain(tokenSentinel);
+    }
+    expect(traffic.sawRelayV2EventName()).toBe(true);
+  });
+
   it('captures renamed daemon.transfer chunk RPC requests when bulk-transfer capture is enabled', () => {
     const harness = createPageHarness();
     const traffic = collectTransferRelayV2Traffic(harness.page as any, { captureBulkTransfer: true });
