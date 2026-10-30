@@ -11,6 +11,7 @@ import { resolveStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs
 import { spawnDetachedInlineNodeTestProcess } from './testkit/core/spawn_test_process.mjs';
 import { waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
+import { ensureMinimalMonorepoLayout } from './testkit/core/minimal_monorepo_layout.mjs';
 
 function stackPaths() {
     const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -72,9 +73,8 @@ function createIsolatedStackCommandEnv({ tempRoot, fakeRepo, storageDir, stackNa
 }
 
 async function createFakeMonorepo(rootDir) {
+    await ensureMinimalMonorepoLayout(rootDir);
     await mkdir(join(rootDir, 'node_modules'), { recursive: true });
-    await mkdir(join(rootDir, 'apps', 'ui'), { recursive: true });
-    await mkdir(join(rootDir, 'apps', 'server'), { recursive: true });
 
     await writeFile(join(rootDir, 'package.json'), JSON.stringify({ name: 'fake-happier-root', private: true }) + '\n', 'utf-8');
     await writeStubHappierCliFiles(rootDir, {

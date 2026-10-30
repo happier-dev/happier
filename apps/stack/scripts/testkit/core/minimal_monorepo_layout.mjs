@@ -14,6 +14,7 @@ export async function ensureMinimalMonorepoLayout(
   await mkdir(uiDir, { recursive: true });
   await mkdir(cliDir, { recursive: true });
   await mkdir(serverDir, { recursive: true });
+  await writeFile(join(rootDir, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n', 'utf-8');
   await writeFile(join(uiDir, 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(serverDir, 'package.json'), '{}\n', 'utf-8');
