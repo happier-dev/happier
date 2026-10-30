@@ -138,7 +138,7 @@ describe('shared Action confirmation projection', () => {
 });
 
 describe('derivePendingRequestFlags', () => {
-    it('uses projected pending request counts without scanning large transcript message lists', () => {
+    it('uses projected zero counts ahead of stale hydrated pending requests', () => {
         const messages: Message[] = Array.from({ length: 1_000 }, (_, index) => ({
             id: `msg-${index}`,
             kind: 'tool-call',

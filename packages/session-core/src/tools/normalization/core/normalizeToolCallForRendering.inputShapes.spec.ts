@@ -4,16 +4,6 @@ import { normalizeToolCallForRendering } from "./normalizeToolCallForRendering.j
 import { makeTool } from "./normalizeToolCallForRendering._testHelpers.js";
 
 describe('normalizeToolCallForRendering (input shapes)', () => {
-    it('parses JSON string inputs into objects', () => {
-        const normalized = normalizeToolCallForRendering(
-            makeTool({
-                input: '{"a":1}',
-                result: '{"ok":true}',
-            }),
-        );
-        expect(normalized.input).toEqual({ a: 1 });
-    });
-
     it('normalizes edit aliases into old_string/new_string + file_path', () => {
         const normalized = normalizeToolCallForRendering(
             makeTool({

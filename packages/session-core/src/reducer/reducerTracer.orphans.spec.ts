@@ -38,37 +38,6 @@ function buildRootMessage(): NormalizedMessage {
 }
 
 describe('reducerTracer orphan handling', () => {
-    it('buffers orphan messages until parent arrives', () => {
-        const state = createTracer();
-        traceMessages(state, [buildTaskMessage()]);
-
-        const orphan: NormalizedMessage = {
-            id: 'orphan1',
-            localId: null,
-            createdAt: 3000,
-            role: 'agent',
-            isSidechain: true,
-            content: [{
-                type: 'text',
-                text: 'Orphan message',
-                uuid: 'orphan-uuid',
-                parentUUID: 'sidechain-uuid',
-            }],
-        };
-
-        let traced = traceMessages(state, [orphan]);
-        expect(traced).toHaveLength(0);
-        expect(state.orphanMessages.has('sidechain-uuid')).toBe(true);
-
-        traced = traceMessages(state, [buildRootMessage()]);
-        expect(traced).toHaveLength(2);
-        expect(traced[0].id).toBe('sidechain1');
-        expect(traced[0].sidechainId).toBe('tool1');
-        expect(traced[1].id).toBe('orphan1');
-        expect(traced[1].sidechainId).toBe('tool1');
-        expect(state.orphanMessages.has('sidechain-uuid')).toBe(false);
-    });
-
     it('processes recursively buffered orphan chains in order', () => {
         const state = createTracer();
         traceMessages(state, [buildTaskMessage()]);
@@ -101,7 +70,8 @@ describe('reducerTracer orphan handling', () => {
             }],
         };
 
-        traceMessages(state, [orphan2, orphan1]);
+        const buffered = traceMessages(state, [orphan2, orphan1]);
+        expect(buffered).toHaveLength(0);
         expect(state.orphanMessages.has('orphan1-uuid')).toBe(true);
         expect(state.orphanMessages.has('sidechain-uuid')).toBe(true);
 

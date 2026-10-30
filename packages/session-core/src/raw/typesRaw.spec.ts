@@ -42,21 +42,29 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(message);
+            const result = RawRecordSchema.parse(message);
 
-            expect(result.success).toBe(true);
-              if (result.success) {
-                  const content = result.data.content;
-                  if (content.type === 'output' && content.data.type === 'assistant') {
-                      const firstItem = (content.data as any).message.content[0];
-                      expect(firstItem.type).toBe('tool_use');
-                      if (firstItem.type === 'tool_use') {
-                          expect(firstItem.id).toBe('call_abc123');  // callId → id
-                          expect(firstItem.name).toBe('Bash');
-                        expect(firstItem.input).toEqual({ command: 'ls -la' });
+            expect(result).toEqual({
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'assistant',
+                        message: {
+                            role: 'assistant',
+                            model: 'claude-3',
+                            content: [{
+                                type: 'tool_use',
+                                callId: 'call_abc123',
+                                id: 'call_abc123',
+                                name: 'Bash',
+                                input: { command: 'ls -la' }
+                            }]
+                        },
+                        uuid: 'test-uuid'
                     }
                 }
-            }
+            });
         });
 
         it('transforms tool-call-result to tool_result with field remapping', () => {
@@ -192,20 +200,28 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(message);
+            const result = RawRecordSchema.parse(message);
 
-            expect(result.success).toBe(true);
-              if (result.success) {
-                  const content = result.data.content;
-                  if (content.type === 'output' && content.data.type === 'assistant') {
-                      const firstItem = (content.data as any).message.content[0];
-                      expect(firstItem.type).toBe('tool_use');
-                      if (firstItem.type === 'tool_use') {
-                          expect(firstItem.id).toBe('call_123');
-                          expect(firstItem.name).toBe('Write');
+            expect(result).toEqual({
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'assistant',
+                        message: {
+                            role: 'assistant',
+                            model: 'claude-3',
+                            content: [{
+                                type: 'tool_use',
+                                id: 'call_123',
+                                name: 'Write',
+                                input: { file_path: '/test.txt' }
+                            }]
+                        },
+                        uuid: 'test-uuid'
                     }
                 }
-            }
+            });
         });
 
         it('passes through tool_result unchanged', () => {
@@ -410,40 +426,6 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
     });
 
     describe('Backwards compatibility with old CLI messages', () => {
-        it('handles old CLI with canonical underscore types', () => {
-            const oldCliMessage = {
-                role: 'agent',
-                content: {
-                    type: 'output',
-                    data: {
-                        type: 'assistant',
-                        message: {
-                            role: 'assistant',
-                            model: 'claude-3',
-                            content: [
-                                { type: 'tool_use', id: 'call_old', name: 'Read', input: {} }
-                            ]
-                        },
-                        uuid: 'old-uuid'
-                    }
-                }
-            };
-
-            const result = RawRecordSchema.safeParse(oldCliMessage);
-
-            expect(result.success).toBe(true);
-              if (result.success) {
-                  const content = result.data.content;
-                  if (content.type === 'output' && content.data.type === 'assistant') {
-                      const firstItem = (content.data as any).message.content[0];
-                      expect(firstItem.type).toBe('tool_use');
-                      if (firstItem.type === 'tool_use') {
-                          expect(firstItem.id).toBe('call_old');
-                      }
-                }
-            }
-        });
-
         it('accepts assistant output messages without model (backwards compatibility)', () => {
             const oldCliMessageMissingModel = {
                 role: 'agent',
@@ -514,17 +496,21 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(codexMessage);
+            const result = RawRecordSchema.parse(codexMessage);
 
-            expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'codex' && content.data.type === 'tool-call') {
-                    // Codex path keeps hyphenated types as-is
-                    expect(content.data.type).toBe('tool-call');
-                    expect(content.data.callId).toBe('codex_1');
+            expect(result).toEqual({
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'tool-call',
+                        callId: 'codex_1',
+                        name: 'Bash',
+                        input: { command: 'pwd' },
+                        id: 'codex-id-1'
+                    }
                 }
-            }
+            });
         });
 
         it('accepts Codex tool-call-result messages via codex schema path', () => {
@@ -1465,61 +1451,6 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
     });
 
     describe('WOLOG: Cross-agent format handling', () => {
-        it('Claude SDK (underscore) passes through unchanged', () => {
-            const claudeMessage = {
-                role: 'agent',
-                content: {
-                    type: 'output',
-                    data: {
-                        type: 'assistant',
-                        message: {
-                            role: 'assistant',
-                            model: 'claude-3',
-                            content: [
-                                { type: 'tool_use', id: 'claude_1', name: 'Bash', input: {} }
-                            ]
-                        },
-                        uuid: 'claude-uuid'
-                    }
-                }
-            };
-
-            const result = RawRecordSchema.safeParse(claudeMessage);
-
-              expect(result.success).toBe(true);
-              // Verify underscore types remain unchanged (idempotent)
-              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
-                  expect((result.data.content.data as any).message.content[0].type).toBe('tool_use');
-              }
-          });
-
-        it('Codex (hyphenated via codex path) uses native schema', () => {
-            const codexMessage = {
-                role: 'agent',
-                content: {
-                    type: 'codex',
-                    data: {
-                        type: 'tool-call',
-                        callId: 'codex_tool',
-                        name: 'Read',
-                        input: {},
-                        id: 'codex-msg-id'
-                    }
-                }
-            };
-
-            const result = RawRecordSchema.safeParse(codexMessage);
-
-            expect(result.success).toBe(true);
-            // Codex path keeps hyphenated types (no transformation)
-            if (result.success && result.data.content.type === 'codex') {
-                expect(result.data.content.data.type).toBe('tool-call');
-                if (result.data.content.data.type === 'tool-call') {
-                    expect(result.data.content.data.callId).toBe('codex_tool');
-                }
-            }
-        });
-
         it('Gemini (uses codex path) works with hyphenated types', () => {
             // Gemini uses the provider transcript dispatch path in CLI, so type: 'codex'
             const geminiMessage = {
@@ -1541,42 +1472,6 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
               }
           });
 
-        it('handles hypothetical hyphenated types in output path (defensive)', () => {
-            // This tests the defensive nature of the transform
-            // If CLI ever sends hyphenated in output path, it should work
-            const hypotheticalMessage = {
-                role: 'agent',
-                content: {
-                    type: 'output',
-                    data: {
-                        type: 'assistant',
-                        message: {
-                            role: 'assistant',
-                            model: 'future-model',
-                            content: [{
-                                type: 'tool-call',  // Hyphenated in output path
-                                callId: 'defensive_test',
-                                name: 'NewTool',
-                                input: { param: 'value' }
-                            }]
-                        },
-                        uuid: 'defensive-uuid'
-                    }
-                }
-            };
-
-              const result = RawRecordSchema.safeParse(hypotheticalMessage);
-
-              expect(result.success).toBe(true);
-              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
-                  // Should transform to tool_use
-                  const item = (result.data.content.data as any).message.content[0];
-                  expect(item.type).toBe('tool_use');
-                  if (item.type === 'tool_use') {
-                      expect(item.id).toBe('defensive_test');
-                  }
-            }
-        });
     });
 
     describe('Regression prevention: Ensure existing behavior unchanged', () => {

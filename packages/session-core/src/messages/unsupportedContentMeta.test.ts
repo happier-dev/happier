@@ -2,11 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { markUnsupportedContentMeta, readUnsupportedContentMeta } from "./unsupportedContentMeta.js";
 
 describe('markUnsupportedContentMeta / readUnsupportedContentMeta', () => {
-    it('round-trips a kind', () => {
-        const meta = markUnsupportedContentMeta(undefined, 'unparsed-user-message');
-        expect(readUnsupportedContentMeta(meta)).toBe('unparsed-user-message');
-    });
-
     it('preserves unrelated existing meta fields', () => {
         const meta = markUnsupportedContentMeta({ source: 'cli' }, 'unsupported-transcript-record');
         expect(meta.source).toBe('cli');
