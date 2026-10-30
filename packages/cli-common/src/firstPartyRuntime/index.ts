@@ -19,7 +19,9 @@ export type {
 
 export {
   assertValidFirstPartyVersionId,
+  FIRST_PARTY_INSTALL_HOME_ENV_KEY,
   InvalidFirstPartyVersionIdError,
+  resolveFirstPartyInstallHomeDir,
   resolveFirstPartyInstallLayout,
   resolveFirstPartyVersionInstallPath,
 } from './installLayout.js';
