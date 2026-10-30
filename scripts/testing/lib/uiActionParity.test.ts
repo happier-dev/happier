@@ -22,8 +22,8 @@ test('exempts machine presentation state and validated Action forwarding only at
   assert.deepEqual(report.findings, []);
   assert.equal(report.exclusions.length, 4);
   assert.ok(report.exclusions.every(site => site.reason.length > 0));
-  const neighboring = collectUiActionParity(sources.map(source => ({ ...source,
-    filePath: 'apps/ui/sources/components/machines/Unvalidated.tsx' })), specs, []);
+  const neighboring = collectUiActionParity(sources.map((source, index) => ({ ...source,
+    filePath: `apps/ui/sources/components/machines/Unvalidated${index}.tsx` })), specs, []);
   assert.deepEqual(neighboring.findings.map(site => site.code), [
     'setting_unmapped', 'setting_unmapped', 'dynamic_action', 'dynamic_action',
   ]);
