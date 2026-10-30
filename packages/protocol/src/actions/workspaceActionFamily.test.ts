@@ -6,6 +6,18 @@ import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 
 describe('workspace client actions', () => {
+  it('admits literal leading-colon filenames through file Actions and Find without admitting absolute paths', () => {
+    const file = { target: { kind: 'session', sessionId: 'session-a', serverId: 'home-a' }, path: 'a:b.ts' };
+    expect(WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.open'].safeParse({ file }).success).toBe(true);
+    expect(WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.files.link.get'].safeParse(file).success).toBe(true);
+    expect(WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.open'].safeParse({ file, find: {
+      query: 'needle', target: { kind: 'session-file', sessionId: 'session-a', serverId: 'home-a',
+        machineId: 'machine-a', rootPath: '/repo', path: file.path },
+    } }).success).toBe(true);
+    for (const path of ['C:', 'C:/outside.ts', 'C:\\outside.ts', '//server/share/outside.ts', '\\\\server\\share\\outside.ts', '../outside.ts']) {
+      expect(WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.open'].safeParse({ file: { ...file, path } }).success).toBe(false);
+    }
+  });
   it('admits a literal selected tilde entry without interpreting general home shorthand', () => {
     expect(isSafeWorkspaceFilePath('~notes.txt')).toBe(true);
     expect(isSafeWorkspaceFilePath('~')).toBe(false);

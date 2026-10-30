@@ -13,7 +13,7 @@ const id = z.string().check(z.trim(), z.minLength(1));
 /** Root-relative file addressing is shared by Action ingress and pane URL readers. */
 export function isSafeWorkspaceFilePath(path: string): boolean {
   return path.length > 0 && !path.includes('\0') && !path.includes('\\')
-    && !path.startsWith('/') && path !== '~' && !path.startsWith('~/') && !/^[A-Za-z]:/.test(path)
+    && !path.startsWith('/') && path !== '~' && !path.startsWith('~/') && !/^[A-Za-z]:(?:\/|$)/.test(path)
     && !path.includes('//') && !path.split('/').some(segment => segment === '.' || segment === '..');
 }
 
