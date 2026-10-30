@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 import { resolveVitestNodeCommand } from '../../../scripts/testing/vitestNodeCommand.mjs';
+import { resolveVitestForwardArgs } from '../../../scripts/testing/vitestForwardArgs.mjs';
+export { resolveVitestForwardArgs } from '../../../scripts/testing/vitestForwardArgs.mjs';
 import {
   parseVitestListJson,
   shouldVitestShardRunProceedWithoutFiles,
@@ -51,18 +53,6 @@ export function resolveVitestConfigPath(argv) {
   if (idx === -1) return null;
   const value = argv[idx + 1];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-export function resolveVitestForwardArgs(argv) {
-  const forwarded = [];
-  for (let index = 2; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === '--config') { index += 1; continue; }
-    if (arg.startsWith('--config=') || arg === '--unit-checks' || arg === '--unit-checks-only') continue;
-    forwarded.push(arg);
-  }
-  if (forwarded[0] === '--') forwarded.shift();
-  return forwarded;
 }
 
 /**
