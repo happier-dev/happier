@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     mapTranscriptListIndexBetweenOrders,
     orientTranscriptListItems,
-    resolveOlderNeighborRenderedIndex,
+    resolveNewerNeighborRenderedIndex,
     resolveOrientedListEdgeSlots,
     resolveTranscriptListPresentation,
     type TranscriptListOrientation,
@@ -104,22 +104,22 @@ describe('mapTranscriptListIndexBetweenOrders', () => {
     });
 });
 
-describe('resolveOlderNeighborRenderedIndex', () => {
-    it('resolves the older rendered neighbor by orientation', () => {
-        expect(resolveOlderNeighborRenderedIndex(3, 5, 'standard')).toBe(2);
-        expect(resolveOlderNeighborRenderedIndex(0, 5, 'standard')).toBeNull();
+describe('resolveNewerNeighborRenderedIndex', () => {
+    it('resolves the newer rendered neighbor by orientation', () => {
+        expect(resolveNewerNeighborRenderedIndex(3, 5, 'standard')).toBe(4);
+        expect(resolveNewerNeighborRenderedIndex(4, 5, 'standard')).toBeNull();
 
-        expect(resolveOlderNeighborRenderedIndex(0, 5, 'inverted')).toBe(1);
-        expect(resolveOlderNeighborRenderedIndex(4, 5, 'inverted')).toBeNull();
+        expect(resolveNewerNeighborRenderedIndex(4, 5, 'inverted')).toBe(3);
+        expect(resolveNewerNeighborRenderedIndex(0, 5, 'inverted')).toBeNull();
     });
 
     it('returns null for invalid rendered indexes', () => {
         for (const orientation of ['standard', 'inverted'] as const) {
-            expect(resolveOlderNeighborRenderedIndex(-1, 5, orientation)).toBeNull();
-            expect(resolveOlderNeighborRenderedIndex(5, 5, orientation)).toBeNull();
-            expect(resolveOlderNeighborRenderedIndex(2.5, 5, orientation)).toBeNull();
-            expect(resolveOlderNeighborRenderedIndex(Number.POSITIVE_INFINITY, 5, orientation)).toBeNull();
-            expect(resolveOlderNeighborRenderedIndex(0, 0, orientation)).toBeNull();
+            expect(resolveNewerNeighborRenderedIndex(-1, 5, orientation)).toBeNull();
+            expect(resolveNewerNeighborRenderedIndex(5, 5, orientation)).toBeNull();
+            expect(resolveNewerNeighborRenderedIndex(2.5, 5, orientation)).toBeNull();
+            expect(resolveNewerNeighborRenderedIndex(Number.POSITIVE_INFINITY, 5, orientation)).toBeNull();
+            expect(resolveNewerNeighborRenderedIndex(0, 0, orientation)).toBeNull();
         }
     });
 });

@@ -39,7 +39,7 @@ export function mapTranscriptListIndexBetweenOrders(
     return orientation === 'inverted' ? count - 1 - index : index;
 }
 
-export function resolveOlderNeighborRenderedIndex(
+export function resolveNewerNeighborRenderedIndex(
     index: number,
     count: number,
     orientation: TranscriptListOrientation,
@@ -48,7 +48,7 @@ export function resolveOlderNeighborRenderedIndex(
         return null;
     }
 
-    const neighborIndex = orientation === 'inverted' ? index + 1 : index - 1;
+    const neighborIndex = orientation === 'inverted' ? index - 1 : index + 1;
     return isInRangeIndex(neighborIndex, count) ? neighborIndex : null;
 }
 

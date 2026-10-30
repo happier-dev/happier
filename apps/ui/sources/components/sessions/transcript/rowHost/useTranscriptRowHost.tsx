@@ -9,7 +9,7 @@ import type { Message, ToolCallMessage } from "@happier-dev/session-core/message
 import { resolveMessageRouteIdForDisplay } from '@happier-dev/session-core/messages';
 import { selectToolApprovalRequestsForMessages, useToolApprovalRequestsIndex } from '@/components/tools/shell/views/toolApprovalPromptMatching';
 import type { TranscriptListOrientation } from '@/components/sessions/transcript/listOrientation';
-import { resolveOlderNeighborRenderedIndex } from '@/components/sessions/transcript/listOrientation';
+import { resolveNewerNeighborRenderedIndex } from '@/components/sessions/transcript/listOrientation';
 import type { ChatListInternalProps, ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
 import { ChatListMessageRow, TranscriptRowShell } from '@/components/sessions/transcript/ChatListRows';
 import {
@@ -724,20 +724,22 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
             const neighborItems = listData[index]?.id === item.id
                 ? listData
                 : itemsRef.current;
-            const olderNeighborIndex = resolveOlderNeighborRenderedIndex(
+            const newerNeighborIndex = resolveNewerNeighborRenderedIndex(
                 index,
                 neighborItems.length,
                 listOrientation,
             );
-            const prev = olderNeighborIndex != null
-                ? neighborItems[olderNeighborIndex]
+            const next = newerNeighborIndex != null
+                ? neighborItems[newerNeighborIndex]
                 : undefined;
+            // A recycler cell paints inside its own box, so a row cannot be pulled above its top
+            // edge. A tool row followed by another tool row gives up part of its own trailing gap.
             const shouldTightenToolStack =
                 toolChromeMode === 'activity_feed' &&
                 resolveKindForMessageId(item.messageId) === 'tool-call' &&
-                prev?.kind === 'message' &&
-                resolveKindForMessageId(prev.messageId) === 'tool-call';
-            const wrapperStyle = shouldTightenToolStack ? { marginTop: -12 } : undefined;
+                next?.kind === 'message' &&
+                resolveKindForMessageId(next.messageId) === 'tool-call';
+            const wrapperStyle = shouldTightenToolStack ? { marginBottom: -12 } : undefined;
             return wrapTranscriptItemForAnchor(item, (
                 <TranscriptEnterWrapper
                     id={item.id}

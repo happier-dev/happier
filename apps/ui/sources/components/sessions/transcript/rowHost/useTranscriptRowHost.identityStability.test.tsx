@@ -1191,4 +1191,30 @@ describe('useTranscriptItemRenderer identity stability', () => {
         expect(returnFocusToTranscriptViewport).not.toHaveBeenCalled();
         await hook.unmount();
     });
+    it('trims the older tool row tail instead of pulling the newer row above its recycler cell', async () => {
+        // The recycler cell paints inside its own box, so a row pulled above its top edge loses its
+        // first lines. A tool row followed by another tool row gives up its own trailing gap instead.
+        const rowOf = (messageId: string) => ({
+            kind: 'message' as const, id: `msg:${messageId}`, messageId, createdAt: 1, seq: null,
+        });
+        const items = [rowOf('tool-a'), rowOf('tool-b'), rowOf('reply')];
+        const hook = await renderHook(() => useTranscriptItemRenderer({
+            ...createRendererDeps(createRendererProps()),
+            listData: items,
+            itemsRef: createRef(items),
+            toolTimelineChromeMode: 'activity_feed',
+            resolveKindForMessageId: (messageId: string) => messageId.startsWith('tool') ? 'tool-call' : 'text',
+        } as unknown as TranscriptItemRendererDeps));
+        const wrapperStyle = (index: number) => {
+            const row = hook.getCurrent().renderItem({ item: items[index]!, index }) as {
+                props: { children: { props: { children: { props: { style?: { marginTop?: number; marginBottom?: number } } } } } };
+            };
+            return row.props.children.props.children.props.style ?? {};
+        };
+        expect(wrapperStyle(0).marginBottom ?? 0).toBeLessThan(0);
+        expect(wrapperStyle(1).marginTop ?? 0).toBeGreaterThanOrEqual(0);
+        expect(wrapperStyle(1).marginBottom ?? 0).toBeGreaterThanOrEqual(0);
+        expect(wrapperStyle(2).marginTop ?? 0).toBeGreaterThanOrEqual(0);
+        await hook.unmount();
+    });
 });
