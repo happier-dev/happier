@@ -31,6 +31,7 @@ export const ACTION_IDS = [
   'session.stop',
   'session.title.set',
   'session.model.set',
+  'session.config_option.set',
   'session.permission_mode.set',
   'session.archive',
   'session.unarchive',

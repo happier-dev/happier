@@ -52,6 +52,8 @@ import { listReviewEnginesForVoiceTool } from '@/voice/tools/actionImpl/reviewEn
 import { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } from '@/voice/tools/actionImpl/agentCatalogList';
 import { sync } from '@/sync/sync';
 import { publishAcpSessionModeOverrideToMetadata } from '@/sync/engine/overrides/acpSessionModeOverridePublish';
+import { publishAcpConfigOptionOverrideToMetadata } from '@/sync/engine/overrides/acpConfigOptionOverridePublish';
+import { nowServerMs } from '@/sync/runtime/time';
 import { updatePromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
 import { updateSkillPromptBundle } from '@/sync/ops/promptLibrary/promptBundles';
 import { writePromptLibraryArtifactToExternalAsset } from '@/sync/ops/promptLibrary/exportPromptLibraryArtifact';
@@ -133,6 +135,15 @@ export function createDefaultActionExecutor(opts?: Readonly<{
     executionRunStop: sessionExecutionRunStop,
     executionRunAction: sessionExecutionRunAction,
     executionRunWait: async () => ({ ok: false, error: 'unsupported_action:execution.run.wait', errorCode: 'unsupported_action' }),
+
+    sessionConfigOptionSet: async ({ sessionId, configId, valueId }) => {
+      const updatedAt = nowServerMs();
+      await publishAcpConfigOptionOverrideToMetadata({
+        sessionId, configId, value: valueId, updatedAt,
+        updateSessionMetadataWithRetry: sync.patchSessionMetadataWithRetry,
+      });
+      return { ok: true, sessionId, configId, valueId, updatedAt };
+    },
 
     sessionOpen: async ({ sessionId }) =>
       opts?.openSession

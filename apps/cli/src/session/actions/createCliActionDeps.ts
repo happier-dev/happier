@@ -69,6 +69,7 @@ import {
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import { setSessionArchivedState } from '@/session/services/setSessionArchivedState';
 import { setSessionModel } from '@/session/services/setSessionModel';
+import { setSessionConfigOption } from '@/session/services/setSessionConfigOption';
 import { setSessionMode } from '@/session/services/setSessionMode';
 import { setSessionPermissionMode } from '@/session/services/setSessionPermissionMode';
 import { setSessionTitle } from '@/session/services/setSessionTitle';
@@ -1803,6 +1804,20 @@ export function createCliActionDeps(params: Readonly<{
         return { ok: false, errorCode: res.code, error: res.code, ...(res.candidates ? { candidates: res.candidates } : {}) };
       }
       return { ok: true, sessionId: res.sessionId, modelId: normalizedModelId, updatedAt };
+    },
+
+    sessionConfigOptionSet: async ({ sessionId, configId, valueId }) => {
+      if (!params.credentials) {
+        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      }
+      const updatedAt = Date.now();
+      const result = await setSessionConfigOption({
+        credentials: params.credentials, idOrPrefix: sessionId, configId, valueId, updatedAt,
+      });
+      if (!result.ok) {
+        return { ok: false, errorCode: result.code, error: result.code, ...(result.candidates ? { candidates: result.candidates } : {}) };
+      }
+      return { ok: true, sessionId: result.sessionId, configId, valueId, updatedAt };
     },
 
     sessionArchiveSet: async ({ sessionId, archived }) => {

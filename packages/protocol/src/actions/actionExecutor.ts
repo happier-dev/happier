@@ -290,6 +290,7 @@ export type ActionExecutorDeps = Readonly<{
     callerPermissionMode?: string | null;
   }>) => Promise<unknown>;
   sessionModelSet?: (args: Readonly<{ sessionId: string; modelId: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionConfigOptionSet?: (args: Readonly<{ sessionId: string; configId: string; valueId: string; serverId?: string | null }>) => Promise<unknown>;
   sessionArchiveSet?: (args: Readonly<{ sessionId: string; archived: boolean; serverId?: string | null }>) => Promise<unknown>;
   sessionStatusGet?: (args: Readonly<{ sessionId: string; live?: boolean; serverId?: string | null }>) => Promise<unknown>;
   sessionWorkStateGet?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
@@ -2365,6 +2366,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!modelId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const res = await deps.sessionModelSet({ sessionId, modelId, ...(serverId ? { serverId } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.config_option.set') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.sessionConfigOptionSet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.config_option.set' };
+          }
+          const data = parsed.data as Record<string, unknown>;
+          const configId = readOpaqueIdentifier(data.configId);
+          const valueId = readOpaqueIdentifier(data.valueId);
+          if (!configId || !valueId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionConfigOptionSet({ sessionId, configId, valueId, ...(serverId ? { serverId } : {}) });
           return { ok: true, result: res };
         }
 

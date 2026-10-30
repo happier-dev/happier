@@ -9,6 +9,25 @@ type Overrides = Readonly<{
 }>;
 
 describe('resolveNextOptimisticAcpConfigOptionOverrides', () => {
+    it('retires a refused choice while preserving unrelated and newer optimistic choices', () => {
+        const incoming: Overrides = { v: 1, updatedAt: 10, overrides: {
+            effort: { updatedAt: 10, value: 'medium' },
+        } };
+        const current: Overrides = { v: 1, updatedAt: 30, overrides: {
+            effort: { updatedAt: 20, value: 'high' },
+            fast: { updatedAt: 30, value: 'true' },
+        } };
+        expect(resolveNextOptimisticAcpConfigOptionOverrides({
+            current, incoming, sessionChanged: false, rejected: { configId: 'effort', updatedAt: 20 },
+        })).toEqual({ v: 1, updatedAt: 30, overrides: {
+            effort: incoming.overrides.effort,
+            fast: current.overrides.fast,
+        } });
+        expect(resolveNextOptimisticAcpConfigOptionOverrides({
+            current, incoming, sessionChanged: false, rejected: { configId: 'effort', updatedAt: 19 },
+        })).toBe(current);
+    });
+
     it('keeps the current optimistic object when the server snapshot is semantically identical', () => {
         const current: Overrides = {
             v: 1,

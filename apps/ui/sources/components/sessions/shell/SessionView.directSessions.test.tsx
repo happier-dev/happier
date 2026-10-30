@@ -20,6 +20,7 @@ import {
 } from '@happier-dev/protocol';
 import type { connectedServiceQuotaRecoveryCreditConsume } from '@/sync/ops/connectedServiceQuotaRecoveryCredits';
 import type { RestartStaleSessionRunnerResult } from '@/sync/ops/sessionRunnerRestart';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { createActionOperationFixture } from '@/dev/testkit/fixtures/actionOperationFixtures';
@@ -112,7 +113,7 @@ const deleteWorkspaceReviewCommentDraftSpy = vi.hoisted(() => vi.fn());
 const clearWorkspaceReviewCommentDraftsSpy = vi.hoisted(() => vi.fn());
 const setWorkspaceReviewCommentDraftIncludedSpy = vi.hoisted(() => vi.fn());
 const publishSessionAcpSessionModeOverrideToMetadataSpy = vi.hoisted(() => vi.fn(async () => {}));
-const publishSessionAcpConfigOptionOverrideToMetadataSpy = vi.hoisted(() => vi.fn(async () => {}));
+const configOptionMetadataWrites = vi.hoisted(() => [] as Metadata[]);
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => false));
 const routerPushSpy = vi.hoisted(() => vi.fn());
@@ -510,6 +511,12 @@ vi.mock('@/voice/session/voiceSession', () => ({
 
 vi.mock('@/sync/sync', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/sync/sync')>();
+  // The real sync graph imports the Action executor while this partial mock loads.
+  // Substitute its outbound persistence boundary on both references, not the executor.
+  const patchSessionMetadataWithRetry = vi.spyOn(actual.sync, 'patchSessionMetadataWithRetry')
+    .mockImplementation(async (sessionId, updater) => {
+      configOptionMetadataWrites.push(updater(storageState.sessions[sessionId as keyof typeof storageState.sessions].metadata));
+    });
   return {
     sync: {
       markSessionViewed: async () => {},
@@ -517,7 +524,8 @@ vi.mock('@/sync/sync', async (importOriginal) => {
       publishSessionPermissionModeToMetadata: async () => {},
       publishNextPromptPermissionModeAfterAdmission: actual.sync.publishNextPromptPermissionModeAfterAdmission.bind(actual.sync),
       publishSessionAcpSessionModeOverrideToMetadata: publishSessionAcpSessionModeOverrideToMetadataSpy,
-      publishSessionAcpConfigOptionOverrideToMetadata: publishSessionAcpConfigOptionOverrideToMetadataSpy,
+      // Outbound metadata persistence boundary; Action dispatch and its updater stay real.
+      patchSessionMetadataWithRetry,
       publishSessionModelOverrideToMetadata: async () => {},
       materializeExistingSessionDraft: async () => {},
       ensureSessionVisibleForMessageRoute: async () => ({ kind: 'available' }),
@@ -575,9 +583,6 @@ vi.mock('@/sync/ops/sessionRunnerRestart', () => ({
 }));
 vi.mock('@/sync/ops/connectedServiceQuotaRecoveryCredits', () => ({
   connectedServiceQuotaRecoveryCreditConsume: connectedServiceQuotaRecoveryCreditConsumeSpy,
-}));
-vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
-  createDefaultActionExecutor: () => ({ execute: vi.fn() }),
 }));
 vi.mock('@/components/sessions/agentInput', () => ({
   AgentInput: (props: any) => React.createElement('AgentInput', { testID: 'session-agent-input', ...props }),
@@ -1158,6 +1163,7 @@ describe('SessionView (direct sessions)', () => {
   }
 
   beforeEach(async () => {
+    configOptionMetadataWrites.length = 0;
     await resetBrowserSessionDraftPersistenceForTest();
     __resetConnectedServiceQuotaSnapshotStore();
     sessionRunnerRuntimeStatusRetention.clear();
@@ -3598,11 +3604,9 @@ describe('SessionView (direct sessions)', () => {
       sessionId: 's1',
       modeId: 'plan',
     }));
-    expect(publishSessionAcpConfigOptionOverrideToMetadataSpy).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 's1',
-      configId: 'thinking',
-      value: 'high',
-    }));
+    expect(configOptionMetadataWrites.at(-1)).toMatchObject({
+      sessionConfigOptionOverridesV1: { overrides: { thinking: { value: 'high' } } },
+    });
   });
 
   it('applies ACP config-option overrides optimistically to existing-session AgentInput props', async () => {
@@ -3657,11 +3661,9 @@ describe('SessionView (direct sessions)', () => {
         },
       },
     });
-    expect(publishSessionAcpConfigOptionOverrideToMetadataSpy).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 's1',
-      configId: 'thinking',
-      value: 'high',
-    }));
+    expect(configOptionMetadataWrites.at(-1)).toMatchObject({
+      sessionConfigOptionOverridesV1: { overrides: { thinking: { value: 'high' } } },
+    });
   });
 
   it('includes the optimistic Claude reasoning effort override in the next submitted message', async () => {

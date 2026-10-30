@@ -274,6 +274,12 @@ const SessionModelSetInputSchema = lazySchema(() => z.object({
   modelId: z.string().refine((value) => value.trim().length > 0, { message: 'Model ID must not be blank' }),
 }).passthrough());
 
+const SessionConfigOptionSetInputSchema = lazySchema(() => z.object({
+  sessionId: z.string().min(1).optional(),
+  configId: z.string().refine((value) => value.trim().length > 0, { message: 'Config ID must not be blank' }),
+  valueId: z.string().refine((value) => value.trim().length > 0, { message: 'Value ID must not be blank' }),
+}).strict());
+
 const SessionStatusGetInputSchema = lazySchema(() => z.object({
   sessionId: z.string().min(1),
   live: z.boolean().optional(),
@@ -2417,6 +2423,36 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     inputSchema: SessionModelSetInputSchema,
+  },
+  {
+    id: 'session.config_option.set',
+    title: 'Set session configuration option',
+    description: 'Request one provider-owned configuration option through the session metadata control plane.',
+    safety: 'safe',
+    approval: APPROVAL_RESULT_OPTIONAL_DEFERRED,
+    placements: [],
+    bindings: { mcpToolName: 'session_config_option_set' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}","configId":"reasoning_effort","valueId":"high"}' },
+    },
+    surfaces: {
+      ui_button: true,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      session_agent: true,
+      mcp: true,
+      cli: true,
+    },
+    inputHints: {
+      title: 'Set session configuration option',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'configId', title: 'Configuration id', widget: 'text', required: true },
+        { path: 'valueId', title: 'Value id', widget: 'text', required: true },
+      ],
+    },
+    inputSchema: SessionConfigOptionSetInputSchema,
   },
   {
     id: 'session.archive',

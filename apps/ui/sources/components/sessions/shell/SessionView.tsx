@@ -4682,13 +4682,23 @@ function SessionViewLoaded({
             });
             return readSessionConfigOptionOverridesState(nextMetadata);
         });
-        fireAndForget(sync.publishSessionAcpConfigOptionOverrideToMetadata({
-            sessionId,
-            configId,
-            value: valueId,
-            updatedAt,
-        }), { tag: 'SessionView.updateSessionConfigOptionOverride' });
-    }, [session.metadata, sessionId]);
+        fireAndForget((async () => {
+            const result = await actionExecutor.execute('session.config_option.set', {
+                sessionId, configId, valueId,
+            }, { surface: 'ui_button', defaultSessionId: sessionId });
+            const deferred = result.ok && result.result && typeof result.result === 'object'
+                && 'kind' in result.result && result.result.kind === 'approval_request_created';
+            if (!result.ok || deferred) {
+                setOptimisticSessionConfigOptionOverrides((current) => resolveNextOptimisticAcpConfigOptionOverrides({
+                    current,
+                    incoming: sessionConfigOptionOverrides,
+                    sessionChanged: false,
+                    rejected: { configId, updatedAt },
+                }) as typeof current);
+            }
+            if (!result.ok) throw new Error(result.error);
+        })(), { tag: 'SessionView.updateSessionConfigOptionOverride' });
+    }, [actionExecutor, session.metadata, sessionConfigOptionOverrides, sessionId]);
     const buildNextMessageMetaOverrides = React.useCallback((
         metaOverrides: Record<string, unknown> | undefined,
         destination: SessionComposerSendDestination,

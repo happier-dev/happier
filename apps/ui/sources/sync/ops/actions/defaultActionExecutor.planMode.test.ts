@@ -156,7 +156,37 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 });
 
+// Load the real executor graph during collection, not inside the first behavior test's timer.
+await import('./defaultActionExecutor');
+
 describe('createDefaultActionExecutor plan mode integration', () => {
+  it('publishes generic config Actions through the real override owner and preserves exact ids', async () => {
+    let metadata: Record<string, unknown> = { path: '/tmp/project', host: 'localhost' };
+    // The existing harness substitutes the outbound metadata-write boundary;
+    // Protocol dispatch and the metadata transformation remain real.
+    patchSessionMetadataWithRetry.mockImplementation(async (_sessionId, updater) => {
+      metadata = updater(metadata);
+    });
+    try {
+      const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+      const executor = createDefaultActionExecutor();
+      for (const surface of ['ui_button', 'session_agent', 'mcp'] as const) {
+        expect(await executor.execute('session.config_option.set', {
+          sessionId: 's1', configId: ' effort ', valueId: ' high ',
+        }, { surface, defaultSessionId: 's1' })).toMatchObject({ ok: true });
+      }
+      expect(metadata).toMatchObject({
+        path: '/tmp/project',
+        sessionConfigOptionOverridesV1: { overrides: { ' effort ': { value: ' high ' } } },
+      });
+      expect(metadata.acpConfigOptionOverridesV1).toBe(metadata.sessionConfigOptionOverridesV1);
+    } finally {
+      patchSessionMetadataWithRetry.mockImplementation(async (_sessionId, updater) => {
+        updater({ path: '/tmp/project', host: 'localhost' });
+      });
+    }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     sessionRpcWithServerScopeMock.mockResolvedValue({ ok: true });
