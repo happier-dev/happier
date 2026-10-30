@@ -391,6 +391,7 @@ describe('runAppBootSequence', () => {
     it('does not re-key the auth tree when a deferred read confirms there is no session', async () => {
         const credentials = createDeferred<AuthCredentials | null>();
         const ready: AppBootReadyState[] = [];
+        const restoreSync = vi.fn(async () => {});
 
         const run = runAppBootSequence({
             prepareTranslations: async () => {},
@@ -399,16 +400,19 @@ describe('runAppBootSequence', () => {
             resolveCredentials: () => credentials.promise,
             prepareWarmCache: async () => {},
             prepareSessionDrafts: async () => {},
-            restoreSync: async () => {},
+            restoreSync,
             onReady: (state) => ready.push(state),
         });
 
         await vi.runAllTimersAsync();
+        expect(ready).toEqual([]);
+        expect(restoreSync).not.toHaveBeenCalled();
         credentials.resolve(null);
         await vi.runAllTimersAsync();
         await run;
 
         expect(ready).toEqual([{ credentials: null }]);
+        expect(restoreSync).not.toHaveBeenCalled();
     });
 
     it('skips sync restore when the host has no restore owner (desktop activity overlay)', async () => {

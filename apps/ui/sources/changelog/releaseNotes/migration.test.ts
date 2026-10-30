@@ -1,105 +1,117 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import Constants from 'expo-constants';
 
+import { setLastViewedReleaseId } from '@/changelog/storage';
+import { resetMmkvStoresForTests } from '@/dev/reactNativeMmkvStub';
+
+import { commitRemoteManifest, getCurrentReleaseEntry, resetManifestRuntimeCacheForTests } from './manifestRuntime';
 import { runReleaseNotesMigrationSeeding } from './migration';
+import {
+    getLastSeenReleaseId,
+    getMigrationSeededReleaseId,
+    getReleaseNotesRuntimeVersion,
+    setLastSeenReleaseId,
+    setLegacyChangelogAutoSeenBaseline,
+    setMigrationSeededReleaseId,
+} from './storage';
 
-const legacyState = vi.hoisted(() => ({
-    lastViewedReleaseId: null as string | null,
-}));
+const originalExpoConfig = Constants.expoConfig;
 
-const manifestState = vi.hoisted(() => ({
-    currentEntry: null as { releaseId: string } | null,
-}));
-
-const storageState = vi.hoisted(() => ({
-    lastSeenReleaseId: null as string | null,
-    migrationSeededReleaseId: null as string | null,
-    legacyChangelogAutoSeenBaseline: null as string | null,
-    setLastSeen: vi.fn<(id: string) => void>(),
-    setMigrationSeeded: vi.fn<(id: string) => void>(),
-}));
-
-vi.mock('@/changelog', () => ({
-    getLastViewedReleaseId: () => legacyState.lastViewedReleaseId,
-}));
-
-vi.mock('./manifestRuntime', () => ({
-    getCurrentReleaseEntry: () => manifestState.currentEntry,
-}));
-
-vi.mock('./storage', () => ({
-    getLastSeenReleaseId: () => storageState.lastSeenReleaseId,
-    getMigrationSeededReleaseId: () => storageState.migrationSeededReleaseId,
-    getLegacyChangelogAutoSeenBaseline: () => storageState.legacyChangelogAutoSeenBaseline,
-    setLastSeenReleaseId: (id: string) => {
-        storageState.setLastSeen(id);
-        storageState.lastSeenReleaseId = id;
-    },
-    setMigrationSeededReleaseId: (id: string) => {
-        storageState.setMigrationSeeded(id);
-        storageState.migrationSeededReleaseId = id;
-    },
-}));
+function admitRelease(releaseId = 'v1.0.0'): void {
+    expect(commitRemoteManifest(JSON.stringify({
+        schemaVersion: 'v1',
+        latestReleaseId: releaseId,
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        assetBaseUrl: 'https://cdn.example/releases/',
+        releases: [{
+            releaseId,
+            versionLabel: releaseId,
+            publishedAt: '2026-01-01T00:00:00.000Z',
+            titleKey: 'releaseNotes.title',
+            cards: [{
+                kind: 'list',
+                titleKey: 'releaseNotes.card.title',
+                rows: [{ iconId: 'sparkles', titleKey: 'releaseNotes.row.title', bodyKey: 'releaseNotes.row.body' }],
+            }],
+        }],
+    }))).not.toBeNull();
+}
 
 describe('runReleaseNotesMigrationSeeding (dev release-id model)', () => {
     beforeEach(() => {
-        legacyState.lastViewedReleaseId = null;
-        manifestState.currentEntry = null;
-        storageState.lastSeenReleaseId = null;
-        storageState.migrationSeededReleaseId = null;
-        storageState.legacyChangelogAutoSeenBaseline = null;
-        storageState.setLastSeen.mockReset();
-        storageState.setMigrationSeeded.mockReset();
+        // Reset only the native persistence boundary; migration and both stores stay real.
+        resetMmkvStoresForTests();
+        resetManifestRuntimeCacheForTests();
+        Object.defineProperty(Constants, 'expoConfig', { configurable: true, value: { ...originalExpoConfig, version: '1.0.0' } });
     });
 
     afterEach(() => {
-        vi.clearAllMocks();
+        resetMmkvStoresForTests();
+        resetManifestRuntimeCacheForTests();
+        Object.defineProperty(Constants, 'expoConfig', { configurable: true, value: originalExpoConfig });
     });
 
     it('does nothing when there is no current release', () => {
+        admitRelease('v0.9.0');
+        setLastViewedReleaseId('ui-v0.5.0');
+        expect(getCurrentReleaseEntry()).toBeNull();
+        const before = getReleaseNotesRuntimeVersion();
         runReleaseNotesMigrationSeeding();
-        expect(storageState.setLastSeen).not.toHaveBeenCalled();
-        expect(storageState.setMigrationSeeded).not.toHaveBeenCalled();
+        expect(getLastSeenReleaseId()).toBeNull();
+        expect(getMigrationSeededReleaseId()).toBeNull();
+        expect(getReleaseNotesRuntimeVersion()).toBe(before);
     });
 
     it('does nothing when a release-notes seen marker already exists', () => {
-        manifestState.currentEntry = { releaseId: 'v1.0.0' };
-        storageState.lastSeenReleaseId = 'something';
+        admitRelease();
+        setLastSeenReleaseId('existing-seen-release');
+        setMigrationSeededReleaseId('v0.9.0');
+        setLastViewedReleaseId('ui-v0.5.0');
+        const before = getReleaseNotesRuntimeVersion();
         runReleaseNotesMigrationSeeding();
-        expect(storageState.setLastSeen).not.toHaveBeenCalled();
+        expect(getLastSeenReleaseId()).toBe('existing-seen-release');
+        expect(getMigrationSeededReleaseId()).toBe('v0.9.0');
+        expect(getReleaseNotesRuntimeVersion()).toBe(before);
     });
 
     it('marks the current release as seen for legacy string users who already viewed changelog updates', () => {
-        manifestState.currentEntry = { releaseId: 'v1.0.0' };
-        legacyState.lastViewedReleaseId = 'ui-v0.5.0';
+        admitRelease();
+        setLastViewedReleaseId('ui-v0.5.0');
         runReleaseNotesMigrationSeeding();
-        expect(storageState.setLastSeen).toHaveBeenCalledWith('v1.0.0');
-        expect(storageState.setMigrationSeeded).toHaveBeenCalledWith('v1.0.0');
+        expect(getLastSeenReleaseId()).toBe('v1.0.0');
+        expect(getMigrationSeededReleaseId()).toBe('v1.0.0');
     });
 
     it('does not seed for fresh installs (legacy id null)', () => {
-        manifestState.currentEntry = { releaseId: 'v1.0.0' };
-        legacyState.lastViewedReleaseId = null;
+        admitRelease();
         runReleaseNotesMigrationSeeding();
-        expect(storageState.setLastSeen).not.toHaveBeenCalled();
-        expect(storageState.setMigrationSeeded).toHaveBeenCalledWith('v1.0.0');
+        expect(getLastSeenReleaseId()).toBeNull();
+        expect(getMigrationSeededReleaseId()).toBe('v1.0.0');
     });
 
     it('does not mark seen when legacy changelog was auto-marked for a fresh install', () => {
-        manifestState.currentEntry = { releaseId: 'v1.0.0' };
-        legacyState.lastViewedReleaseId = '0.2.1';
-        storageState.legacyChangelogAutoSeenBaseline = '0.2.1';
+        admitRelease();
+        setLastViewedReleaseId('0.2.1');
+        setLegacyChangelogAutoSeenBaseline('0.2.1');
         runReleaseNotesMigrationSeeding();
-        expect(storageState.setLastSeen).not.toHaveBeenCalled();
-        expect(storageState.setMigrationSeeded).toHaveBeenCalledWith('v1.0.0');
+        expect(getLastSeenReleaseId()).toBeNull();
+        expect(getMigrationSeededReleaseId()).toBe('v1.0.0');
     });
 
     it('is idempotent across runs for the same baseline', () => {
-        manifestState.currentEntry = { releaseId: 'v1.0.0' };
-        legacyState.lastViewedReleaseId = 'ui-v0.5.0';
+        admitRelease();
+        const before = getReleaseNotesRuntimeVersion();
         runReleaseNotesMigrationSeeding();
-        expect(storageState.setMigrationSeeded).toHaveBeenCalledTimes(1);
+        expect(getLastSeenReleaseId()).toBeNull();
+        expect(getMigrationSeededReleaseId()).toBe('v1.0.0');
+        const afterFirst = getReleaseNotesRuntimeVersion();
+        expect(afterFirst).toBeGreaterThan(before);
+
+        // Keep seen null: the second run must hit the baseline guard, not the seen guard.
+        setLastViewedReleaseId('ui-v0.5.0');
         runReleaseNotesMigrationSeeding();
-        expect(storageState.setMigrationSeeded).toHaveBeenCalledTimes(1);
-        expect(storageState.setLastSeen).toHaveBeenCalledTimes(1);
+        expect(getLastSeenReleaseId()).toBeNull();
+        expect(getMigrationSeededReleaseId()).toBe('v1.0.0');
+        expect(getReleaseNotesRuntimeVersion()).toBe(afterFirst);
     });
 });

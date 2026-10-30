@@ -2,6 +2,77 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installTauriMcpWebviewDriverScripts } from './installTauriMcpWebviewDriverScripts';
 import { maybeInstallTauriMcpBridge } from './maybeInstallTauriMcpBridge';
+import { SystemTaskSpecSchema, type SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
+import type { DesktopActivityOverlaySyncPayload } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
+import { readDesktopActivityOverlayQaSyncOverride } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayQaSyncOverride';
+import { controlPersonalHomeBootstrapQaMutationPause } from '@/components/personalHome/bootstrap/personalHomeBootstrapQaMutationPause';
+
+// The actual default task runner and overlay bridge terminate at this native IPC boundary.
+const native = vi.hoisted(() => ({
+    nextTaskId: 0,
+    taskSpecs: [] as SystemTaskSpec[],
+    taskData: {} as Record<string, unknown>,
+    taskResults: new Map<string, unknown>(),
+    listeners: new Map<string, (payload: unknown) => void>(),
+    overlayPayloads: [] as DesktopActivityOverlaySyncPayload[],
+    overlayState: null as DesktopActivityOverlaySyncPayload | null,
+}));
+
+vi.mock('@/utils/platform/desktopHost', async importOriginal => ({
+    ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
+    desktopHostKind: () => 'tauri',
+    isDesktopHost: () => true,
+    invokeDesktopHost: async (command: string, args?: Record<string, unknown>) => {
+        if (command === 'start_system_task') {
+            const spec = SystemTaskSpecSchema.parse(JSON.parse(String(args?.specJson)));
+            native.taskSpecs.push(spec);
+            const taskId = `mcp_native_${++native.nextTaskId}`;
+            native.taskResults.set(taskId, { protocolVersion: 1, taskId, ok: true, data: native.taskData });
+            return { taskId };
+        }
+        if (command === 'get_system_task_snapshot') {
+            return { events: [], result: native.taskResults.get(String(args?.taskId)) };
+        }
+        if (command === 'desktop_activity_overlay_sync') {
+            // IPC receives the real producer's payload; the simulated host retains it verbatim.
+            const payload = args?.payload as DesktopActivityOverlaySyncPayload;
+            native.overlayPayloads.push(payload);
+            native.overlayState = payload;
+            return;
+        }
+        if (command === 'desktop_activity_overlay_get_window_state') return native.overlayState;
+        throw new Error(`Unexpected desktop IPC command: ${command}`);
+    },
+    listenDesktopHostEvent: async (event: string, listener: (payload: unknown) => void) => {
+        native.listeners.set(event, listener);
+        return () => { native.listeners.delete(event); };
+    },
+}));
+
+type QaCommands = {
+    seedDesktopActivityOverlayQaState: (mode: string) => Promise<Record<string, unknown>>;
+    clearDesktopActivityOverlayQaState: () => Record<string, unknown>;
+    readPersonalHomeBootstrapQaObservation: () => Record<string, unknown>;
+    navigateHappierQaPath: (path: string) => Record<string, unknown>;
+    readPersonalHomeDaemonQaStatus: () => Promise<unknown>;
+    stopPersonalHomeDaemonForQa: () => Promise<unknown>;
+    controlPersonalHomeBootstrapQaPause: (request: unknown) => Record<string, unknown>;
+    uninstallPersonalHomeRuntimeForQa: () => Promise<Record<string, unknown>>;
+};
+const qaWindows: Array<typeof globalThis & { __MCP__: QaCommands }> = [];
+
+function installDefaultQaBridge(windowObj = { __MCP__: {} } as unknown as typeof globalThis) {
+    // A DOM adapter fixture only: every domain callback remains the production default.
+    const documentObj = {
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        evaluate: () => ({ singleNodeValue: null, snapshotLength: 0, snapshotItem: () => null }),
+    } as unknown as Document;
+    installTauriMcpWebviewDriverScripts({ windowObj, documentObj });
+    const installed = windowObj as typeof globalThis & { __MCP__: QaCommands };
+    qaWindows.push(installed);
+    return installed;
+}
 
 const ensureSessionVisibleForMessageRouteMock = vi.hoisted(() => vi.fn());
 const legacyEnsureSessionVisibleForMessageRouteMock = vi.hoisted(() => vi.fn());
@@ -19,6 +90,13 @@ vi.mock('@/sync/sync', () => ({
 
 describe('installTauriMcpWebviewDriverScripts', () => {
     beforeEach(() => {
+        vi.stubEnv('EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE', 'tauri');
+        native.taskSpecs.length = 0;
+        native.taskData = {};
+        native.taskResults.clear();
+        native.listeners.clear();
+        native.overlayPayloads.length = 0;
+        native.overlayState = null;
         ensureSessionVisibleForMessageRouteMock.mockReset();
         legacyEnsureSessionVisibleForMessageRouteMock.mockReset();
         getSyncSingletonMock.mockReset();
@@ -30,11 +108,15 @@ describe('installTauriMcpWebviewDriverScripts', () => {
     });
 
     afterEach(() => {
+        for (const windowObj of qaWindows.splice(0)) windowObj.__MCP__.clearDesktopActivityOverlayQaState();
+        controlPersonalHomeBootstrapQaMutationPause({ action: 'release' });
+        vi.unstubAllEnvs();
         vi.useRealTimers();
     });
 
     it('installs resolveRef helpers expected by mcp-server-tauri tooling', () => {
         const element = { tagName: 'BUTTON' } as unknown as Element;
+        const other = { tagName: 'INPUT' } as unknown as Element;
         const reverseRefs = new Map<string, Element>([['e1', element]]);
 
         const windowObj = {
@@ -44,16 +126,28 @@ describe('installTauriMcpWebviewDriverScripts', () => {
         } as unknown as typeof globalThis;
 
         const documentObj = {
-            querySelector: () => element,
-            querySelectorAll: () => [element],
+            querySelector: (selector: string) => selector === '.other' ? other : null,
+            querySelectorAll: (selector: string) => selector === '.both' ? [element, other] : [],
             evaluate: () => ({ singleNodeValue: element, snapshotLength: 1, snapshotItem: () => element }),
         } as unknown as Document;
 
         installTauriMcpWebviewDriverScripts({ windowObj, documentObj });
 
-        expect(typeof (windowObj as unknown as { __MCP__?: { resolveRef?: unknown } }).__MCP__?.resolveRef).toBe('function');
-        expect(typeof (windowObj as unknown as { __MCP__?: { resolveAll?: unknown } }).__MCP__?.resolveAll).toBe('function');
-        expect(typeof (windowObj as unknown as { __MCP__?: { countAll?: unknown } }).__MCP__?.countAll).toBe('function');
+        const mcp = (windowObj as unknown as { __MCP__: {
+            resolveRef: (selector: string) => Element | null;
+            resolveAll: (selector: string) => Element[];
+            countAll: (selector: string) => number;
+            reverseRefs?: Map<string, Element>;
+        } }).__MCP__;
+        expect(mcp.resolveRef('[ref=e1]')).toBe(element);
+        expect(mcp.resolveRef('.other')).toBe(other);
+        expect(mcp.resolveRef('.missing')).toBeNull();
+        expect(mcp.resolveAll('e1')).toEqual([element]);
+        expect(mcp.resolveAll('.both')).toEqual([element, other]);
+        expect(mcp.countAll('.both')).toBe(2);
+        expect(mcp.countAll('.missing')).toBe(0);
+        delete mcp.reverseRefs;
+        expect(() => mcp.resolveRef('e1')).toThrow('require a snapshot');
     });
 
     it('installs a canonical local-settings writer helper for the Tauri MCP bridge', async () => {
@@ -267,7 +361,6 @@ describe('installTauriMcpWebviewDriverScripts', () => {
 
     it('exposes checked-in Personal Home QA boundaries backed by the native document-start observer', async () => {
         const navigated: string[] = [];
-        const daemonActions: string[] = [];
         const windowObj = {
             __MCP__: {},
             __happierPersonalHomeQaForbiddenSurface: {
@@ -278,24 +371,7 @@ describe('installTauriMcpWebviewDriverScripts', () => {
             dispatchEvent: () => true,
             PopStateEvent: class { constructor(public readonly type: string) {} },
         } as unknown as typeof globalThis;
-        const documentObj = {
-            readyState: 'loading',
-            documentElement: {},
-            querySelector: () => null,
-            querySelectorAll: () => [],
-            evaluate: () => ({ singleNodeValue: null, snapshotLength: 0, snapshotItem: () => null }),
-        } as unknown as Document;
-
-        installTauriMcpWebviewDriverScripts({
-            windowObj,
-            documentObj,
-            runPersonalHomeDaemonQaTask: async (action) => {
-                daemonActions.push(action);
-                return { ok: true, data: { daemonRunning: action === 'status' } };
-            },
-        });
-
-        const mcp = (windowObj as unknown as { __MCP__?: Record<string, (...args: unknown[]) => unknown> }).__MCP__;
+        const mcp = installDefaultQaBridge(windowObj).__MCP__;
         expect(mcp?.readPersonalHomeBootstrapQaObservation()).toEqual({
             installedAtDocumentStart: true,
             seenForbiddenOnboarding: false,
@@ -308,130 +384,69 @@ describe('installTauriMcpWebviewDriverScripts', () => {
         });
         expect(mcp?.navigateHappierQaPath('/settings/server')).toEqual({ ok: true, pathname: '/settings/server' });
         expect(navigated).toEqual(['/settings/server']);
-        await expect(mcp?.readPersonalHomeDaemonQaStatus()).resolves.toEqual({ ok: true, data: { daemonRunning: true } });
-        expect(daemonActions).toEqual(['status']);
+        native.taskData = { daemonRunning: true };
+        await expect(mcp.readPersonalHomeDaemonQaStatus()).resolves.toMatchObject({ ok: true, data: { daemonRunning: true } });
+        native.taskData = { daemonRunning: false };
+        await expect(mcp.stopPersonalHomeDaemonForQa()).resolves.toMatchObject({ ok: true, data: { daemonRunning: false } });
+        expect(native.taskSpecs.map(spec => spec.kind)).toEqual(['daemon.service.status.v1', 'daemon.service.stop.v1']);
     });
 
     it('installs a deterministic desktop-overlay QA seed helper for canonical proof states', async () => {
-        const seededModes: string[] = [];
-        const windowObj = {
-            __MCP__: {},
-        } as unknown as typeof globalThis;
-        const documentObj = {
-            querySelector: () => null,
-            querySelectorAll: () => [],
-            evaluate: () => ({ singleNodeValue: null, snapshotLength: 0, snapshotItem: () => null }),
-        } as unknown as Document;
-
-        installTauriMcpWebviewDriverScripts({
-            windowObj,
-            documentObj,
-            seedDesktopOverlayQaState: async (mode) => {
-                seededModes.push(mode);
-                return {
-                    ok: true,
-                    mode,
-                    cardKind: mode,
-                };
-            },
+        const windowObj = installDefaultQaBridge();
+        await expect(windowObj.__MCP__.seedDesktopActivityOverlayQaState('permission_request')).resolves.toMatchObject({
+            ok: true, mode: 'permission_request', cardKind: 'permission_request', expanded: true,
         });
-
-        const result = await (
-            windowObj as unknown as {
-                __MCP__?: {
-                    seedDesktopActivityOverlayQaState?: (mode: unknown) => Promise<{ ok: boolean; mode?: string }>;
-                };
-            }
-        ).__MCP__?.seedDesktopActivityOverlayQaState?.('permission_request');
-
-        expect(result).toMatchObject({
-            ok: true,
-            mode: 'permission_request',
-        });
-        expect(seededModes).toEqual(['permission_request']);
+        const override = readDesktopActivityOverlayQaSyncOverride({ windowObj });
+        expect(override).not.toBeNull();
+        expect(native.overlayState).toBe(override);
+        expect(override?.model.expanded.cards[0]?.kind).toBe('permission_request');
+        expect(override?.expanded).toBe(true);
     });
 
     it('pins desktop-overlay QA seed state without repeatedly churning the proof payload', async () => {
         vi.useFakeTimers();
-
-        const seededModes: string[] = [];
-        const windowObj = {
-            __MCP__: {},
-        } as unknown as typeof globalThis;
-        const documentObj = {
-            querySelector: () => null,
-            querySelectorAll: () => [],
-            evaluate: () => ({ singleNodeValue: null, snapshotLength: 0, snapshotItem: () => null }),
-        } as unknown as Document;
-
-        installTauriMcpWebviewDriverScripts({
-            windowObj,
-            documentObj,
-            seedDesktopOverlayQaState: async (mode) => {
-                seededModes.push(mode);
-                return {
-                    ok: true,
-                    mode,
-                    cardKind: mode,
-                };
-            },
-        });
-
-        await (
-            windowObj as unknown as {
-                __MCP__?: {
-                    seedDesktopActivityOverlayQaState?: (mode: unknown) => Promise<{ ok: boolean; mode?: string }>;
-                };
-            }
-        ).__MCP__?.seedDesktopActivityOverlayQaState?.('quota_summary');
-
+        const timersBefore = vi.getTimerCount();
+        const windowObj = installDefaultQaBridge();
+        await expect(windowObj.__MCP__.seedDesktopActivityOverlayQaState('quota_summary')).resolves.toMatchObject({ ok: true });
+        const pinned = readDesktopActivityOverlayQaSyncOverride({ windowObj });
+        expect(pinned?.model.expanded.cards[0]?.kind).toBe('quota_summary');
+        const syncsBefore = native.overlayPayloads.length;
         await vi.advanceTimersByTimeAsync(350);
-
-        expect(seededModes.length).toBe(1);
-        expect(new Set(seededModes)).toEqual(new Set(['quota_summary']));
+        // There must be real pin delivery; a fake seed with no override used to pass this case.
+        expect(native.overlayPayloads.length).toBeGreaterThan(syncsBefore);
+        expect(native.overlayPayloads.every(payload => payload === pinned)).toBe(true);
+        expect(readDesktopActivityOverlayQaSyncOverride({ windowObj })).toBe(pinned);
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(readDesktopActivityOverlayQaSyncOverride({ windowObj })).toBeNull();
+        const syncsAtExpiry = native.overlayPayloads.length;
+        await vi.advanceTimersByTimeAsync(350);
+        expect(native.overlayPayloads).toHaveLength(syncsAtExpiry);
+        expect(vi.getTimerCount()).toBe(timersBefore);
     });
 
     it('stops the previous desktop-overlay QA seed pin before pinning a new proof state', async () => {
         vi.useFakeTimers();
-
-        const seededModes: string[] = [];
-        const windowObj = {
-            __MCP__: {},
-        } as unknown as typeof globalThis;
-        const documentObj = {
-            querySelector: () => null,
-            querySelectorAll: () => [],
-            evaluate: () => ({ singleNodeValue: null, snapshotLength: 0, snapshotItem: () => null }),
-        } as unknown as Document;
-
-        installTauriMcpWebviewDriverScripts({
-            windowObj,
-            documentObj,
-            seedDesktopOverlayQaState: async (mode) => {
-                seededModes.push(mode);
-                return {
-                    ok: true,
-                    mode,
-                    cardKind: mode,
-                };
-            },
-        });
-
-        const mcp = (
-            windowObj as unknown as {
-                __MCP__?: {
-                    seedDesktopActivityOverlayQaState?: (mode: unknown) => Promise<{ ok: boolean; mode?: string }>;
-                };
-            }
-        ).__MCP__;
-
-        await mcp?.seedDesktopActivityOverlayQaState?.('permission_request');
-        await mcp?.seedDesktopActivityOverlayQaState?.('user_question');
+        const timersBefore = vi.getTimerCount();
+        const windowObj = installDefaultQaBridge();
+        const mcp = windowObj.__MCP__;
+        await expect(mcp.seedDesktopActivityOverlayQaState('permission_request')).resolves.toMatchObject({ ok: true });
+        const oldPin = readDesktopActivityOverlayQaSyncOverride({ windowObj });
+        await expect(mcp.seedDesktopActivityOverlayQaState('user_question')).resolves.toMatchObject({ ok: true });
+        const currentPin = readDesktopActivityOverlayQaSyncOverride({ windowObj });
+        expect(currentPin).not.toBe(oldPin);
+        expect(currentPin?.model.expanded.cards[0]?.kind).toBe('user_question');
+        const syncsBefore = native.overlayPayloads.length;
         await vi.advanceTimersByTimeAsync(250);
-
-        expect(seededModes).toContain('permission_request');
-        expect(seededModes.at(-1)).toBe('user_question');
-        expect(seededModes).toEqual(['permission_request', 'user_question']);
+        const subsequentPayloads = native.overlayPayloads.slice(syncsBefore);
+        expect(subsequentPayloads.length).toBeGreaterThan(0);
+        expect(subsequentPayloads.every(payload => payload === currentPin)).toBe(true);
+        expect(vi.getTimerCount()).toBe(timersBefore + 1);
+        expect(mcp.clearDesktopActivityOverlayQaState()).toEqual({ ok: true });
+        expect(readDesktopActivityOverlayQaSyncOverride({ windowObj })).toBeNull();
+        const syncsAtClear = native.overlayPayloads.length;
+        await vi.advanceTimersByTimeAsync(250);
+        expect(native.overlayPayloads).toHaveLength(syncsAtClear);
+        expect(vi.getTimerCount()).toBe(timersBefore);
     });
 
     it('re-syncs a pinned desktop-overlay QA seed until native state reports the seeded card', async () => {
@@ -568,32 +583,7 @@ describe('installTauriMcpWebviewDriverScripts', () => {
     });
 
     it('exposes the checked-in bootstrap mutation pause and the canonical uninstall operation for loaded QA', async () => {
-        const { controlPersonalHomeBootstrapQaMutationPause } = await import(
-            '@/components/personalHome/bootstrap/personalHomeBootstrapQaMutationPause'
-        );
-        const windowObj = { __MCP__: {} } as unknown as typeof globalThis;
-        const documentObj = {
-            querySelector: () => null,
-            querySelectorAll: () => [],
-            evaluate: () => ({ singleNodeValue: null, snapshotLength: 0, snapshotItem: () => null }),
-        } as unknown as Document;
-        let uninstallCalls = 0;
-
-        installTauriMcpWebviewDriverScripts({
-            windowObj,
-            documentObj,
-            uninstallPersonalHomeRuntimeQaTask: async () => {
-                uninstallCalls += 1;
-                return true;
-            },
-        });
-
-        const mcp = (windowObj as unknown as {
-            __MCP__?: {
-                controlPersonalHomeBootstrapQaPause?: (request: unknown) => Record<string, unknown>;
-                uninstallPersonalHomeRuntimeForQa?: () => Promise<Record<string, unknown>>;
-            };
-        }).__MCP__;
+        const mcp = installDefaultQaBridge().__MCP__;
 
         // The hook drives the canonical pause owner rather than keeping its own QA state.
         expect(mcp?.controlPersonalHomeBootstrapQaPause?.({
@@ -610,8 +600,9 @@ describe('installTauriMcpWebviewDriverScripts', () => {
 
         // The uninstall boundary exists for the paused destructive-arbitration journey, so it runs
         // while that arm is live and reaches the canonical operation exactly once.
-        await expect(mcp?.uninstallPersonalHomeRuntimeForQa?.()).resolves.toEqual({ ok: true });
-        expect(uninstallCalls).toBe(1);
+        native.taskData = { uninstalled: true };
+        await expect(mcp.uninstallPersonalHomeRuntimeForQa()).resolves.toEqual({ ok: true });
+        expect(native.taskSpecs.map(spec => spec.kind)).toEqual(['relay.runtime.uninstall.v1']);
 
         expect(mcp?.controlPersonalHomeBootstrapQaPause?.({ action: 'release' }))
             .toMatchObject({ ok: true, armed: null, held: null });
@@ -648,37 +639,20 @@ describe('installTauriMcpWebviewDriverScripts', () => {
     });
 
     it('reports a failed canonical uninstall instead of self-attesting success', async () => {
-        const { controlPersonalHomeBootstrapQaMutationPause } = await import(
-            '@/components/personalHome/bootstrap/personalHomeBootstrapQaMutationPause'
-        );
-        const windowObj = { __MCP__: {} } as unknown as typeof globalThis;
-        const documentObj = {
-            querySelector: () => null,
-            querySelectorAll: () => [],
-            evaluate: () => ({ singleNodeValue: null, snapshotLength: 0, snapshotItem: () => null }),
-        } as unknown as Document;
-
-        installTauriMcpWebviewDriverScripts({
-            windowObj,
-            documentObj,
-            uninstallPersonalHomeRuntimeQaTask: async () => {
-                throw new Error('Runtime uninstall did not confirm completion.');
-            },
-        });
-
-        const mcp = (windowObj as unknown as {
-            __MCP__?: { uninstallPersonalHomeRuntimeForQa?: () => Promise<Record<string, unknown>> };
-        }).__MCP__;
+        const mcp = installDefaultQaBridge().__MCP__;
         controlPersonalHomeBootstrapQaMutationPause({
             action: 'arm',
             kind: 'relay.runtime.installOrUpdate.v1',
             ordinal: 1,
             ttlMs: 5_000,
         });
-        await expect(mcp?.uninstallPersonalHomeRuntimeForQa?.()).resolves.toEqual({
+        // A successful task envelope without the executor's positive confirmation is not success.
+        native.taskData = { uninstalled: false };
+        await expect(mcp.uninstallPersonalHomeRuntimeForQa()).resolves.toEqual({
             ok: false,
             reason: 'Runtime uninstall did not confirm completion.',
         });
+        expect(native.taskSpecs.map(spec => spec.kind)).toEqual(['relay.runtime.uninstall.v1']);
         controlPersonalHomeBootstrapQaMutationPause({ action: 'release' });
     });
 });

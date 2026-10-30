@@ -4,7 +4,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { installBrowserStorageLockBoundary, renderScreen } from '@/dev/testkit';
+import { installBrowserStorageLockBoundary, renderScreen, waitForTestEvent } from '@/dev/testkit';
 import { EmbedSessionRuntimeProvider, useEmbedSessionRuntime } from './EmbedSessionRuntimeProvider';
 import type { EmbedSessionRuntime } from './createEmbedSessionRuntime';
 
@@ -42,10 +42,13 @@ describe('frame-owned runtime mount', () => {
             return React.createElement('RuntimeProbe');
         }
         const screen = await renderScreen(<EmbedSessionRuntimeProvider endpointUrl="https://home.example"><Probe /></EmbedSessionRuntimeProvider>);
-        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-        expect(observed.at(-1)).toMatchObject({ phase: 'loading', token: null, endpoint: 'https://home.example' });
-        expect(observed.at(-1)?.publicKey).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-        await screen.unmount();
+        try {
+            await waitForTestEvent(screen.subscribe, () => observed.at(-1), value => value !== undefined);
+            expect(observed.at(-1)).toMatchObject({ phase: 'loading', token: null, endpoint: 'https://home.example' });
+            expect(observed.at(-1)?.publicKey).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+        } finally {
+            await screen.unmount();
+        }
     });
     it('retires the page on hide and creates a different recipient after a browser restore', async () => {
         const events = new EventTarget();

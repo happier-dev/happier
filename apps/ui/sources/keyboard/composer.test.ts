@@ -109,5 +109,18 @@ describe('composer keyboard semantics', () => {
             abortConfirmationExpiresAt: 1_000 + COMPOSER_ABORT_CONFIRMATION_WINDOW_MS,
             nowMs: 1_500,
         })).toBe('confirmAbort');
+        const expiresAt = 1_000 + COMPOSER_ABORT_CONFIRMATION_WINDOW_MS;
+        expect(resolveComposerEscapeAction({ key: 'Escape', shiftKey: true }, {
+            canAbort: true,
+            isAborting: false,
+            abortConfirmationExpiresAt: expiresAt,
+            nowMs: expiresAt,
+        })).toBe('confirmAbort');
+        expect(resolveComposerEscapeAction({ key: 'Escape', shiftKey: true }, {
+            canAbort: true,
+            isAborting: false,
+            abortConfirmationExpiresAt: expiresAt,
+            nowMs: expiresAt + 1,
+        })).toBe('armAbort');
     });
 });

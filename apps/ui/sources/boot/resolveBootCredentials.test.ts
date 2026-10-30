@@ -192,11 +192,14 @@ describe('resolveBootCredentials', () => {
 
     it('leaves an unknown web Home address pending without restoring the retained Home credentials', async () => {
         stubWebRuntime('https://app.example.test/?server=https%3A%2F%2Fnew.example.test');
-        await retainHome('https://retained.example.test', { token: 'retained-token' });
+        const credentials = { token: 'retained-token' };
+        const retained = await retainHome('https://retained.example.test', credentials);
         await expect(resolveBootCredentials('web')).resolves.toBeNull();
+        expect(getActiveServerSnapshot().serverId).toBe(retained.serverId);
         expect(getServerUrl()).toBe('https://retained.example.test');
         expect(listServerProfiles().some((profile) => profile.serverUrl === 'https://new.example.test')).toBe(false);
         expect(runtime.window.location.search).toContain('new.example.test');
+        await expect(TokenStorage.getCredentialsForServerUrl(retained.serverUrl, { serverId: retained.serverId })).resolves.toEqual(credentials);
     });
 
     it('preserves current custody without restoring another Home while a web override is pending', async () => {

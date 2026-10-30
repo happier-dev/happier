@@ -222,10 +222,28 @@ describe('DesktopTrayRuntime — this computer\'s services (R16 c)', () => {
 
     it('reads the status line from connection health and the drift banner, the owners every surface uses', async () => {
         const screen = await mountTray();
-        const state = host.trayStates.at(-1)!;
-        expect(typeof state.label).toBe('string');
-        expect(typeof state.detail).toBe('string');
-        expect(state.status).toBeDefined();
-        await act(async () => screen.tree.unmount());
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const previous = storage.getState();
+        try {
+            // Drive the real transport projection, not a replacement health/drift hook.
+            await act(async () => {
+                storage.getState().setSocketStatus('disconnected');
+                storage.getState().resetEndpointConnectivity();
+            });
+            await vi.waitFor(() => expect(host.trayStates.at(-1)).toMatchObject({
+                status: 'connecting', label: 'status.connecting', detail: 'status.unknown',
+            }));
+
+            await act(async () => storage.getState().setEndpointConnectivity({
+                status: 'offline', reason: null, attempt: 1, nextRetryAt: null,
+                lastConnectedAt: null, lastDisconnectedAt: 1, lastErrorMessage: null,
+            }));
+            await vi.waitFor(() => expect(host.trayStates.at(-1)).toMatchObject({
+                status: 'server_unreachable', label: 'status.disconnected', detail: 'status.unknown',
+            }));
+        } finally {
+            await act(async () => screen.tree.unmount());
+            storage.setState(previous, true);
+        }
     });
 });

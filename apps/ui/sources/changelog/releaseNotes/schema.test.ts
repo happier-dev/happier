@@ -125,7 +125,15 @@ describe('parseReleaseNotesManifest', () => {
 
         const card = parsed?.releases[0]?.cards[0];
         expect(card?.kind).toBe('image');
-        expect(card?.kind === 'image' ? card.media.desktop?.key : null).toBe('hero-desktop.webp');
+        expect(card?.kind === 'image' ? card.media : null).toMatchObject({
+            localAssetKey: 'release-v1-hero',
+            altKey: 'releaseNotes.v1_0_0.cards.hero.alt',
+            mobile: { localAssetKey: 'release-v1-hero-mobile' },
+            desktop: {
+                key: 'hero-desktop.webp',
+                altKey: 'releaseNotes.v1_0_0.cards.hero.desktopAlt',
+            },
+        });
     });
 
     it('accepts optional wide title keys on story deck cards', () => {
@@ -224,9 +232,13 @@ describe('parseReleaseNotesManifest', () => {
                     titleKey: 'releaseNotes.v1_0_0.cards.video.title',
                     bodyKey: 'releaseNotes.v1_0_0.cards.video.body',
                     media: {
-                        key: 'demo-mobile.mp4',
+                        key: 'demo.mp4',
                         localPosterAssetKey: 'release-v1-video-poster',
                         accessibilityLabelKey: 'releaseNotes.v1_0_0.cards.video.label',
+                        mobile: {
+                            key: 'demo-mobile.mp4',
+                            localPosterAssetKey: 'release-v1-video-mobile-poster',
+                        },
                         desktop: {
                             key: 'demo-desktop.mp4',
                             posterKey: 'demo-desktop-poster.webp',
@@ -238,7 +250,19 @@ describe('parseReleaseNotesManifest', () => {
 
         const card = parsed?.releases[0]?.cards[0];
         expect(card?.kind).toBe('video');
-        expect(card?.kind === 'video' ? card.media.desktop?.key : null).toBe('demo-desktop.mp4');
+        expect(card?.kind === 'video' ? card.media : null).toMatchObject({
+            key: 'demo.mp4',
+            localPosterAssetKey: 'release-v1-video-poster',
+            accessibilityLabelKey: 'releaseNotes.v1_0_0.cards.video.label',
+            mobile: {
+                key: 'demo-mobile.mp4',
+                localPosterAssetKey: 'release-v1-video-mobile-poster',
+            },
+            desktop: {
+                key: 'demo-desktop.mp4',
+                posterKey: 'demo-desktop-poster.webp',
+            },
+        });
     });
 
     it('returns null on completely malformed input', () => {

@@ -500,7 +500,6 @@
     "sources/auth/terminal/resolveTerminalApprovalTarget.test.ts",
     "sources/auth/terminal/terminalProvisioning.test.ts",
     "sources/boot/resolveBootCredentials.test.ts",
-    "sources/boot/resolveBootCredentials.webServerOverride.test.ts",
     "sources/boot/runAppBootSequence.test.ts",
     "sources/capabilities/codexAcpDep.test.ts",
     "sources/capabilities/ensureAgentInstallablesBackground.test.ts",

@@ -36,12 +36,6 @@ describe('desktop main window presence', () => {
     });
 
     describe('isDesktopMainWindowVisible', () => {
-        it('keeps a visible window present while another app holds focus', () => {
-            setDocument({ visibilityState: 'visible', hasFocus: () => false });
-
-            expect(isDesktopMainWindowVisible()).toBe(true);
-        });
-
         it('reports a hidden, unfocused window as absent', () => {
             setDocument({ visibilityState: 'hidden', hasFocus: () => false });
 

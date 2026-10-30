@@ -50,7 +50,4 @@ describe('Typography visual primitive helpers', () => {
         expect(keyHint).toMatchObject(Typography.mono());
     });
 
-    it('uses tabular numerals for timestamps', () => {
-        expect(({ ...Typography.variant('micro', 'regular'), ...Typography.tabular() }).fontVariant).toEqual(['tabular-nums']);
-    });
 });

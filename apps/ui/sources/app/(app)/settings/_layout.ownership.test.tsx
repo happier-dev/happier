@@ -7,6 +7,7 @@ import { WorkspaceDestinationBody } from '@/components/appShell/workspace/Worksp
 import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { registerWorkspaceRouteContext } from '@/components/appShell/workspace/workspaceRouteContext';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
+import { initializeAuthRouteRuntimeForTests } from '@/dev/testkit/harness/authRouteRuntimeHarness';
 
 installPanelCommonModuleMocks();
 const boundary = vi.hoisted(() => ({ pathname: '/settings/server', nested: null as React.ComponentType | null }));
@@ -21,14 +22,11 @@ vi.mock('expo-router', async () => {
     }, { Screen: () => null });
     return { ...createExpoRouterMock({ pathname: () => boundary.pathname }).module, Stack };
 });
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-    const { settingsParse } = await import('@/sync/domains/settings/settings');
-    return createStorageModuleStub({ storage: createStorageStoreMock({ settings: settingsParse({}) }) });
-});
-vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({ logout: async () => {} }), useOptionalAuth: () => null }));
-// This composition test has no authenticated network transport.
-vi.mock('@/sync/api/session/apiSocket', () => ({ apiSocket: {} }));
+vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness'))
+    .createSocketIoClientBoundary(original));
+
+await initializeAuthRouteRuntimeForTests();
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
 let SettingsLayout: React.ComponentType;
 let HomesLayout: React.ComponentType;
@@ -60,13 +58,13 @@ describe('Settings mirror and hosted collection ownership', () => {
             closeTabs: () => {}, dispatch: () => {}, navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
             registerBackStep: () => () => {}, back: () => {}, forward: () => {},
         };
-        const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={navigation}>
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><WorkspaceNavigationContext.Provider value={navigation}>
             <SettingsLayout />
             <DestinationInstanceHost tabId="settings-tab" ref={target} pathname={boundary.pathname} focused visible
                 navigation={navigation.navigationForTab('settings-tab')}>
                 <WorkspaceDestinationBody target={target} pathname={boundary.pathname} renderSession={() => null} renderSessionDetails={() => null} />
             </DestinationInstanceHost>
-        </WorkspaceNavigationContext.Provider>);
+        </WorkspaceNavigationContext.Provider></InjectedAuthProvider>);
         expect(screen.root.findAllByType(page === 'server' ? HomesProvider : TokensProvider.type)).toHaveLength(1);
     });
 });

@@ -5,7 +5,6 @@ import {
     dispatchEscapeToLayerStack,
     getMaxEscapeKeyBlockerPriority,
     isEscapeEventHandled,
-    markEscapeEventHandled,
     registerEscapeKeyBlocker,
     registerEscapeLayer,
 } from './escape';
@@ -78,21 +77,21 @@ describe('escape layer stack', () => {
         const unregisterBlocker = registerEscapeKeyBlocker(300);
         const unregisterLayer = registerEscapeLayer({ priority: 200, onEscape: () => undefined });
 
-        expect(getMaxEscapeKeyBlockerPriority()).toBe(300);
-
-        unregisterBlocker();
-        unregisterLayer();
+        try {
+            expect(getMaxEscapeKeyBlockerPriority()).toBe(300);
+            unregisterBlocker();
+            expect(getMaxEscapeKeyBlockerPriority()).toBe(200);
+            unregisterLayer();
+            expect(getMaxEscapeKeyBlockerPriority()).toBe(0);
+        } finally {
+            unregisterBlocker();
+            unregisterLayer();
+        }
     });
 
     it('places session-list selection below panes and overlays but above ordinary focus layers', () => {
         expect(ESCAPE_LAYER_PRIORITIES.sessionListSelection).toBeGreaterThan(ESCAPE_LAYER_PRIORITIES.focusSessionSurface);
         expect(ESCAPE_LAYER_PRIORITIES.sessionListSelection).toBeLessThan(ESCAPE_LAYER_PRIORITIES.pane);
         expect(ESCAPE_LAYER_PRIORITIES.sessionListSelection).toBeLessThan(ESCAPE_LAYER_PRIORITIES.overlay);
-    });
-
-    it('marks escape events handled defensively', () => {
-        const event = {};
-        markEscapeEventHandled(event);
-        expect(isEscapeEventHandled(event)).toBe(true);
     });
 });

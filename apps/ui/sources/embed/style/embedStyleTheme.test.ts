@@ -4,6 +4,9 @@ import type { EmbedStyleV1 } from '@happier-dev/protocol/embed';
 
 import { darkTheme, lightTheme, type Theme } from '@/theme';
 import { applyThemeRuntimeSelection } from '@/theme/profiles/themeProfileRuntime';
+import { storage } from '@/sync/domains/state/storage';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { loadLocalSettings } from '@/sync/domains/state/settingsPersistence';
 
 import { applyEmbedStyle, mergeEmbedStyles, resolveEmbedThemeApplication } from './embedStyleTheme';
 
@@ -83,20 +86,31 @@ describe('embed style → theme', () => {
 
     it('applies the text size as a runtime-only scale and loads the font file', async () => {
         const runtime = createThemeRuntime();
-        const applyLocalSettings = vi.fn();
         const installFontFace = vi.fn(async () => ({ status: 'loaded' as const }));
+        const previous = storage.getState().localSettings;
+        const persisted = loadLocalSettings();
+        storage.setState({ localSettings: { ...previous, uiFontScale: 1 } });
+        // Observe the genuine device adapter; the store and persistence owner remain real.
+        const persistence = getPersistenceStorage();
+        const writes = [vi.spyOn(persistence, 'set'), vi.spyOn(persistence, 'delete'), vi.spyOn(persistence, 'clearAll')];
+        try {
+            await applyEmbedStyle(style({ typography: { fontUrl: 'https://fonts.acme.dev/acme.woff2', scale: 'compact' } }), {
+                applySelection: runtime.applySelection,
+                installFontFace,
+                applyLocalSettings: storage.getState().applyLocalSettings,
+            });
 
-        await applyEmbedStyle(style({ typography: { fontUrl: 'https://fonts.acme.dev/acme.woff2', scale: 'compact' } }), {
-            applySelection: runtime.applySelection,
-            installFontFace,
-            applyLocalSettings,
-        });
-
-        expect(installFontFace).toHaveBeenCalledWith({ url: 'https://fonts.acme.dev/acme.woff2' });
-        expect(applyLocalSettings).toHaveBeenCalledWith({ uiFontScale: expect.any(Number) }, { persist: false });
-        expect(applyLocalSettings.mock.calls[0]?.[0].uiFontScale).toBeLessThan(1);
-        // A font file without a family name still reaches text through the runtime face.
-        expect(runtime.registered.light.typography.fontFamily).not.toBeNull();
+            expect(installFontFace).toHaveBeenCalledWith({ url: 'https://fonts.acme.dev/acme.woff2' });
+            expect(storage.getState().localSettings.uiFontScale).toBeLessThan(1);
+            expect(storage.getState().localSettings.uiFontScale).toBe(resolveEmbedThemeApplication(style({ typography: { scale: 'compact' } })).uiFontScale);
+            expect(loadLocalSettings()).toEqual(persisted);
+            for (const write of writes) expect(write).not.toHaveBeenCalled();
+            // A font file without a family name still reaches text through the runtime face.
+            expect(runtime.registered.light.typography.fontFamily).not.toBeNull();
+        } finally {
+            for (const write of writes) write.mockRestore();
+            storage.setState({ localSettings: previous });
+        }
     });
 
     it('layers runtime style over the saved style, token by token', () => {

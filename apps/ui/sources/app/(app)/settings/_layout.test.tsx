@@ -4,13 +4,11 @@ import { renderScreen } from '@/dev/testkit';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
+import { initializeAuthRouteRuntimeForTests } from '@/dev/testkit/harness/authRouteRuntimeHarness';
 
 installPanelCommonModuleMocks();
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-    const { settingsParse } = await import('@/sync/domains/settings/settings');
-    return createStorageModuleStub({ storage: createStorageStoreMock({ settings: settingsParse({}) }) });
-});
+vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness'))
+    .createSocketIoClientBoundary(original));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     const Stack = Object.assign((props: React.PropsWithChildren) => React.createElement('NativeSettingsNavigator', props), {
@@ -20,6 +18,8 @@ vi.mock('expo-router', async () => {
 });
 
 // Expo still needs nested route registration to mirror hosted query parameters into its URL state.
+await initializeAuthRouteRuntimeForTests();
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { default: SettingsLayout } = await import('./_layout');
 
 it('keeps the native Settings navigator registered while the workspace owns the visible body', async () => {
@@ -31,7 +31,9 @@ it('keeps the native Settings navigator registered while the workspace owns the 
         navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
         registerBackStep: () => () => {}, back: () => {}, forward: () => {},
     };
-    const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={navigation}><SettingsLayout /></WorkspaceNavigationContext.Provider>);
+    const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+        <WorkspaceNavigationContext.Provider value={navigation}><SettingsLayout /></WorkspaceNavigationContext.Provider>
+    </InjectedAuthProvider>);
     expect(screen.root.findAllByType('NativeSettingsNavigator')).toHaveLength(1);
     expect(screen.root.findAllByType('RegisteredSettingsRoute').map(node => node.props.name)).toContain('connected-services');
     expect(screen.findAllHostsByTestId('settings-shell')).toHaveLength(0);

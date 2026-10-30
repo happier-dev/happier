@@ -125,6 +125,7 @@ describe('useEscapeLayer', () => {
         const windowAddEventListener = Object.getOwnPropertyDescriptor(window, 'addEventListener');
         const windowRemoveEventListener = Object.getOwnPropertyDescriptor(window, 'removeEventListener');
         const documentAddEventListener = vi.spyOn(document, 'addEventListener');
+        const documentRemoveEventListener = vi.spyOn(document, 'removeEventListener');
 
         Object.defineProperty(window, 'addEventListener', {
             configurable: true,
@@ -141,6 +142,21 @@ describe('useEscapeLayer', () => {
             });
 
             expect(documentAddEventListener).toHaveBeenCalledWith('keydown', expect.any(Function), true);
+            const target = container.querySelector('[data-testid="escape-target"]');
+            expect(target).toBeInstanceOf(HTMLInputElement);
+            const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+            target!.dispatchEvent(event);
+            expect(onEscape).toHaveBeenCalledOnce();
+            expect(event.defaultPrevented).toBe(true);
+
+            const registration = documentAddEventListener.mock.calls.find(([type, , capture]) => type === 'keydown' && capture === true);
+            expect(registration).toBeDefined();
+            await act(async () => { root.render(null); });
+            expect(documentRemoveEventListener).toHaveBeenCalledWith('keydown', registration![1], true);
+            const afterUnmount = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+            document.dispatchEvent(afterUnmount);
+            expect(onEscape).toHaveBeenCalledOnce();
+            expect(afterUnmount.defaultPrevented).toBe(false);
         } finally {
             if (windowAddEventListener) {
                 Object.defineProperty(window, 'addEventListener', windowAddEventListener);
@@ -149,6 +165,7 @@ describe('useEscapeLayer', () => {
                 Object.defineProperty(window, 'removeEventListener', windowRemoveEventListener);
             }
             documentAddEventListener.mockRestore();
+            documentRemoveEventListener.mockRestore();
             await act(async () => {
                 root.unmount();
             });

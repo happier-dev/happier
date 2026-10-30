@@ -17,7 +17,9 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { initializeAuthRouteRuntimeForTests } from '@/dev/testkit/harness/authRouteRuntimeHarness';
 import { MMKV } from 'react-native-mmkv';
 import { clearPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
-import type { IrohHomeRuntimeOriginLease, IrohHomeTunnelAcquireInput } from '@/sync/runtime/nativeIrohTunnels/types';
+import type { IrohNativeLifecycleModule } from '@/sync/runtime/nativeIrohTunnels/supervisor';
+import { disposeIrohHomeTunnelRuntime, getIrohHomeTunnelRuntime } from '@/sync/runtime/nativeIrohTunnels/runtime';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 installTokenStorageWebPlatformMocks();
 vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness'))
@@ -28,16 +30,7 @@ vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit
 const replaceSpy = vi.hoisted(() => vi.fn());
 const confirmSpy = vi.hoisted(() => vi.fn(async () => true));
 const routeBoundary = vi.hoisted(() => ({ params: {} as Record<string, string> }));
-const nativeBoundary = vi.hoisted(() => ({ acquire: vi.fn<(input: IrohHomeTunnelAcquireInput) => Promise<IrohHomeRuntimeOriginLease>>() }));
-
-vi.mock('@/sync/runtime/browserIroh/hostEligibility', () => ({
-    // Platform boundary: exercise delayed native discovery and its real enrollment policy.
-    resolveBrowserIrohHostDecision: () => ({ eligible: false, reason: 'not_web' }),
-}));
-vi.mock('@/sync/runtime/nativeIrohTunnels/runtime', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/runtime/nativeIrohTunnels/runtime')>(),
-    acquireIrohHomeRuntimeOrigin: nativeBoundary.acquire,
-}));
+const nativeBoundary = vi.hoisted(() => ({ ensureHomeTunnel: vi.fn<IrohNativeLifecycleModule['ensureHomeTunnel']>() }));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -57,10 +50,6 @@ vi.mock('@/text/i18n', async () => {
     return { ...createTextModuleMock(), setPreferredLanguageFromSettings: vi.fn() };
 });
 const runtimeFetchSpy = vi.hoisted(() => vi.fn<typeof import('@/utils/system/runtimeFetch').runtimeFetch>(async () => new Response('', { status: 503 })));
-vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
-    runtimeFetch: runtimeFetchSpy,
-}));
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: { confirm: confirmSpy } }).module;
@@ -100,15 +89,19 @@ function terminalRequest(serverUrl: string, serverIdentityId: string) {
 }
 
 let restoreLocks: (() => void) | undefined;
-beforeEach(() => { restoreLocks = installWebLockManagerMock().restore; });
+beforeEach(() => {
+    restoreLocks = installWebLockManagerMock().restore;
+    setRuntimeFetch(runtimeFetchSpy);
+});
 afterEach(async () => {
     await standardCleanup();
+    await disposeIrohHomeTunnelRuntime();
     clearPendingTerminalConnect();
     replaceSpy.mockClear();
     confirmSpy.mockReset();
     confirmSpy.mockResolvedValue(true);
     routeBoundary.params = {};
-    nativeBoundary.acquire.mockReset();
+    nativeBoundary.ensureHomeTunnel.mockReset();
     restoreLocks?.();
     vi.unstubAllGlobals();
 });
@@ -131,8 +124,11 @@ it('does not redirect preauth terminal pairing to an unreachable unsaved Home', 
     resetServerProfilesRuntimeForTests();
 
     await upsertAndActivateServer({ serverUrl: 'https://saved.example.test', source: 'manual', scope: 'device' });
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.alert).mockClear();
     const screen = await renderScreen(<InjectedAuthProvider credentials={null}><TerminalConnectScreen /></InjectedAuthProvider>);
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    // URL-only admission reports its settled failure by alert; descriptor failure uses the surface card.
+    await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', expect.any(String)));
 
     expect(runtimeFetchSpy).toHaveBeenCalledWith('https://unreachable.example.test/health', expect.any(Object));
     expect(replaceSpy).not.toHaveBeenCalled();
@@ -250,6 +246,10 @@ it.each(['web-link', 'native-link', 'scanner-hook'])(
 });
 
 it('retains an unavailable descriptor pairing without changing focus or redirecting through the focused Home', async () => {
+    // A desktop WebView is a real native-carrier host; the native SDK owns refusal.
+    vi.stubGlobal('isTauri', true);
+    nativeBoundary.ensureHomeTunnel.mockRejectedValue(Object.assign(new Error('unavailable'), { name: 'IrohError', code: 'unavailable' }));
+    getIrohHomeTunnelRuntime({ native: { ensureHomeTunnel: nativeBoundary.ensureHomeTunnel, releaseHomeTunnel: async () => {} } });
     vi.stubGlobal('localStorage', createStorage());
     vi.stubGlobal('sessionStorage', createStorage());
     const profiles = await import('@/sync/domains/server/serverProfiles');
@@ -272,6 +272,7 @@ it('retains an unavailable descriptor pairing without changing focus or redirect
         result = await hook.getCurrent().processAuthUrl(`https://app.example.test${buildTerminalConnectWebHref(captured)}`);
     });
     expect(result).toBe(false);
+    expect(nativeBoundary.ensureHomeTunnel).toHaveBeenCalled();
     expect(profiles.getActiveServerId()).toBe(active.id);
     expect(replaceSpy).not.toHaveBeenCalled();
     const custodyStorage = new MMKV({ id: scopedStorageId('pending-terminal-connect', readStorageScopeFromEnv()) });
@@ -281,6 +282,7 @@ it('retains an unavailable descriptor pairing without changing focus or redirect
 });
 
 it('retains the web intent across a remount while transport discovery is pending', async () => {
+    vi.stubGlobal('isTauri', true);
     vi.stubGlobal('localStorage', createStorage());
     vi.stubGlobal('sessionStorage', createStorage());
     const profiles = await import('@/sync/domains/server/serverProfiles');
@@ -294,8 +296,9 @@ it('retains the web intent across a remount while transport discovery is pending
             revision: 1, endpoints: [{ kind: 'iroh' as const, endpointId: 'c'.repeat(64) }],
         },
     };
-    const acquisition = createDeferred<IrohHomeRuntimeOriginLease>();
-    nativeBoundary.acquire.mockImplementation(() => acquisition.promise);
+    const acquisition = createDeferred<Awaited<ReturnType<IrohNativeLifecycleModule['ensureHomeTunnel']>>>();
+    nativeBoundary.ensureHomeTunnel.mockImplementation(() => acquisition.promise);
+    getIrohHomeTunnelRuntime({ native: { ensureHomeTunnel: nativeBoundary.ensureHomeTunnel, releaseHomeTunnel: async () => {} } });
     const location = { href: `https://app.example.test${buildTerminalConnectWebHref(captured)}`, pathname: '/terminal/connect' };
     vi.stubGlobal('window', {
         location, sessionStorage: globalThis.sessionStorage,
@@ -303,7 +306,7 @@ it('retains the web intent across a remount while transport discovery is pending
     });
     vi.stubGlobal('document', { getElementById: () => null });
     const first = await renderScreen(<InjectedAuthProvider credentials={null}><TerminalConnectScreen /></InjectedAuthProvider>);
-    await vi.waitFor(() => expect(nativeBoundary.acquire).toHaveBeenCalled());
+    await vi.waitFor(() => expect(nativeBoundary.ensureHomeTunnel).toHaveBeenCalled());
     await first.unmount();
     const resumed = await renderScreen(<InjectedAuthProvider credentials={null}><TerminalConnectScreen /></InjectedAuthProvider>);
     try {

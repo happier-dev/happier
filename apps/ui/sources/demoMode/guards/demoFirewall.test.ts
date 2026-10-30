@@ -36,13 +36,16 @@ describe('demoFirewall', () => {
     });
 
     it('blocks and logs runtimeFetch and direct global fetch paths', async () => {
-        globalThis.fetch = vi.fn(async () => new Response('ok'));
+        const fetchSpy = vi.fn(async () => new Response('ok'));
+        globalThis.fetch = fetchSpy;
 
         installDemoFirewall();
 
         await expect(runtimeFetch('https://example.test/runtime')).rejects.toThrow(/Demo mode blocked network egress/);
         await expect(globalThis.fetch('https://example.test/direct')).rejects.toThrow(/Demo mode blocked network egress/);
 
+        // Rejecting after dispatch would still leak demo traffic.
+        expect(fetchSpy).not.toHaveBeenCalled();
         expect(getDemoFirewallDenyLog()).toEqual([
             expect.objectContaining({ channel: 'runtimeFetch', url: 'https://example.test/runtime' }),
             expect.objectContaining({ channel: 'globalFetch', url: 'https://example.test/direct' }),

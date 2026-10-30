@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 import { startEmbedBridgeGuest, type EmbedBridgeWindow } from './embedBridgeGuest';
 
@@ -31,8 +32,6 @@ function initEnvelope(overrides: Record<string, unknown> = {}) {
         payload: { kind: 'init', identity, sessionId: 'session-a', credential, ...overrides },
     };
 }
-
-const flush = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 const channels: MessageChannel[] = [];
 afterEach(() => {
@@ -82,7 +81,10 @@ describe('embed bridge guest', () => {
 
     it('takes configure and open from the port, ignoring malformed and out-of-order messages', async () => {
         const frame = createFrameWindow();
-        const onConfigure = vi.fn();
+        const delivered = createDeferred<void>();
+        const onConfigure = vi.fn((message) => {
+            if (message.style?.radius === 'sharp') delivered.resolve();
+        });
         const onOpen = vi.fn();
         startEmbedBridgeGuest({ window: frame.frameWindow, identity, embedPublicKey: PUBLIC_KEY, events: { onConfigure, onOpen } });
         const channel = openChannel();
@@ -93,10 +95,13 @@ describe('embed bridge guest', () => {
         channel.port1.postMessage({ version: 1, identity: { instanceId: 'x', mountNonce: 'y' }, sequence: 3, direction: 'hostToFrame', payload: { kind: 'open', sessionId: 'session-z' } });
         channel.port1.postMessage({ version: 1, identity, sequence: 4, direction: 'hostToFrame', payload: { kind: 'open', sessionId: 'session-b' } });
         channel.port1.postMessage({ version: 1, identity, sequence: 1, direction: 'hostToFrame', payload: { kind: 'open', sessionId: 'session-old' } });
-        await flush();
+        // This accepted callback is a FIFO barrier on the same real receiving port.
+        channel.port1.postMessage({ version: 1, identity, sequence: 5, direction: 'hostToFrame', payload: { kind: 'configure', style: { v: 1, radius: 'sharp' } } });
+        await delivered.promise;
 
-        expect(onConfigure).toHaveBeenCalledTimes(1);
+        expect(onConfigure).toHaveBeenCalledTimes(2);
         expect(onConfigure.mock.calls[0]?.[0]).toMatchObject({ kind: 'configure', style: { radius: 'round' } });
+        expect(onConfigure.mock.calls[1]?.[0]).toMatchObject({ kind: 'configure', style: { radius: 'sharp' } });
         expect(onOpen).toHaveBeenCalledTimes(1);
         expect(onOpen.mock.calls[0]?.[0]).toEqual({ kind: 'open', sessionId: 'session-b' });
     });
@@ -106,12 +111,16 @@ describe('embed bridge guest', () => {
         const guest = startEmbedBridgeGuest({ window: frame.frameWindow, identity, embedPublicKey: PUBLIC_KEY, events: {} });
         const channel = openChannel();
         const sent: unknown[] = [];
-        channel.port1.onmessage = (event) => { sent.push(event.data); };
+        const delivered = createDeferred<void>();
+        channel.port1.onmessage = (event) => {
+            sent.push(event.data);
+            if (sent.length === 2) delivered.resolve();
+        };
         frame.deliver({ source: frame.parent as unknown as Window, origin: HOST_ORIGIN, data: initEnvelope(), ports: [channel.port2] });
 
         const outcome = guest.requestCredential({ sessionId: 'session-a', embedPublicKey: PUBLIC_KEY, reason: 'expiring' });
         guest.publishState({ sessionId: 'session-a', phase: 'ready', activity: 'working' });
-        await flush();
+        await delivered.promise;
 
         const request = sent[0] as { sequence: number; payload: { kind: string } };
         expect(request.payload.kind).toBe('credential.request');

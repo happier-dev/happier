@@ -47,25 +47,43 @@ describe('startDemoRuntimeResidueTracking runtime mode', () => {
         ]);
     });
 
-    it('tracks net event listeners in runtime mode via keyed O(1) removal (no linear scan)', () => {
+    it('tracks exact target, event, capture and listener identity through out-of-order removals', () => {
         startDemoRuntimeResidueTracking('runtime');
         const target = new EventTarget();
-        const first = () => undefined;
-        const second = () => undefined;
+        const otherTarget = new EventTarget();
+        const delivered: Array<readonly [EventTarget | null, string]> = [];
+        const first = (event: Event) => { delivered.push([event.target, event.type]); };
+        const second = vi.fn();
         try {
-            target.addEventListener('demo-a', first);
-            target.addEventListener('demo-b', second);
-            // Idempotent re-add must not inflate the count (matches DOM dedupe).
-            target.addEventListener('demo-a', first);
-            // Remove exactly one registration; the keyed structure must decrement
-            // only the matching listener and leave the other attached.
-            target.removeEventListener('demo-a', first);
+            target.addEventListener('demo', first);
+            otherTarget.addEventListener('demo', first);
+            target.addEventListener('demo', second);
+            target.addEventListener('demo', first, { capture: true });
+            target.addEventListener('other', first);
+            // Same registration is idempotent, but target/type/capture differences are not.
+            target.addEventListener('demo', first);
+            target.removeEventListener('demo', second);
+            target.removeEventListener('demo', second);
+            otherTarget.removeEventListener('demo', second);
+            target.removeEventListener('missing', first);
+            target.removeEventListener('demo', second, { capture: true });
+            target.removeEventListener('demo', first, { capture: false });
+
+            target.dispatchEvent(new Event('demo'));
+            otherTarget.dispatchEvent(new Event('demo'));
+            target.dispatchEvent(new Event('other'));
+            expect(second).not.toHaveBeenCalled();
+            expect(delivered).toEqual([[target, 'demo'], [otherTarget, 'demo'], [target, 'other']]);
             const findings = stopDemoRuntimeResidueTracking();
             expect(findings).toEqual([
-                { kind: 'eventListener', label: 'attached EventTarget listeners', count: 1 },
+                { kind: 'eventListener', label: 'attached EventTarget listeners', count: 3 },
             ]);
         } finally {
-            target.removeEventListener('demo-b', second);
+            target.removeEventListener('demo', first);
+            target.removeEventListener('demo', first, { capture: true });
+            target.removeEventListener('demo', second);
+            otherTarget.removeEventListener('demo', first);
+            target.removeEventListener('other', first);
         }
     });
 });

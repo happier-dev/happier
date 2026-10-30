@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
@@ -11,24 +11,20 @@ import { AuthProvider, getCurrentAuth } from '@/auth/context/AuthContext';
 import { subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { consumeAccountServiceOAuthReturn } from '@/sync/ops/accountDirectory/consumeAccountServiceOAuthReturn';
 import { router } from 'expo-router';
-import OAuthProviderReturn from './[provider]';
-import MtlsCallbackScreen from '../mtls';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { executeHomeAuthentication } from '@/auth/flows/executeHomeAuthentication';
-import TeamSignInRoute from '../teams/[teamId]/sign-in';
 import type { AuthEntryProjectionV1 } from '@happier-dev/protocol';
+import { initializeAuthRouteRuntimeForTests } from '@/dev/testkit/harness/authRouteRuntimeHarness';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn(), params: {
     provider: 'github', flow: 'auth', pending: 'provider-handle', purpose: '', admissionReference: '', accountMode: 'plain', code: 'mtls-code', error: '',
     teamId: '', target: '',
 } }));
-vi.mock('@/sync/http/client', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/http/client')>(),
-    createServerFetchAtEndpoint: (target: { endpointUrl: string; runtimeOrigin?: string }) => (path: string, init?: RequestInit) => boundary.request(target.endpointUrl, path, init, target.runtimeOrigin),
-    serverFetch: (path: string, init?: RequestInit) => boundary.request('ambient', path, init),
-}));
+vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness'))
+    .createSocketIoClientBoundary(original));
 vi.mock('expo-router', async () => ({
     ...(await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
     useLocalSearchParams: () => boundary.params,
@@ -36,6 +32,19 @@ vi.mock('expo-router', async () => ({
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+
+await initializeAuthRouteRuntimeForTests();
+const { default: OAuthProviderReturn } = await import('./[provider]');
+const { default: MtlsCallbackScreen } = await import('../mtls');
+const { default: TeamSignInRoute } = await import('../teams/[teamId]/sign-in');
+
+beforeEach(() => {
+    // Observe the physical HTTP destination below the real scoped client and carrier policy.
+    setRuntimeFetch(async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        return await boundary.request(url.origin, `${url.pathname}${url.search}`, init);
+    });
+});
 
 let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 let restore: (() => void) | undefined;
@@ -94,12 +103,6 @@ async function mountTeamEntry() {
         }
         return fixture.request(endpoint, path, init);
     });
-    // Authenticated entry uses the exact Account request authority, whose final
-    // HTTP boundary is fetch rather than the anonymous endpoint client above.
-    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-        const url = new URL(input instanceof Request ? input.url : String(input));
-        return await boundary.request(url.origin, `${url.pathname}${url.search}`, init);
-    }));
     screen = await renderScreen(<AuthProvider initialCredentials={credentials}><TeamSignInRoute /></AuthProvider>);
     return { fixture, home, credentials };
 }
@@ -403,10 +406,9 @@ it.each([
     if (accountCredentialReplaced && restoreRequired) {
         await TokenStorage.accountDirectoryAuthCredentials.set(directoryTarget, { token: 'replacement-directory-token' });
     }
-    boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit, runtimeOrigin?: string) => {
+    boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
         if (path === '/v1/auth/external/github/finalize-keyless' || path === '/v1/auth/mtls/claim') {
-            expect(endpoint).toBe(homeB.serverUrl);
-            if (!superseded) expect(runtimeOrigin).toBe('https://home-b-transport.test');
+            expect(endpoint).toBe('https://home-b-transport.test');
             if (superseded) {
                 await TokenStorage.setPendingExternalAuth({ provider, proof: 'replacement-proof', serverUrl: homeB.serverUrl,
                     serverId: 'srv_home_b', returnTo: '/setup/wizard', accountContinuation: continuation },
