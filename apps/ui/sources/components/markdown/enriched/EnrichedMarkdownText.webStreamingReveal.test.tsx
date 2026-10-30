@@ -52,6 +52,7 @@ type WebEnrichedMarkdownTextModule = Readonly<{
 
 type WebParseMarkdownModule = Readonly<{
     preloadMarkdownRuntime: () => Promise<void>;
+    parseMarkdownSyncIfReady: (markdown: string, flags: { latexMath: boolean }) => MarkdownAstNode | null;
 }>;
 
 type InlineRendererProps = Readonly<{
@@ -724,9 +725,15 @@ describe('EnrichedMarkdownText web streaming reveal', () => {
     });
 
     it('exposes a web parser warmup hook for transcript preloading', async () => {
+        vi.resetModules();
         const parser = await loadPatchedWebParseMarkdown();
-
+        const markdown = '**Preloaded text**';
+        expect(parser.parseMarkdownSyncIfReady(markdown, { latexMath: false })).toBeNull();
         await expect(parser.preloadMarkdownRuntime()).resolves.toBeUndefined();
+        expect(parser.parseMarkdownSyncIfReady(markdown, { latexMath: false })).toMatchObject({
+            type: 'Document',
+            children: [{ type: 'Paragraph', children: [{ type: 'Strong', children: [{ type: 'Text', content: 'Preloaded text' }] }] }],
+        });
     });
 
     it('keeps the single-file parser inside the owning web runtime module', () => {

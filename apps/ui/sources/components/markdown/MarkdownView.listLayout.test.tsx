@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { MarkdownView } from './MarkdownView';
 import { renderScreen } from '@/dev/testkit';
+import { MarkdownCodeBlock } from './MarkdownCodeBlock';
 
 
 declare global {
@@ -14,11 +15,6 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('./MermaidRenderer', () => ({
     MermaidRenderer: () => null,
-}));
-
-vi.mock('./MarkdownCodeBlock', () => ({
-    MarkdownCodeBlock: (props: Record<string, unknown>) =>
-        React.createElement('MarkdownCodeBlock', props),
 }));
 
 describe('MarkdownView (lists)', () => {
@@ -115,7 +111,7 @@ describe('MarkdownView (lists)', () => {
         const screen = await renderScreen(<MarkdownView markdown={markdown} />);
 
         expect(screen.findAllByType('EnrichedMarkdownText')).toHaveLength(0);
-        const codeBlock = screen.findByType('MarkdownCodeBlock');
+        const codeBlock = screen.findByType(MarkdownCodeBlock);
         expect(codeBlock.props.content).toBe([
             '1. **First idea**',
             '',

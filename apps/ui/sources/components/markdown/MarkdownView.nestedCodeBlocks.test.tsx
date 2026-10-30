@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
@@ -7,11 +7,18 @@ import { t } from '@/text';
 import { MarkdownView } from './MarkdownView';
 import { MarkdownCodeBlockWrapStateProvider } from './MarkdownCodeBlockWrapState';
 
-const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async (_text: string) => true) }));
-// The OS clipboard is the boundary; the parser, code view and copy action remain real.
-vi.mock('expo-clipboard', () => clipboard);
+const clipboard = { writeText: vi.fn(async (_text: string) => undefined) };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+// The browser clipboard is the boundary; parser, code view and copy owner remain real.
+beforeEach(() => {
+    clipboard.writeText.mockClear();
+    vi.stubGlobal('navigator', { clipboard });
+});
 
-afterEach(standardCleanup);
+afterEach(() => { standardCleanup(); vi.unstubAllGlobals(); });
 
 describe('MarkdownView nested code blocks', () => {
     it('renders and copies token labels in code while keeping Find offsets on their labels', async () => {
@@ -23,7 +30,7 @@ describe('MarkdownView nested code blocks', () => {
         expect(screen.findAllHostsByTestId('find-match-current').map(node => node.children.join('')).join('')).toBe('Auth');
         const copy = screen.findAllByProps({ accessibilityLabel: t('common.copy') }).find(node => typeof node.type === 'string');
         await pressTestInstanceAsync(copy!, 'copy reference code label');
-        expect(clipboard.setStringAsync).toHaveBeenLastCalledWith('Read Auth after');
+        expect(clipboard.writeText).toHaveBeenLastCalledWith('Read Auth after');
     });
 
     it('keeps code Find marks after custom options in the same special segment', async () => {
@@ -67,8 +74,8 @@ describe('MarkdownView nested code blocks', () => {
             return <MarkdownCodeBlockWrapStateProvider>{visible ? <MarkdownView markdown={markdown + suffix} codeBlockStateKey="nested-message" /> : null}</MarkdownCodeBlockWrapStateProvider>;
         }
         const screen = await renderScreen(<Transcript visible />);
-        const switches = () => screen.findAllByProps({ accessibilityRole: 'switch' }).filter(node => typeof node.type === 'string');
-        const checked = () => switches().map(node => node.props.accessibilityState.checked);
+        const switches = () => screen.findAllByProps({ role: 'switch' }).filter(node => typeof node.type === 'string');
+        const checked = () => switches().map(node => node.props['aria-checked']);
         expect(checked()).toEqual([false, false, false]);
         expect(screen.getTextContent()).toContain('const first = 1;');
         expect(screen.getTextContent()).toContain('7.');
@@ -90,7 +97,7 @@ describe('MarkdownView nested code blocks', () => {
         const copy = screen.findAllByProps({ accessibilityLabel: t('common.copy') }).find(node => typeof node.type === 'string');
         expect(copy).toBeDefined();
         await pressTestInstanceAsync(copy!, 'copy nested code');
-        expect(clipboard.setStringAsync).toHaveBeenLastCalledWith('def example():\n    return 1\n\nprint(example())');
+        expect(clipboard.writeText).toHaveBeenLastCalledWith('def example():\n    return 1\n\nprint(example())');
     });
 
     it('also exposes wrapping for indented code blocks', async () => {
@@ -99,7 +106,7 @@ describe('MarkdownView nested code blocks', () => {
         expect(screen.findAllByTestId('code-wrap-lines-toggle').filter(node => typeof node.type === 'string')).toHaveLength(2);
         const copies = screen.findAllByProps({ accessibilityLabel: t('common.copy') }).filter(node => typeof node.type === 'string');
         await pressTestInstanceAsync(copies[0]!, 'copy indented code');
-        expect(clipboard.setStringAsync).toHaveBeenLastCalledWith('first line\n  indented line');
+        expect(clipboard.writeText).toHaveBeenLastCalledWith('first line\n  indented line');
     });
 
     it('removes opening-fence indentation without removing indentation within the code', async () => {
@@ -107,16 +114,16 @@ describe('MarkdownView nested code blocks', () => {
         const screen = await renderScreen(<MarkdownView markdown={'- Example\n\n    ```js\n    foo()\n      extra\n    ```'} />);
         const copy = screen.findAllByProps({ accessibilityLabel: t('common.copy') }).find(node => typeof node.type === 'string');
         await pressTestInstanceAsync(copy!, 'copy indented nested fence');
-        expect(clipboard.setStringAsync).toHaveBeenLastCalledWith('foo()\n  extra');
+        expect(clipboard.writeText).toHaveBeenLastCalledWith('foo()\n  extra');
     });
 
     it('preserves task-list interaction when a task contains a code block', async () => {
         storage.getState().applySettingsLocal({ filesDiffSyntaxHighlightingMode: 'off' });
         const screen = await renderScreen(<MarkdownView markdown={'- [ ] Review this example\n\n  ```ts\n  const value = 1;\n  ```'} />);
-        const checkbox = () => screen.findAllByProps({ accessibilityRole: 'checkbox' }).find(node => typeof node.type === 'string');
-        expect(checkbox()!.props.accessibilityState.checked).toBe(false);
-        expect(checkbox()!.props.accessibilityState.disabled).not.toBe(true);
+        const checkbox = () => screen.findAllByProps({ role: 'checkbox' }).find(node => typeof node.type === 'string');
+        expect(checkbox()!.props['aria-checked']).toBe(false);
+        expect(checkbox()!.props['aria-disabled']).not.toBe(true);
         await pressTestInstanceAsync(checkbox()!, 'check task');
-        expect(checkbox()!.props.accessibilityState.checked).toBe(true);
+        expect(checkbox()!.props['aria-checked']).toBe(true);
     });
 });

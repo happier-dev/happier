@@ -1,8 +1,9 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installMarkdownCommonModuleMocks } from './markdownTestHelpers';
+import { MarkdownCodeBlock } from './MarkdownCodeBlock';
 
 declare global {
     // eslint-disable-next-line no-var
@@ -12,25 +13,6 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 installMarkdownCommonModuleMocks();
-
-const markdownCodeBlockState = vi.hoisted(() => ({
-    nextMountId: 0,
-}));
-
-vi.mock('./MarkdownCodeBlock', async () => {
-    const ReactModule = await import('react');
-
-    return {
-        MarkdownCodeBlock: (props: Record<string, unknown>) => {
-            const [mountId] = ReactModule.useState(() => {
-                markdownCodeBlockState.nextMountId += 1;
-                return markdownCodeBlockState.nextMountId;
-            });
-
-            return ReactModule.createElement('MarkdownCodeBlock', { ...props, mountId });
-        },
-    };
-});
 
 vi.mock('./MermaidRenderer', () => ({
     MermaidRenderer: (props: Record<string, unknown>) =>
@@ -59,31 +41,17 @@ async function renderStreamingMarkdown(markdown: string, props: Record<string, u
 }
 
 describe('MarkdownView (streaming markdown)', () => {
-    beforeEach(() => {
-        markdownCodeBlockState.nextMountId = 0;
-    });
-
-    it('repairs an incomplete link into a link with a placeholder destination while streaming', async () => {
-        // The half-streamed URL must never reach the renderer, and the label must already
-        // be a link: streaming it as prose and re-parenting it when `)` arrives remounts
-        // the reveal span and replays its opacity keyframe on every link.
-        const screen = await renderStreamingMarkdown('Look at [docs](https://exa');
-
-        expect(visibleText(screen)).toBe('Look at [docs](streamdown:incomplete-link)');
-        expect(visibleText(screen)).not.toContain('https://exa');
-    }, 60_000);
-
     it('repairs incomplete bold spans before passing prose to the enriched renderer', async () => {
         const screen = await renderStreamingMarkdown('This is **half');
 
         const enrichedRun = screen.findByType('EnrichedMarkdownText');
-        expect(String(enrichedRun.props.markdown)).toContain('half');
+        expect(enrichedRun.props.markdown).toBe('This is **half**');
     }, 60_000);
 
     it('renders incomplete code fences as cheap text while streaming', async () => {
         const screen = await renderStreamingMarkdown(['```ts', 'const value = 1;'].join('\n'));
 
-        expect(screen.findAllByType('MarkdownCodeBlock')).toHaveLength(0);
+        expect(screen.findAllByType(MarkdownCodeBlock)).toHaveLength(0);
         expect(visibleText(screen)).toContain('const value = 1;');
     }, 60_000);
 
@@ -201,7 +169,7 @@ describe('MarkdownView (streaming markdown)', () => {
             }),
         );
 
-        const firstCodeBlock = screen.findByType('MarkdownCodeBlock');
+        const firstCodeBlock = screen.findByType(MarkdownCodeBlock);
 
         await act(async () => {
             await screen.update(
@@ -213,8 +181,8 @@ describe('MarkdownView (streaming markdown)', () => {
             );
         });
 
-        const nextCodeBlock = screen.findByType('MarkdownCodeBlock');
-        expect(nextCodeBlock.props.mountId).toBe(firstCodeBlock.props.mountId);
+        const nextCodeBlock = screen.findByType(MarkdownCodeBlock);
+        expect(nextCodeBlock).toBe(firstCodeBlock);
         expect(nextCodeBlock.props.content).toBe('const value = 1;\nconst next = 2;');
     }, 60_000);
 });

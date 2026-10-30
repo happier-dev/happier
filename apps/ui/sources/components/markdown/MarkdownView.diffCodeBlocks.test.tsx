@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installMarkdownCommonModuleMocks } from './markdownTestHelpers';
@@ -17,33 +17,21 @@ vi.mock('./MermaidRenderer', () => ({
 }));
 
 installMarkdownCommonModuleMocks({
-    storage: async () => {
-        const actual = await vi.importActual<typeof import('@/sync/domains/state/storage')>('@/sync/domains/state/storage');
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            ...actual,
-            useSetting: (key: string) => {
-                if (key === 'filesDiffTokenizationMaxBytes') return tokenizationMaxBytes;
-                if (key === 'wrapLinesInDiffs') return false;
-                if (key === 'showLineNumbersInToolViews') return false;
-                if (key === 'filesDiffFileListVirtualizationMinFiles') return 20;
-                return null;
-            },
-        });
-    },
+    storage: () => vi.importActual('@/sync/domains/state/storage'),
 });
 
-vi.mock('@/components/ui/code/blocks/CodeBlockView', () => ({
-    CodeBlockView: (props: any) => React.createElement('CodeBlockView', props),
-}));
-
-vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
-    DiffFilesListView: (props: any) => React.createElement('DiffFilesListView', props),
-}));
-
-let tokenizationMaxBytes = 1_000_000;
+const { CodeBlockView } = await import('@/components/ui/code/blocks/CodeBlockView');
+const { DiffFilesListView } = await import('@/components/ui/code/diff/DiffFilesListView');
+const { storage } = await import('@/sync/domains/state/storage');
 
 describe('MarkdownView (diff code fences)', () => {
+    beforeEach(() => storage.getState().applySettingsLocal({
+        filesDiffTokenizationMaxBytes: 1_000_000,
+        wrapLinesInDiffs: false,
+        showLineNumbersInToolViews: false,
+        filesDiffFileListVirtualizationMinFiles: 20,
+        filesDiffSyntaxHighlightingMode: 'off',
+    }));
     it('renders ```diff fenced blocks as a diff viewer by default', async () => {
         const { MarkdownView } = await import('./MarkdownView');
 
@@ -67,16 +55,16 @@ describe('MarkdownView (diff code fences)', () => {
             const screen = await renderScreen(<MarkdownView markdown={markdown} />);
             tree = screen.tree;
 
-            const diffView = screen.findByType('DiffFilesListView' as any);
+            const diffView = screen.findByType(DiffFilesListView);
             expect(diffView).not.toBeNull();
             expect(diffView.props.virtualizedListLayout).toBe('intrinsic');
-            expect(screen.findAllByType('CodeBlockView' as any)).toHaveLength(0);
+            expect(screen.findAllByType(CodeBlockView)).toHaveLength(0);
 
             expect(screen.findByTestId('markdown-code-block-toggle:code')).not.toBeNull();
             await screen.pressByTestIdAsync('markdown-code-block-toggle:code');
 
-            expect(screen.findAllByType('DiffFilesListView' as any)).toHaveLength(0);
-            const codeView = screen.findByType('CodeBlockView' as any);
+            expect(screen.findAllByType(DiffFilesListView)).toHaveLength(0);
+            const codeView = screen.findByType(CodeBlockView);
             expect(codeView).not.toBeNull();
             expect(codeView.props.code).toBe(diffContent);
         } finally {
@@ -89,7 +77,7 @@ describe('MarkdownView (diff code fences)', () => {
     it('falls back to CodeBlockView when diff fenced block exceeds tokenization budget', async () => {
         const { MarkdownView } = await import('./MarkdownView');
 
-        tokenizationMaxBytes = 10;
+        storage.getState().applySettingsLocal({ filesDiffTokenizationMaxBytes: 10 });
         const codeContent = ['diff --git a/a.ts b/a.ts', '+const a = 2'].join('\n');
         const markdown = ['```diff', codeContent, '```'].join('\n');
 
@@ -98,11 +86,10 @@ describe('MarkdownView (diff code fences)', () => {
             const screen = await renderScreen(<MarkdownView markdown={markdown} />);
             tree = screen.tree;
 
-            expect(screen.findAllByType('DiffFilesListView' as any)).toHaveLength(0);
-            expect(screen.findAllByType('CodeBlockView' as any)).toHaveLength(1);
-            expect(screen.findByType('CodeBlockView' as any).props.code).toBe(codeContent);
+            expect(screen.findAllByType(DiffFilesListView)).toHaveLength(0);
+            expect(screen.findAllByType(CodeBlockView)).toHaveLength(1);
+            expect(screen.findByType(CodeBlockView).props.code).toBe(codeContent);
         } finally {
-            tokenizationMaxBytes = 1_000_000;
             act(() => {
                 tree?.unmount();
             });
@@ -120,9 +107,9 @@ describe('MarkdownView (diff code fences)', () => {
             const screen = await renderScreen(<MarkdownView markdown={markdown} />);
             tree = screen.tree;
 
-            expect(screen.findAllByType('DiffFilesListView' as any)).toHaveLength(0);
-            expect(screen.findAllByType('CodeBlockView' as any)).toHaveLength(1);
-            expect(screen.findByType('CodeBlockView' as any).props.code).toBe(codeContent);
+            expect(screen.findAllByType(DiffFilesListView)).toHaveLength(0);
+            expect(screen.findAllByType(CodeBlockView)).toHaveLength(1);
+            expect(screen.findByType(CodeBlockView).props.code).toBe(codeContent);
         } finally {
             act(() => {
                 tree?.unmount();
@@ -147,8 +134,8 @@ describe('MarkdownView (diff code fences)', () => {
             const screen = await renderScreen(React.createElement(MarkdownView as any, { markdown, variant: 'thinking' }));
             tree = screen.tree;
 
-            expect(screen.findAllByType('DiffFilesListView' as any)).toHaveLength(0);
-            expect(screen.findAllByType('CodeBlockView' as any)).toHaveLength(0);
+            expect(screen.findAllByType(DiffFilesListView)).toHaveLength(0);
+            expect(screen.findAllByType(CodeBlockView)).toHaveLength(0);
 
             const textContent = screen.getTextContent();
             const hasDiffLine = textContent.includes('diff --git a/a.ts b/a.ts');

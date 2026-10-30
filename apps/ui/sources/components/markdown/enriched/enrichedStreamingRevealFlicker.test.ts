@@ -67,6 +67,8 @@ describe('enriched streaming reveal — source-append bounding (live flicker 202
         for (const range of ranges) {
             expect(range.start).toBeGreaterThanOrEqual('hello world'.length);
         }
+        const parts = splitStreamingRevealTextParts({ text: currentRendered, startOffset: 0, activeRanges: ranges });
+        expect(parts.filter(part => part.animated).map(part => part.text)).toEqual(['and', 'more']);
     });
 });
 

@@ -8,6 +8,7 @@ import type { ASTNode } from 'react-native-enriched-markdown/src/web/types';
 import { installMarkdownCommonModuleMocks } from './markdownTestHelpers';
 import type { MarkdownImageResolver } from './markdownImages';
 import type { MarkdownSourceRangeAction } from './MarkdownView';
+import { MarkdownCodeBlock } from './MarkdownCodeBlock';
 
 declare global {
     // eslint-disable-next-line no-var
@@ -21,11 +22,6 @@ installMarkdownCommonModuleMocks();
 const documentImages: MarkdownImageResolver = {
     resolve: () => ({ kind: 'blocked' }), remoteLoaded: false, onLoadRemote() {},
 };
-
-vi.mock('./MarkdownCodeBlock', () => ({
-    MarkdownCodeBlock: (props: Record<string, unknown>) =>
-        React.createElement('MarkdownCodeBlock', props),
-}));
 
 vi.mock('./MermaidRenderer', () => ({
     MermaidRenderer: (props: Record<string, unknown>) =>
@@ -169,26 +165,38 @@ describe('MarkdownView (enriched renderer)', () => {
 
         const enrichedRuns = screen.findAllByType('EnrichedMarkdownText');
         expect(enrichedRuns.map((node) => node.props.markdown)).toEqual(['Before', 'After']);
-        expect(screen.findAllByType('MarkdownCodeBlock')).toHaveLength(1);
+        expect(screen.findAllByType(MarkdownCodeBlock)).toHaveLength(1);
     });
 
     it('lets callers handle enriched markdown links before opening externally', async () => {
         const { MarkdownView } = await import('./MarkdownView');
         const onLinkPress = vi.fn(() => true);
+        const external = await import('@/utils/url/requestOpenExternalUrl');
+        // Observe the real front door without substituting its admission or OS behavior.
+        const openExternal = vi.spyOn(external, 'requestOpenExternalUrl');
+        try {
+            const screen = await renderScreen(
+                React.createElement(MarkdownView as any, {
+                    markdown: '[src](http://localhost:18829/repo/src/index.ts:8)',
+                    selectable: true,
+                    profile: 'transcript',
+                    onLinkPress,
+                }),
+            );
 
-        const screen = await renderScreen(
-            React.createElement(MarkdownView as any, {
-                markdown: '[src](http://localhost:18829/repo/src/index.ts:8)',
-                selectable: true,
-                profile: 'transcript',
-                onLinkPress,
-            }),
-        );
+            const enrichedRun = screen.findByType('EnrichedMarkdownText');
+            const event = { url: 'http://localhost:18829/repo/src/index.ts:8' };
+            await act(async () => { enrichedRun.props.onLinkPress(event); });
+            expect(onLinkPress).toHaveBeenCalledWith(event.url);
+            expect(openExternal).not.toHaveBeenCalled();
 
-        const enrichedRun = screen.findByType('EnrichedMarkdownText');
-        enrichedRun.props.onLinkPress({ url: 'http://localhost:18829/repo/src/index.ts:8' });
-
-        expect(onLinkPress).toHaveBeenCalledWith('http://localhost:18829/repo/src/index.ts:8');
+            onLinkPress.mockReturnValue(false);
+            await act(async () => { enrichedRun.props.onLinkPress(event); });
+            expect(openExternal).toHaveBeenCalledOnce();
+            expect(openExternal).toHaveBeenCalledWith(event.url);
+        } finally {
+            openExternal.mockRestore();
+        }
     });
 
     it.each([
@@ -361,6 +369,7 @@ describe('MarkdownView (enriched renderer)', () => {
         const screen = await renderScreen(<ReviewModeHarness />);
 
         const inactive = screen.findByProps({ testID: 'markdown-source-range-trigger:1-1' });
+        const content = screen.findByType('EnrichedMarkdownText');
         expect(inactive.props.accessibilityRole).toBeUndefined();
 
         await act(async () => {
@@ -368,7 +377,8 @@ describe('MarkdownView (enriched renderer)', () => {
         });
 
         const active = screen.findByProps({ testID: 'markdown-source-range-trigger:1-1' });
-        expect(active.type).toBe(inactive.type);
+        expect(active).toBe(inactive);
+        expect(screen.findByType('EnrichedMarkdownText')).toBe(content);
         expect(active.props.accessibilityRole).toBe('button');
 
         active.props.onPress();

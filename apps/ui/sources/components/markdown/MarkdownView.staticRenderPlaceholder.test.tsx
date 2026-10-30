@@ -86,7 +86,6 @@ describe('MarkdownView (static render placeholder)', () => {
         animatedCapture.sequenceStepCounts.length = 0;
         animatedCapture.loopStartCount = 0;
         animatedCapture.loopStopCount = 0;
-        vi.resetModules();
         vi.useFakeTimers();
     });
 
@@ -159,7 +158,7 @@ describe('MarkdownView (static render placeholder)', () => {
         const { MarkdownView } = await import('./MarkdownView');
 
         const screen = await renderScreen(
-            <MarkdownView markdown="Hello **world**" profile="transcript" streamingMode="streaming" />,
+            <MarkdownView markdown="Hello **world**" profile="transcript" streamingMode="streaming" staticRenderPlaceholderEnabled />,
         );
 
         await act(async () => {
