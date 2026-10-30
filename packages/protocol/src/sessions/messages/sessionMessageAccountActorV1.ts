@@ -11,10 +11,11 @@ import { SessionInputAdmissionReceiptV1Schema } from './sessionInputAdmission.js
  * message's actor.
  *
  * It carries the exact admitted Account identity plus that Account's current
- * neutral display profile — never the raw admission receipt, the admitted
- * `sessionRelationship`, the grant source, or any access fact. Historical
- * authorship must not change when grant topology changes, so admission
- * relationship is deliberately absent.
+ * neutral display profile and, when a resource owner supplies it, a current/former
+ * presentation relationship. That relationship is diagnostic display state only:
+ * never the raw admission receipt, admitted `sessionRelationship`, grant source,
+ * access level, or authorization evidence. Historical authorship never changes
+ * when grant topology changes.
  *
  * `profile: null` is the expected shape after Home Account deletion: the
  * immutable receipt still proves who authored the message.
@@ -23,6 +24,7 @@ export const SessionMessageAccountActorV1Schema = lazyZodSchema(() => z.strictOb
   v: z.literal(1),
   accountId: z.string().check(z.trim(), z.minLength(1), z.maxLength(191)),
   profile: z.nullable(AccountDisplayProfileV1Schema),
+  accessibility: z.optional(z.enum(['current', 'former'])),
 }));
 
 export type SessionMessageAccountActorV1 = z.infer<typeof SessionMessageAccountActorV1Schema>;

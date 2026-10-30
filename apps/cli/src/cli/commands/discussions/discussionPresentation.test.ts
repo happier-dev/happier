@@ -58,7 +58,8 @@ describe('Discussion human presentation', () => {
 
   it('uses the approved deleted-Account fallback without exposing the raw id', () => {
     const output = formatDiscussionMessageForHuman(message({
-      accountActor: { v: 1, accountId: 'private-account-id', profile: null },
+      accountActor: { v: 1, accountId: 'private-account-id', accessibility: 'former',
+        profile: { name: 'Retained name', firstName: null, lastName: null, username: null, avatarUrl: null } },
     }));
 
     expect(output).toBe('1. Former member: Ready');

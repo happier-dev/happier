@@ -3,6 +3,7 @@ import { DiscussionCreateResultV1Schema, DiscussionDetailsResultV1Schema, Discus
 import type { DiscussionMessageContentV1, DiscussionOpenedMessageV1, DiscussionOpenedSummaryV1 } from '@happier-dev/protocol';
 import { readDiscussionMessagePartsV1 } from '@happier-dev/protocol/discussions/content';
 import { formatSessionInputMentionMarkerV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
+import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 
 import type {
   ActionCliPresentation,
@@ -59,15 +60,11 @@ function resolveActorName(actor: DiscussionOpenedMessageV1['accountActor']): Rea
   label: string;
   isUsername: boolean;
 }> | null {
-  const profile = actor?.profile ?? null;
-  if (profile === null) return null;
-  const fullName = [profile.firstName, profile.lastName]
-    .map((part) => part?.trim() ?? '')
-    .filter(Boolean)
-    .join(' ');
-  if (fullName) return { label: fullName, isUsername: false };
-  const username = profile.username?.trim();
-  return username ? { label: username, isUsername: true } : null;
+  if (!actor) return null;
+  const classification = classifyAccountActorLabelV1(actor, false);
+  if (classification.kind === 'former') return { label: 'Former member', isUsername: false };
+  if (classification.kind !== 'profile') return null;
+  return { label: classification.label, isUsername: classification.source === 'username' };
 }
 
 /**
@@ -109,7 +106,6 @@ function renderContent(
 function renderAccountActor(message: DiscussionOpenedMessageV1): string {
   const actor = message.accountActor;
   if (actor === null) return 'Unknown author';
-  if (actor.profile === null) return 'Former member';
   const name = resolveActorName(actor);
   if (name === null) return 'Happier member';
   return name.isUsername ? `@${name.label}` : name.label;

@@ -33,6 +33,21 @@ describe('SessionMessageAccountActorV1Schema', () => {
     }).profile).toBeNull();
   });
 
+  it('accepts an explicit current/former presentation relationship without treating it as access', () => {
+    expect(SessionMessageAccountActorV1Schema.parse({
+      v: 1,
+      accountId: 'acc_alice',
+      profile: { firstName: 'Alice', lastName: null, username: null, avatarUrl: null },
+      accessibility: 'former',
+    }).accessibility).toBe('former');
+    expect(SessionMessageAccountActorV1Schema.safeParse({
+      v: 1,
+      accountId: 'acc_alice',
+      profile: null,
+      accessibility: 'owner',
+    }).success).toBe(false);
+  });
+
   it('rejects admission relationship, receipt, and access disclosure', () => {
     for (const forbidden of [
       { sessionRelationship: 'owner' },
