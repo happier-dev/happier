@@ -2,17 +2,34 @@ import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
-const { emitUpdate } = vi.hoisted(() => ({
-    emitUpdate: vi.fn(),
-}));
+import { eventRouter, type ClientConnection } from "@/app/events/eventRouter";
+import { createFakeSocket } from "../../testkit/socketHarness";
 
-vi.mock("@/app/events/eventRouter", async () => {
-    const actual = await vi.importActual<typeof import("@/app/events/eventRouter")>("@/app/events/eventRouter");
-    return {
-        ...actual,
-        eventRouter: { emitUpdate },
-    };
-});
+const updateObservers = new Map<string, { user: ReturnType<typeof createFakeSocket>; machine: ReturnType<typeof createFakeSocket>; connections: ClientConnection[] }>();
+
+function observeAccountUpdates(userId: string) {
+    const existing = updateObservers.get(userId);
+    if (existing) return existing;
+    const user = createFakeSocket({ id: `user-${userId}`, data: { userId } });
+    const machine = createFakeSocket({ id: `machine-${userId}`, data: { userId } });
+    // Socket.IO is the transport boundary; all routing, projection and publication stay real.
+    const connections: ClientConnection[] = [
+        { connectionType: "user-scoped", userId, socket: user as unknown as ClientConnection["socket"] },
+        { connectionType: "machine-scoped", userId, machineId: "test-machine", socket: machine as unknown as ClientConnection["socket"] },
+    ];
+    for (const connection of connections) eventRouter.addConnection(userId, connection);
+    const observer = { user, machine, connections };
+    updateObservers.set(userId, observer);
+    return observer;
+}
+
+function closeUpdateObservers() {
+    for (const [userId, observer] of updateObservers) {
+        for (const connection of observer.connections) eventRouter.removeConnection(userId, connection);
+    }
+    updateObservers.clear();
+}
+
 
 import { db } from "@/storage/db";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -45,6 +62,7 @@ function createTestApp() {
             return reply.code(401).send({ error: "Unauthorized" });
         }
         request.userId = userId;
+        observeAccountUpdates(userId);
     });
 
     return trackApp(typed);
@@ -76,6 +94,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
     });
     afterEach(async () => {
         await closeTrackedApps();
+        closeUpdateObservers();
         harness.resetEnv();
         vi.unstubAllGlobals();
         vi.clearAllMocks();
@@ -140,10 +159,8 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
         });
         expect(change).toEqual(expect.objectContaining({ cursor: expect.any(Number) }));
         expect(change!.hint).toEqual(openAiCodexChange.hint);
-        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
-            userId: user.id,
-            recipientFilter: { type: "user-scoped-only" },
-            payload: expect.objectContaining({
+        expect(observeAccountUpdates(user.id).user.emit).toHaveBeenCalledWith(
+            "update", expect.objectContaining({
                 seq: change!.cursor,
                 body: expect.objectContaining({
                     t: "update-account",
@@ -155,11 +172,9 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
                     ]),
                 }),
             }),
-        }));
-        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
-            userId: user.id,
-            recipientFilter: { type: "user-machine-scoped-only" },
-            payload: expect.objectContaining({
+        );
+        expect(observeAccountUpdates(user.id).machine.emit).toHaveBeenCalledWith(
+            "update", expect.objectContaining({
                 seq: change!.cursor,
                 body: expect.objectContaining({
                     t: "update-account",
@@ -174,7 +189,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
                     ]),
                 }),
             }),
-        }));
+        );
     });
 
     it("rejects sealed ciphertext longer than CONNECTED_SERVICE_CREDENTIAL_MAX_LEN", async () => {
@@ -856,17 +871,15 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
         });
         expect(change).toEqual(expect.objectContaining({ cursor: expect.any(Number) }));
         expect(change!.hint).toEqual(openAiCodexChange.hint);
-        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
-            userId: user.id,
-            recipientFilter: { type: "user-scoped-only" },
-            payload: expect.objectContaining({
+        expect(observeAccountUpdates(user.id).user.emit).toHaveBeenCalledWith(
+            "update", expect.objectContaining({
                 seq: change!.cursor,
                 body: expect.objectContaining({
                     t: "update-account",
                     connectedServicesV2: [],
                 }),
             }),
-        }));
+        );
     });
 
     it("fences stale refresh persistence and health with the canonical credential revision", async () => {
@@ -911,7 +924,8 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             },
         });
         expect(staleHealth.statusCode).toBe(409);
-        expect(emitUpdate).not.toHaveBeenCalled();
+        expect(observeAccountUpdates(user.id).user.emit).not.toHaveBeenCalled();
+        expect(observeAccountUpdates(user.id).machine.emit).not.toHaveBeenCalled();
     });
 
     it("treats an explicit null revision as expect-absence", async () => {

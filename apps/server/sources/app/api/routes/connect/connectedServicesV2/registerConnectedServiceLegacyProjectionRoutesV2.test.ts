@@ -4,19 +4,19 @@ import {
     validatorCompiler,
     ZodTypeProvider,
 } from "fastify-type-provider-zod";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Fastify as HappierFastify } from "../../../types";
 import { registerConnectedServiceCredentialRoutesV2 } from "./registerConnectedServiceCredentialRoutesV2";
 import { registerConnectedServiceProfilesRoutesV2 } from "./registerConnectedServiceProfilesRoutesV2";
 
-const repository = vi.hoisted(() => ({
-    listQualifiedConnectedAccounts: vi.fn(),
-    readQualifiedConnectedServiceCredentialForLegacyProjection: vi.fn(),
-    deleteQualifiedConnectedServiceCredentialForStorageMode: vi.fn(),
-}));
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { mutateQualifiedConnectedServiceCredential } from "../qualifiedConnectedAccounts/credentialRepository";
+import { resolveLegacyServiceAccountTokenIdentityFields } from "../qualifiedConnectedAccounts/identity";
 
-vi.mock("../qualifiedConnectedAccounts/credentialRepository", () => repository);
+let accountId: string;
 
 function createTestApp(): HappierFastify {
     const app = Fastify({ logger: false });
@@ -25,7 +25,7 @@ function createTestApp(): HappierFastify {
     const typed =
         app.withTypeProvider<ZodTypeProvider>() as HappierFastify;
     typed.decorate("authenticate", async (request: FastifyRequest) => {
-        request.userId = "account-owner";
+        request.userId = accountId;
     });
     registerConnectedServiceProfilesRoutesV2(typed);
     registerConnectedServiceCredentialRoutesV2(typed, {
@@ -39,39 +39,54 @@ const geminiService = {
     localId: "gemini-account",
 } as const;
 
-function account(authenticationModeId: string, accountId: string) {
-    return {
-        ref: { service: geminiService, accountId },
-        status: "connected" as const,
+async function retainCredential(authenticationModeId: string, profileId: string) {
+    const kind = authenticationModeId === "legacy-oauth-unsupported" ? "oauth" : "token";
+    const identity = resolveLegacyServiceAccountTokenIdentityFields({ serviceId: "gemini", profileId, credentialKind: kind });
+    const result = await mutateQualifiedConnectedServiceCredential({
+        accountId,
+        ref: { service: geminiService, accountId: identity.connectedAccountId },
         authenticationModeId,
-        credentialRevision: "csr_1234567890123456789012",
-        configurationReady: false,
-        configurationRevision: null,
-        providerIdentity: null,
-        scopes: [],
-        expiresAt: null,
-        lastUsedAt: null,
-    };
+        expectedCredentialRevision: null,
+        content: { t: "encrypted", c: "ciphertext" },
+        metadata: { scopes: [] },
+        ...(authenticationModeId === "legacy-oauth-unsupported" ? {
+            legacyIdentity: { serviceId: "gemini", profileId, credentialKind: kind },
+        } : {}),
+    });
+    if (result.status !== "written") throw new Error("Expected qualified credential create");
 }
 
 describe("Connected Service V2 old-reader projection", () => {
     const apps: HappierFastify[] = [];
+    let harness: LightSqliteHarness;
+
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-legacy-projection-",
+            initEncrypt: true,
+        });
+    }, 120_000);
+    beforeEach(async () => {
+        const owner = await db.account.create({
+            data: { ...createSignedAccountContentBinding(), encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        accountId = owner.id;
+    });
 
     afterEach(async () => {
-        repository.listQualifiedConnectedAccounts.mockReset();
-        repository
-            .readQualifiedConnectedServiceCredentialForLegacyProjection
-            .mockReset();
         await Promise.all(apps.splice(0).map(async (app) => {
             await app.close();
         }));
+        await db.account.deleteMany();
+    });
+    afterAll(async () => {
+        await harness.close();
     });
 
     it("omits unsupported qualified modes while retaining supported profiles", async () => {
-        repository.listQualifiedConnectedAccounts.mockResolvedValue([
-            account("legacy-oauth-unsupported", "old-oauth"),
-            account("api-key", "api-key"),
-        ]);
+        await retainCredential("legacy-oauth-unsupported", "old-oauth");
+        await retainCredential("api-key", "api-key");
         const app = createTestApp();
         apps.push(app);
         await app.ready();
@@ -98,21 +113,7 @@ describe("Connected Service V2 old-reader projection", () => {
     ] as const)(
         "projects credential mode %s with status %s",
         async (authenticationModeId, expectedStatus, expectedKind) => {
-            repository
-                .readQualifiedConnectedServiceCredentialForLegacyProjection
-                .mockResolvedValue({
-                    status: "resolved",
-                    credential: {
-                        ...account(authenticationModeId, "work"),
-                        content: {
-                            t: "encrypted",
-                            c: "ciphertext",
-                        },
-                        metadata: {
-                            scopes: [],
-                        },
-                    },
-                });
+            await retainCredential(authenticationModeId, "work");
             const app = createTestApp();
             apps.push(app);
             await app.ready();

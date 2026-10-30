@@ -64,23 +64,6 @@ describe("createExternalAuthorizeUrl", () => {
         repeatKeyDelete.mockResolvedValue(undefined);
     });
 
-    it("returns null when oauth_state backend is unavailable", async () => {
-        createOauthStateToken.mockRejectedValue(new OAuthStateUnavailableError());
-
-        const provider = createProviderStub();
-
-        const result = await createExternalAuthorizeUrl({
-            flow: "connect",
-            providerId: "github",
-            provider,
-            reference: testProviderReference,
-            env: {},
-            userId: "u1",
-        });
-
-        expect(result).toBeNull();
-        expect(provider.resolveAuthorizeUrl).not.toHaveBeenCalled();
-    });
 
     it("cleans up oauth_state repeatKey when oauth_state backend is unavailable", async () => {
         createOauthStateToken.mockRejectedValue(new OAuthStateUnavailableError());
@@ -97,6 +80,7 @@ describe("createExternalAuthorizeUrl", () => {
         });
 
         expect(result).toBeNull();
+        expect(provider.resolveAuthorizeUrl).not.toHaveBeenCalled();
         expect(repeatKeyDelete).toHaveBeenCalledWith({
             where: { key: "oauth_state_sid_123" },
         });

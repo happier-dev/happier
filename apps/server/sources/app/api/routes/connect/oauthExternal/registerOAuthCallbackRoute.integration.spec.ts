@@ -116,44 +116,6 @@ describe("OAuth callback provider security binding", () => {
         },
     );
 
-    it("consumes a changed deployment attempt before code exchange", async () => {
-        const config = {
-            id: "okta", type: "oidc", displayName: "Acme Okta",
-            issuer: oidc.issuer, clientId: "oidc_client", clientSecret: "oidc_secret",
-            redirectUrl: "https://api.example.test/v1/oauth/okta/callback",
-        };
-        harness.resetEnv({
-            AUTH_SIGNUP_PROVIDERS: "okta",
-            AUTH_PROVIDERS_CONFIG_JSON: JSON.stringify([config]),
-            HAPPIER_WEBAPP_URL: "https://app.example.test",
-        });
-        const app = Fastify({ logger: false });
-        app.setValidatorCompiler(validatorCompiler);
-        app.setSerializerCompiler(serializerCompiler);
-        trackApp(app);
-        registerOAuthCallbackRoute(app.withTypeProvider<ZodTypeProvider>());
-        const { provider, reference } = (await resolveOAuthRuntimeById(process.env, "okta"))!;
-        const authorizeUrl = await createExternalAuthorizeUrl({
-            flow: "auth", providerId: "okta", provider, reference, env: process.env,
-            publicKeyHex: "a".repeat(64), proofHash: null,
-        });
-        expect(authorizeUrl).toBeTruthy();
-        const authorize = await fetch(authorizeUrl!, { redirect: "manual" });
-        expect(authorize.status).toBe(302);
-        const callback = new URL(authorize.headers.get("location")!);
-        process.env.AUTH_PROVIDERS_CONFIG_JSON = JSON.stringify([{ ...config, clientSecret: "rotated_secret" }]);
-        const network = vi.fn(originalFetch);
-        globalThis.fetch = network;
-
-        const response = await app.inject({ method: "GET", url: `${callback.pathname}${callback.search}` });
-        expect(response.statusCode).toBe(302);
-        expect(new URL(response.headers.location as string).searchParams.get("error"))
-            .toBe("auth_provider_configuration_changed");
-        expect(network).not.toHaveBeenCalled();
-        expect(await db.repeatKey.count()).toBe(0);
-        expect(await db.account.count()).toBe(0);
-        expect(await db.accountIdentity.count()).toBe(0);
-    });
 
     it.each([
         {

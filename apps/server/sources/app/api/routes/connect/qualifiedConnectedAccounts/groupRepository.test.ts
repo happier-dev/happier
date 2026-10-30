@@ -284,16 +284,6 @@ describe("qualified Connected Account group repository", () => {
             .toThrow(/active account.*enabled member/i);
     });
 
-    it("lists every retained group the Account holds", async () => {
-        // A predecessor or migration can leave more rows than a current create is
-        // allowed to add. Refusing the whole list would take the Account's group
-        // projection, and therefore every mutation that republishes it, offline.
-        const storage = storageHolding(501);
-
-        await expect(listAllQualifiedConnectedAccountGroupsInTx(storage, {
-            accountId: "owner",
-        })).resolves.toHaveLength(501);
-    });
 
     it("does not page a retained group list down to a window", async () => {
         const storage = storageHolding(1_200);

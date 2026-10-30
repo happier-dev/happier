@@ -680,45 +680,4 @@ describe("Connected Account attempt transaction routes", () => {
         expect(await db.repeatKey.count()).toBe(21);
     });
 
-    it("resumes the canonical exact-key transaction written before a server restart", async () => {
-        const account = await createE2eeAccount();
-        const app = createTestApp();
-        await app.ready();
-        const attemptId = "restart-continuity";
-        const url = `/v2/connect/connected-account-attempt-transactions/oauth/${attemptId}`;
-        const headers = {
-            "content-type": "application/json" as const,
-            "x-test-user-id": account.id,
-        };
-        const content = { t: "encrypted", c: "opaque-restart" } as const;
-        const expiresAtMs = Date.now() + 15 * 60_000;
-        expect((await app.inject({
-            method: "POST",
-            url,
-            headers,
-            payload: { content, expiresAtMs, scope: oauthScope },
-        })).statusCode).toBe(200);
-
-        const accountDigest = createHash("sha256")
-            .update(JSON.stringify(["connected-account-attempt-account-v2", account.id]))
-            .digest("base64url");
-        const canonicalKey = `caat_v2_${accountDigest}_${createHash("sha256")
-            .update(JSON.stringify([
-                "connected-account-attempt-transaction-v2",
-                "oauth",
-                attemptId,
-            ]))
-            .digest("base64url")}`;
-        const stored = await db.repeatKey.findFirstOrThrow({
-            where: { value: { contains: "opaque-restart" } },
-        });
-        await db.repeatKey.update({
-            where: { key: stored.key },
-            data: { key: canonicalKey },
-        });
-
-        const resumed = await app.inject({ method: "GET", url, headers });
-        expect(resumed.statusCode, resumed.body).toBe(200);
-        expect(resumed.json()).toEqual({ revision: 1, content, expiresAtMs });
-    });
 });

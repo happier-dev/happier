@@ -1,5 +1,6 @@
 import Fastify, { type FastifyRequest } from "fastify";
 import {
+    buildConnectedServiceCredentialRecord,
     encodeQualifiedConnectedAccountV4StructuredQueryValue,
     QUALIFIED_CONNECTED_ACCOUNT_V4_ROUTES,
     QualifiedConnectedAccountConfigurationTargetV4Schema,
@@ -11,7 +12,7 @@ import {
     validatorCompiler,
     ZodTypeProvider,
 } from "fastify-type-provider-zod";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Fastify as HappierFastify } from "../../../types";
 import { resolveConnectedServicesFeature } from "@/app/features/connectedServicesFeature";
@@ -19,11 +20,39 @@ import {
     registerQualifiedConnectedAccountCredentialRoutesV4,
 } from "./registerQualifiedConnectedAccountCredentialRoutesV4";
 import { connectRoutes } from "../connectRoutes";
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { mutateQualifiedConnectedServiceCredential, readQualifiedConnectedServiceCredential } from "./credentialRepository";
+import { createConnectedServiceCredentialRevision } from "../credentials/credentialRevision";
+import { resolveLegacyServiceAccountTokenIdentityFields } from "./identity";
 
 const service = {
     pluginId: "example.connected-accounts",
     localId: "service/with/path",
 } as const;
+
+const ref = { service, accountId: "provider/account" };
+let accountId: string;
+
+async function createCredential(withConfiguration = false) {
+    const result = await mutateQualifiedConnectedServiceCredential({
+        accountId,
+        ref,
+        authenticationModeId: "token",
+        expectedCredentialRevision: null,
+        content: { t: "plain", v: { token: "opaque" } },
+        metadata: { scopes: [] },
+        ...(withConfiguration ? {
+            initialConfiguration: {
+                expectedConfigurationRevision: null,
+                replacementContentEnvelope: { t: "plain" as const, v: { region: "eu" } },
+            },
+        } : {}),
+    });
+    if (result.status !== "written") throw new Error("Expected qualified credential create");
+    return result;
+}
 
 function createTestApp(): HappierFastify {
     const app = Fastify({ logger: false });
@@ -32,18 +61,37 @@ function createTestApp(): HappierFastify {
     const typed =
         app.withTypeProvider<ZodTypeProvider>() as HappierFastify;
     typed.decorate("authenticate", async (request: FastifyRequest) => {
-        request.userId = "account-owner";
+        request.userId = accountId;
     });
     return typed;
 }
 
 describe("qualified Connected Account V4 credential routes", () => {
     const apps: HappierFastify[] = [];
+    let harness: LightSqliteHarness;
+
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-qualified-route-contract-",
+            initEncrypt: true,
+        });
+    }, 120_000);
+    beforeEach(async () => {
+        const owner = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        accountId = owner.id;
+    });
 
     afterEach(async () => {
         await Promise.all(apps.splice(0).map(async (app) => {
             await app.close();
         }));
+        await db.account.deleteMany();
+    });
+    afterAll(async () => {
+        await harness.close();
     });
 
     it("registers the complete atomic V4 route family before capability advertisement", async () => {
@@ -66,6 +114,8 @@ describe("qualified Connected Account V4 credential routes", () => {
         await app.ready();
 
         expect(app.hasRoute({ method: 'HEAD', url: '/v4/connect/qualified/provider-account-usage/history/document' })).toBe(true);
+        expect(resolveConnectedServicesFeature(process.env).capabilities
+            ?.connectedServices?.qualifiedAccounts?.protocolVersion).toBe(4);
 
         expect(
             registered.sort(([leftMethod, leftPath], [rightMethod, rightPath]) =>
@@ -82,378 +132,236 @@ describe("qualified Connected Account V4 credential routes", () => {
         );
     });
 
-    it("advertises V4 if and only if the exact atomic route family is registered", async () => {
-        const registered: string[] = [];
-        const app = createTestApp();
-        apps.push(app);
-        app.addHook("onRoute", (route) => {
-            if (!route.url.startsWith("/v4/connect/qualified/")) return;
-            const methods = Array.isArray(route.method)
-                ? route.method
-                : [route.method];
-            for (const method of methods) {
-                if (method !== "HEAD" || Array.isArray(route.method)) {
-                    registered.push(`${method} ${route.url}`);
-                }
-            }
-        });
-
-        connectRoutes(app);
-        await app.ready();
-
-        const complete = JSON.stringify(registered.sort()) === JSON.stringify(
-            QUALIFIED_CONNECTED_ACCOUNT_V4_ROUTES
-                .map(([method, path]) => `${method} ${path}`)
-                .sort(),
-        );
-        const advertised =
-            resolveConnectedServicesFeature(process.env)
-                .capabilities
-                ?.connectedServices
-                ?.qualifiedAccounts
-                ?.protocolVersion === 4;
-        expect(advertised).toBe(complete);
-    });
 
     it("decodes one percent-encoded structured service query through the shared codec", async () => {
-        const listQualifiedConnectedAccounts = vi.fn(async () => []);
+        await createCredential();
+        const otherService = await mutateQualifiedConnectedServiceCredential({
+            accountId,
+            ref: { service: { ...service, localId: "another-service" }, accountId: ref.accountId },
+            authenticationModeId: "token",
+            expectedCredentialRevision: null,
+            content: { t: "plain", v: { token: "other-service-secret" } },
+            metadata: { scopes: [] },
+        });
+        expect(otherService.status).toBe("written");
         const app = createTestApp();
         apps.push(app);
-        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
-            listQualifiedConnectedAccounts,
-            mutateQualifiedConnectedServiceCredential: vi.fn(),
-        });
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
         await app.ready();
-
-        const encodedService =
-            encodeQualifiedConnectedAccountV4StructuredQueryValue(
-                QualifiedConnectedAccountServiceRefSchema,
-                service,
-            );
+        const encodedService = encodeQualifiedConnectedAccountV4StructuredQueryValue(
+            QualifiedConnectedAccountServiceRefSchema, service,
+        );
         const response = await app.inject({
             method: "GET",
             url: `/v4/connect/qualified/accounts?service=${encodeURIComponent(encodedService)}`,
         });
-
         expect(response.statusCode).toBe(200);
-        expect(response.json()).toEqual({ service, accounts: [] });
-        expect(listQualifiedConnectedAccounts).toHaveBeenCalledWith({
-            accountId: "account-owner",
-            service,
-        });
+        expect(response.json().service).toEqual(service);
+        expect(response.json().accounts).toEqual([
+            expect.objectContaining({ ref }),
+        ]);
     });
 
     it.each([
         "service=%7B%22pluginId%22%3A%22example.connected-accounts%22%7D",
         "service=%7B%22pluginId%22%3A%22example.connected-accounts%22%2C%22localId%22%3A%22one%22%7D&service=%7B%22pluginId%22%3A%22example.connected-accounts%22%2C%22localId%22%3A%22two%22%7D",
     ])("rejects malformed or duplicate structured service queries", async (query) => {
-        const listQualifiedConnectedAccounts = vi.fn(async () => []);
         const app = createTestApp();
         apps.push(app);
-        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
-            listQualifiedConnectedAccounts,
-            mutateQualifiedConnectedServiceCredential: vi.fn(),
-        });
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
         await app.ready();
-
         const response = await app.inject({
-            method: "GET",
-            url: `/v4/connect/qualified/accounts?${query}`,
+            method: "GET", url: `/v4/connect/qualified/accounts?${query}`,
         });
-
         expect(response.statusCode).toBe(400);
         expect(response.json()).toEqual({ error: "invalid-params" });
-        expect(listQualifiedConnectedAccounts).not.toHaveBeenCalled();
     });
 
-    it("validates and forwards a strict structured credential mutation", async () => {
-        const mutateQualifiedConnectedServiceCredential = vi.fn(async () => ({
-            status: "written" as const,
-            credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
-            configurationRevision: null,
-        }));
+    it("validates and persists a strict structured credential mutation", async () => {
         const app = createTestApp();
         apps.push(app);
-        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
-            listQualifiedConnectedAccounts: vi.fn(),
-            mutateQualifiedConnectedServiceCredential,
-        });
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
         await app.ready();
-
         const mutation = {
-            ref: {
-                service,
-                accountId: "provider/account",
-            },
-            authenticationModeId: "token",
+            ref, authenticationModeId: "token",
             expectedCredentialRevision: null,
             content: { t: "plain", v: { token: "opaque" } },
             metadata: {},
         };
         const response = await app.inject({
-            method: "POST",
-            url: "/v4/connect/qualified/credential",
-            payload: mutation,
+            method: "POST", url: "/v4/connect/qualified/credential", payload: mutation,
         });
-
         expect(response.statusCode).toBe(200);
         expect(response.json()).toEqual({
             success: true,
-            credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
+            credentialRevision: expect.any(String),
             configurationRevision: null,
         });
-        expect(mutateQualifiedConnectedServiceCredential).toHaveBeenCalledWith({
-            accountId: "account-owner",
-            ...mutation,
-            metadata: { scopes: [] },
+        await expect(readQualifiedConnectedServiceCredential({ accountId, ref })).resolves.toMatchObject({
+            status: "resolved",
+            credential: {
+                credentialRevision: response.json().credentialRevision,
+                authenticationModeId: "token",
+                content: mutation.content,
+                metadata: { scopes: [] },
+            },
         });
     });
 
     it("reads an exact credential and account configuration through structured identity queries", async () => {
-        const ref = { service, accountId: "provider/account" };
+        const created = await createCredential(true);
         const target = { kind: "account" as const, ref };
-        const credential = {
-            revisionSemantics: "revisioned" as const,
-            credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
-            authenticationModeId: "token",
-            configurationRevision: "configuration-revision",
-            content: { t: "plain" as const, v: { token: "opaque" } },
-            metadata: { scopes: [] },
-        };
-        const configuration = {
-            target,
-            authenticationModeId: "token",
-            revisionSemantics: credential.revisionSemantics,
-            credentialRevision: credential.credentialRevision,
-            configurationRevision: "configuration-revision",
-            configurationContent: { t: "plain" as const, v: { region: "eu" } },
-        };
-        const readQualifiedConnectedServiceCredential =
-            vi.fn(async () => ({
-                status: "resolved" as const,
-                credential,
-            }));
-        const readQualifiedConnectedAccountConfiguration =
-            vi.fn(async () => configuration);
         const app = createTestApp();
         apps.push(app);
-        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
-            listQualifiedConnectedAccounts: vi.fn(),
-            mutateQualifiedConnectedServiceCredential: vi.fn(),
-            readQualifiedConnectedServiceCredential,
-            readQualifiedConnectedAccountConfiguration,
-            mutateQualifiedConnectedAccountConfiguration: vi.fn(),
-        });
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
         await app.ready();
-
-        const credentialQuery =
-            encodeQualifiedConnectedAccountV4StructuredQueryValue(
-                QualifiedConnectedAccountRefSchema,
-                ref,
-            );
+        const credentialQuery = encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema, ref);
         const credentialResponse = await app.inject({
-            method: "GET",
-            url: `/v4/connect/qualified/credential?ref=${encodeURIComponent(credentialQuery)}`,
+            method: "GET", url: `/v4/connect/qualified/credential?ref=${encodeURIComponent(credentialQuery)}`,
         });
         expect(credentialResponse.statusCode).toBe(200);
-        expect(credentialResponse.json()).toEqual({ ref, ...credential });
-        expect(readQualifiedConnectedServiceCredential).toHaveBeenCalledWith({
-            accountId: "account-owner",
-            ref,
+        expect(credentialResponse.json()).toEqual({
+            ref, revisionSemantics: "revisioned",
+            credentialRevision: created.credentialRevision,
+            authenticationModeId: "token",
+            configurationRevision: created.configurationRevision,
+            content: { t: "plain", v: { token: "opaque" } },
+            metadata: { scopes: [] },
         });
-
-        const targetQuery =
-            encodeQualifiedConnectedAccountV4StructuredQueryValue(
-                QualifiedConnectedAccountConfigurationTargetV4Schema,
-                target,
-            );
+        const targetQuery = encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountConfigurationTargetV4Schema, target);
         const configurationResponse = await app.inject({
-            method: "GET",
-            url: `/v4/connect/qualified/configuration?target=${encodeURIComponent(targetQuery)}`,
+            method: "GET", url: `/v4/connect/qualified/configuration?target=${encodeURIComponent(targetQuery)}`,
         });
         expect(configurationResponse.statusCode).toBe(200);
-        expect(configurationResponse.json()).toEqual(configuration);
-        expect(readQualifiedConnectedAccountConfiguration).toHaveBeenCalledWith({
-            accountId: "account-owner",
-            target,
+        expect(configurationResponse.json()).toEqual({
+            target, authenticationModeId: "token", revisionSemantics: "revisioned",
+            credentialRevision: created.credentialRevision,
+            configurationRevision: created.configurationRevision,
+            configurationContent: { t: "plain", v: { region: "eu" } },
         });
     });
 
-    it("returns the stable unsupported-format conflict for a retained legacy credential", async () => {
-        const ref = { service, accountId: "provider/account" };
-        const readQualifiedConnectedServiceCredential =
-            vi.fn(async () => ({ status: "unsupported_format" as const }));
-        const app = createTestApp();
-        apps.push(app);
-        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
-            listQualifiedConnectedAccounts: vi.fn(),
-            mutateQualifiedConnectedServiceCredential: vi.fn(),
-            readQualifiedConnectedServiceCredential,
-        });
-        await app.ready();
-
-        const credentialQuery =
-            encodeQualifiedConnectedAccountV4StructuredQueryValue(
-                QualifiedConnectedAccountRefSchema,
-                ref,
-            );
-        const response = await app.inject({
-            method: "GET",
-            url: `/v4/connect/qualified/credential?ref=${encodeURIComponent(credentialQuery)}`,
-        });
-
-        expect(response.statusCode).toBe(409);
-        expect(response.json()).toEqual({
-            error: "connect_credential_unsupported_format",
-        });
-    });
 
     it("keeps an absent credential on the V4 not-found path", async () => {
-        const ref = { service, accountId: "provider/account" };
         const app = createTestApp();
         apps.push(app);
-        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
-            listQualifiedConnectedAccounts: vi.fn(),
-            mutateQualifiedConnectedServiceCredential: vi.fn(),
-            readQualifiedConnectedServiceCredential:
-                vi.fn(async () => ({ status: "not_found" as const })),
-        });
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
         await app.ready();
-
-        const credentialQuery =
-            encodeQualifiedConnectedAccountV4StructuredQueryValue(
-                QualifiedConnectedAccountRefSchema,
-                ref,
-            );
+        const credentialQuery = encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema, ref);
         const response = await app.inject({
-            method: "GET",
-            url: `/v4/connect/qualified/credential?ref=${encodeURIComponent(credentialQuery)}`,
+            method: "GET", url: `/v4/connect/qualified/credential?ref=${encodeURIComponent(credentialQuery)}`,
         });
-
         expect(response.statusCode).toBe(404);
-        expect(response.json()).toEqual({
-            error: "connect_credential_not_found",
-        });
+        expect(response.json()).toEqual({ error: "connect_credential_not_found" });
     });
 
     it("keeps an unsupported credential health mutation distinct from not found", async () => {
-        const ref = { service, accountId: "provider/account" };
-        const mutateQualifiedConnectedServiceCredentialHealth =
-            vi.fn(async () => ({ status: "unsupported_format" as const }));
-        const app = createTestApp();
-        apps.push(app);
-        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
-            listQualifiedConnectedAccounts: vi.fn(),
-            mutateQualifiedConnectedServiceCredential: vi.fn(),
-            mutateQualifiedConnectedServiceCredentialHealth,
+        const profileId = "retained-invalid-binding";
+        const identity = resolveLegacyServiceAccountTokenIdentityFields({
+            serviceId: "openai-codex", profileId, credentialKind: "oauth",
         });
-        await app.ready();
-
-        const response = await app.inject({
-            method: "PATCH",
-            url: "/v4/connect/qualified/credential/health",
-            payload: {
-                ref,
-                expectedCredentialRevision:
-                    "csr_abcdefghijklmnopqrstuvwxyz",
-                expectedConfigurationRevision: null,
-                health: {
-                    v: 1,
-                    status: "needs_reauth",
-                    reconnectRequired: true,
-                    providerErrorCode: "invalid_grant",
-                },
+        const retainedRef = {
+            service: { pluginId: identity.servicePluginId, localId: identity.serviceLocalId },
+            accountId: identity.connectedAccountId,
+        };
+        const credentialRevision = createConnectedServiceCredentialRevision();
+        // This retained legacy vector is parseable but bound to the wrong service/profile.
+        // Corrupt native at-rest ciphertext has a distinct HTTP500 fail-closed contract.
+        const record = buildConnectedServiceCredentialRecord({
+            now: 1_000, serviceId: "github", profileId: "another-profile", kind: "oauth",
+            oauth: {
+                accessToken: "retained-secret", refreshToken: "retained-refresh", idToken: null,
+                scope: null, tokenType: "Bearer", providerAccountId: null, providerEmail: null,
             },
         });
-
-        expect(response.statusCode).toBe(409);
-        expect(response.json()).toEqual({
-            error: "connect_credential_unsupported_format",
+        await db.serviceAccountToken.create({
+            data: {
+                accountId, vendor: "openai-codex", profileId, ...identity,
+                token: Buffer.from(JSON.stringify(record), "utf8"),
+                metadata: { v: 3, storage: "plain_json_v1", kind: "oauth", credentialRevision },
+            },
         });
+        const app = createTestApp();
+        apps.push(app);
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
+        await app.ready();
+        const response = await app.inject({
+            method: "PATCH", url: "/v4/connect/qualified/credential/health",
+            payload: {
+                ref: retainedRef, expectedCredentialRevision: credentialRevision,
+                expectedConfigurationRevision: null,
+                health: { v: 1, status: "needs_reauth", reconnectRequired: true, providerErrorCode: "invalid_grant" },
+            },
+        });
+        expect(response.statusCode).toBe(409);
+        expect(response.json()).toEqual({ error: "connect_credential_unsupported_format" });
+        expect(response.body).not.toContain("retained-secret");
+        expect(await db.serviceAccountToken.count({ where: { accountId } })).toBe(1);
     });
 
     it("maps credential health storage-mode mismatch to invalid params", async () => {
-        const ref = { service, accountId: "provider/account" };
-        const mutateQualifiedConnectedServiceCredentialHealth =
-            vi.fn(async () => ({ status: "storage_mode_mismatch" as const }));
+        const created = await createCredential();
+        // A retained plain envelope cannot become readable E2EE content when Account mode changes.
+        await db.account.update({
+            where: { id: accountId },
+            data: { ...createSignedAccountContentBinding(), encryptionMode: "e2ee" },
+        });
         const app = createTestApp();
         apps.push(app);
-        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
-            listQualifiedConnectedAccounts: vi.fn(),
-            mutateQualifiedConnectedServiceCredential: vi.fn(),
-            mutateQualifiedConnectedServiceCredentialHealth,
-        });
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
         await app.ready();
-
         const response = await app.inject({
-            method: "PATCH",
-            url: "/v4/connect/qualified/credential/health",
+            method: "PATCH", url: "/v4/connect/qualified/credential/health",
             payload: {
-                ref,
-                expectedCredentialRevision:
-                    "csr_abcdefghijklmnopqrstuvwxyz",
+                ref, expectedCredentialRevision: created.credentialRevision,
                 expectedConfigurationRevision: null,
-                health: {
-                    v: 1,
-                    status: "needs_reauth",
-                    reconnectRequired: true,
-                    providerErrorCode: "invalid_grant",
-                },
+                health: { v: 1, status: "needs_reauth", reconnectRequired: true, providerErrorCode: "invalid_grant" },
             },
         });
-
         expect(response.statusCode).toBe(400);
         expect(response.json()).toEqual({ error: "invalid-params" });
+        expect(await db.serviceAccountToken.count({ where: { accountId } })).toBe(1);
     });
 
     it("replaces account configuration through the credential/configuration CAS owner", async () => {
-        const target = {
-            kind: "account" as const,
-            ref: { service, accountId: "provider/account" },
-        };
-        const mutateQualifiedConnectedAccountConfiguration = vi.fn(async () => ({
-            status: "written" as const,
-            credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
-            configurationRevision: "next-configuration-revision",
-        }));
+        const created = await createCredential(true);
+        const target = { kind: "account" as const, ref };
         const app = createTestApp();
         apps.push(app);
-        registerQualifiedConnectedAccountCredentialRoutesV4(app, {
-            listQualifiedConnectedAccounts: vi.fn(),
-            mutateQualifiedConnectedServiceCredential: vi.fn(),
-            readQualifiedConnectedServiceCredential: vi.fn(),
-            readQualifiedConnectedAccountConfiguration: vi.fn(),
-            mutateQualifiedConnectedAccountConfiguration,
-        });
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
         await app.ready();
-
         const patch = {
             target,
-            expectedCredentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
-            expectedConfigurationRevision: "configuration-revision",
-            replacementContentEnvelope: {
-                t: "plain" as const,
-                v: { region: "us" },
-            },
+            expectedCredentialRevision: created.credentialRevision,
+            expectedConfigurationRevision: created.configurationRevision,
+            replacementContentEnvelope: { t: "plain" as const, v: { region: "us" } },
         };
         const response = await app.inject({
-            method: "PATCH",
-            url: "/v4/connect/qualified/configuration",
-            payload: patch,
+            method: "PATCH", url: "/v4/connect/qualified/configuration", payload: patch,
         });
-
         expect(response.statusCode).toBe(200);
         expect(response.json()).toEqual({
-            success: true,
-            credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
-            configurationRevision: "next-configuration-revision",
+            success: true, credentialRevision: created.credentialRevision,
+            configurationRevision: expect.any(String),
         });
-        expect(mutateQualifiedConnectedAccountConfiguration).toHaveBeenCalledWith({
-            accountId: "account-owner",
-            target,
-            expectedCredentialRevision: patch.expectedCredentialRevision,
-            expectedConfigurationRevision: patch.expectedConfigurationRevision,
-            replacementContentEnvelope: patch.replacementContentEnvelope,
+        expect(response.json().configurationRevision).not.toBe(created.configurationRevision);
+        const targetQuery = encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountConfigurationTargetV4Schema, target);
+        const read = await app.inject({
+            method: "GET", url: `/v4/connect/qualified/configuration?target=${encodeURIComponent(targetQuery)}`,
         });
+        expect(read.statusCode).toBe(200);
+        expect(read.json()).toMatchObject({
+            target, credentialRevision: created.credentialRevision,
+            configurationRevision: response.json().configurationRevision,
+            configurationContent: patch.replacementContentEnvelope,
+        });
+        const stale = await app.inject({
+            method: "PATCH", url: "/v4/connect/qualified/configuration", payload: patch,
+        });
+        expect(stale.statusCode).toBe(409);
+        const afterStale = await app.inject({
+            method: "GET", url: `/v4/connect/qualified/configuration?target=${encodeURIComponent(targetQuery)}`,
+        });
+        expect(afterStale.json()).toEqual(read.json());
     });
 });

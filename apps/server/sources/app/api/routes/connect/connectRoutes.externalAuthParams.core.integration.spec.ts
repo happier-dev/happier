@@ -14,6 +14,7 @@ function createTestApp() {
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
+    enableAuthentication(typed);
     return typed;
 }
 
@@ -24,6 +25,7 @@ function applyGithubExternalAuthParamsEnv(
     harness.resetEnv({
         AUTH_SIGNUP_PROVIDERS: "github",
         GITHUB_CLIENT_ID: "gh_client",
+        GITHUB_CLIENT_SECRET: "gh_secret",
         GITHUB_REDIRECT_URL: "https://api.example.test/v1/oauth/github/callback",
         ...overrides,
     });
@@ -212,7 +214,6 @@ describe("connectRoutes (external auth params)", () => {
             + `&requestDigest=${encodeURIComponent(requestDigest)}`;
 
         const app = createTestApp();
-        enableAuthentication(app);
         connectRoutes(app);
         await app.ready();
 
