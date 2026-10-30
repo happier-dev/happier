@@ -22,7 +22,7 @@ import {
     useHorizontalSafeArea,
 } from '@/components/navigation/safeArea/HorizontalSafeArea';
 import { renderAppStackScreen } from '@/components/navigation/appStackScreenLayout';
-import { resolveSidebarInsetSplit } from '@/components/navigation/safeArea/horizontalSafeArea';
+import { resolveSidebarInsetSplit } from '@/components/navigation/safeArea/horizontalSafeAreaResolvers';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { resolvePaneFocusModeRouteScopeId } from '@/components/appShell/panes/focusMode/resolvePaneFocusModeRouteScopeId';
 import { isTauriDesktop } from '@/utils/platform/tauri';
