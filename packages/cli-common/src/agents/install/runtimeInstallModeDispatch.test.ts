@@ -32,6 +32,7 @@ const lifecycleContext: RuntimeInstallLifecycleContext = {
     vendorScratchDir: null,
     appendCommandLog: () => {},
     appendLogLine: () => {},
+    onProgress: () => {},
 };
 
 describe('runRuntimeInstallModeDispatch', () => {

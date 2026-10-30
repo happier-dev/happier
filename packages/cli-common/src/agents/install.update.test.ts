@@ -74,7 +74,11 @@ describe('installAgentCliForRuntime intent update (K6)', () => {
     });
     expect(result).toMatchObject({ ok: true, alreadyInstalled: false });
     await expect(readFile(join(home, 'updated'), 'utf8')).resolves.toContain('updated');
-    if (result.ok) expect(await readFile(result.logPath!, 'utf8')).toContain(`## ${command} update`);
+    if (result.ok) {
+      const log = await readFile(result.logPath!, 'utf8');
+      expect(log).toContain(`## ${command} update`);
+      expect(log).toContain(`Running ${command}`);
+    }
   });
 
   posixOnly('never installs a managed copy beside a package-manager install; names its command instead', async () => {
@@ -139,6 +143,7 @@ describe('installAgentCliForRuntime intent update (K6)', () => {
     // The finite fixture exits if cancellation is missing, so RED never leaves a real installer running.
     await writeFile(await realpath(command), '#!/bin/sh\nsleep 1\necho completed\n', 'utf8');
     const controller = new AbortController();
+    const reason = new Error('installation cancelled by caller');
     const operation = installAgentCliForRuntime({
       runtimeSpec: vendorSpec({ manualInstallRecipes: { [platform]: [{ cmd: command, args: [] }] } }),
       platform,
@@ -150,14 +155,40 @@ describe('installAgentCliForRuntime intent update (K6)', () => {
       signal: controller.signal,
       deps: {
         execFileWithDeadline: async (cmd, args, options) => {
-          const timer = setTimeout(() => controller.abort(), 50);
+          const timer = setTimeout(() => controller.abort(reason), 50);
           try { return await execFileWithDeadline(cmd, args, options); }
           finally { clearTimeout(timer); }
         },
       },
     });
-    await expect(operation).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(operation).rejects.toBe(reason);
+    const logDir = join(env.HAPPIER_HOME_DIR!, 'logs', 'agent-installs');
+    const [logName] = await readdir(logDir);
+    expect(await readFile(join(logDir, logName!), 'utf8')).toContain(reason.message);
     expect(await readdir(getHappierTempRoot(join(env.HAPPIER_HOME_DIR!, 'tools/providers/claude/.tmp')))).toEqual([]);
+  });
+
+  posixOnly.each(['install', 'update'] as const)('preserves cancellation when the vendor %s log becomes unavailable', async (intent) => {
+    const command = await writeNativeClaude();
+    await writeFile(await realpath(command), '#!/bin/sh\nsleep 1\n', 'utf8');
+    const controller = new AbortController();
+    const reason = new Error('installation cancelled despite unavailable log');
+    const operation = installAgentCliForRuntime({
+      runtimeSpec: vendorSpec({ manualInstallRecipes: { [platform]: [{ cmd: command, args: [] }] } }),
+      platform, env, intent,
+      ...(intent === 'update' ? { updateTarget: { command, source: 'system' as const } } : {}),
+      skipIfInstalled: false, allowVendorRecipeExecution: true, signal: controller.signal,
+      deps: {
+        execFileWithDeadline: async (cmd, args, options) => {
+          // A real filesystem failure must not replace the owning operation's cancellation.
+          await rm(join(env.HAPPIER_HOME_DIR!, 'logs', 'agent-installs'), { recursive: true, force: true });
+          const timer = setTimeout(() => controller.abort(reason), 50);
+          try { return await execFileWithDeadline(cmd, args, options); }
+          finally { clearTimeout(timer); }
+        },
+      },
+    });
+    await expect(operation).rejects.toBe(reason);
   });
 
   posixOnly.each(['install', 'update'] as const)('reports a failed vendor %s termination instead of successful cancellation', async (intent) => {

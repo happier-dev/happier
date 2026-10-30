@@ -58,10 +58,17 @@ export async function runRuntimeInstallCoordinator(params: Readonly<{
             lifecycleContext,
             deps: params.deps,
             signal: params.signal,
-            onProgress: params.onProgress,
+            onProgress: lifecycleContext.onProgress,
         });
     } catch (error) {
-        if (!(error instanceof ExecFileTerminationError)) params.signal?.throwIfAborted();
+        if (!(error instanceof ExecFileTerminationError) && params.signal?.aborted) {
+            const reason: unknown = params.signal.reason;
+            try {
+                lifecycleContext.appendLogLine(lifecycleContext.logPath, reason instanceof Error ? reason.message : String(reason));
+            } finally {
+                params.signal.throwIfAborted();
+            }
+        }
         return buildRuntimeInstallFailureResult({ error, plan, lifecycleContext });
     } finally {
         await disposeRuntimeInstallLifecycleContext(lifecycleContext);

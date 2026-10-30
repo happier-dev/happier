@@ -25,6 +25,7 @@ export type RuntimeInstallLifecycleContext = Readonly<{
     vendorScratchDir: string | null;
     appendCommandLog: AppendCommandLogFn;
     appendLogLine: AppendLogLineFn;
+    onProgress: AgentInstallProgressCallback;
 }>;
 
 function resolveLogPath(params: Readonly<{ agentId: string; logDir?: string | null; env: NodeJS.ProcessEnv }>): string {
@@ -108,9 +109,28 @@ export async function createRuntimeInstallLifecycleContext(params: Readonly<{
                   prefix: 'vendor-install',
               })
             : null;
+    let progressStarted = false;
+    let completionReported = false;
+    const onProgress: AgentInstallProgressCallback = (event) => {
+        if (event.t === 'log') {
+            appendLogLine(logPath, event.line);
+            progressStarted = false;
+            completionReported = false;
+        } else {
+            const complete = event.bytesTotal !== null && event.bytesDone === event.bytesTotal;
+            // Persist the first sample and natural completion, not every streamed chunk.
+            if (!progressStarted || (complete && !completionReported)) {
+                appendLogLine(logPath, `# download: ${event.bytesDone}/${event.bytesTotal ?? 'unknown'} bytes`);
+            }
+            progressStarted = true;
+            completionReported ||= complete;
+        }
+        params.onProgress?.(event);
+    };
     return {
         logPath,
         vendorScratchDir,
+        onProgress,
         appendCommandLog,
         appendLogLine: (path, line) => {
             appendLogLine(path, line);

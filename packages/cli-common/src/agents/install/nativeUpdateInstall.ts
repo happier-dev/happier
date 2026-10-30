@@ -74,12 +74,18 @@ export async function updateInstalledAgentCli(params: Readonly<{
       appendLogLine: lifecycleContext.appendLogLine,
       acceptResolvedAfterFailure: false,
       signal: params.signal,
-      onProgress: params.onProgress,
+      onProgress: lifecycleContext.onProgress,
     });
     if (!result.ok) {
       return { ...result, plan, logPath: lifecycleContext.logPath };
     }
     return { ok: true, plan, alreadyInstalled: false, logPath: lifecycleContext.logPath };
+  } catch (error) {
+    try {
+      lifecycleContext.appendLogLine(lifecycleContext.logPath, error instanceof Error ? error.message : String(error));
+    } finally {
+      throw error;
+    }
   } finally {
     await disposeRuntimeInstallLifecycleContext(lifecycleContext);
   }
