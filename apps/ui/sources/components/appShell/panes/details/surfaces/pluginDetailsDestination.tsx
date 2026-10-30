@@ -844,19 +844,19 @@ export function usePluginDetailsPaneLaunch(input: Readonly<{
     });
 
     React.useEffect(() => {
+        // First describe has not answered yet; missing authority is not a
+        // settled withdrawal of the opener's exact pending handoff.
+        if (input.mount.projectionPhase === 'establishing') return;
         scope?.store.retireHandoffIfAuthorityChanged({ authority, handoffKey: overlayKey });
-    }, [authority, overlayKey, scope]);
+    }, [authority, input.mount.projectionPhase, overlayKey, scope]);
     React.useEffect(() => {
-        if (!staged || !scope) return;
-        setDelivered(staged);
-        scope.store.settle(staged);
-    }, [scope, staged]);
-    React.useEffect(() => {
-        if (delivered !== null && !deliveredIsCurrent) {
+        if (staged && scope) {
+            setDelivered(staged);
+            scope.store.settle(staged);
+        } else if (delivered !== null && !deliveredIsCurrent) {
             setDelivered(null);
         }
-    }, [delivered, deliveredIsCurrent]);
-
+    }, [scope, staged, delivered, deliveredIsCurrent]);
     return staged ?? (deliveredIsCurrent ? delivered : null);
 }
 
@@ -1299,16 +1299,20 @@ function PluginDetailsDestinationSurfaceMount(props: Readonly<{
     }> | null>(null);
 
     React.useEffect(() => {
+        if (props.mount.projectionPhase === 'establishing') return;
         scope?.store.retireHandoffIfAuthorityChanged({
             authority,
             handoffKey: tabKey,
         });
-    }, [authority, scope, tabKey]);
+    }, [authority, props.mount.projectionPhase, scope, tabKey]);
     React.useEffect(() => {
-        if (!staged || !scope) return;
-        setDelivered(staged);
-        scope.store.settle(staged);
-    }, [scope, staged]);
+        if (staged && scope) {
+            setDelivered(staged);
+            scope.store.settle(staged);
+        } else if (delivered !== null && !deliveredIsCurrent) {
+            setDelivered(null);
+        }
+    }, [scope, staged, delivered, deliveredIsCurrent]);
     React.useEffect(() => {
         if (!fallback || !fallbackLaunch?.unavailableFallback) return;
         const prior = fallbackInvocationRef.current;
