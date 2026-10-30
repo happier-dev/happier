@@ -228,11 +228,9 @@ function tempFile(dir, filename) {
  * artifacts produced by the current build run.
  *
  * @param {readonly string[]} paths
- * @param {{ statSync?: typeof fs.statSync }} [opts]
  * @returns {string}
  */
-export function pickNewestFile(paths, opts) {
-  const statSyncImpl = opts?.statSync ?? fs.statSync;
+export function pickNewestFile(paths) {
   if (!Array.isArray(paths) || paths.length === 0) {
     fail('pickNewestFile expected at least one path');
   }
@@ -242,7 +240,7 @@ export function pickNewestFile(paths, opts) {
 
   for (const p of paths) {
     try {
-      const stat = statSyncImpl(p);
+      const stat = fs.statSync(p);
       const mtime = Number(stat?.mtimeMs ?? 0);
       if (Number.isFinite(mtime) && mtime >= bestMtime) {
         bestMtime = mtime;
