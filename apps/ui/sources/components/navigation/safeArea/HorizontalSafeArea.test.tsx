@@ -11,7 +11,7 @@ import {
     useScreenSafeAreaBackdrop,
     useScreenSafeAreaBleed,
 } from './HorizontalSafeArea';
-import { resolveHorizontalSafeAreaRoot } from './horizontalSafeArea';
+import { resolveHorizontalSafeAreaRoot } from './horizontalSafeAreaResolvers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
