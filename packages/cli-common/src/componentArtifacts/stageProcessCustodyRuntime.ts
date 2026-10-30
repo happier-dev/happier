@@ -1,4 +1,6 @@
-import { chmod, cp, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { chmod, copyFile, cp, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -46,7 +48,24 @@ export async function stageProcessCustodyRuntime({
     try {
       await cp(prebuiltExecutablePath, stagedExecutable);
       if (target.os !== 'windows') await chmod(stagedExecutable, 0o755);
-      await rename(stagedExecutable, executablePath);
+      try {
+        await rename(stagedExecutable, executablePath);
+      } catch (error) {
+        if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'EXDEV') throw error;
+        // OS temp may be on another volume. A sibling file guarantees the final
+        // rename stays on the destination filesystem without overwriting a live
+        // inode. Metro's existing .tmp.* publication exclusion covers this file
+        // even when the payload lives in watched source; no directory is added.
+        const replacement = join(toolsDir, `.tmp.process-custody-${randomUUID()}`);
+        // copyFile removes a partial destination on failure. EXCL ensures this
+        // invocation owns the file before the rename/cleanup below.
+        await copyFile(stagedExecutable, replacement, constants.COPYFILE_EXCL);
+        try {
+          await rename(replacement, executablePath);
+        } finally {
+          await rm(replacement, { force: true });
+        }
+      }
     } finally {
       await rm(stagingDir, { recursive: true, force: true });
     }
