@@ -12,6 +12,7 @@ import { resolveWorkspaceBuildMode, WORKSPACE_BUILD_MODE_ENV } from '../../../sc
 async function main() {
   const { packageRoot, scriptsDir, testsDir, testFiles } = await collectStackUnitTestFiles(import.meta.url, {
     collect: collectTestFiles,
+    files: process.argv.slice(2),
   });
 
   // Stack scripts import internal workspace packages via `exports` pointing at `dist/**`.

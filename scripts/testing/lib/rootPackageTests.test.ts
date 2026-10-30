@@ -1,13 +1,51 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { resolveRootScriptWorkspaceTargets } from './rootScriptWorkspaceTargets.ts';
 import { selectSharedPackageTestCommands } from './sharedPackageTestCommands.ts';
 
 const rootPackage = JSON.parse(readFileSync('package.json', 'utf8'));
+
+test('root unit file selections dispatch only owning workspaces and preserve their runner prerequisites', () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'happier-root-selection-'));
+  try {
+    const log = join(fixture, 'calls.jsonl');
+    const pnpm = join(fixture, 'pnpm.cjs');
+    // The package-manager process is the boundary; selection and command orchestration stay real.
+    writeFileSync(pnpm, `const fs = require('node:fs');fs.appendFileSync(process.env.ROOT_TEST_CALLS, JSON.stringify(process.argv.slice(2))+'\\n');`);
+    writeFileSync(join(fixture, 'package.json'), JSON.stringify({ private: true }));
+    writeFileSync(join(fixture, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
+    for (const [directory, name] of [['apps/stack', '@happier-dev/stack'], ['packages/protocol', '@happier-dev/protocol'], ['packages/channels-protocol', '@happier-dev/channels-protocol']]) {
+      mkdirSync(join(fixture, directory), { recursive: true });
+      writeFileSync(join(fixture, directory, 'package.json'), JSON.stringify({ name, scripts: { test: 'unused' } }));
+      writeFileSync(join(fixture, directory, 'selected.test.mjs'), '');
+    }
+    const run = (files: string[]) => spawnSync(process.execPath, ['--experimental-strip-types', resolve('scripts/testing/runRootTests.ts'), 'unit', ...files], {
+      cwd: fixture,
+      encoding: 'utf8',
+      env: { ...process.env, npm_execpath: pnpm, ROOT_TEST_CALLS: log },
+    });
+    const result = run(['--', 'apps/stack/selected.test.mjs', join(fixture, 'packages/protocol/selected.test.mjs'), 'packages/channels-protocol/selected.test.mjs', 'apps/stack/selected.test.mjs']);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line)), [
+      ['--filter', '@happier-dev/protocol', '--silent', 'run', 'test', 'selected.test.mjs'],
+      ['--filter', '@happier-dev/channels-protocol', '--silent', 'run', 'build'],
+      ['--filter', '@happier-dev/channels-protocol', '--silent', 'run', 'test', 'selected.test.mjs'],
+      ['--dir', 'apps/stack', '--silent', 'run', 'test:unit', 'selected.test.mjs'],
+    ]);
+    rmSync(log);
+    for (const file of ['apps/stack/missing.test.mjs', 'apps/stack', '--unknown', '../outside.test.mjs']) {
+      const rejected = run([file]);
+      assert.notEqual(rejected.status, 0, rejected.stdout + rejected.stderr);
+      assert.equal(existsSync(log), false, `invalid selection must never dispatch a full suite: ${file}`);
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 for (const [lane, expectedCommands] of Object.entries({
   unit: [

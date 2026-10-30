@@ -35,6 +35,10 @@ This also lets these checks run without an Expo server or a synchronized
 
 In 0.3 development, `pnpm --filter @happier-dev/cli run test:unit src/api/artifacts/accountArtifactStore.test.ts` forwards the file selection through the routed script chain and runs it once. Explicit runner arguments, including file and test-name filters, bypass automatic sharding and the unit lane's unrelated native checks. An unfiltered unit run retains its shard/CI-part selection, native script tests and import-cycle guard. CLI unit aliases use source-test preparation. Explicit test-file requests retain the existing validation envelope; the complete lane uses the existing compilation envelope because it executes real compiler owners. Focused compiler-consuming requests use the explicit compilation-class wrapper inside a routed outer `hstack-exec` command, never a controller-local admission implementation.
 
+Stack unit tests also accept explicit files: `pnpm --dir apps/stack run test:unit scripts/utils/test/test_collection.test.mjs`. Paths are relative to the Stack package, or absolute. The selection uses the normal preparation, serial Node runner and isolated Stack environment; missing files, directories and integration-test files fail rather than falling back to the full suite. With no files, the command keeps its complete unit-test collection.
+
+From the repository root, `pnpm run test:unit apps/stack/scripts/utils/test/test_collection.test.mjs` routes repository-relative or absolute files to their owning unit-test workspaces. It forwards each workspace's files to its existing test command and retains that workspace's build/check prerequisites. Unselected workspaces are skipped; duplicate paths run once. The root command rejects missing files, directories and paths outside its unit-test workspace inventory before dispatch. With no files, it retains the complete root unit-test lane.
+
 Source-test tool requirements come from the selected package's optional
 `package.json#happierSourceTestTools` array of executable names, for both direct
 Vitest and package-manager requests. An absent declaration adds no prerequisite;
