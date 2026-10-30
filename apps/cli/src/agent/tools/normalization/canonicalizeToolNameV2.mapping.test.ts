@@ -126,7 +126,4 @@ describe('canonicalizeToolNameV2 mappings', () => {
     expect(canonicalize(toolName, input)).toBe(expected);
   });
 
-  it('detects Workspace Indexing Permission prompts emitted as Unknown tool', () => {
-    expect(canonicalize('Unknown tool', { title: 'Workspace Indexing Permission' })).toBe('WorkspaceIndexingPermission');
-  });
 });

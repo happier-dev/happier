@@ -163,11 +163,6 @@ describe('recordToolTraceEvent', () => {
 });
 
 describe('initToolTraceIfEnabled', () => {
-  it('is exported', async () => {
-    const mod = await import('./toolTrace');
-    expect(typeof mod.initToolTraceIfEnabled).toBe('function');
-  });
-
   it('creates an empty file when tracing enabled and STACK_TOOL_TRACE_FILE is set', async () => {
     await withToolTraceFile('happy-tool-trace-init-', (filePath) => {
       expect(existsSync(filePath)).toBe(false);

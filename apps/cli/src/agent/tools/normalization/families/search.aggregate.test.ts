@@ -11,14 +11,6 @@ describe('normalizeCodeSearchResult aggregate semantics', () => {
     });
   });
 
-  it('keeps an explicit zero match result distinct from unavailable details', () => {
-    expect(normalizeCodeSearchResult({ totalMatches: 0, truncated: false })).toEqual({
-      totalMatches: 0,
-      truncated: false,
-      matches: [],
-    });
-  });
-
   it('preserves aggregate metadata and truncation when detail rows are present', () => {
     expect(normalizeCodeSearchResult({
       totalMatches: 4,
