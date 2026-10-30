@@ -154,7 +154,7 @@ describe('AcpToolCallAccumulator', () => {
     });
 
     it('publishes only materially changed result revisions after terminal enrichment', () => {
-        const accumulator = new AcpToolCallAccumulator({ tombstoneTtlMs: 100, maxTombstones: 2 });
+        const accumulator = new AcpToolCallAccumulator();
         accumulator.observe(observation(1, { status: 'completed', rawOutput: { ok: true } }));
 
         expect(accumulator.observe(observation(1, { title: 'stale' }))).toEqual({ kind: 'ignored', reason: 'stale' });
@@ -387,8 +387,8 @@ describe('AcpToolCallAccumulator', () => {
         });
     });
 
-    it('rejects an invalid identity before it can prune valid lifecycle state', () => {
-        const accumulator = new AcpToolCallAccumulator({ tombstoneTtlMs: 100 });
+    it('rejects an invalid identity without changing valid lifecycle state', () => {
+        const accumulator = new AcpToolCallAccumulator();
         accumulator.observe(observation(1, { status: 'completed' }, { observedAtMs: 1_000 }));
 
         expect(() => accumulator.observe(observation(2, { status: 'pending' }, {
@@ -429,15 +429,16 @@ describe('AcpToolCallAccumulator', () => {
         }
     });
 
-    it('bounds tombstones, closes turns against replay, and clears all state on reset/dispose', () => {
-        const accumulator = new AcpToolCallAccumulator({ maxTombstones: 2, maxClosedTurns: 2 });
-        for (let index = 0; index < 3; index += 1) {
+    it('retains terminal identities until reset and closes turns against replay until disposal', () => {
+        const accumulator = new AcpToolCallAccumulator();
+        const terminalCallCount = 4_097;
+        for (let index = 0; index < terminalCallCount; index += 1) {
             accumulator.observe(observation(index + 1, { status: 'completed' }, { toolCallId: `call-${index}` }));
         }
-        expect(accumulator.tombstoneSize).toBe(2);
-        expect(accumulator.peek('session-1', 'turn-1', null, 'call-0')).toBeNull();
-        expect(accumulator.peek('session-1', 'turn-1', null, 'call-1')).not.toBeNull();
-        expect(accumulator.peek('session-1', 'turn-1', null, 'call-2')).not.toBeNull();
+        expect(accumulator.tombstoneSize).toBe(terminalCallCount);
+        expect(accumulator.observe(observation(terminalCallCount + 1, { title: 'Late detail' }, {
+            toolCallId: 'call-0',
+        }))).toMatchObject({ kind: 'late-enrichment', call: { title: 'Late detail' } });
 
         accumulator.observe(observation(10, { status: 'pending' }, { toolCallId: 'open' }));
         accumulator.terminalizeTurn({
@@ -451,25 +452,10 @@ describe('AcpToolCallAccumulator', () => {
             kind: 'ignored',
             reason: 'duplicate',
         });
-        accumulator.terminalizeTurn({
-            sessionId: 'session-1',
-            turnId: 'turn-2',
-            status: 'completed',
-            revision: 12,
-            observedAtMs: 2_001,
-        });
-        accumulator.terminalizeTurn({
-            sessionId: 'session-1',
-            turnId: 'turn-3',
-            status: 'completed',
-            revision: 13,
-            observedAtMs: 2_002,
-        });
-        expect(accumulator.closedTurnSize).toBe(2);
         expect(accumulator.observe(observation(14, { status: 'pending' }, {
             turnId: 'turn-1',
-            toolCallId: 'reopened-after-bounded-close-eviction',
-        }))).toMatchObject({ kind: 'progress' });
+            toolCallId: 'unobserved-before-close',
+        }))).toEqual({ kind: 'ignored', reason: 'closed-beyond-tombstone' });
 
         accumulator.reset();
         expect(accumulator.activeSize).toBe(0);
@@ -481,36 +467,56 @@ describe('AcpToolCallAccumulator', () => {
         expect(() => accumulator.observe(observation(14, { status: 'pending' }))).toThrow(/disposed/i);
     });
 
-    it('bounds active records and expires tombstones from their newest enrichment time', () => {
-        const accumulator = new AcpToolCallAccumulator({
-            maxActiveRecords: 1,
-            tombstoneTtlMs: 100,
-        });
-        accumulator.observe(observation(1, { status: 'pending' }, { toolCallId: 'active-1' }));
-        expect(() => accumulator.observe(observation(1, { status: 'pending' }, {
-            toolCallId: 'active-2',
-        }))).toThrow(/capacity/i);
-
+    it('keeps every closed turn closed until the owning session resets', () => {
+        const accumulator = new AcpToolCallAccumulator();
+        const closedTurnCount = 513;
+        for (let index = 1; index <= closedTurnCount; index += 1) {
+            accumulator.terminalizeTurn({
+                sessionId: 'session-1', turnId: `turn-${index}`, status: 'completed',
+                revision: index, observedAtMs: 2_000 + index,
+            });
+        }
+        expect(accumulator.closedTurnSize).toBe(closedTurnCount);
+        expect(accumulator.observe(observation(1, { status: 'pending' }, {
+            toolCallId: 'unobserved-before-close',
+        }))).toEqual({ kind: 'ignored', reason: 'closed-beyond-tombstone' });
         accumulator.reset();
+        expect(accumulator.observe(observation(1, { status: 'pending' }))).toMatchObject({ kind: 'progress' });
+    });
+
+    it('accepts every active call and retires them at the owning turn boundary', () => {
+        const accumulator = new AcpToolCallAccumulator();
+        const activeCallCount = 2_049;
+        for (let index = 0; index < activeCallCount; index += 1) {
+            accumulator.observe(observation(1, { status: 'pending' }, { toolCallId: `active-${index}` }));
+        }
+        expect(accumulator.activeSize).toBe(activeCallCount);
+        expect(accumulator.terminalizeTurn({
+            sessionId: 'session-1', turnId: 'turn-1', status: 'completed', revision: 2, observedAtMs: 2_000,
+        })).toHaveLength(activeCallCount);
+        expect(accumulator.activeSize).toBe(0);
+    });
+
+    it('correlates late terminal enrichment after elapsed time until session retirement', () => {
+        const accumulator = new AcpToolCallAccumulator();
         accumulator.observe(observation(1, { status: 'completed' }, {
             toolCallId: 'done',
-            observedAtMs: 1_950,
-        }));
-        accumulator.observe(observation(2, { title: 'late' }, {
-            toolCallId: 'done',
-            observedAtMs: 2_000,
+            observedAtMs: 1_000,
         }));
         accumulator.observe(observation(1, { status: 'pending' }, {
             toolCallId: 'clock-probe',
             turnId: 'turn-2',
-            observedAtMs: 2_050,
+            observedAtMs: 1_000 + 6 * 60_000,
         }));
         expect(accumulator.tombstoneSize).toBe(1);
-        accumulator.observe(observation(2, { status: 'pending' }, {
-            toolCallId: 'clock-probe',
-            turnId: 'turn-2',
-            observedAtMs: 2_101,
-        }));
+        expect(accumulator.findNewestRetainedTurnId({
+            sessionId: 'session-1', sidechainId: null, toolCallId: 'done',
+        })).toBe('turn-1');
+        expect(accumulator.observe(observation(2, { title: 'late' }, {
+            toolCallId: 'done', observedAtMs: 1_001 + 6 * 60_000,
+        }))).toMatchObject({ kind: 'late-enrichment', call: { title: 'late' } });
+        accumulator.dispose();
+        expect(accumulator.activeSize).toBe(0);
         expect(accumulator.tombstoneSize).toBe(0);
     });
 });

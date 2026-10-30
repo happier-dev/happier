@@ -10,42 +10,23 @@ import {
 } from './mergeToolCallUpdate';
 import type {
     AcpToolAccumulatorEmission,
-    AcpToolCallAccumulatorOptions,
     AcpToolObservation,
     MergedAcpToolCall,
     TerminalizeAcpToolTurnInput,
 } from './types';
-
-const DEFAULT_MAX_ACTIVE_RECORDS = 2_048;
-const DEFAULT_MAX_TOMBSTONES = 4_096;
-const DEFAULT_TOMBSTONE_TTL_MS = 5 * 60_000;
-const DEFAULT_MAX_CLOSED_TURNS = 512;
 
 type Tombstone = Readonly<{
     record: MutableAcpToolCallRecord;
     finalizedAtMs: number;
 }>;
 
-function positiveInteger(value: number | undefined, fallback: number): number {
-    return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : fallback;
-}
-
 export class AcpToolCallAccumulator {
+    // Late ACP updates carry no turn identity. Retain correlation for this runtime's
+    // lifetime; reset/dispose retire it with the owning Session, never by age/count.
     private readonly active = new Map<string, MutableAcpToolCallRecord>();
     private readonly tombstones = new Map<string, Tombstone>();
-    private readonly closedTurns = new Map<string, number>();
-    private readonly maxActiveRecords: number;
-    private readonly maxTombstones: number;
-    private readonly tombstoneTtlMs: number;
-    private readonly maxClosedTurns: number;
+    private readonly closedTurns = new Set<string>();
     private disposed = false;
-
-    constructor(options: AcpToolCallAccumulatorOptions = {}) {
-        this.maxActiveRecords = positiveInteger(options.maxActiveRecords, DEFAULT_MAX_ACTIVE_RECORDS);
-        this.maxTombstones = positiveInteger(options.maxTombstones, DEFAULT_MAX_TOMBSTONES);
-        this.tombstoneTtlMs = positiveInteger(options.tombstoneTtlMs, DEFAULT_TOMBSTONE_TTL_MS);
-        this.maxClosedTurns = positiveInteger(options.maxClosedTurns, DEFAULT_MAX_CLOSED_TURNS);
-    }
 
     get activeSize(): number {
         return this.active.size;
@@ -63,7 +44,6 @@ export class AcpToolCallAccumulator {
         this.assertActive();
         this.assertObservation(observation);
         const identity = createAcpToolIdentity(observation);
-        this.prune(observation.observedAtMs);
         const tombstone = this.tombstones.get(identity.correlationKey);
         const allSidechainsTurnKey = createAcpTurnIdentity({
             sessionId: observation.sessionId,
@@ -105,9 +85,6 @@ export class AcpToolCallAccumulator {
             return this.emitActiveRecord(identity.correlationKey, record);
         }
 
-        if (this.active.size >= this.maxActiveRecords) {
-            throw new Error(`ACP tool accumulator active-record capacity ${this.maxActiveRecords} exceeded`);
-        }
         const created = createMutableAcpToolCallRecord(observation, identity);
         mergeAcpToolObservation(created, observation);
         this.active.set(identity.correlationKey, created);
@@ -142,9 +119,7 @@ export class AcpToolCallAccumulator {
             turnId: input.turnId,
             sidechainId: input.sidechainId,
         });
-        this.closedTurns.delete(turnKey);
-        this.closedTurns.set(turnKey, input.observedAtMs);
-        this.pruneClosedTurns();
+        this.closedTurns.add(turnKey);
         return Object.freeze(emissions);
     }
 
@@ -157,7 +132,7 @@ export class AcpToolCallAccumulator {
     /**
      * Finds the newest retained terminal observation for an opaque provider call ID.
      *
-     * ACP tool updates do not carry a turn ID. The runtime uses this bounded lookup only
+     * ACP tool updates do not carry a turn ID. The runtime uses this retained lookup only
      * for `tool_call_update`, after preferring an active current-turn record, so a newly
      * created `tool_call` with a reused opaque ID always starts a fresh turn-scoped record.
      */
@@ -232,7 +207,6 @@ export class AcpToolCallAccumulator {
             record,
             finalizedAtMs: record.observedAtMs,
         }));
-        this.pruneTombstoneCount();
         return Object.freeze({
             kind: 'terminal',
             call: snapshotAcpToolCall(record),
@@ -240,31 +214,6 @@ export class AcpToolCallAccumulator {
             publishResult,
             revision: record.revision,
         });
-    }
-
-    private prune(nowMs: number): void {
-        for (const [key, tombstone] of this.tombstones) {
-            if (nowMs - tombstone.finalizedAtMs > this.tombstoneTtlMs) {
-                this.tombstones.delete(key);
-            }
-        }
-        this.pruneTombstoneCount();
-    }
-
-    private pruneTombstoneCount(): void {
-        while (this.tombstones.size > this.maxTombstones) {
-            const oldest = this.tombstones.keys().next().value as string | undefined;
-            if (oldest === undefined) break;
-            this.tombstones.delete(oldest);
-        }
-    }
-
-    private pruneClosedTurns(): void {
-        while (this.closedTurns.size > this.maxClosedTurns) {
-            const oldest = this.closedTurns.keys().next().value as string | undefined;
-            if (oldest === undefined) break;
-            this.closedTurns.delete(oldest);
-        }
     }
 
     private assertActive(): void {

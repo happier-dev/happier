@@ -10,7 +10,6 @@ export {
 } from './observeRawToolUpdate';
 export type {
     AcpToolAccumulatorEmission,
-    AcpToolCallAccumulatorOptions,
     AcpToolIdentity,
     AcpToolLifecycleStatus,
     AcpToolObservation,

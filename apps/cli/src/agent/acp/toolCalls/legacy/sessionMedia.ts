@@ -3,8 +3,6 @@ import type { AgentMessage } from '@/agent/core/AgentMessage';
 import { extractAcpMediaContentBlocks } from '../../media/extractAcpMediaContentBlocks';
 import type { MergedAcpToolResult } from '../types';
 
-const MAX_MEDIA_FINGERPRINTS = 1_024;
-
 export class LegacyAcpSessionMediaPublisher {
     private readonly publishedFingerprints = new Set<string>();
 
@@ -19,11 +17,6 @@ export class LegacyAcpSessionMediaPublisher {
         const fingerprint = `${result.localId}\0${JSON.stringify(extracted.media)}`;
         if (extracted.media.length > 0 && !this.publishedFingerprints.has(fingerprint)) {
             this.publishedFingerprints.add(fingerprint);
-            while (this.publishedFingerprints.size > MAX_MEDIA_FINGERPRINTS) {
-                const oldest = this.publishedFingerprints.values().next().value;
-                if (typeof oldest !== 'string') break;
-                this.publishedFingerprints.delete(oldest);
-            }
             this.emit({
                 type: 'event',
                 name: 'session_media',

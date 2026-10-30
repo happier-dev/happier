@@ -96,10 +96,3 @@ export type TerminalizeAcpToolTurnInput = Readonly<{
     revision: number;
     observedAtMs: number;
 }>;
-
-export type AcpToolCallAccumulatorOptions = Readonly<{
-    maxActiveRecords?: number;
-    maxTombstones?: number;
-    tombstoneTtlMs?: number;
-    maxClosedTurns?: number;
-}>;
