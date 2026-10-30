@@ -1785,6 +1785,7 @@ export async function runCodex(opts: {
             credentials: opts.credentials,
             settings: opts.accountSettingsContext?.settings ?? null,
             profileId: session.getMetadataSnapshot()?.profileId ?? null,
+            sessionMetadata: session.getMetadataSnapshot(),
             baseOverride,
             executionRunsFeatureEnabled: resolveCliFeatureDecision({
                 featureId: 'execution.runs',

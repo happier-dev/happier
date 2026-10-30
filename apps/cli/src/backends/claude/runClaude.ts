@@ -507,6 +507,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         credentials,
         settings: options.accountSettings ?? null,
         profileId: session.getMetadataSnapshot()?.profileId ?? null,
+        sessionMetadata: session.getMetadataSnapshot(),
         executionRunsFeatureEnabled: resolveCliFeatureDecision({
             featureId: 'execution.runs',
             env: process.env,
@@ -1819,6 +1820,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     credentials,
                     settings: options.accountSettings ?? null,
                     profileId: session.getMetadataSnapshot()?.profileId ?? null,
+                    sessionMetadata: session.getMetadataSnapshot(),
                     executionRunsFeatureEnabled: resolveCliFeatureDecision({
                         featureId: 'execution.runs',
                         env: process.env,
@@ -2105,6 +2107,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         credentials,
                         settings: options.accountSettings ?? null,
                         profileId: artifacts.deferredSession.getMetadataSnapshot?.()?.profileId ?? null,
+                        sessionMetadata: artifacts.deferredSession.getMetadataSnapshot?.(),
                         executionRunsFeatureEnabled: resolveCliFeatureDecision({
                             featureId: 'execution.runs',
                             env: process.env,

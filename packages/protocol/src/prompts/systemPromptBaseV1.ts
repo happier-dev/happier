@@ -1,7 +1,7 @@
 import { trimIdent } from '../strings/trimIdent.js';
 import {
   isCodingPromptResponseOptionsEnabled,
-  resolveCodingPromptSessionTitleUpdatesModeV1,
+  resolveCodingPromptSessionTitleInstructionModeV1,
 } from './codingPromptBehaviorV1.js';
 
 export const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1 = trimIdent(`
@@ -64,9 +64,10 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 = trimIdent(`
 export function buildHappierBaseSystemPromptV1(args?: Readonly<{
   settings?: Record<string, unknown> | null | undefined;
   sessionTitleToolAvailable?: boolean;
+  sessionMetadata?: unknown;
 }>): string {
   const blocks: string[] = [];
-  const sessionTitleUpdatesMode = resolveCodingPromptSessionTitleUpdatesModeV1(args?.settings);
+  const sessionTitleUpdatesMode = resolveCodingPromptSessionTitleInstructionModeV1(args?.settings, args?.sessionMetadata);
   if (args?.sessionTitleToolAvailable !== false && sessionTitleUpdatesMode === 'initial') {
     blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1);
   } else if (args?.sessionTitleToolAvailable !== false && sessionTitleUpdatesMode === 'ongoing') {
