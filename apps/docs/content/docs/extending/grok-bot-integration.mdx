@@ -1,0 +1,96 @@
+---
+title: Grok Bot integration
+description: Install and manage Happier sessions through Grok on X — setup, monitoring, and session control in one shareable bot.
+---
+
+Run Happier through a shareable Grok Bot on X. The bot installs Happier, pairs with your account, and manages your sessions from its own Linux computer.
+
+**[Install the Happier session control Grok Bot →](https://x.ai/bot/eI3Gm7MjAxV_bgJ_MB0pk)**
+
+## What it does
+
+The bot connects to your Happier account or self-hosted relay and controls sessions through `happier mcp serve`. You pick the autonomy level:
+
+- **Watch only** — the bot lists sessions and reports status when asked.
+- **Assist** — the bot answers simple questions about sessions (status, agent, machine) without changing anything.
+- **Drive** — the bot starts sessions, sends messages, and manages session state on your behalf.
+
+Permission approvals always require your yes unless you explicitly allow autonomous approval.
+
+## First run
+
+On first use, the bot walks through setup:
+
+1. Installs the Happier CLI on the bot's own Linux computer (using the public install script).
+2. Pairs with Happier Cloud or your self-hosted relay by sending you the one-time approval link to approve in the Happier app.
+3. Optionally joins your Tailscale tailnet if you are using a private self-hosted relay.
+4. Starts the Happier daemon.
+
+The setup follows the [agent setup guide](/getting-started/agent-setup).
+
+## Session management
+
+The bot uses `happier mcp serve` to:
+
+- list and summarize sessions (status, agent, machine)
+- start new sessions
+- send messages to sessions
+- change session settings (permission mode, model)
+- stop or archive sessions
+
+All operations go through the same Happier MCP server interface that any MCP host can use. See [Happier as an MCP server](/extending/happier-as-mcp-server) for the full tool catalog.
+
+## Monitoring
+
+The bot can poll sessions on a schedule and notify you when:
+
+- a session is waiting on a permission request
+- a session has finished a turn
+- a session has an error
+
+Happier does not yet push events to external listeners (tracked in [issue #795](https://github.com/happier-dev/happier/issues/795)), so monitoring uses polling.
+
+## Keep-alive
+
+On systems without systemd, the bot runs a keep-alive routine that restarts the Happier daemon and Tailscale when they stop. This ensures the bot's connection stays up even if a process exits.
+
+## Multiple relays
+
+By default, the bot manages one Happier connection. If you want to manage sessions on a second relay (for example, a work account and a personal account), you can set `HAPPIER_HOME_DIR` to isolate the second relay's credentials and configuration.
+
+The bot does not automatically configure multiple relays. Ask it to set up a second connection if you need one.
+
+## Security
+
+The bot's Linux computer becomes one of your paired devices:
+
+- **End-to-end encryption is preserved.** Session content is decrypted on the bot's computer, just as it would be on your own machine.
+- **The bot has the same access as any paired device.** It can read, create, and manage sessions your account allows.
+- **Revoke access from the app.** Remove the bot's machine from your paired machines in the Happier app when you no longer want it connected.
+
+Treat the bot's machine the same way you would treat a dev box or VPS where you run sessions: as a trusted device with access to your Happier account.
+
+## Autonomy levels
+
+You control how much the bot can do without asking:
+
+| Level | The bot can… | Requires your approval |
+| --- | --- | --- |
+| Watch only | List sessions, report status | Everything else |
+| Assist | Answer questions about sessions, summarize state | Starting sessions, sending messages, changing settings |
+| Drive | Start sessions, send messages, manage session state | Permission-gated operations (unless you allow autonomous approval) |
+
+The default is **assist**. Change it by telling the bot which level you want.
+
+## Limitations
+
+- **No push events yet.** The bot polls sessions for updates. Real-time notifications will be available when Happier supports external event listeners ([issue #795](https://github.com/happier-dev/happier/issues/795)).
+- **One computer.** The bot runs on its own Linux computer. It cannot manage sessions across multiple machines unless you pair each one separately.
+- **No file access.** The bot cannot browse or edit files in your project folders. It manages sessions, not the working trees.
+
+## Related
+
+- [Happier as an MCP server](/extending/happier-as-mcp-server) — the MCP interface the bot uses.
+- [Set up with your coding agent](/getting-started/agent-setup) — the setup flow the bot follows.
+- [Inbox and approvals](/sessions/inbox-and-approvals) — permission requests the bot can monitor.
+- [Machines and the daemon](/apps/daemon) — how the daemon runs on the bot's computer.
