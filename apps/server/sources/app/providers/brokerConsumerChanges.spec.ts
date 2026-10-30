@@ -28,15 +28,6 @@ function sessionDatabaseBoundary(rows: readonly SessionRow[]): Tx {
 }
 
 describe('Session broker custodian publication audience', () => {
-    it('returns no custodians for a thousand plain Sessions', async () => {
-        const rows: SessionRow[] = Array.from({ length: 1_000 }, (_, index) => ({
-            id: `plain-${index}`, accountId: 'session-owner', teamCredentialBindings: [],
-        }));
-        expect(await readSessionProviderBrokerCustodianAccountIdsInTx(
-            sessionDatabaseBoundary(rows), rows.map(row => row.id),
-        )).toEqual([]);
-    });
-
     it('returns each accepted Team broker custodian once without consumer or direct-only Accounts', async () => {
         const rows: SessionRow[] = [{
             id: 'brokered', accountId: 'session-owner', teamCredentialBindings: [

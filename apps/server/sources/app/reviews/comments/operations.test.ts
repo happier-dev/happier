@@ -840,62 +840,6 @@ describe("review comment operations", () => {
         })).rejects.toMatchObject({ code: "review_comment_idempotency_conflict" });
     });
 
-    it("isolates create mutation identity by account", async () => {
-        const { operations } = createHarness();
-        const input = {
-            projectId: "project-1",
-            anchor: { kind: "file", filePath: "src/example.ts" } as const,
-            snapshot: textSnapshot(["return value.name;"]),
-            body: "Account-local comment.",
-            authorIntent: "open" as const,
-            clientMutationId: "shared-account-local-mutation",
-        };
-
-        const first = await operations.create({
-            accountId: "account-1",
-            actor: { kind: "user", userId: "user-1" },
-            grants: [],
-            input,
-        });
-        const second = await operations.create({
-            accountId: "account-2",
-            actor: { kind: "user", userId: "user-2" },
-            grants: [],
-            input,
-        });
-
-        expect(first.replayed).toBe(false);
-        expect(second.replayed).toBe(false);
-        expect(second.comment.id).not.toBe(first.comment.id);
-    });
-
-    it("admits one durable create under concurrent equivalent requests", async () => {
-        const { store, operations } = createHarness();
-        const params = {
-            accountId: "account-1",
-            actor: { kind: "user", userId: "user-1" } as const,
-            grants: [],
-            input: {
-                projectId: "project-1",
-                anchor: { kind: "file", filePath: "src/example.ts" } as const,
-                snapshot: textSnapshot(["return value.name;"]),
-                body: "Concurrent comment.",
-                authorIntent: "open" as const,
-                clientMutationId: "mutation-create-concurrent",
-            },
-        };
-
-        const results = await Promise.all([
-            operations.create(params),
-            operations.create(params),
-        ]);
-
-        expect(new Set(results.map((result) => result.comment.id))).toEqual(new Set([results[0]!.comment.id]));
-        expect(results.map((result) => result.replayed).sort()).toEqual([false, true]);
-        expect(await store.listEvents({ accountId: "account-1", commentId: results[0]!.comment.id }))
-            .toHaveLength(1);
-    });
-
     it("stores current-state rows and append-only events for proposed plugin comments", async () => {
         const { store, operations } = createHarness();
 

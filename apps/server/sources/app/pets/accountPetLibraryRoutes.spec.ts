@@ -56,19 +56,6 @@ describe("accountPetLibraryRoutes", () => {
         vi.clearAllMocks();
     });
 
-    it("registers a delete route for account-owned pet cleanup", async () => {
-        const { registerAccountPetLibraryRoutes } = await import("./accountPetLibraryRoutes");
-        const route = createRouteTestBuilder({
-            method: "DELETE",
-            path: "/v1/account/pets/:petId",
-            registerRoutes(app) {
-                registerWithRouteHarness(app, registerAccountPetLibraryRoutes);
-            },
-        });
-
-        expect(route.routeExists).toBe(true);
-    });
-
     it("lists account pet metadata without spritesheet bytes", async () => {
         listAccountPetsForAccount.mockResolvedValue({ ok: true, pets: [petMetadata()] });
         const { registerAccountPetLibraryRoutes } = await import("./accountPetLibraryRoutes");

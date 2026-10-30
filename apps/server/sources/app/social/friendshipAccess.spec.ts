@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
 const dbMocks = createDbMocks({ userRelationship: ["findFirst"] } as const);
 installDbModuleMock({ db: dbMocks.db });
-import { areFriends } from "./friendshipAccess";
+const { areFriends } = await import("./friendshipAccess");
 beforeEach(() => { vi.clearAllMocks(); dbMocks.reset(); });
     describe("areFriends", () => {
         it("should return true when users are friends (from->to)", async () => {
