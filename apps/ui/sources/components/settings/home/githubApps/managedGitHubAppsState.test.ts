@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ManagedGitHubAppInstallationV1 } from '@happier-dev/protocol';
 
 import {
     INITIAL_MANAGED_GITHUB_APPS_STATE,
@@ -18,19 +19,31 @@ const registration = {
 
 describe('managedGitHubAppsState', () => {
     it('retains the last known registrations and installations when refresh fails', () => {
+        const installation = {
+            id: 'installation-1', registrationId: registration.id,
+            githubInstallationId: '123', githubOrganizationId: '22', githubOrganizationLogin: 'happier-dev',
+            repositorySelection: 'selected', revision: 1, state: 'active',
+            verifiedPermissions: { contents: 'read' }, verifiedEvents: ['push'],
+            suspendedAt: null, lastVerifiedAt: '2026-09-01T10:00:00.000Z', teamConsumers: [],
+        } satisfies ManagedGitHubAppInstallationV1;
         const ready = settleManagedGitHubAppsRefresh(INITIAL_MANAGED_GITHUB_APPS_STATE, {
             kind: 'succeeded',
-            value: { registrations: [registration], installations: [] },
+            value: { registrations: [registration], installations: [installation] },
         });
         const refreshing = beginManagedGitHubAppsRefresh(ready);
+        expect(refreshing).toMatchObject({
+            kind: 'ready', registrations: [registration], installations: [installation],
+            refreshing: true, stale: false,
+        });
         const failed = settleManagedGitHubAppsRefresh(refreshing, {
             kind: 'failed',
             failure: { code: 'home_unreachable', retryable: true },
         });
 
         expect(failed).toMatchObject({
-            kind: 'ready', registrations: [registration], installations: [],
+            kind: 'ready', registrations: [registration], installations: [installation],
             refreshing: false, stale: true,
+            failure: { code: 'home_unreachable', retryable: true },
         });
     });
 

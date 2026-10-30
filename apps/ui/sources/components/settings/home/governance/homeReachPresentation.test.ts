@@ -45,6 +45,7 @@ describe('Reach exposure warning (plan §3.2)', () => {
 
     it('offers turning direct connections off only while devices keep an HTTPS address', () => {
         expect(reachCanRetireIroh(homeReachabilityFixture())).toBe(true);
+        expect(reachCanRetireIroh(homeReachabilityFixture({ publicAddress: { url: 'http://home.example', source: 'home' } }))).toBe(false);
         expect(reachCanRetireIroh(homeReachabilityFixture({ publicAddress: { url: null, source: 'none' } }))).toBe(false);
     });
 });

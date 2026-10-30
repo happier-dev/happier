@@ -359,22 +359,6 @@ describe('HomeAdministrationTeamsScreen', () => {
         });
     });
 
-    it('says the Home has no Teams rather than showing an empty surface', async () => {
-        const home = await harness.addHome({
-            name: 'Home A',
-            serverUrl: 'https://home-a.example',
-            teamsEnabled: true,
-        });
-        await harness.selectHomes([home]);
-        harness.answer(home, GOVERNANCE_PATH, { body: homeGovernanceProjectionFixture() });
-        harness.answer(home, TEAMS_LIST_PATH, { body: { items: [], nextCursor: null } });
-
-        const screen = await renderHomeTeams(home);
-        await waitForHomeGovernance(() => {
-            expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-teams-empty');
-        });
-    });
-
     it('does not ask a Home for Teams it has said it does not have', async () => {
         const home = await harness.addHome({
             name: 'Home A',

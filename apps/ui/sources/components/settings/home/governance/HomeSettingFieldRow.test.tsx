@@ -41,6 +41,27 @@ describe('HomeSettingFieldRow', { timeout: 180_000 }, () => {
       />,
     );
     expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('row');
+    await screen.update(
+      <HomeSettingFieldRow
+        testID="row"
+        entry={homeSettingEntryFixture('HAPPIER_FILES_BACKEND', {
+          value: 'local',
+          declaration: {
+            type: 'enum',
+            section: 'server',
+            group: 'storage',
+            bounds: { values: ['local', 's3'] },
+          },
+        })}
+        title="Storage backend"
+        staged={undefined}
+        readOnly={false}
+        disabled={false}
+        error={null}
+        onStage={vi.fn()}
+      />,
+    );
+    expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('row');
   });
 
   it('states a byte limit with its unit, editable and read-only alike', async () => {
