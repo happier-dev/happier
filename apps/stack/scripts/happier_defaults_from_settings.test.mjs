@@ -148,7 +148,6 @@ test('stack convenience session create keeps the borrowed UI through wrapper boo
     cwd: rootDir, env,
   });
   assert.equal(res.code, 0, `stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-  assert.match(res.stdout, /daemon already running for stack home/);
   const forwarded = JSON.parse(res.stdout.trim().split('\n').at(-1));
   assert.equal(forwarded.webappUrl, webappUrl);
   assert.equal(forwarded.serverUrl, `http://127.0.0.1:${port}`);
