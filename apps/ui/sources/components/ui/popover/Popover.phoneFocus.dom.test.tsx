@@ -25,6 +25,61 @@ const { VoiceIslandAnatomy, VoiceOrbAnatomy } = await import('@/components/voice
 const { useCompanionPointerDragSession } = await import('@/components/companion/interaction/useCompanionPointerDragSession');
 
 describe('Popover phone-sheet focus return', () => {
+    it('dismisses a headerless intelligence sheet through the shared Close grabber and restores the opener', async () => {
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        function Harness() {
+            const [open, setOpen] = React.useState(false);
+            const anchorRef = React.useRef<import('react-native').View>(null);
+            return <>
+                <View ref={anchorRef}>
+                    <button data-testid="intelligence-opener" onClick={() => setOpen(true)}>Info</button>
+                </View>
+                <Popover open={open} phonePresentation="sheet" sheetHeader="none" sheetBackdrop="none"
+                    accessibilityLabel="Info" anchorRef={anchorRef} focusReturnRef={anchorRef}
+                    onRequestClose={() => setOpen(false)}>
+                    {() => <Text>Language intelligence answer</Text>}
+                </Popover>
+            </>;
+        }
+        try {
+            await act(async () => root.render(<Harness />));
+            const opener = container.querySelector<HTMLButtonElement>('[data-testid="intelligence-opener"]')!;
+            for (const activation of ['pointer', 'keyboard'] as const) {
+                await act(async () => { opener.focus(); opener.click(); });
+                const dialog = document.querySelector('[role="dialog"]')!;
+                expect(dialog).not.toBeNull();
+                const close = dialog.querySelector<HTMLElement>('[role="button"][aria-label="Close"]')!;
+                expect(close).not.toBeNull();
+                await act(async () => {
+                    if (activation === 'pointer') {
+                        close.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+                        close.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+                        close.click();
+                    } else {
+                        close.focus();
+                        const down = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+                        close.dispatchEvent(down);
+                        close.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+                        // jsdom omits a native button's browser-generated keyboard click.
+                        if (close.tagName === 'BUTTON' && !down.defaultPrevented) {
+                            close.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+                        }
+                    }
+                });
+                await vi.waitFor(async () => {
+                    await act(async () => {});
+                    expect(document.querySelector('[role="dialog"]')).toBeNull();
+                    expect(document.activeElement).toBe(opener);
+                });
+            }
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+        }
+    });
+
     it('preserves pointer focus on a real RNW opener through drag admission, open and Escape', async () => {
         const container = document.createElement('div');
         document.body.append(container);

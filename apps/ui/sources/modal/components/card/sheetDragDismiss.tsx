@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Animated, PanResponder, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -47,7 +48,8 @@ export function useSheetDrag(onDismiss: (() => void) | null) {
     const height = React.useRef(0);
     const onLayout = React.useCallback((event: LayoutChangeEvent) => { height.current = event.nativeEvent.layout.height; }, []);
     const handlers = React.useMemo(() => PanResponder.create({
-        onStartShouldSetPanResponder: () => onDismiss !== null,
+        // A tap belongs to the close button; take over only once the pointer starts a drag.
+        onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_event, gesture) => onDismiss !== null && Math.abs(gesture.dy) > Math.abs(gesture.dx),
         onPanResponderMove: (_event, gesture) => { offset.setValue(Math.max(0, gesture.dy)); },
         onPanResponderRelease: (_event, gesture) => {
@@ -71,17 +73,18 @@ export function SheetGrabber(props: Readonly<{
     testID?: string;
 }>): React.ReactElement {
     return (
-        <View
-            testID={props.testID}
-            style={styles.zone}
-            accessible
-            accessibilityRole="button"
-            accessibilityLabel={t('common.close')}
-            accessibilityActions={[{ name: 'activate', label: t('common.close') }]}
-            onAccessibilityAction={(event) => { if (event.nativeEvent.actionName === 'activate') props.onDismiss(); }}
-            {...props.panHandlers}
-        >
-            <View style={styles.grabber} />
+        <View {...props.panHandlers}>
+            <HappierPressable
+                testID={props.testID}
+                style={styles.zone}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.close')}
+                accessibilityActions={[{ name: 'activate', label: t('common.close') }]}
+                onAccessibilityAction={(event) => { if (event.nativeEvent.actionName === 'activate') props.onDismiss(); }}
+                onPress={props.onDismiss}
+            >
+                <View style={styles.grabber} />
+            </HappierPressable>
         </View>
     );
 }
