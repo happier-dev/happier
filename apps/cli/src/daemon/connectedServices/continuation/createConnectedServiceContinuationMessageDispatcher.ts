@@ -75,6 +75,7 @@ export function createConnectedServiceContinuationMessageDispatcher(
       resumePromptMode: SessionContinuationResumePromptModeV1;
       customResumePrompt?: string | null;
       recoveryKind?: ConnectedServiceRuntimeAuthFailureKind | null;
+      afterUsageLimitReset?: boolean;
       isCurrent?: Parameters<typeof sendSessionMessage>[0]['canAdmit'];
     }>): Promise<
       | Readonly<{ status: 'not_interrupted' | 'disabled' | 'suppressed_newer_user_input' }>
@@ -90,6 +91,7 @@ export function createConnectedServiceContinuationMessageDispatcher(
         resumePromptMode: input.resumePromptMode,
         customResumePrompt: input.customResumePrompt,
         recoveryKind: input.recoveryKind,
+        afterUsageLimitReset: input.afterUsageLimitReset,
       });
       const localId = createContinuationLocalId(input.sessionId, input.attemptId, input.interruptedOriginId);
       const sent = await this.sendContinuationPrompt({ sessionId: input.sessionId, prompt, localId, isCurrent: input.isCurrent });

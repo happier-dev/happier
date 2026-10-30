@@ -1506,6 +1506,11 @@ The development parser distinguishes Claude's automatic usage-limit wait footer
 from the interactive usage-limit chooser. An empty composer still accepts a new
 prompt, as Claude permits during the wait. Clearing an owned leftover draft with
 Escape waits for the provider wait to end; it must not cancel automatic continuation.
+The interactive chooser is dismissed inside serialized prompt injection: a fresh
+capture must show it before one Escape is sent, and closure is verified before input
+is written. Exact connected-account application wakes Pending without pressing keys.
+The dialog-choice broker leaves this menu to injection rather than publishing a
+competing app choice.
 The Rewind message selector owns keyboard input even when its only focused row is
 `(current)`, so that row is never treated as a prompt draft. These keyboard semantics
 follow [Claude's interactive-mode contract](https://code.claude.com/docs/en/interactive-mode).
@@ -1787,6 +1792,14 @@ Admission hands continuation custody to Pending and its existing queued,
 delivering and activation-failure presentation; it does not prove quota recovery.
 Connected Account recovery additionally requires its existing outcome proof to
 observe successful execution under the selected credential.
+
+Claude's provider-owned transcript mapper reads reset seconds and allowance identity
+from `apiErrorParams.rate_limit_info`, with `quotaLimits` as a fallback. It converts
+the reset to milliseconds for the existing runtime report, pool exclusion and
+recovery wait. An explicit `usage_limit_reached` remains a usage failure even when
+the accompanying meter is below 100 percent. Standard account-switch continuation
+uses neutral text; a resume after the reset retains the limits-lifted text. Both
+paths use the existing prompt owner and preserve custom resume prompts.
 
 After a primary Claude limit failure, the existing quota outbox and runtime-auth
 reporter deliver their observations independently; recovery reporting does not

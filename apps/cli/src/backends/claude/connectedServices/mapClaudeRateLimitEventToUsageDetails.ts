@@ -112,6 +112,11 @@ function collectSyntheticApiErrorRecords(record: Record<string, unknown>): Recor
     records.push(result);
     if (isRecord(result.error)) records.push(result.error);
   }
+  for (const source of [...records]) {
+    const apiErrorParams = isRecord(source.apiErrorParams) ? source.apiErrorParams : null;
+    if (isRecord(apiErrorParams?.rate_limit_info)) records.push(apiErrorParams.rate_limit_info);
+    if (isRecord(source.quotaLimits)) records.push(source.quotaLimits);
+  }
   return records;
 }
 
@@ -271,7 +276,7 @@ function readSyntheticProviderLimitId(records: readonly Record<string, unknown>[
   // An error code identifies the rejection, not the exhausted allowance. Unknown
   // allowance identity must remain unknown so selected pool limits do not exclude it.
   for (const record of records) {
-    for (const name of ['providerLimitId', 'provider_limit_id', 'limit', 'limitType', 'limit_type']) {
+    for (const name of ['providerLimitId', 'provider_limit_id', 'rateLimitType', 'rate_limit_type', 'limit', 'limitType', 'limit_type']) {
       const text = readString(record[name]);
       if (text) return text;
     }
@@ -313,7 +318,8 @@ function mapSyntheticClaudeApiErrorToUsageDetails(record: Record<string, unknown
     'status_code',
   ]));
   const hasRateLimitEvidence = containsRateLimitEvidence(record);
-  const hasUsageLimitEvidence = containsClaudeUsageLimitEvidence(record);
+  const hasDeclaredUsageLimit = records.some((source) => source.apiError === 'usage_limit_reached');
+  const hasUsageLimitEvidence = hasDeclaredUsageLimit || containsClaudeUsageLimitEvidence(record);
   const hasProviderCapacityEvidence = status === 529 || containsProviderCapacityEvidence(record);
   const hasCompatibleStatus = status === null || status === 429 || status === 529;
   const isAssistantApiError =
@@ -342,7 +348,9 @@ function mapSyntheticClaudeApiErrorToUsageDetails(record: Record<string, unknown
     v: 1,
     resetAtMs,
     retryAfterMs,
-    ...(hasProviderCapacityEvidence ? { limitCategory: 'capacity' as const } : {}),
+    ...(hasProviderCapacityEvidence
+      ? { limitCategory: 'capacity' as const }
+      : hasDeclaredUsageLimit ? { limitCategory: 'usage_limit' as const } : {}),
     quotaScope: 'account',
     recoverability: 'wait',
     ...(providerLimitId ? { providerLimitId } : {}),

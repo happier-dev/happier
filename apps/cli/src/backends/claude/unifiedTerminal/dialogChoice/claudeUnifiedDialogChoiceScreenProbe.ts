@@ -69,6 +69,9 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
 
   const dialogIsOwned = (dialog: ClaudeUnifiedVisibleDialog): boolean => {
     if (dialog.owner === null) return false;
+    // Injection owns usage-limit dismissal; retire inherited app questions through the
+    // existing owned-dialog path so an old request cannot compete with that terminal effect.
+    if (dialog.owner.kind === 'prompt_injection') return true;
     // resume_choice is published exclusively by its dedicated startup resolver DURING the startup
     // window; the generalized broker must defer then to avoid the startup double-publish (F2). But the
     // ownership is scoped: once startup is ready the resolver has stood down, so a resume dialog that

@@ -198,6 +198,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
           sessionId: intent.sessionId, attemptId: intent.attemptId!, interruptedOriginId: 'failed-turn',
           interruption: 'provider_failed_turn', resumePromptMode: intent.resumePromptMode ?? 'standard',
           recoveryKind: intent.classification.kind,
+          afterUsageLimitReset: true,
         });
         return { ok: true, status: 'continuation_enqueued' };
       },
@@ -236,6 +237,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
           sessionId: intent.sessionId, attemptId: intent.attemptId!, interruptedOriginId: 'failed-turn',
           interruption: 'provider_failed_turn', resumePromptMode: intent.resumePromptMode ?? 'standard',
           recoveryKind: intent.classification.kind,
+          afterUsageLimitReset: true,
         });
         return { ok: true, status: 'continuation_enqueued' };
       },

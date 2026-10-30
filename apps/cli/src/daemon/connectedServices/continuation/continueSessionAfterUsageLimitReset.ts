@@ -114,6 +114,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
     resumePromptMode: recovery.resumePromptMode,
     customResumePrompt: input.customResumePrompt,
     recoveryKind: 'usage_limit',
+    afterUsageLimitReset: true,
     isCurrent: async ({ rawSession, metadata }) => {
       if (!(await input.isCurrent()) || rawSession.latestTurnStatus !== 'failed' || rawSession.archivedAt != null || !metadata
         || rawSession.latestTurnId !== input.rawSession.latestTurnId) return false;

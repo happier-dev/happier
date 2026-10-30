@@ -10,11 +10,10 @@ export type ClaudeUsageLimitDialogReleaseResult =
   | Readonly<{ status: 'failed'; reason: string }>;
 
 /**
- * Releases only Claude's exact, freshly observed usage-limit dialog after the selected account was
- * applied successfully. One Escape dismisses this provider-owned stale overlay; it is never sent
- * for a healthy screen, another dialog, or an in-flight turn.
+ * Releases only Claude's freshly observed usage-limit dialog inside serialized prompt injection.
+ * One Escape dismisses the overlay and a fresh capture verifies closure before any input is written.
  */
-export async function releaseClaudeUsageLimitDialogAfterExactApplication(input: Readonly<{
+export async function releaseClaudeUsageLimitDialogBeforePromptInjection(input: Readonly<{
   port: TerminalControlPort;
   wait?: (ms: number) => Promise<void>;
   settleMs?: number;

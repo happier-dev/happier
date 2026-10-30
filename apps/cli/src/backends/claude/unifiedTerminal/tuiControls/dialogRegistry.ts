@@ -31,7 +31,7 @@ export type ClaudeUnifiedDialogDetectorStateKey =
   | 'effortChangeDialogVisible'
   | 'trustFolderPromptVisible';
 
-export type ClaudeUnifiedDialogOwner = 'slash_controls' | 'resume_startup';
+export type ClaudeUnifiedDialogOwner = 'slash_controls' | 'resume_startup' | 'prompt_injection';
 
 export type ClaudeUnifiedDialogOwnerRegistration = Readonly<{
   kind: ClaudeUnifiedDialogOwner;
@@ -191,7 +191,7 @@ export const CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY: readonly ClaudeUnifiedRe
   {
     dialogId: 'usage_limit',
     detectorStateKey: 'usageLimitDialogVisible',
-    owner: null,
+    owner: { kind: 'prompt_injection', controlKeys: [] },
     questionId: 'claudeUnifiedTerminalUsageLimit',
     requestReason: 'claude_unified_terminal_usage_limit',
     header: 'Claude usage limit',

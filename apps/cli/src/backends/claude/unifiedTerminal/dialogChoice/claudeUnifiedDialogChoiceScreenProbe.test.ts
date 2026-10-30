@@ -160,6 +160,27 @@ function createHarness(params: Readonly<{
 }
 
 describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
+  it.each([false, true])('leaves the usage-limit menu to prompt injection without publishing a competing app choice (inherited: %s)', async (inherited) => {
+    const menu = readFileSync(new URL('../tuiControls/__fixtures__/incident-89861-ratelimit-resume.ansi', import.meta.url), 'utf8');
+    const { broker, client, port, probe } = createHarness({ captures: [menu] });
+    if (inherited) {
+      client.agentState.requests.claude_dialog_choice_inherited = {
+        tool: 'AskUserQuestion', kind: 'user_action',
+        source: CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
+        arguments: { happierDialog: { kind: 'recognized', dialogId: 'usage_limit' }, questions: [] },
+        createdAt: 1,
+      };
+    }
+    try {
+      await expect(probe.probe()).resolves.toEqual({ kind: 'owned', dialogId: 'usage_limit' });
+      await vi.waitFor(() => expect(client.agentState.requests).toEqual({}));
+      expect(port.sentKeys).toEqual([]);
+    } finally {
+      probe.dispose();
+      await broker.dispose();
+    }
+  });
+
   it('observes a native question that renders after its lifecycle screen hint', async () => {
     const { broker, client, probe } = createHarness({
       captures: [...Array.from({ length: 7 }, () => ''), NATIVE_QUESTION_SCREEN, NATIVE_QUESTION_SCREEN],

@@ -636,7 +636,7 @@ export class Session {
             && this.connectedServiceExactApplicationHandler
         ) {
             await this.connectedServiceExactApplicationHandler().catch((error) => {
-                logger.debug('[Session] Failed to release Claude provider UI after exact connected-service application (non-fatal)', error);
+                logger.infoFile('[Session] Failed to wake Claude pending input after exact connected-service application (non-fatal)', error);
             });
         }
         return { ok: true, appliedVia: 'current_truth_fence' };

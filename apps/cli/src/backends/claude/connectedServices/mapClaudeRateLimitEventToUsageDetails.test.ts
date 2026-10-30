@@ -9,6 +9,22 @@ import { classifyClaudeConnectedServiceRuntimeAuthFailure } from './classifyClau
 import { shouldHandleConnectedServiceProviderLimitFailure } from '@/daemon/connectedServices/accountGroups/quotas/quotaLimitSelection';
 
 describe('mapClaudeRateLimitEventToUsageDetails', () => {
+  it.each(['apiErrorParams', 'quotaLimits'] as const)('retains the structured transcript reset from %s through runtime classification', (source) => {
+    const rateLimitInfo = { status: 'rejected', resetsAt: 1793444400, rateLimitType: 'seven_day', utilization: 95 };
+    const error = {
+      type: 'assistant', isApiErrorMessage: true,
+      apiError: 'usage_limit_reached', apiErrorStatus: 429, error: 'rate_limit',
+      ...(source === 'apiErrorParams'
+        ? { apiErrorParams: { rate_limit_info: rateLimitInfo }, quotaLimits: rateLimitInfo }
+        : { quotaLimits: rateLimitInfo }),
+    };
+    const details = mapClaudeProviderFailureToUsageDetails(error);
+    expect(details).toMatchObject({ resetAtMs: 1793444400000, providerLimitId: 'seven_day' });
+    expect(classifyClaudeConnectedServiceRuntimeAuthFailure({ details, error })).toMatchObject({
+      kind: 'usage_limit', resetsAtMs: 1793444400000, providerLimitId: 'seven_day',
+    });
+  });
+
   it('admits an actual failed SDK result whose rejection evidence is in result and errors', () => {
     expect(mapClaudeProviderFailureToUsageDetails({
       type: 'result', subtype: 'error_during_execution', is_error: true,
