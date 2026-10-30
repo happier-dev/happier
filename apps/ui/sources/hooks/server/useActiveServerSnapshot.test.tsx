@@ -94,13 +94,27 @@ describe('useActiveServerSnapshot', () => {
     });
 
     it('does not subscribe or read the active server while disabled', async () => {
-        getActiveServerSnapshotMock.mockReturnValue({
-            serverId: 'server-a',
-            serverUrl: 'http://api.example.test',
-            generation: 1,
-        });
+        const runtime = await vi.importActual<typeof import('@/sync/domains/server/serverRuntime')>(
+            '@/sync/domains/server/serverRuntime',
+        );
+        const { seedPersistedHomeProfilesForTests } = await import('@/dev/testkit/fixtures/persistedHomeProfiles');
+        await seedPersistedHomeProfilesForTests({ profiles: [], activeServerId: '' });
+        const firstHome = await runtime.upsertAndActivateServer({ serverUrl: 'https://first-home.example.test' });
+
+        // Observe reads and disposal without replacing the real profile publisher.
+        getActiveServerSnapshotMock.mockImplementation(runtime.getActiveServerSnapshot);
         const unsubscribe = vi.fn();
-        subscribeActiveServerMock.mockReturnValue(unsubscribe);
+        const deliveredSnapshot = vi.fn();
+        subscribeActiveServerMock.mockImplementation((listener: Parameters<typeof runtime.subscribeActiveServer>[0]) => {
+            const dispose = runtime.subscribeActiveServer((snapshot) => {
+                deliveredSnapshot(snapshot);
+                listener(snapshot);
+            });
+            return () => {
+                unsubscribe();
+                dispose();
+            };
+        });
 
         const { useActiveServerSnapshot } = await import('./useActiveServerSnapshot');
         const hook = await renderHook(
@@ -114,14 +128,36 @@ describe('useActiveServerSnapshot', () => {
 
         await hook.rerender(true);
 
-        expect(hook.getCurrent().serverId).toBe('server-a');
+        expect(hook.getCurrent().serverId).toBe(firstHome.id);
         expect(subscribeActiveServerMock).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            await runtime.upsertAndActivateServer({ serverUrl: 'https://second-home.example.test' });
+        });
+        expect(hook.getCurrent().serverUrl).toBe('https://second-home.example.test');
+        expect(deliveredSnapshot).toHaveBeenCalled();
 
         await hook.rerender(false);
 
         expect(unsubscribe).toHaveBeenCalledTimes(1);
         expect(hook.getCurrent().serverId).toBe('');
+
+        getActiveServerSnapshotMock.mockClear();
+        deliveredSnapshot.mockClear();
+        await act(async () => {
+            await runtime.setActiveServer({ serverId: firstHome.id });
+        });
+        expect(getActiveServerSnapshotMock).not.toHaveBeenCalled();
+        expect(deliveredSnapshot).not.toHaveBeenCalled();
+        expect(hook.getCurrent().serverId).toBe('');
+
+        await hook.rerender(true);
+        expect(hook.getCurrent().serverId).toBe(firstHome.id);
+        expect(subscribeActiveServerMock).toHaveBeenCalledTimes(2);
         await hook.unmount();
-        expect(unsubscribe).toHaveBeenCalledTimes(1);
+        expect(unsubscribe).toHaveBeenCalledTimes(2);
+        deliveredSnapshot.mockClear();
+        await runtime.upsertAndActivateServer({ serverUrl: 'https://unmounted-home.example.test' });
+        expect(deliveredSnapshot).not.toHaveBeenCalled();
     });
 });

@@ -1,45 +1,43 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
+import * as profiles from '@/sync/domains/server/serverProfiles';
+import { loadEffectiveHomeViewState } from '@/sync/domains/server/selection/homeViewSelectionState';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 
-const homeViewState = vi.hoisted(() => ({
-    value: null as null | {
-        version: 1;
-        groups: readonly unknown[];
-        activeTargetKind: 'server' | 'group' | null;
-        activeTargetId: string | null;
-    },
-    /** Set by the device-local selection test so the writer has a real owner to save through. */
-    save: null as null | ((update: unknown, options: unknown) => unknown),
-}));
-
-const syncSingleton = vi.hoisted(() => ({ applySettings: vi.fn() }));
-
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-    getSyncSingleton: () => syncSingleton,
-}));
-
-vi.mock('@/sync/domains/server/selection/homeViewSelectionState', () => ({
-    loadEffectiveHomeViewState: () => homeViewState.value,
-    subscribeEffectiveHomeViewState: () => () => {},
-    updateEffectiveHomeViewState: (update: unknown, options: unknown) => {
-        if (!homeViewState.save) throw new Error('not exercised by this test');
-        return homeViewState.save(update, options);
-    },
-}));
+const homes = createHomeGovernanceHarness();
+const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+let locks: ReturnType<typeof installWebLockManagerMock>;
 
 describe('useHomeViewSelectionSettings', () => {
-    afterEach(() => {
+    beforeEach(async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `home_view_hook_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        profiles.resetServerProfilesRuntimeForTests();
+        locks = installWebLockManagerMock();
+        installHomeGovernanceBoundaries(homes);
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        getStorage().setState({ settings: { ...settingsDefaults }, settingsScope: null });
+    });
+    afterEach(async () => {
         standardCleanup();
-        homeViewState.value = null;
-        homeViewState.save = null;
-        syncSingleton.applySettings.mockClear();
+        await homes.reset();
+        locks.restore();
+        resetRuntimeFetch();
+        profiles.resetServerProfilesRuntimeForTests();
+        if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+        else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
     });
 
     it('reads the legacy Home-view fallback without subscribing to unrelated Account settings', async () => {
         const { getStorage } = await import('@/sync/domains/state/storageStore');
         const { useHomeViewSelectionSettings } = await import('./useHomeViewSelectionSettings');
+
+        expect(profiles.loadHomeViewState()).toBeNull();
+        expect(loadEffectiveHomeViewState()).toBeNull();
 
         let renderCount = 0;
         const hook = await renderHook(() => {
@@ -81,18 +79,19 @@ describe('useHomeViewSelectionSettings', () => {
             serverSelectionActiveTargetKind: 'server',
             serverSelectionActiveTargetId: 'srv-legacy',
         });
-        homeViewState.value = {
+        const device = await profiles.upsertServerProfile({ name: 'Device Home', serverUrl: 'https://device-home.example.test' });
+        await profiles.saveHomeViewState({
             version: 1,
             groups: [],
             activeTargetKind: 'server',
-            activeTargetId: 'srv-device-global',
-        };
+            activeTargetId: device.id,
+        });
 
         const hook = await renderHook(() => useHomeViewSelectionSettings());
 
         expect(hook.getCurrent()).toMatchObject({
             serverSelectionActiveTargetKind: 'server',
-            serverSelectionActiveTargetId: 'srv-device-global',
+            serverSelectionActiveTargetId: device.id,
         });
     });
 
@@ -100,25 +99,17 @@ describe('useHomeViewSelectionSettings', () => {
         const { getStorage } = await import('@/sync/domains/state/storageStore');
         const { useHomeViewSelectionSettingsMutable } = await import('./useHomeViewSelectionSettings');
 
-        const saved = {
-            version: 1 as const,
-            groups: [] as readonly unknown[],
-            activeTargetKind: 'server' as const,
-            activeTargetId: 'srv-device-global',
-        };
-        homeViewState.value = saved;
-        const savedScopes: unknown[] = [];
-        homeViewState.save = (_update, options) => {
-            savedScopes.push(options);
-            return saved;
-        };
+        const original = await profiles.upsertServerProfile({ name: 'Original', serverUrl: 'https://original-home.example.test' });
+        const target = await profiles.upsertServerProfile({ name: 'Target', serverUrl: 'https://target-home.example.test' });
+        await profiles.saveHomeViewState({ version: 1, groups: [], activeTargetKind: 'server', activeTargetId: original.id });
 
         const hook = await renderHook(() => useHomeViewSelectionSettingsMutable());
+        expect(hook.getCurrent().serverSelectionActiveTargetId).toBe(original.id);
         await act(async () => {
-            hook.getCurrent().setHomeViewSelectionSettings({
+            await hook.getCurrent().setHomeViewSelectionSettings({
                 serverSelectionGroups: [],
                 serverSelectionActiveTargetKind: 'server',
-                serverSelectionActiveTargetId: 'srv-device-global',
+                serverSelectionActiveTargetId: target.id,
             });
         });
 
@@ -126,8 +117,10 @@ describe('useHomeViewSelectionSettings', () => {
         // readers keep working. This is the one catalogued local-only exception: it must never
         // reach the scoped Account-settings writer, which would seal, queue and sync it to a
         // Home (Lane 07.6 §2, completion evidence 9).
-        expect(savedScopes).toEqual([{ scope: 'device' }]);
-        expect(getStorage().getState().settings.serverSelectionActiveTargetId).toBe('srv-device-global');
-        expect(syncSingleton.applySettings).not.toHaveBeenCalled();
+        expect(profiles.loadHomeViewState()).toMatchObject({ activeTargetKind: 'server', activeTargetId: target.id });
+        expect(loadEffectiveHomeViewState()).toMatchObject({ activeTargetKind: 'server', activeTargetId: target.id });
+        expect(hook.getCurrent().serverSelectionActiveTargetId).toBe(target.id);
+        expect(getStorage().getState().settings.serverSelectionActiveTargetId).toBe(target.id);
+        expect(homes.requests.filter(request => request.path.includes('/account/settings') && request.method !== 'GET')).toEqual([]);
     });
 });
