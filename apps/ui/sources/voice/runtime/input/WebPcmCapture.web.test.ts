@@ -88,26 +88,33 @@ describe('WebPcmCapture', () => {
 
   it.each(['failure', 'cancel'] as const)('does not report a successful graceful drain after accepted callback %s', async (action) => {
     const { context, processor } = createContext({ sampleRate: 16_000 });
-    let rejectChunk!: (error: Error) => void;
-    const held = new Promise<void>((_resolve, reject) => { rejectChunk = reject; });
+    const chunkResult = createDeferred<void>();
     const chunkEntered = createDeferred<void>();
     const signal = new AbortController();
     const capture = createWebPcmCapture({
       mic: createMic(context).mic, signal: signal.signal,
       format: { sampleRate: 16_000, channels: 1, encoding: 'pcm16le' }, chunkMs: 20,
-      fallback: 'allow_script_processor', onChunk: () => { chunkEntered.resolve(); return held; },
+      fallback: 'allow_script_processor', onChunk: () => { chunkEntered.resolve(); return chunkResult.promise; },
     });
-    await capture.start();
-    processor.onaudioprocess?.(processEvent(new Float32Array(320), 16_000));
-    await chunkEntered.promise;
-    const outcome = capture.finish().then(() => ({ ok: true }), (error: unknown) => ({ ok: false, error }));
-    if (action === 'failure') rejectChunk(new Error('consumer failed'));
-    else signal.abort();
-    const settled = await Promise.race([outcome, new Promise((resolve) => setTimeout(() => resolve({ pending: true }), 50))]);
-    expect(settled).toMatchObject(action === 'failure'
-      ? { ok: false, error: { code: 'pcm_capture_chunk_failed' } }
-      : { ok: false, error: { name: 'AbortError' } });
-    expect(capture.isActive()).toBe(false);
+    let acceptedDrain: Promise<void> | undefined;
+    try {
+      await capture.start();
+      processor.onaudioprocess?.(processEvent(new Float32Array(320), 16_000));
+      await chunkEntered.promise;
+      acceptedDrain = capture.waitForDrain();
+      const outcome = capture.finish().then(() => ({ ok: true }), (error: unknown) => ({ ok: false, error }));
+      if (action === 'failure') chunkResult.reject(new Error('consumer failed'));
+      else signal.abort();
+      // Cancellation must settle finish while the accepted callback is still held.
+      expect(await outcome).toMatchObject(action === 'failure'
+        ? { ok: false, error: { code: 'pcm_capture_chunk_failed' } }
+        : { ok: false, error: { name: 'AbortError' } });
+      expect(capture.isActive()).toBe(false);
+    } finally {
+      chunkResult.resolve();
+      await capture.stop();
+      await acceptedDrain;
+    }
   });
 
   it('finishes every accepted frame while prompt stop discards frames still queued for delivery', async () => {

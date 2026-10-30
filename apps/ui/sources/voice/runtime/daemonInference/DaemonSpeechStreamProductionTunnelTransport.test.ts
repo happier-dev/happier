@@ -49,6 +49,7 @@ const { daemonSpeechStreamDiagnostics } = await import('./daemonSpeechStreamDiag
 const { installDaemonSpeechStreamQaRouteRequirement } = await import('./daemonSpeechStreamQaRouteRequirement');
 
 const HOME = 'https://speech-peer.example.test';
+const LOOPBACK_ORIGIN = 'http://127.0.0.1:39001';
 const PORT = 3005;
 const FORMAT = { sampleRateHz: 16_000, channelCount: 1, bitsPerSample: 16, ffmpegCodec: 'pcm_s16le' } as const;
 const originalState = { settings: storage.getState().settings, machines: storage.getState().machines,
@@ -100,7 +101,7 @@ function selectMachine(hasEndpoint = true, httpPort: number | null = PORT) {
   const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now(), daemonState: {
     httpPort,
     ...(hasEndpoint ? { peerMediation: { loopback: { endpoint: {
-      v: 1, routeKind: 'loopback_direct', url: 'http://127.0.0.1:39001',
+      v: 1, routeKind: 'loopback_direct', url: LOOPBACK_ORIGIN,
       endpointFingerprint: 'fingerprint-1', expiresAt: Date.now() + 600_000,
     } } } } : {}),
   } });
@@ -254,10 +255,10 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
     grants.length = 0; opens.length = 0; receivedPcm.length = 0;
     NativeWebSocket.instances.length = 0;
     vi.stubGlobal('WebSocket', NativeWebSocket);
-    vi.stubGlobal('fetch', mint);
     // Plain cases carry only tokens. The two legacy credential-kind vectors
     // restore actual E2EE Accounts and content fingerprints, never Plain keys.
     account = await restoreServerAccountForTest({ serverUrl: HOME, accountId: 'artifact-account', credentials,
+      additionalRequestOrigins: [LOOPBACK_ORIGIN],
       credentialScope: 'restored-home', request: async (input, init) => {
         const path = new URL(String(input)).pathname;
         if (path === '/health') return new Response(null, { status: 200 });
@@ -271,7 +272,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
         if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'artifact-account', timestamp: 1 });
         if (path === '/v2/account/settings') return Response.json({ version: 0,
           content: encryptedSettings ? { t: 'encrypted', c: encryptedSettings } : { t: 'plain', v: {} } });
-        if (path.endsWith('/route-grants')) return await mint(input, init);
+        if (path.endsWith('/route-grants') || path.endsWith('/tunnel/open')) return await mint(input, init);
         if (!e2eeKind) {
           const machine = createPlainMachineReadHttpResponseFixture(path, init);
           if (machine) return machine;

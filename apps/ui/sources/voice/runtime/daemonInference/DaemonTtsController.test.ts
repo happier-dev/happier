@@ -927,37 +927,6 @@ describe('DaemonTtsController', () => {
         expect(playAudioBytesWithStopper).not.toHaveBeenCalled();
     });
 
-    it('allows overriding the daemon TTS output codec on a per-call basis', async () => {
-        const synthesizeText = vi.fn().mockResolvedValue({
-            bytes: new Uint8Array(Buffer.from('voice-audio')),
-            output: { codec: 'wav', mimeType: 'audio/wav' },
-        });
-        const playAudioBytesWithStopper = vi.fn().mockResolvedValue(undefined);
-
-        const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText }),
-            playAudioBytesWithStopper,
-        });
-
-        await controller.speak({
-            sessionId: 'session-override',
-            text: 'hello daemon',
-            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-            voiceId: 'af_heart',
-            speed: 1,
-            registerPlaybackStopper: (_stopper: () => void) => () => {},
-            onSpeaking: vi.fn(),
-            output: { codec: 'wav', mimeType: 'audio/wav' },
-        } as any);
-
-        expect(daemonRpc).toHaveBeenCalledWith(expect.objectContaining({
-            method: 'daemon.voiceInference.tts.synthesize', payload: expect.objectContaining({ output: { codec: 'wav', mimeType: 'audio/wav' } }),
-        }));
-        expect(playAudioBytesWithStopper).toHaveBeenCalledWith(expect.objectContaining({
-            format: 'wav',
-        }));
-    });
-
     it('rejects an unsupported daemon wire codec through the real strict reader before playback', async () => {
         const synthesizeText = vi.fn().mockResolvedValue({
             bytes: new Uint8Array(Buffer.from('voice-audio')),

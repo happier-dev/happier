@@ -111,22 +111,24 @@ describe('voiceAudioMode', () => {
 
   it('redacts raw audio-mode errors from dev logging', async () => {
     audioRuntime.platform = 'web';
-    setAudioModeAsync.mockRejectedValueOnce(new Error('native audio permissions failed'));
+    setAudioModeAsync.mockRejectedValueOnce(new Error('private audio permission detail for /Users/example/secret'));
 
     const { ensureVoiceForegroundAudioMode } = await import('./voiceAudioMode');
 
     await ensureVoiceForegroundAudioMode();
 
-    expect(console.warn).toHaveBeenCalledWith(
-      '[voiceAudioMode] Failed to set audio mode',
-      expect.objectContaining({
-        mode: expect.objectContaining({
+    const diagnostics = vi.mocked(console.warn).mock.calls.filter(
+      ([event]) => event === '[voiceAudioMode] Failed to set audio mode',
+    );
+    expect(diagnostics).toEqual([[
+      '[voiceAudioMode] Failed to set audio mode', {
+        mode: {
           allowsRecording: true,
           playsInSilentMode: true,
           shouldPlayInBackground: false,
-        }),
+        },
         errorKind: 'Error',
-      }),
-    );
+      },
+    ]]);
   });
 });

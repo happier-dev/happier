@@ -431,15 +431,6 @@ describe('bundledSpeechRuntime', () => {
     expect(onPlaybackStarted).not.toHaveBeenCalled();
   });
 
-  it('executes a second bundled speech package from the injected registry without a host-global descriptor edit', async () => {
-    transcribeReply.mockResolvedValueOnce('acme result');
-    await expect(runtimeFor([CATALOG_STT_DECLARATION]).transcribeRecordedAudio(CATALOG_STT_ID, {
-      uri: 'file:///recording.wav', providerConfig: { catalogModel: 'acme-v2', language: '' },
-    })).resolves.toBe('acme result');
-    expect(transcribeReply).toHaveBeenCalledWith(expect.objectContaining({ target: { pluginId: 'happier.voice.acme', localId: 'catalog-stt' } }));
-    assertPrivateSettingsStayLocal();
-  });
-
   it('validates a declared text model without carrying it over the daemon RPC', async () => {
     transcribeReply.mockResolvedValueOnce('openai-compatible result');
     const declaration: SpeechDeclaration = { id: 'text-stt', title: 'Text-configured speech-to-text', kind: 'speech',

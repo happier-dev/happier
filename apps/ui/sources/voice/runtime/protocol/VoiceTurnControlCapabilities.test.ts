@@ -23,6 +23,14 @@ describe('resolveVoiceTurnControlAction', () => {
       basis: 'played_ms',
     });
     expect(resolveVoiceTurnControlAction(CAPABILITIES, 'clear_input')).toEqual({ status: 'available' });
+    for (const capabilities of [CAPABILITIES, { ...CAPABILITIES, commitInput: false }]) {
+      expect(resolveVoiceTurnControlAction(capabilities, 'commit_input')).toEqual({
+        status: 'unavailable',
+        code: 'voice_turn_action_unsupported',
+      });
+    }
+    expect(resolveVoiceTurnControlAction({ ...CAPABILITIES, commitInput: true }, 'commit_input'))
+      .toEqual({ status: 'available' });
     expect(resolveVoiceTurnControlAction(CAPABILITIES, 'stop_session')).toEqual({ status: 'available' });
     expect(resolveVoiceTurnControlAction(CAPABILITIES, 'resume_session')).toEqual({
       status: 'available',

@@ -1410,14 +1410,18 @@ describe('createLocalVoiceCaptureOwner', () => {
 
     it('preserves streaming endpoint fallback when the active native VAD terminates', async () => {
         const onEndpointSignal = vi.fn();
-        let terminateVad: (error: unknown) => void = () => {};
+        const pcm = createSharedNativePcmHarness();
+        const pushVadAudioFrame = vi.fn(async () => ({ speechStarted: false, speechEnded: false }));
+        const detectorCancelled = createDeferred<void>();
+        const cancelVadDetector = vi.fn(async () => { detectorCancelled.resolve(); });
+        const bridge = await resolveNativeSileroVadBridge({
+            createVadDetector: vi.fn(async () => {}),
+            pushVadAudioFrame,
+            cancelVadDetector,
+        }, { frameSource: pcm.capture });
+        expect(bridge).not.toBeNull();
         const nativeVadController = createNativeVadController({
-            bridge: {
-                startSession: ({ onTerminal }) => {
-                    terminateVad = onTerminal ?? (() => {});
-                    return { stop: () => {} };
-                },
-            },
+            bridge,
             onEndpointSignal,
         });
         const owner = createLocalVoiceCaptureOwner({
@@ -1426,17 +1430,33 @@ describe('createLocalVoiceCaptureOwner', () => {
         }, { nativeVadController });
         sdk.sherpaPush.mockResolvedValue({ text: 'keep listening', isEndpoint: true });
         await owner.startCapture({ handsFree: true, provider: 'local_neural', sessionId: 'vad-fallback' });
-        nativeAudio.emit();
-        await nativeAudio.capture.waitForDrain();
+        expect(nativeVadController.isActiveSession('vad-fallback')).toBe(true);
+        expect(pcm.capture.getSnapshot().subscriberCount).toBe(2);
+        pcm.emitFrame();
+        await pcm.capture.waitForDrain();
         expect(onEndpointSignal).not.toHaveBeenCalled();
 
-        terminateVad(new Error('native detector stopped'));
-        nativeAudio.emit();
-        await nativeAudio.capture.waitForDrain();
+        // Fail only the external detector SDK, not the physical mic shared with STT.
+        pushVadAudioFrame.mockRejectedValueOnce(new Error('native detector stopped'));
+        sdk.sherpaPush.mockResolvedValueOnce({ text: 'keep listening', isEndpoint: false });
+        pcm.emitFrame();
+        await pcm.capture.waitForDrain();
+        await detectorCancelled.promise;
+        expect(nativeVadController.isActiveSession('vad-fallback')).toBe(false);
+        expect(pcm.capture.getSnapshot().subscriberCount).toBe(1);
+        expect(pcm.nativeStop).not.toHaveBeenCalled();
+        expect(onEndpointSignal).not.toHaveBeenCalled();
+
+        pcm.emitFrame();
+        await pcm.capture.waitForDrain();
         expect(onEndpointSignal).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
             sessionId: 'vad-fallback', source: 'native_stream', transcript: 'keep listening',
         }));
         await owner.stopSession();
+        expect(cancelVadDetector).toHaveBeenCalledOnce();
+        expect(pcm.nativeStop).toHaveBeenCalledOnce();
+        expect(pcm.capture.getSnapshot().subscriberCount).toBe(0);
+        expect(pcm.coordinator.getSnapshot().leaseCount).toBe(0);
     });
 
     it('releases the native VAD subscriber when local-neural startup is aborted', async () => {
@@ -1475,6 +1495,7 @@ describe('createLocalVoiceCaptureOwner', () => {
     });
 
     it('settles End while native VAD startup is pending and disposes the late detector and PCM lease', async () => {
+        vi.useFakeTimers();
         const nativeStartEntered = createDeferred<void>();
         const releaseNativeStart = createDeferred<void>();
         const pcm = createSharedNativePcmHarness({
@@ -1531,16 +1552,15 @@ describe('createLocalVoiceCaptureOwner', () => {
         expect(pcm.platformApply).toHaveBeenCalledTimes(1);
 
         const stopPromise = owner.stopSession('local-neural-pending-vad');
-        const stopOutcome = await Promise.race([
-            stopPromise.then(() => 'settled' as const),
-            new Promise<'timed_out'>((resolve) => setTimeout(() => resolve('timed_out'), 25)),
-        ]);
-        expect(stopOutcome).toBe('settled');
-
-        // Let the uncancellable native start finish after End. Its late session
-        // must be recognized as stale and immediately release both resources.
-        releaseNativeStart.resolve();
-        await Promise.all([startPromise, stopPromise]);
+        try {
+            // End needs neither native startup completion nor advancement of
+            // the owner's terminal-abandonment clock to release its authority.
+            await stopPromise;
+        } finally {
+            // Let uncancellable SDK work settle only after observing End.
+            releaseNativeStart.resolve();
+            await Promise.all([startPromise, stopPromise]);
+        }
         await detectorCancelled.promise;
         expect(cancelVadDetector).toHaveBeenCalledTimes(1);
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { readSessionIncludedInVoiceFromState, resolveVoiceSessionUpdatePolicy } from '@/voice/runtime/voiceUpdatePolicy';
+import { useVoiceTargetStore } from './voiceTargetStore';
+import { createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 describe('voiceUpdatePolicy', () => {
   it('reads synchronized Account Follow state from the exact Home list projection after reload', () => {
@@ -82,24 +84,41 @@ describe('voiceUpdatePolicy', () => {
   });
 
   it('does not let a stale compatibility target cache elevate disclosure', () => {
-    const policy = resolveVoiceSessionUpdatePolicy({
-      sessionId: 'same',
-      sessionAddress: { serverId: 'server-b', sessionId: 'same' },
-      includeInVoice: false,
-      settings: {
-        voice: {
-          ui: {
-            updates: {
-              activeSession: 'none',
-              otherSessions: 'activity',
-            },
-          },
-        },
-      },
+    const previousTargets = useVoiceTargetStore.getState();
+    const retainedAddress = { serverId: 'server-a', sessionId: 'same' };
+    const currentAddress = { serverId: 'server-b', sessionId: 'same' };
+    const includedViewer = createSessionViewerFixture({ follow: {
+      follows: true, notificationLevel: 'important', includeInVoice: true,
+    } });
+    const excludedViewer = createSessionViewerFixture({ follow: {
+      follows: true, notificationLevel: 'important', includeInVoice: false,
+    } });
+    const state = { sessionListRowsByServerId: {
+      'server-a': { same: { viewer: includedViewer } },
+      'server-b': { same: { viewer: excludedViewer } },
+    } };
+    const readPolicy = () => resolveVoiceSessionUpdatePolicy({
+      sessionId: currentAddress.sessionId,
+      sessionAddress: currentAddress,
+      includeInVoice: readSessionIncludedInVoiceFromState(state, currentAddress),
+      settings: { voice: { ui: { updates: { activeSession: 'snippets', otherSessions: 'activity' } } } },
     });
+    try {
+      previousTargets.setScope('global');
+      previousTargets.setPrimaryActionSessionAddress(retainedAddress);
+      previousTargets.setLastFocusedSessionAddress(retainedAddress);
+      previousTargets.setVoiceLiveContextSessionAddresses([retainedAddress]);
+      expect(useVoiceTargetStore.getState().voiceLiveContextSessionAddresses).toEqual([retainedAddress]);
+      expect(readSessionIncludedInVoiceFromState(state, retainedAddress)).toBe(true);
+      expect(readPolicy()).toMatchObject({ isIncludedInVoice: false, level: 'activity' });
 
-    expect(policy.isIncludedInVoice).toBe(false);
-    expect(policy.level).toBe('activity');
+      // A genuine Follow change, not retained target selection, authorizes the active level.
+      state.sessionListRowsByServerId['server-b'].same.viewer = includedViewer;
+      expect(readPolicy()).toMatchObject({ isIncludedInVoice: true, level: 'snippets' });
+      expect(useVoiceTargetStore.getState().primaryActionSessionAddress).toEqual(retainedAddress);
+    } finally {
+      useVoiceTargetStore.setState(previousTargets, true);
+    }
   });
 
   it('treats absent synchronized Follow state as not included', () => {

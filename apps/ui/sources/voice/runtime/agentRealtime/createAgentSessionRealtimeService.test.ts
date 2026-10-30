@@ -1,4 +1,4 @@
-import { createDeferred } from '@/dev/testkit';
+import { createDeferred, flushHookEffects } from '@/dev/testkit';
 import { describe, expect, it, vi } from 'vitest';
 import { AGENT_SESSION_REALTIME_SDP_MAX_BYTES } from '@happier-dev/protocol';
 import type { AgentSessionRealtimeHandle } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -377,13 +377,17 @@ describe('bound Agent-session realtime service', () => {
     const pendingInspect = new Promise<never>((_resolve, reject) => {
       rejectInspect = reject;
     });
+    const inspectRpcEntered = createDeferred<void>();
     const inspectAttempt = new AbortController();
     const inspectService = createAgentSessionRealtimeService({
       provider,
       conversationSessionId: 'session-pending-inspect',
       applicationAttemptId: 'voice:pending-inspect',
       signal: inspectAttempt.signal,
-      sessionRpc: vi.fn(async () => await pendingInspect),
+      sessionRpc: vi.fn(async () => {
+        inspectRpcEntered.resolve();
+        return await pendingInspect;
+      }),
       onStarted: vi.fn(),
     });
     const inspecting = inspectService.inspect();
@@ -413,25 +417,13 @@ describe('bound Agent-session realtime service', () => {
     const starting = startService.start({
       transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=pending-offer\r\n' },
     });
-    await sessionRpcEntered1.promise;
+    await Promise.all([inspectRpcEntered.promise, sessionRpcEntered1.promise]);
     expect(sessionRpc).toHaveBeenCalledTimes(1);
 
     inspectAttempt.abort();
     startAttempt.abort();
-    const [inspectOutcome, startOutcome] = await Promise.all([
-      Promise.race([
-        inspecting,
-        new Promise<'still_pending'>((resolve) => {
-          setTimeout(() => resolve('still_pending'), 25);
-        }),
-      ]),
-      Promise.race([
-        starting,
-        new Promise<'still_pending'>((resolve) => {
-          setTimeout(() => resolve('still_pending'), 25);
-        }),
-      ]),
-    ]);
+    // Both RPCs remain held until the public abort results have settled.
+    const [inspectOutcome, startOutcome] = await Promise.all([inspecting, starting]);
 
     rejectInspect(new Error('late_inspect_rejection'));
     resolveStart({ ...successfulStart, preparedInstructionsFor: { serverId: 'server-a', sessionId: 'session-pending-start' } });
@@ -497,13 +489,10 @@ describe('bound Agent-session realtime service', () => {
       }));
 
     caller.abort();
-    await expect(Promise.race([
-      starting,
-      new Promise<'still_pending'>((resolve) => {
-        setTimeout(() => resolve('still_pending'), 25);
-      }),
-    ])).resolves.toEqual({ status: 'aborted' });
+    await expect(starting).resolves.toEqual({ status: 'aborted' });
     await stopRpcEntered2.promise;
+    // Let the second transport rejection settle before admitting the late START.
+    await flushHookEffects();
     expect(stopRpc).toHaveBeenCalledTimes(2);
 
     resolveStart(successfulStart);
@@ -576,12 +565,7 @@ describe('bound Agent-session realtime service', () => {
     );
 
     caller.abort();
-    await expect(Promise.race([
-      starting,
-      new Promise<'still_pending'>((resolve) => {
-        setTimeout(() => resolve('still_pending'), 25);
-      }),
-    ])).resolves.toEqual({ status: 'aborted' });
+    await expect(starting).resolves.toEqual({ status: 'aborted' });
     await stopRpcEntered1.promise;
     expect(stopRpc).toHaveBeenCalledOnce();
 
@@ -1011,12 +995,7 @@ describe('bound Agent-session realtime service', () => {
     const caller = new AbortController();
     const callerStop = started.handle.stop({ signal: caller.signal });
     caller.abort();
-    const callerOutcome = await Promise.race([
-      callerStop,
-      new Promise<'still_pending'>((resolve) => {
-        setTimeout(() => resolve('still_pending'), 25);
-      }),
-    ]);
+    const callerOutcome = await callerStop;
     const disposeWasPendingAtCallerAbort = !disposeSettled;
     const stopCallsBeforeSharedSettlement = stopRpc.mock.calls.length;
 

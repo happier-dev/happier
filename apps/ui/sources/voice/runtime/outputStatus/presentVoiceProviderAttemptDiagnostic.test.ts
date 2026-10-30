@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { getPreferredLanguage, preloadTranslationsForSettings, setPreferredLanguageFromSettings, t } from '@/text';
 
 import {
   CODEX_V3_CONVERSATIONAL_TRANSCRIPT_UNAVAILABLE,
@@ -11,25 +12,37 @@ describe('Voice provider attempt diagnostic presentation', () => {
     voiceOutputStatusStore.clearAttemptForSession('voice-global');
   });
 
-  it('projects the bounded unavailable code into localized attempt status without a turn identity', () => {
-    presentVoiceProviderAttemptDiagnostic({
-      controlSessionId: 'voice-global',
-      attemptId: 31,
-      diagnostic: {
-        code: CODEX_V3_CONVERSATIONAL_TRANSCRIPT_UNAVAILABLE,
-        severity: 'warning',
-        message: 'provider prose must not be rendered',
-      },
-    });
+  it('projects the bounded unavailable code into localized attempt status without a turn identity', async () => {
+    const previousLanguage = getPreferredLanguage();
+    await preloadTranslationsForSettings('fr');
+    setPreferredLanguageFromSettings('fr');
+    try {
+      expect(getPreferredLanguage()).toBe('fr');
+      presentVoiceProviderAttemptDiagnostic({
+        controlSessionId: 'voice-global',
+        attemptId: 31,
+        diagnostic: {
+          code: CODEX_V3_CONVERSATIONAL_TRANSCRIPT_UNAVAILABLE,
+          severity: 'warning',
+          message: 'provider prose must not be rendered',
+        },
+      });
 
-    expect(voiceOutputStatusStore.readForSession('voice-global')).toMatchObject({
-      scope: 'attempt',
-      attemptId: 31,
-      statusId: CODEX_V3_CONVERSATIONAL_TRANSCRIPT_UNAVAILABLE,
-    });
-    expect(voiceOutputStatusStore.readForSession('voice-global')).not.toHaveProperty('turnId');
-    expect(voiceOutputStatusStore.readForSession('voice-global')?.text)
-      .not.toContain('provider prose');
+      const localizedText = t('voiceSurface.conversationalTranscriptUnavailable');
+      expect(localizedText.trim()).not.toBe('');
+      expect(localizedText).not.toBe('voiceSurface.conversationalTranscriptUnavailable');
+      expect(voiceOutputStatusStore.readForSession('voice-global')).toMatchObject({
+        scope: 'attempt',
+        attemptId: 31,
+        statusId: CODEX_V3_CONVERSATIONAL_TRANSCRIPT_UNAVAILABLE,
+        text: localizedText,
+      });
+      expect(voiceOutputStatusStore.readForSession('voice-global')).not.toHaveProperty('turnId');
+      expect(voiceOutputStatusStore.readForSession('voice-global')?.text)
+        .not.toContain('provider prose');
+    } finally {
+      setPreferredLanguageFromSettings(previousLanguage);
+    }
   });
 
   it('keeps unknown provider diagnostics out of the normal user-visible status owner', () => {

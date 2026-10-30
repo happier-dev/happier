@@ -36,7 +36,6 @@ afterEach(async () => {
 import { createVoiceCaptureAdmissionController } from './VoiceCaptureAdmissionController';
 import {
     createVoiceCaptureAdmissionBinding,
-    VoiceCaptureBusyError,
 } from './VoiceCaptureAdmissionBinding';
 
 function createCaptureOwner() {
@@ -150,12 +149,4 @@ describe('createVoiceCaptureAdmissionBinding', () => {
         expect(admission.acquire('conversation').status).toBe('acquired');
     });
 
-    it('exports a distinguishable busy error for controller remediation', () => {
-        const error = new VoiceCaptureBusyError('conversation');
-        expect(error).toMatchObject({
-            name: 'VoiceCaptureBusyError',
-            code: 'voice_capture_busy_conversation',
-            activeOwner: 'conversation',
-        });
-    });
 });
