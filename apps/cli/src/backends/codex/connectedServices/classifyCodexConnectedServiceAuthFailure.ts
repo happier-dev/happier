@@ -108,6 +108,8 @@ export function isCodexProviderCapacityFailure(value: unknown): boolean {
     ? { message: value.message }
     : readCodexProviderErrorRecord(value) ?? value;
   if (classifyProviderLimitEvidence(evidence) === 'capacity') return true;
+  const record = readCodexProviderErrorRecord(value);
+  if (classifyProviderLimitEvidence({ code: record?.codexErrorInfo ?? record?.codex_error_info }) === 'capacity') return true;
   return /\bapplication\s+network\s+permission\s+was\s+revoked\b/i.test(readErrorText(value));
 }
 

@@ -20,6 +20,14 @@ import {
 } from './classifyCodexConnectedServiceAuthFailure';
 
 describe('classifyCodexConnectedServiceAuthFailure', () => {
+  it.each(['codexErrorInfo', 'codex_error_info'])('classifies a structured %s serverOverloaded discriminator as capacity', (key) => {
+    expect(classifyCodexConnectedServiceAuthFailure({
+      providerErrorPath: true,
+      error: { turn: { error: { message: 'Request failed', [key]: 'serverOverloaded' } } },
+      serviceId: 'openai-codex', profileId: 'work', groupId: 'pool',
+    })).toMatchObject({ kind: 'capacity', limitCategory: 'capacity', quotaScope: 'provider', source: 'structured_provider_error' });
+  });
+
   it.each([
     { label: 'invalid failure kind', overrides: { kind: 'provider-private-kind' }, expected: null },
     {
