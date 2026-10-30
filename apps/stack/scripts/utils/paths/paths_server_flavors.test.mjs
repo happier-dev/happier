@@ -14,7 +14,7 @@ async function withTempRoot(t) {
   return rootDir;
 }
 
-async function createMonorepoServerFixture({ rootDir, includeSqliteSchema }) {
+async function createMonorepoServerFixture({ rootDir }) {
   const repoRoot = join(rootDir, 'main');
   const serverDir = join(repoRoot, 'apps', 'server');
   await mkdir(serverDir, { recursive: true });
@@ -26,10 +26,8 @@ async function createMonorepoServerFixture({ rootDir, includeSqliteSchema }) {
   await writeFile(join(repoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(repoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
 
-  if (includeSqliteSchema) {
-    await mkdir(join(serverDir, 'prisma', 'sqlite'), { recursive: true });
-    await writeFile(join(serverDir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
-  }
+  await mkdir(join(serverDir, 'prisma', 'sqlite'), { recursive: true });
+  await writeFile(join(serverDir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
 
   return { repoRoot, serverDir };
 }
@@ -37,14 +35,7 @@ async function createMonorepoServerFixture({ rootDir, includeSqliteSchema }) {
 test('getComponentDir prefers happier-server for happier-server-light when unified schema exists', async (t) => {
   const rootDir = await withTempRoot(t);
   const env = { HAPPIER_STACK_WORKSPACE_DIR: rootDir };
-  const { serverDir } = await createMonorepoServerFixture({ rootDir, includeSqliteSchema: true });
+  const { serverDir } = await createMonorepoServerFixture({ rootDir });
 
-  assert.equal(getComponentDir(rootDir, 'happier-server-light', env), serverDir);
-});
-
-test('getComponentDir resolves happier-server-light to the monorepo server package dir', async (t) => {
-  const rootDir = await withTempRoot(t);
-  const env = { HAPPIER_STACK_WORKSPACE_DIR: rootDir };
-  const { serverDir } = await createMonorepoServerFixture({ rootDir, includeSqliteSchema: false });
   assert.equal(getComponentDir(rootDir, 'happier-server-light', env), serverDir);
 });

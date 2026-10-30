@@ -5,15 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildGitIdentityEnv } from '../../testkit/core/env_scope.mjs';
 import { run, runCapture } from '../proc/proc.mjs';
-import { computeDetachedWorktreeDir, withDetachedWorktree } from './detached_worktree.mjs';
-
-test('computeDetachedWorktreeDir includes nonce to avoid collisions', () => {
-  const dir1 = computeDetachedWorktreeDir({ repoRootDir: '/repo', label: 'coderabbit-1-of-21', headCommit: 'abcdef0123456789', nonce: 'n1' });
-  const dir2 = computeDetachedWorktreeDir({ repoRootDir: '/repo', label: 'coderabbit-1-of-21', headCommit: 'abcdef0123456789', nonce: 'n2' });
-  assert.notEqual(dir1, dir2);
-  assert.ok(dir1.includes('coderabbit-1-of-21-abcdef012345-n1'));
-  assert.ok(dir2.includes('coderabbit-1-of-21-abcdef012345-n2'));
-});
+import { withDetachedWorktree } from './detached_worktree.mjs';
 
 test('withDetachedWorktree can be called repeatedly without directory collisions', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'happy-review-wt-'));

@@ -60,7 +60,7 @@ test('native workspace fixture routes serialized foreground custody to its isola
     args: ['-e', 'process.stdout.write(process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT)'],
     env: native.env, stdio: ['ignore', 'pipe', 'pipe'] });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, join(root, 'host-admission'));
+  assert.equal(result.stdout, native.admissionRoot);
   const nested = await runWorkspaceBuildAdmission({ command: process.execPath,
     args: ['--input-type=module', '-e', `
       import {runWorkspaceBuildAdmission} from ${JSON.stringify(new URL('./workspace_build_admission.mjs', import.meta.url).href)};
@@ -73,7 +73,7 @@ test('native workspace fixture routes serialized foreground custody to its isola
     `], env: native.env,
     stdio: ['ignore', 'pipe', 'pipe'] });
   assert.equal(nested.status, 0, nested.stderr);
-  assert.equal(nested.stdout, join(root, 'host-admission'));
+  assert.equal(nested.stdout, native.admissionRoot);
 });
 
 async function waitForFile(path, { timeoutMs = 5_000 } = {}) {

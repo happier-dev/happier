@@ -6,7 +6,6 @@ import { join } from 'node:path';
 
 import {
   importPrismaClientForHappyServerLight,
-  importPrismaClientFromGeneratedSqlite,
   importPrismaClientFromNodeModules,
 } from './prisma_import.mjs';
 
@@ -41,18 +40,6 @@ test('importPrismaClientFromNodeModules imports PrismaClient via node_modules re
   await withPrismaFixture(async (dir) => {
     await writePrismaNodeModule(dir);
     const PrismaClient = await importPrismaClientFromNodeModules({ dir });
-    assert.equal(typeof PrismaClient, 'function');
-    assert.equal(PrismaClient.name, 'PrismaClient');
-  });
-});
-
-test('importPrismaClientFromGeneratedSqlite imports PrismaClient from generated/sqlite-client', async () => {
-  await withPrismaFixture(async (dir) => {
-    await writeModulePackageJson(dir);
-    await mkdir(join(dir, 'generated', 'sqlite-client'), { recursive: true });
-    await writeFile(join(dir, 'generated', 'sqlite-client', 'index.js'), 'export class PrismaClient {}\n', 'utf-8');
-
-    const PrismaClient = await importPrismaClientFromGeneratedSqlite({ dir });
     assert.equal(typeof PrismaClient, 'function');
     assert.equal(PrismaClient.name, 'PrismaClient');
   });

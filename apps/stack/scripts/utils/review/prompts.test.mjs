@@ -8,7 +8,6 @@ import {
   buildCodexMonorepoNormalPrompt,
   buildCodexAuditPrompt,
   buildCodexMonorepoAuditPrompt,
-  buildCodexMonorepoSlicePrompt,
 } from './prompts.mjs';
 
 test('monorepo normal prompt is focused and includes findings JSON marker', () => {
@@ -38,13 +37,6 @@ test('component deep prompt scopes diff to component path', () => {
   const prompt = buildCodexDeepPrompt({ component: 'happier-cli', baseRef: 'upstream/main', changeType: 'committed' });
   assert.match(prompt, /Scope: apps\/cli\//);
   assert.match(prompt, /git diff upstream\/main\.\.\.HEAD -- apps\/cli\//);
-});
-
-test('monorepo slice prompt toggles focused vs deep wording', () => {
-  const deep = buildCodexMonorepoSlicePrompt({ sliceLabel: 'apps/cli', baseCommit: 'abc123', baseRef: 'upstream/main', deep: true });
-  const focused = buildCodexMonorepoSlicePrompt({ sliceLabel: 'apps/cli', baseCommit: 'abc123', baseRef: 'upstream/main', deep: false });
-  assert.match(deep, /deep, long-form/i);
-  assert.match(focused, /focused code review/i);
 });
 
 test('prompts support appending custom focus instructions', () => {

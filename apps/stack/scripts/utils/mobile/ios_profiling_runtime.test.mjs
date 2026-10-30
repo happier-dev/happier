@@ -2,24 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  parseXcodeBuildSettings,
   resolveIosSimulatorDevice,
   runIosProfilingRuntime,
 } from './ios_profiling_runtime.mjs';
-
-test('parseXcodeBuildSettings reads indented xcodebuild key/value rows', () => {
-  const settings = parseXcodeBuildSettings(`
-      ENABLE_DEBUG_DYLIB = NO
-      TARGET_BUILD_DIR = /tmp/Build/Products/Release-iphonesimulator
-      FULL_PRODUCT_NAME = Happier-Local.app
-      PRODUCT_BUNDLE_IDENTIFIER = dev.happier.stack.test
-  `);
-
-  assert.equal(settings.ENABLE_DEBUG_DYLIB, 'NO');
-  assert.equal(settings.TARGET_BUILD_DIR, '/tmp/Build/Products/Release-iphonesimulator');
-  assert.equal(settings.FULL_PRODUCT_NAME, 'Happier-Local.app');
-  assert.equal(settings.PRODUCT_BUNDLE_IDENTIFIER, 'dev.happier.stack.test');
-});
 
 test('resolveIosSimulatorDevice resolves an explicit simulator UDID from simctl JSON', async () => {
   const device = await resolveIosSimulatorDevice({

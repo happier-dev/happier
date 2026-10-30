@@ -272,44 +272,25 @@ test('postgres managed infra retains its service, readiness wait, and persisted 
   assert.match(await readFile(restarted.composePath, 'utf8'), /^  postgres:/m);
 });
 
-test('applyHappyServerMigrations delegates mysql to the canonical provider dispatcher', async () => {
-  const calls = [];
-  const env = { DATABASE_URL: 'mysql://operator/db', HAPPIER_DB_PROVIDER: 'mysql' };
-  await applyHappyServerMigrations(
-    { serverDir: '/server', env, dbProvider: 'mysql', quiet: true },
-    {
-      pmExecScriptImpl: async (input) => calls.push(input),
-    },
-  );
-
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].script, 'migrate:deploy');
-  assert.deepEqual(calls[0].args, []);
-  assert.equal(calls[0].dir, '/server');
-  assert.deepEqual(calls[0].env, env);
-  assert.equal(calls[0].quiet, true);
-});
-
 test('applyHappyServerMigrations delegates every provider to one canonical dispatcher', async () => {
-  const calls = [];
-  await applyHappyServerMigrations(
-    { serverDir: '/server', env: { HAPPIER_DB_PROVIDER: 'postgres' }, dbProvider: 'postgres' },
-    {
-      pmExecScriptImpl: async (input) => calls.push(input),
-    },
-  );
-  assert.equal(calls[0].script, 'migrate:deploy');
-  assert.deepEqual(calls[0].args, []);
+  for (const dbProvider of ['postgres', 'mysql', 'sqlite', 'pglite']) {
+    const calls = [];
+    const quiet = dbProvider === 'mysql';
+    const env = {
+      HAPPIER_DB_PROVIDER: dbProvider,
+      ...(dbProvider === 'mysql' ? { DATABASE_URL: 'mysql://operator/db' } : {}),
+    };
+    await applyHappyServerMigrations(
+      { serverDir: '/server', env, dbProvider, quiet },
+      { pmExecScriptImpl: async (input) => calls.push(input) },
+    );
 
-  await applyHappyServerMigrations(
-    { serverDir: '/server', env: { HAPPIER_DB_PROVIDER: 'sqlite' }, dbProvider: 'sqlite' },
-    { pmExecScriptImpl: async (input) => calls.push(input) },
-  );
-  await applyHappyServerMigrations(
-    { serverDir: '/server', env: { HAPPIER_DB_PROVIDER: 'pglite' }, dbProvider: 'pglite' },
-    { pmExecScriptImpl: async (input) => calls.push(input) },
-  );
-  assert.equal(calls[1].script, 'migrate:deploy');
-  assert.equal(calls[2].script, 'migrate:deploy');
-  assert.deepEqual(calls.map((call) => call.env.HAPPIER_DB_PROVIDER), ['postgres', 'sqlite', 'pglite']);
+    assert.deepEqual(calls, [{
+      dir: '/server',
+      script: 'migrate:deploy',
+      args: [],
+      env,
+      quiet,
+    }]);
+  }
 });

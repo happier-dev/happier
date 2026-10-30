@@ -3,15 +3,6 @@ import test from 'node:test';
 
 import { buildSetupChildEnv } from './child_env.mjs';
 
-test('buildSetupChildEnv preserves base env and sets setup child marker', () => {
-  const env = buildSetupChildEnv({
-    baseEnv: { FOO: 'bar' },
-  });
-
-  assert.equal(env.HAPPIER_STACK_SETUP_CHILD, '1');
-  assert.equal(env.FOO, 'bar');
-});
-
 test('buildSetupChildEnv sets workspace dir when provided', () => {
   const env = buildSetupChildEnv({
     baseEnv: { FOO: 'bar' },

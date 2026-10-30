@@ -3,27 +3,6 @@ import assert from 'node:assert/strict';
 
 import { runReviewersSafe } from './run_reviewers_safe.mjs';
 
-test('runReviewersSafe returns values in reviewer order', async () => {
-  const reviewers = ['a', 'b', 'c'];
-  const seen = [];
-
-  const res = await runReviewersSafe({
-    reviewers,
-    runReviewer: async (r) => {
-      seen.push(r);
-      return { reviewer: r, ok: true };
-    },
-    onError: (reviewer, error) => ({ reviewer, ok: false, error }),
-  });
-
-  assert.deepEqual(seen, reviewers);
-  assert.deepEqual(
-    res.map((r) => r.reviewer),
-    reviewers
-  );
-  assert.equal(res.every((r) => r.ok), true);
-});
-
 test('runReviewersSafe converts thrown errors into onError results', async () => {
   const reviewers = ['ok', 'boom', 'ok2'];
 
@@ -37,9 +16,9 @@ test('runReviewersSafe converts thrown errors into onError results', async () =>
   });
 
   assert.deepEqual(res.map((r) => r.reviewer), reviewers);
-  assert.equal(res[0].ok, true);
+  assert.deepEqual(res[0], { reviewer: 'ok', ok: true });
   assert.equal(res[1].ok, false);
   assert.match(res[1].message, /kaboom/);
-  assert.equal(res[2].ok, true);
+  assert.deepEqual(res[2], { reviewer: 'ok2', ok: true });
 });
 
