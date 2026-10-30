@@ -276,6 +276,15 @@ Genuine rewrites remain subject to Claude's checks; `PreToolUse` still carries
 the input needed for `AskUserQuestion` answers. Claude's Auto classifier remains
 the permission authority before a request reaches these hooks.
 
+In development source, `normalizeClaudeAskUserQuestionInputForPublication` owns
+Claude's implicit freeform answer across the SDK, hook bridge and native broker.
+Native single-select questions with nonempty option previews publish only their
+choices (`freeform: false`); checkbox questions retain the ordinary freeform row.
+The native screen parser separates the preview column from option labels and
+records the actual freeform row. The existing answer driver refuses terminal
+notes or an active notes editor before navigation or submission; notes are
+annotations on a choice and are never converted into freeform answers.
+
 | Feature | Status | Exact source files | Current behavior / special cases | Unified architecture migration notes |
 | --- | --- | --- | --- | --- |
 | Direct session browse/list | `supported` | `apps/cli/src/backends/claude/directSessions/listClaudeSessionCandidates.ts`, `apps/ui/sources/agents/providers/claude/directSessions/resolveClaudeBrowseSourceOptions.ts`, `apps/ui/sources/agents/providers/claude/uiBehavior.tsx` | UI exposes only one Claude direct source today: `{ kind: 'claudeConfig' }`; discovery walks `~/.claude/projects/**.jsonl` and lazily reads session titles. | Promote direct-source selection into the same provider runtime record used by resume/takeover instead of a Claude-only browse option. |

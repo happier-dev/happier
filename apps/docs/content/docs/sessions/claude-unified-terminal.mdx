@@ -108,6 +108,8 @@ In development source, **Answer questions** and **Approve permission requests** 
 
 With **App and terminal** selected, a question is one request shared by the app and Claude's native form. Answering in either place retires the other prompt. Multiple questions, checkboxes, and freeform answers use the native form's own controls. Happier preserves a conflicting draft or selection you have already made in the terminal and asks you to finish there rather than replacing it.
 
+For native questions with a preview panel, Happier offers the listed choices. Claude's notes field adds an annotation to a choice; enter notes in the terminal. An active notes editor or existing notes must be finished there before answering in Happier. Ordinary questions and checkbox questions keep their freeform answer field.
+
 In that flow, permission requests offer the choices Claude actually displays, including their exact remembered scope. Plan approval uses those native choices too; freeform feedback requests a plan revision. If Happier cannot recognize a native form safely, it directs you to the terminal.
 
 These changes are not a statement of preview or stable availability. The response-location controls require the updated Happier CLI and app.

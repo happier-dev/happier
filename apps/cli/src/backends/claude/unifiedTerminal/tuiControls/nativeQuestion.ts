@@ -28,7 +28,7 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
   const failed = (reason: string): ClaudeNativeQuestionAnswerResult => ({ status: 'failed', reason });
   let answers: StructuredQuestionAnswersV1;
   try {
-    const publication = normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', { questions: params.questions }) as { questions: readonly StructuredQuestionLike[] };
+    const publication = normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', { questions: params.questions }, { native: true }) as { questions: readonly StructuredQuestionLike[] };
     answers = normalizeStructuredQuestionAnswersV1(params.answers, publication.questions);
   } catch {
     return failed('invalid_question_answers');
@@ -65,6 +65,9 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
     if (presentation && !matchesClaudeNativeQuestionScreen(presentation, params.questions)) {
       captureReason = 'native_question_changed'; return false;
     }
+    // Notes belong to the terminal user, including an empty active editor.
+    // Check before navigation as well as submission: arrow/tab keys can edit them.
+    if (presentation?.notesDraft) { captureReason = 'local_answer_conflict'; return false; }
     return true;
   };
   const send = async (key: TerminalSpecialKey | { text: string }): Promise<boolean> => {
@@ -108,8 +111,8 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
     const screen = read();
     const target = desired[index]!;
     const question = questions[index]!;
-    const draft = screen.options.at(-1)!;
-    const draftText = /^Type something\.?$/u.test(draft.label) ? '' : draft.label;
+    const draft = screen.freeformIndex === null ? null : screen.options[screen.freeformIndex]!;
+    const draftText = !draft || /^Type something\.?$/u.test(draft.label) ? '' : draft.label;
     return screen.options.slice(0, question.options.length).some((option, optionIndex) => option.checked === true && !target.selected.includes(optionIndex))
       || Boolean(draftText && !draftMatches(index, draftText, target.freeform[0] ?? ''));
   };
