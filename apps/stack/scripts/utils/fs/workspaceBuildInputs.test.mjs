@@ -7,6 +7,21 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readSourceComponentBuildInputs, readSourcePluginUiBuildInputs } from './workspaceBuildInputs.mjs';
 
+test('source web inputs retain dependency patches required by the captured UI preflight', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-source-web-patch-inputs-' });
+  await writeFile(fixture.path('package.json'), '{}');
+  await mkdir(fixture.path('patches'));
+  const patch = 'patches/dependency.patch';
+  await writeFile(fixture.path('pnpm-workspace.yaml'), `patchedDependencies:\n  dependency@1.0.0: ${patch}\n`);
+  await writeFile(fixture.path(patch), 'authored patch');
+  const inputs = await readSourceComponentBuildInputs({ repoDir: fixture.root, component: 'expo' });
+  assert.ok(inputs.files.includes(patch), 'the captured patch declaration must have its authored patch bytes');
+  assert.ok(inputs.watchPaths.includes(fixture.path('patches')), 'new patch membership must invalidate preparation');
+  const identity = await readBuildInputIdentity({ sourceDir: fixture.root, files: inputs.files });
+  await writeFile(fixture.path(patch), 'changed authored patch');
+  assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files: inputs.files }), identity);
+});
+
 test('source build inputs capture and watch pnpm dependency resolution and policy', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-pnpm-build-inputs-' });
   await writeFile(fixture.path('package.json'), '{}');

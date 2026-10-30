@@ -123,6 +123,7 @@ export async function readSourceComponentBuildInputs({ repoDir, component }) {
       sourceRoots: component === 'daemon' && path === 'apps/ui' ? ['scripts'] : SOURCE_ROOTS,
       additionalInputPaths: root === repoDir ? ['apps/cli/scripts/buildPublication.mjs',
         'apps/cli/scripts/build-owned/bundledPluginMembership.ts',
+        ...(component === 'expo' ? ['patches'] : []),
         // This collector imports the generator's path owner even when the
         // component closure does not otherwise include CLI tooling.
         'apps/cli/scripts/build-owned/bundledPlugins/projectionPaths.mjs',
