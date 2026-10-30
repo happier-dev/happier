@@ -199,6 +199,7 @@ export type RecordedHomeRequest = Readonly<{
     serverId: string;
     serverUrl: string;
     path: string;
+    method: string;
     input: unknown;
     /** The bearer the scoped authority actually attached, for authority checks. */
     token: string | null;
@@ -729,16 +730,17 @@ async function answerForEndpointBody(
     } catch {
         input = null;
     }
+    const method = (init?.method ?? 'GET').toUpperCase();
     current.requests.push(Object.freeze({
         serverId: record?.serverId ?? '',
         serverUrl,
         path,
+        method,
         input,
         token,
     }));
     notifyHomeRequests(current);
 
-    const method = (init?.method ?? 'GET').toUpperCase();
     const route = new URL(path, serverUrl).pathname;
     const answer = await selectHomeDomainAnswer(record, path, method, input, url, init);
     if (!answer && record && method === 'POST' && route === '/v1/machines/read-batch') {
@@ -765,7 +767,7 @@ async function answerForEndpointBody(
         // Session parts are the same external facts the per-Session paths answer; each part is recorded as its own request.
         const parts = createSessionReadBatchHttpBoundary(async component => {
             const partPath = `${component.url.pathname}${component.url.search}`;
-            current.requests.push(Object.freeze({ serverId: record.serverId, serverUrl, path: partPath, input: null, token }));
+            current.requests.push(Object.freeze({ serverId: record.serverId, serverUrl, path: partPath, method: 'GET', input: null, token }));
             notifyHomeRequests(current);
             const selected = await selectHomeDomainAnswer(record, partPath, 'GET', null, component.url.href, { ...init, method: 'GET', body: undefined });
             return selected ? await renderHomeDomainAnswer(selected, partPath, 'GET', null, init?.signal) : undefined;
