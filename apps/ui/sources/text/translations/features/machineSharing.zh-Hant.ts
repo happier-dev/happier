@@ -3,7 +3,7 @@ export const machineSharing = createMachineSharingTranslations({
     terminals: { projectEmpty: '在此專案中開啟終端。', opening: '正在開啟終端。', sharedOsLead: "只向你信任的 {machine} 擁有者交付資料。", sharedOsDetail: "即使成員使用獨立使用者，擁有者也能查看交付的金鑰和所選憑證。目前成員與擁有者的隔離 Agent 仍共用同一個 Agent 使用者，可讀取彼此的所選憑證和 Session 上下文。啟用設定或正在設定不代表成員已隔離。", denied: '你已無權存取此終端。', rootDenied: '此工作區無法用於終端。', offline: '此機器離線。正在顯示最後已知的輸出。', openUnknown: '終端可能已開啟。請先檢查現有終端，再重試。', unavailable: '此機器不支援終端。', failed: '無法開啟此終端。' },
     revoked: '{owner} 已停止共享 {machine}。你在這裡執行中的工作正在停止。工作階段仍保留在歷史記錄中，但你無法在這裡開始新工作。',
     recipientEncryptionIncompatible: '這台端對端加密機器需要使用端對端加密帳戶。',
-    destinations: { yours: '你的機器', created: '由 Happier 建立', shared: '共享給你 · {team}', sharedWithoutOwner: '共享給你', owner: '{owner} 的機器 · {platform}', pendingKey: '正在等候安全存取', sharedPurposeUnsupported: '此工作需要使用你自己的機器。' },
+    destinations: { yours: '你的機器', created: '由 Happier 建立', shared: '共享給你 · {team}', sharedWithoutOwner: '共享給你', owner: '{owner} 的機器 · {platform}', ownerOnly: "{owner} 的機器", pendingKey: '正在等候安全存取', sharedPurposeUnsupported: '此工作需要使用你自己的機器。' },
     title: '共享', description: '新增的人員和團隊可以在 {machine} 的工作區啟動工作階段、執行指令碼和開啟終端機。',
     recipientDescription: "{machine} 已與你共享。你可以在其工作區中啟動工作階段、執行指令碼和開啟終端機。",
     recipientTrustLead: "只向你信任的 {machine} 擁有者交付資料。",
@@ -21,4 +21,5 @@ export const machineSharing = createMachineSharingTranslations({
     saveFailed: '無法為 {person} 儲存「{draft}」。目前仍為「{current}」。',
     effectiveLoss: '失去最後一項存取權的人，其執行中的工作階段、指令碼、執行任務、排隊及準備中的工作、終端機和服務將停止。Happier 歷程記錄仍歸本人所有；已取得的資料無法收回。',
     overlap: '其他有效存取權仍然保留。工作將繼續執行。', custodianProtected: '無法在這裡移除或取代機器的原始擁有者。',
+    unpublished: "{machine} 的擁有者尚未發布可分享的詳細資訊。", custodianOnly: "只有 {machine} 的擁有者可以執行此操作。「可以管理」不包含此權限。", upgradeRequired: "{machine} 的擁有者需要先在這台機器上更新 Happier。", unpublishedTag: "詳細資訊尚未發布", unpublishedMember: "在 {machine} 的擁有者發布可分享的詳細資訊之前，{person} 無法開啟它。",
 });

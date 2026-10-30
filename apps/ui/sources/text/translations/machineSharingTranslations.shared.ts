@@ -5,7 +5,8 @@ export type MachineSharingCopy = Readonly<{
     allMembers: string; pending: string; incompatible: string; incompatibleHelp: string; plain: string;
     saved: string; yourAccess: string; ownHistory: string; through: string; leave: string; inherited: string; unavailable: string; saveFailed: string;
     effectiveLoss: string; overlap: string; custodianProtected: string; revoked: string;
-    destinations: Readonly<{ yours: string; created: string; shared: string; sharedWithoutOwner: string; owner: string; pendingKey: string; sharedPurposeUnsupported: string }>;
+    unpublished: string; custodianOnly: string; upgradeRequired: string; unpublishedTag: string; unpublishedMember: string;
+    destinations: Readonly<{ yours: string; created: string; shared: string; sharedWithoutOwner: string; owner: string; ownerOnly: string; pendingKey: string; sharedPurposeUnsupported: string }>;
     terminals: Readonly<{ projectEmpty: string; opening: string; sharedOsLead: string; sharedOsDetail: string; denied: string;
         rootDenied: string; offline: string; openUnknown: string; unavailable: string; failed: string }>;
 }>;
@@ -31,12 +32,16 @@ export function createMachineSharingTranslations(copy: MachineSharingCopy) {
         saveFailed: (parameters: Readonly<{ person: string; draft: string; current: string }>) => format(copy.saveFailed, parameters), effectiveLoss: copy.effectiveLoss, overlap: copy.overlap,
         revoked: (parameters: Readonly<{ owner: string; machine: string }>) => format(copy.revoked, parameters),
         custodianProtected: copy.custodianProtected,
+        unpublished: machine(copy.unpublished), custodianOnly: machine(copy.custodianOnly), upgradeRequired: machine(copy.upgradeRequired),
+        unpublishedTag: copy.unpublishedTag,
+        unpublishedMember: (parameters: Readonly<{ machine: string; person: string }>) => format(copy.unpublishedMember, parameters),
     }, destinations: {
         recipientEncryptionIncompatible: copy.recipientEncryptionIncompatible,
         yours: copy.destinations.yours, created: copy.destinations.created,
         shared: (parameters: Readonly<{ team: string }>) => format(copy.destinations.shared, parameters),
         sharedWithoutOwner: copy.destinations.sharedWithoutOwner,
         owner: (parameters: Readonly<{ owner: string; platform: string }>) => format(copy.destinations.owner, parameters),
+        ownerOnly: (parameters: Readonly<{ owner: string }>) => format(copy.destinations.ownerOnly, parameters),
         pendingKey: copy.destinations.pendingKey, sharedPurposeUnsupported: copy.destinations.sharedPurposeUnsupported,
     }, terminals: {
         projectEmpty: copy.terminals.projectEmpty, opening: copy.terminals.opening, sharedOsLead: machine(copy.terminals.sharedOsLead), sharedOsDetail: machine(copy.terminals.sharedOsDetail),

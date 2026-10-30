@@ -3,7 +3,7 @@ export const machineSharing = createMachineSharingTranslations({
     terminals: { projectEmpty: 'このプロジェクトでターミナルを開きます。', opening: 'ターミナルを開いています。', sharedOsLead: "{machine} に渡す情報は、その所有者を信頼したうえで提供してください。", sharedOsDetail: "所有者は、メンバーのユーザーが分離された後も、提供されたキーや選択済み認証情報を確認できます。現在、メンバーと所有者の分離された Agent は同じ Agent ユーザーを共有し、互いの選択済み認証情報や Session コンテキストを読めます。設定が有効または処理中でも、メンバーの分離は証明されません。", denied: 'このターミナルへのアクセス権がなくなりました。', rootDenied: 'このワークスペースではターミナルを利用できません。', offline: 'このマシンはオフラインです。最後に取得した出力を表示しています。', openUnknown: 'ターミナルが開かれた可能性があります。再試行する前に既存のターミナルを確認してください。', unavailable: 'このマシンではターミナルを利用できません。', failed: 'このターミナルを開けませんでした。' },
     revoked: '{owner} が {machine} の共有を停止しました。ここで実行中の作業は停止処理中です。セッションは履歴に残りますが、ここで新しい作業は開始できません。',
     recipientEncryptionIncompatible: 'このエンドツーエンド暗号化されたマシンには、エンドツーエンド暗号化されたアカウントが必要です。',
-    destinations: { yours: '自分のマシン', created: 'Happier で作成', shared: '共有されたマシン · {team}', sharedWithoutOwner: '共有されたマシン', owner: '{owner} のマシン · {platform}', pendingKey: '安全なアクセスを準備中', sharedPurposeUnsupported: 'この作業には自分のマシンが必要です。' },
+    destinations: { yours: '自分のマシン', created: 'Happier で作成', shared: '共有されたマシン · {team}', sharedWithoutOwner: '共有されたマシン', owner: '{owner} のマシン · {platform}', ownerOnly: "{owner} のマシン", pendingKey: '安全なアクセスを準備中', sharedPurposeUnsupported: 'この作業には自分のマシンが必要です。' },
     title: '共有', description: '追加したユーザーやチームは、{machine} のワークスペースでセッションを開始し、スクリプトを実行し、ターミナルを開けます。',
     recipientDescription: "{machine} はあなたと共有されています。ワークスペースでセッションの開始、スクリプトの実行、ターミナルを開くことができます。",
     recipientTrustLead: "{machine} に渡す情報は、その所有者を信頼したうえで提供してください。",
@@ -21,4 +21,5 @@ export const machineSharing = createMachineSharingTranslations({
     saveFailed: '{person} の「{draft}」を保存できませんでした。現在も「{current}」のままです。',
     effectiveLoss: '最後のアクセス権を失う人のセッション、スクリプト、実行、待機中・準備中の作業、ターミナル、サービスは停止されます。Happier の履歴は本人のものとして残り、取得済みのデータは回収できません。',
     overlap: '他の有効なアクセス権が残っています。作業は継続します。', custodianProtected: '元のマシン所有者はここでは削除・変更できません。',
+    unpublished: "{machine} の所有者がまだ共有できる詳細を公開していません。", custodianOnly: "これは {machine} の所有者だけが行えます。管理可能には含まれません。", upgradeRequired: "{machine} の所有者がこのマシンの Happier を更新する必要があります。", unpublishedTag: "詳細は未公開", unpublishedMember: "{machine} の所有者が共有できる詳細を公開するまで、{person} は開けません。",
 });

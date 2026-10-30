@@ -3,7 +3,7 @@ export const machineSharing = createMachineSharingTranslations({
     terminals: { projectEmpty: '在此项目中打开终端。', opening: '正在打开终端。', sharedOsLead: "只向你信任的 {machine} 所有者交付资料。", sharedOsDetail: "即使成员使用独立用户，所有者也能查看交付的密钥和所选凭据。目前成员与所有者的隔离 Agent 仍共享同一个 Agent 用户，可读取彼此的所选凭据和 Session 上下文。启用设置或正在配置不代表成员已隔离。", denied: '你已无权访问此终端。', rootDenied: '此工作区无法用于终端。', offline: '此机器离线。正在显示最后已知的输出。', openUnknown: '终端可能已打开。请先检查现有终端，再重试。', unavailable: '此机器不支持终端。', failed: '无法打开此终端。' },
     revoked: '{owner} 已停止共享 {machine}。你在这里运行的工作正在停止。会话仍保留在历史记录中，但你无法在这里开始新工作。',
     recipientEncryptionIncompatible: '这台端到端加密机器需要使用端到端加密账户。',
-    destinations: { yours: '你的机器', created: '由 Happier 创建', shared: '共享给你 · {team}', sharedWithoutOwner: '共享给你', owner: '{owner} 的机器 · {platform}', pendingKey: '正在等待安全访问', sharedPurposeUnsupported: '此工作需要使用你自己的机器。' },
+    destinations: { yours: '你的机器', created: '由 Happier 创建', shared: '共享给你 · {team}', sharedWithoutOwner: '共享给你', owner: '{owner} 的机器 · {platform}', ownerOnly: "{owner} 的机器", pendingKey: '正在等待安全访问', sharedPurposeUnsupported: '此工作需要使用你自己的机器。' },
     title: '共享', description: '添加的人员和团队可以在 {machine} 的工作区启动会话、运行脚本和打开终端。',
     recipientDescription: "{machine} 已与你共享。你可以在其工作区中启动会话、运行脚本和打开终端。",
     recipientTrustLead: "只向你信任的 {machine} 所有者交付资料。",
@@ -21,4 +21,5 @@ export const machineSharing = createMachineSharingTranslations({
     saveFailed: '无法为 {person} 保存“{draft}”。当前仍为“{current}”。',
     effectiveLoss: '失去最后一项访问权限的人，其正在运行的会话、脚本、运行任务、排队及准备中的工作、终端和服务将被停止。Happier 历史记录仍归本人所有；已获取的数据无法收回。',
     overlap: '其他有效访问权限仍然保留。工作将继续运行。', custodianProtected: '无法在这里移除或替换机器的原始所有者。',
+    unpublished: "{machine} 的所有者尚未发布可共享的详细信息。", custodianOnly: "只有 {machine} 的所有者可以执行此操作。“可以管理”不包含此权限。", upgradeRequired: "{machine} 的所有者需要先在这台机器上更新 Happier。", unpublishedTag: "详细信息尚未发布", unpublishedMember: "在 {machine} 的所有者发布可共享的详细信息之前，{person} 无法打开它。",
 });
