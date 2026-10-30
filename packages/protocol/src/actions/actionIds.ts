@@ -33,7 +33,7 @@ import { MACHINE_POOL_ACTION_IDS_V1 } from '../machines/pools/actionsV1.js';
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../machines/managed/actionIdsV1.js';
 import { MACHINE_PRESET_ACTION_IDS_V1 } from '../machines/managed/machinePresetActionIdsV1.js';
 import { PROJECT_WORKER_ACTION_IDS_V1 } from './specs/projectWorkersActionIdsV1.js';
-import { ACTION_OPERATION_ACTION_IDS_V1 } from './specs/actionOperations.js';
+import { ACTION_OPERATION_ACTION_IDS_V1 } from './operations/actionIdsV1.js';
 import { TEAM_ACTION_IDS_V1 } from '../teams/actionsV1.js';
 import { MANAGED_GITHUB_APP_ACTION_IDS_V1 } from '../identity/githubApps.js';
 import { MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 } from '../identity/providers.js';
