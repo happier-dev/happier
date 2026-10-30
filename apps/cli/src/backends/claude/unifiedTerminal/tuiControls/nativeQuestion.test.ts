@@ -71,7 +71,10 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(screen)!, input.questions)).toBe(true);
     expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(screen)!, [{ ...input.questions[0]!, options: ['Compact fixture (Recommended)', 'Keep fixture rows', 'Record only'] }])).toBe(false);
     const answers = { [String(input.questions[0]!.question)]: ['Record only'] };
-    const notesScreens = ['notes.empty', 'notes.escaped', 'notes.continued'].map(capture);
+    const notesScreens = [
+      ...['notes.empty', 'notes.escaped', 'notes.continued'].map(capture),
+      capture('notes.empty').replace('Notes: Add notes on this design…', 'Notes: press n to add notes'),
+    ];
     for (const notesScreen of notesScreens) {
       const port = createFakeControlPort({ captures: [notesScreen] });
       await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input.questions, answers })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });

@@ -190,7 +190,10 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
   } else {
     if (heading.length === 0 || options.length === 0) return null;
     const footer = body.slice(optionsEnd).filter((line) => line.trim().length > 0);
-    if (footer.length < 3 || !RULE.test(footer[0]!) || !(previewColumn !== null ? /^\s+Chat about this$/u : /^\s*\d+\. Chat about this$/u).test(footer[1]!) || !HINT.test(footer.slice(2).map((line) => line.trim()).join(' '))) return null;
+    const hint = footer.slice(2).map((line) => line.trim()).join(' ');
+    if (footer.length < 3 || !RULE.test(footer[0]!) || !(previewColumn !== null ? /^\s+Chat about this$/u : /^\s*\d+\. Chat about this$/u).test(footer[1]!) || !HINT.test(hint)) return null;
+    // The editor owns navigation even when its text equals the idle notes hint.
+    if (previewColumn !== null && hint.includes(' · ctrl+g to edit in ')) notesDraft = true;
     if (multiSelect && options.some((option) => option.checked === null)) return null;
     if (previewColumn === null) {
       const freeform = options.at(-1)!;
