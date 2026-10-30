@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { readIrohRelayConfigFromEnv } from './relayConfig';
+import { classifyIrohHomeCarrierFailure } from './errors';
 
 describe('readIrohRelayConfigFromEnv', () => {
   it('normalizes explicit relay configuration without ambient discovery', () => {
@@ -38,6 +39,18 @@ describe('readIrohRelayConfigFromEnv', () => {
       HAPPIER_IROH_RELAY_POLICY: 'disabled',
       HAPPIER_IROH_RELAY_URLS: 'https://relay.example',
     })).toThrow(/cannot be combined/);
+  });
+
+  it.each([
+    { HAPPIER_IROH_RELAY_POLICY: 'relay-only' },
+    { HAPPIER_IROH_RELAY_URLS: 'not-a-url' },
+    { HAPPIER_IROH_RELAY_URLS: 'https://relay.example, ' },
+    { HAPPIER_IROH_RELAY_POLICY: 'disabled', HAPPIER_IROH_RELAY_URLS: 'https://relay.example' },
+  ])('preserves configuration refusal at the carrier classifier for %j', env => {
+    let failure: unknown;
+    try { readIrohRelayConfigFromEnv(env); } catch (error) { failure = error; }
+    expect(failure).toMatchObject({ code: 'endpoint_config_conflict' });
+    expect(classifyIrohHomeCarrierFailure(failure)).toMatchObject({ fallbackAllowed: false, failureClass: 'endpoint-config' });
   });
 
   it('fails closed for credential-bearing or unsupported relay descriptors', () => {
