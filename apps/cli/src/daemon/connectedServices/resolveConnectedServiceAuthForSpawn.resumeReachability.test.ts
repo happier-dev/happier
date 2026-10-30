@@ -19,6 +19,7 @@ import { resolveConnectedServiceMaterializedRootDir } from './materialize/resolv
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { resolveConnectedServiceHomeDir } from './homes/resolveConnectedServiceHomeDir';
 import { openSqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
+import { createProviderCliFixture } from '@/testkit/process/providerCliFixture';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 
 /**
@@ -171,6 +172,7 @@ async function expectPathRemoved(path: string): Promise<void> {
 
 describe('resolveConnectedServiceAuthForSpawn post-materialization resume reachability gate', () => {
   it('existing-state resume refuses native-only state and preserves the stable indexed rollout when present', async () => {
+    const providerEnv = await createProviderCliFixture(['codex']);
     const testRoot = await mkdtemp(join(tmpdir(), 'happier-existing-resume-'));
     const activeServerDir = join(testRoot, 'server');
     const sourceCodexHome = join(testRoot, 'native');
@@ -183,6 +185,7 @@ describe('resolveConnectedServiceAuthForSpawn post-materialization resume reacha
     const credentials = makeLegacyCredentials();
     const now = 1_000_000;
     try {
+      const processEnv = { ...providerEnv, CODEX_HOME: sourceCodexHome };
       await mkdir(join(sourceCodexHome, 'sessions'), { recursive: true });
       await writeFile(sourcePath, 'native-only transcript\n');
       const resolveLaunch = async () => {
@@ -190,14 +193,14 @@ describe('resolveConnectedServiceAuthForSpawn post-materialization resume reacha
         agentId: 'codex', sessionDirectory: testRoot, connectedServicesBindingsRaw: PI_CONNECTED_BINDINGS,
         materializationKey: 'existing', activeServerDir, baseDir: join(testRoot, 'materialized'),
         credentials, api: makeCodexApi(now, credentials), nowMs: () => now,
-        accountSettings: sharedStateAccountSettings(), processEnv: { CODEX_HOME: sourceCodexHome },
+        accountSettings: sharedStateAccountSettings(), processEnv,
         vendorResumeId, resumeReachabilityRequired: true, sessionStateMode: 'existing',
         candidatePersistedSessionFile: sourcePath,
         });
         const result = await resolveSpawnChildEnvironment({
           options: { directory: testRoot, backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, resume: vendorResumeId, handoffStateTransfer: 'existing', codexBackendMode: 'appServer' },
           existingSessionMetadata: { machineId: 'source-machine', flavor: 'codex', codexSessionId: vendorResumeId, codexBackendMode: 'appServer', path: testRoot },
-          profileEnvironmentVariables: {}, daemonSpawnHooks: null, processEnv: { CODEX_HOME: sourceCodexHome },
+          profileEnvironmentVariables: {}, daemonSpawnHooks: null, processEnv,
           logDebug: () => {}, logInfo: () => {}, logWarn: () => {}, connectedServiceAuth: auth,
         });
         return { auth, result };

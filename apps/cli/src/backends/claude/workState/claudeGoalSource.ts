@@ -69,6 +69,8 @@ function isTranscriptRowNewerThanMs(message: unknown, basisMs: number): boolean 
  */
 
 export type ClaudeGoalWorkStateSource = Readonly<{
+  /** Includes restored goals and goal-set intents awaiting their first native status. */
+  hasActiveGoal(): boolean;
   /**
    * Observe one transcript message (raw JSONL row or SDK message). Routes a
    * `goal_status` attachment into the goal work-state and reads the `/goal`
@@ -266,6 +268,7 @@ export function createClaudeGoalWorkStateSource(params: Readonly<{
   };
 
   return {
+    hasActiveGoal: () => goalSetAtMs !== null,
     observeTranscriptMessage(message) {
       // Learn (and adopt, latest-wins) the Claude session id from this channel's ESTABLISHING
       // records (system/assistant/user — never the goal_status attachment itself) BEFORE the guard,
@@ -301,6 +304,7 @@ export function createClaudeGoalWorkStateSource(params: Readonly<{
     },
     recordGoalSetIntent() {
       tracker.recordGoalControlIntent({ kind: 'set' });
+      goalSetAtMs ??= now();
     },
     finalizeInterruptedGoalOnShutdown() {
       // `publish` no-ops on null, so a session with no active goal to interrupt is a clean no-op.
@@ -311,6 +315,7 @@ export function createClaudeGoalWorkStateSource(params: Readonly<{
     },
     reseedActiveGoalUsageFromPublishedItem(item) {
       if (!item || item.status !== 'active') return;
+      goalSetAtMs ??= now();
       const tokensUsed = typeof item.tokensUsed === 'number' && item.tokensUsed >= 0 ? item.tokensUsed : undefined;
       const timeUsedSeconds = typeof item.timeUsedSeconds === 'number' && item.timeUsedSeconds >= 0 ? item.timeUsedSeconds : undefined;
       if (tokensUsed === undefined && timeUsedSeconds === undefined) return;

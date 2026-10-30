@@ -3868,6 +3868,10 @@ export const de: TranslationStructure = {
                         title: "Claude-Code-Experimente",
                         footer: "Diese Einstellungen gelten für lokale Claude-Sessions (Terminal) und Remote-Claude-Sessions (Agent SDK), die Happier startet."
                     },
+                    claudeIdleReclaim: {
+                        title: "Inaktive Sitzungen",
+                        footer: "Dein nächster Prompt setzt dieselbe Claude-Sitzung fort und kann etwas länger dauern. Der Zustand im Arbeitsspeicher wird freigegeben. Hintergrundaufgaben, geplante Arbeit und Datei-Checkpoints halten sie aktiv. Sitzungen im einheitlichen Terminal bleiben aktiv."
+                    },
                     claudeRemoteSdk: {
                         title: "Klassische Runtime (Agent-SDK-Fallback)",
                         footer: "Den Agent-SDK-Weg nutzen, wenn die einheitliche Terminal-Runtime aus oder nicht verfügbar ist."
@@ -3951,6 +3955,14 @@ export const de: TranslationStructure = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Agent Teams erzwingen",
                         subtitle: "Die experimentellen Agent Teams von Claude Code (Agent-Schwarm) in allen von Happier gestarteten Claude-Sessions aktivieren."
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "Inaktive Claude-Prozesse freigeben",
+                        subtitle: "Gib nach einer Ruhephase Speicher frei. Standardmäßig ausgeschaltet."
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "Inaktivitätsdauer (Minuten)",
+                        subtitle: "Wähle, wie lange eine aktivierte entfernte Claude-Sitzung bereit bleibt."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Agent-SDK-Fallback nutzen",

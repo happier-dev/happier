@@ -4050,6 +4050,10 @@ export const zhHans: TranslationStructure = {
                         title: "Claude Code 实验功能",
                         footer: "这些设置同时适用于由 Happier 启动的 Claude 本地会话（终端）和远程会话（Agent SDK）。"
                     },
+                    claudeIdleReclaim: {
+                        title: "空闲会话",
+                        footer: "下一条提示会恢复同一个 Claude 会话，可能需要稍长一点时间。内存中的状态将被释放。后台任务、计划工作和文件检查点会使进程继续运行。统一终端会话会保持运行。"
+                    },
                     claudeRemoteSdk: {
                         title: "经典运行时（Agent SDK 回退）",
                         footer: "当统一终端运行时关闭或不可用时，使用 Agent SDK 路径。"
@@ -4133,6 +4137,14 @@ export const zhHans: TranslationStructure = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "强制启用 Agent Teams",
                         subtitle: "在所有由 Happier 启动的 Claude 会话中启用 Claude Code 的实验性 Agent Teams（代理群）功能。"
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "释放空闲的 Claude 进程",
+                        subtitle: "在一段空闲时间后释放内存。默认关闭。"
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "空闲时长（分钟）",
+                        subtitle: "选择启用此选项后，远程 Claude 会话保持就绪的时间。"
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "使用 Agent SDK 回退",

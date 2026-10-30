@@ -523,7 +523,7 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
             expect(Number.parseInt(panes.stdout.trim(), 10)).toBe(result.pid);
         } finally {
             killIsolatedTmuxServer(socketPath);
-            rmSync(dir, { recursive: true, force: true });
+            removeIsolatedTmuxTempDir(dir);
         }
     });
 
@@ -547,7 +547,7 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
             expect(cursor).toEqual({ x: expect.any(Number), y: expect.any(Number) });
         } finally {
             killIsolatedTmuxServer(socketPath);
-            rmSync(dir, { recursive: true, force: true });
+            removeIsolatedTmuxTempDir(dir);
         }
     });
 

@@ -146,6 +146,31 @@ existing replay-capture owner. The shared runtime preserves fresh input and
 output emitted during native resume and imports captured history only when
 requested.
 
+## Interactive turn silence notices (development)
+
+The session turn lifecycle owns an observation-only silence timer. While a turn
+is active, correlated live provider messages reset it at provider ingress, before
+transcript filtering or buffering. Transcript delivery, historical replay,
+host-generated messages, and presence heartbeats are not provider activity.
+
+Claude Agent SDK 0.2.123 buffers native messages before its public iterator. The
+remote runner observes its supported spawn transport through a byte-preserving
+stdout transform, so transcript persistence cannot delay receipt observation.
+The existing primary-message classifier excludes SDK control frames, replay, and
+sidechains; native init and compaction receipt extend the existing session
+lineage before later messages in the same burst are classified.
+
+After 15 minutes without such an event, the runner writes one `turn stall noticed`
+entry to its file log, including session and turn identity and the observed event
+age. Continued silence produces no further entry; a new provider event starts a
+new episode. Terminal turn states and session shutdown stop observation.
+`HAPPIER_TURN_STALL_WARN_MS` overrides the interval; `0` disables it.
+
+This development diagnostic changes no session status and performs no abort,
+restart, or other recovery. A healthy long tool call may also be silent. It does
+not detect idle-process CPU spins, establish the cause of a hang, or replace
+provider-specific terminal dialog recovery and task-activity tracking.
+
 ## CLI entry flow
 
 ```mermaid

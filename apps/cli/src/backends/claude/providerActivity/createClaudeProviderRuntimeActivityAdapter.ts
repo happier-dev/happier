@@ -61,6 +61,10 @@ export function createClaudeProviderRuntimeActivityAdapter(params: Readonly<{
     };
 
     return {
+        /** Live provider-task state; `unknown` (lost or incomplete observation) is never idle. */
+        readCurrentState(): ClaudeProviderRuntimeActivityProjection['state'] {
+            return currentProjection().state;
+        },
         async publishBeforeRuntimeStart(reasonCode: string): Promise<void> {
             if (!isCurrentRuntime()) return;
             if (observationState === 'stopped') {

@@ -4191,6 +4191,10 @@ export const pl: TranslationStructure = {
                         title: "Eksperymenty Claude Code",
                         footer: "Te ustawienia dotyczą zarówno lokalnych sesji Claude (terminal), jak i zdalnych sesji Claude (Agent SDK) uruchamianych przez Happier."
                     },
+                    claudeIdleReclaim: {
+                        title: "Bezczynne sesje",
+                        footer: "Następny prompt wznowi tę samą sesję Claude i może potrwać nieco dłużej. Stan w pamięci zostanie zwolniony. Zadania w tle, zaplanowana praca i punkty kontrolne plików utrzymują ją aktywną. Sesje ujednoliconego terminala pozostają aktywne."
+                    },
                     claudeRemoteSdk: {
                         title: "Klasyczny runtime (fallback Agent SDK)",
                         footer: "Użyj ścieżki Agent SDK, gdy ujednolicony runtime terminala jest wyłączony albo niedostępny."
@@ -4274,6 +4278,14 @@ export const pl: TranslationStructure = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Wymuś włączenie Agent Teams",
                         subtitle: "Włącza eksperymentalne Agent Teams w Claude Code (rój agentów) we wszystkich sesjach Claude uruchamianych przez Happier."
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "Zwalniaj bezczynne procesy Claude",
+                        subtitle: "Zwalniaj pamięć po okresie bezczynności. Domyślnie wyłączone."
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "Czas bezczynności (minuty)",
+                        subtitle: "Wybierz, jak długo zdalna sesja Claude z włączoną opcją pozostaje gotowa."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Użyj fallbacku Agent SDK",

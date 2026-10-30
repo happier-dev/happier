@@ -52,13 +52,13 @@ import { ChildProcess, spawn } from 'node:child_process';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 import { readTailTextFile } from '@/utils/fs/readTailTextFile';
+import { observeClaudeSdkProcess } from './agentSdk/observeClaudeSdkProcess';
 import { buildClaudeAgentSdkHooks } from './agentSdk/buildClaudeAgentSdkHooks';
 import {
     normalizeClaudeProviderTaskEvent,
     readClaudeSessionHookProviderTaskActivity,
 } from '@/backends/claude/providerActivity/createClaudeProviderActivityLedger';
 import type { createClaudeProviderRuntimeActivityAdapter } from '@/backends/claude/providerActivity/createClaudeProviderRuntimeActivityAdapter';
-import { hasClaudeQueuedUserTurns } from './resultTurnBoundary';
 import {
     handleClaudeRuntimeActivityLoss,
     createClaudeRuntimeActivityEvidence,
@@ -118,6 +118,7 @@ import {
 } from '../connectedServices/claudeSubscriptionAccessTokenRefresh';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import type { ClaudeEffectiveModelObservation } from '../sessionModels/effectiveModelUpdate';
+import { isLivePrimaryClaudeProviderHook, isLivePrimaryClaudeProviderMessage, isSidechainSessionHook } from '../utils/sessionHookAttribution';
 
 type AgentSdkQueryFactory = (params: {
     prompt: string | AsyncIterable<SDKUserMessage>;
@@ -181,6 +182,8 @@ export async function claudeRemoteAgentSdk(opts: {
     onThinkingChange?: (thinking: boolean) => void;
     onProviderPromptStarted?: () => void | Promise<void>;
     onMessage: (message: SDKMessage) => void;
+    /** Live provider ingress, before transcript filtering or buffering. */
+    onProviderEvent?: () => void;
     /** Explicit query launch controls acknowledged by the provider's successful init. */
     onEffectiveModel?: (facts: ClaudeEffectiveModelObservation) => void;
     /** Correlation supplied by the workflow owner after onMessage has observed the same SDK fact. */
@@ -576,6 +579,7 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
             decisionReason?: string | null;
         },
     ): Promise<PermissionResult> => {
+        if (!isSidechainSessionHook({ agentId: options.agentId })) opts.onProviderEvent?.();
         const result = await opts.canCallTool(toolName, input, resolvedMode, options);
 
         const normalizedToolName = typeof toolName === 'string' ? toolName.trim() : '';
@@ -612,6 +616,7 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
 	        getMode: () => mode,
 	        onSessionFound: (sessionId, data) => recordSessionFound(sessionId, data as any),
 	        onSessionHook: (data) => {
+	            if (isLivePrimaryClaudeProviderHook(data, latestClaudeSessionId)) opts.onProviderEvent?.();
 	            opts.onSessionHook?.(data);
 	            const activity = readClaudeSessionHookProviderTaskActivity(data);
 	            if (!activity) return;
@@ -888,6 +893,7 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
         return child as unknown as AgentSdkSpawnedProcess;
     };
 
+    let disposeProviderMessageObservation: (() => void) | undefined;
     const spawnBaseProcess = opts.spawnClaudeCodeProcess ?? defaultSpawnClaudeCodeProcess;
     queryOptions.spawnClaudeCodeProcess = (spawnOptions: AgentSdkSpawnOptions): AgentSdkSpawnedProcess => {
         const child = spawnBaseProcess(spawnOptions);
@@ -911,7 +917,20 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
             child.on('error', onError);
             if (child.exitCode !== null || ('signalCode' in child && child.signalCode != null)) onExit();
         });
-        return child;
+        if (!opts.onProviderEvent) return child;
+        const observation = observeClaudeSdkProcess(child, message => {
+            if (abortSignal.aborted || !isLivePrimaryClaudeProviderMessage(message, providerActivityLedger.isOwnedSessionId)) return;
+            // Receipt must seed the same additive lineage before later frames in a burst;
+            // UI/transcript session discovery remains with the ordered projection below.
+            const record = message as Record<string, unknown>;
+            if (record.type === 'system' && (record.subtype === 'init' || record.subtype === 'compact_boundary')) {
+                const sessionId = readNonBlankOpaqueIdentifier(record.session_id);
+                if (sessionId) providerActivityLedger.noteOwnedSessionId(sessionId);
+            }
+            opts.onProviderEvent?.();
+        });
+        disposeProviderMessageObservation = observation.dispose;
+        return observation.process;
     };
     let nextMessagePump: Promise<void> | null = null;
     let deferredUntilForegroundTurnEnds: ClaudeRemoteProviderAcceptedPrompt<EnhancedMode> | null = null;
@@ -2292,9 +2311,10 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                 const didRequestThisResult = awaitingRequestedTurnInterruptResult;
                 awaitingRequestedTurnInterruptResult = false;
                 const failure = readAgentSdkResultFailure(message);
-                const hasQueuedUserTurns = hasClaudeQueuedUserTurns(message);
-                if (failure && !hasQueuedUserTurns) {
-                    if (didRequestThisResult && message.subtype === 'error_during_execution') {
+                const retainForeground = promptSettlements.shouldRetainForegroundForResult(message);
+                const isRequestedExecutionInterrupt = didRequestThisResult && message.subtype === 'error_during_execution';
+                if (failure && !retainForeground) {
+                    if (isRequestedExecutionInterrupt) {
                         if (!didFinalizeTurn) {
                             await releaseCurrentTurnForResult();
                         }
@@ -2303,7 +2323,7 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                     await reconcileRuntimeActivityForResult();
                     throw new Error(failure);
                 }
-                if (failure) opts.onCompletionEvent?.(failure);
+                if (failure && !isRequestedExecutionInterrupt) opts.onCompletionEvent?.(failure);
 
                 const resultText = extractResultText(message);
                 if (!streamedTranscriptWriter && !didPublishAssistantTextThisTurn && resultText) {
@@ -2318,12 +2338,12 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                     flushBufferedStreamEventAssistantMessage(message);
                 }
 
-                if (hasQueuedUserTurns) {
-                    // A resumed notification or failed earlier command can finish before the
-                    // submitted user send. Preserve its output without releasing foreground custody.
+                if (retainForeground) {
+                    // Preserve output from earlier or partially answered work until the submitted
+                    // prompts have outcomes. Session backlog alone does not identify those prompts.
                     lastTurnFlushSummary = await flushStreamedTranscriptWriter('turn-end');
                     maybeEmitResultAssistantFallback(message, resultText);
-                    resetForegroundTurn();
+                    if (!didReleaseTurnForResult && !didFinalizeTurn) resetForegroundTurn();
                     if (isCompactCommand) {
                         emitCompactionCompleted();
                         isCompactCommand = false;
@@ -2392,6 +2412,7 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
         }
         throw e;
     } finally {
+        disposeProviderMessageObservation?.();
         await opts.setPermissionModeApplier?.(null);
         opts.onInFlightSteerAvailabilityChange?.(false);
         opts.setUserMessageSender?.(null);

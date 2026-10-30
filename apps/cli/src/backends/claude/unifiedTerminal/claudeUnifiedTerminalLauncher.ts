@@ -999,6 +999,8 @@ export async function claudeUnifiedTerminalLauncher(
       expectedExistingTerminalHostAttachmentId,
       currentTerminalHost: resolveCurrentTerminalHost(session) ?? undefined,
       ...binding.sessionOptions,
+      onProviderEvent: () => session.client.sessionTurnLifecycle?.observeProviderTurnEvent(),
+      readProviderSessionId: () => session.sessionId,
       onHistoricalMessage: async (message) => {
         if (binding.shouldSuppressTranscriptMessage(message)) return;
         await transcriptProjector.observeCommitted(message);

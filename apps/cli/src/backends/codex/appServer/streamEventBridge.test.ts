@@ -541,6 +541,26 @@ describe('createCodexAppServerStreamEventBridge', () => {
         ]);
     });
 
+    it('emits web searches when they complete and image views when they start', () => {
+        const bridge = createCodexAppServerStreamEventBridge();
+        const notify = (method: string, item: Record<string, unknown>) => bridge.onNotification({ method, params: { item } });
+        const action = { type: 'search', query: 'fused kernels', queries: ['fused kernels'] };
+        const results = [{ type: 'text_result', ref_id: 'turn0search0', title: 'Fusion benchmark',
+            url: 'https://example.invalid/bench', domain: 'example.invalid', snippet: 'Fused kernels compared.' }];
+
+        expect(notify('item/started', { id: 'search', type: 'webSearch', query: '', action: null, results: null })).toEqual([]);
+        expect(notify('item/completed', { id: 'search', type: 'webSearch', query: 'fused kernels', action, results })).toEqual([
+            expect.objectContaining({ type: 'tool-call', name: 'WebSearch', input: { query: 'fused kernels', action } }),
+            expect.objectContaining({ type: 'tool-result', output: { results } }),
+        ]);
+        expect(notify('item/started', { id: 'view', type: 'imageView', path: '/repo/plot.png' })).toEqual([
+            expect.objectContaining({ type: 'tool-call', name: 'view_image', input: { path: '/repo/plot.png' } }),
+        ]);
+        expect(notify('item/completed', { id: 'view', type: 'imageView', path: '/repo/plot.png' })).toEqual([
+            expect.objectContaining({ type: 'tool-result', callId: 'view' }),
+        ]);
+    });
+
     it('maps tool items and tool user-input requests', () => {
         const bridge = createCodexAppServerStreamEventBridge();
 

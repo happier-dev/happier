@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AgentMessage } from '@/agent/core';
+import type { AgentBackend } from '@/agent/core';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 
 import { PiRpcBackend } from './PiRpcBackend';
@@ -668,6 +669,38 @@ function findContextCompactionPayload(
 }
 
 describe('PiRpcBackend pending turn lifecycle', () => {
+  it('observes raw live turn activity that has no transcript mapping, excluding replay and synthetic messages', async () => {
+    const backend = new PiRpcBackend({ cwd: process.cwd(), command: process.execPath, args: [] });
+    let observations = 0;
+    const unsubscribe = (backend as AgentBackend).onProviderTurnEvent?.(() => { observations += 1; });
+    const internal = backend as unknown as {
+      handleStdoutLine(line: string): void;
+      createPendingTurn(timeoutMs: number): { promise: Promise<void> };
+      emitMessage(message: AgentMessage): void;
+    };
+    const emit = (event: Record<string, unknown>) => internal.handleStdoutLine(JSON.stringify(event));
+    try {
+      emit({ type: 'message_update', assistantMessageEvent: { type: 'thinking_start' } });
+      const pending = internal.createPendingTurn(60_000);
+      void pending.promise.catch(() => {});
+      // A resumed provider can replay old assistant messages before agent_start.
+      emit({ type: 'message_end', message: { role: 'assistant', content: [] } });
+      internal.emitMessage({ type: 'status', status: 'running' });
+      expect(observations).toBe(0);
+      emit({ type: 'agent_start' });
+      emit({ type: 'message_update', assistantMessageEvent: { type: 'thinking_start' } });
+      expect(observations).toBe(2);
+      // Host liveness queries are not new provider turn events.
+      emit({ type: 'response', id: 'unrelated', command: 'get_state', success: true, data: { isStreaming: true } });
+      expect(observations).toBe(2);
+      unsubscribe?.();
+      emit({ type: 'message_update', assistantMessageEvent: { type: 'thinking_start' } });
+      expect(observations).toBe(2);
+    } finally {
+      await backend.dispose();
+    }
+  });
+
   const tempDirs: string[] = [];
 
   afterEach(() => {

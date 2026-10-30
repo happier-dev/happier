@@ -4,6 +4,8 @@ import { buildSettingArtifacts, type SettingDefinitionMap } from '@happier-dev/p
 import type { ProviderSettingsDefinition } from '../types.js';
 
 export const MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS = 16_384;
+// Node timers use a signed 32-bit millisecond delay; larger delays fire immediately.
+export const MAX_CLAUDE_REMOTE_IDLE_RECLAIM_TIMEOUT_MINUTES = Math.floor(2_147_483_647 / 60_000);
 
 const CLAUDE_SETTING_SOURCES_V2 = ['user', 'project', 'local'] as const;
 export type ClaudeSettingSourceV2 = (typeof CLAUDE_SETTING_SOURCES_V2)[number];
@@ -158,6 +160,18 @@ export const CLAUDE_REMOTE_PROVIDER_FIELDS = {
     description: 'Use Claude Agent SDK in remote mode',
     storageScope: 'account',
     analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
+  claudeRemoteIdleReclaimEnabled: {
+    schema: z.boolean(),
+    default: false,
+    description: 'Release idle Claude remote processes and resume the same session on the next prompt',
+    storageScope: 'account',
+  },
+  claudeRemoteIdleReclaimTimeoutMinutes: {
+    schema: z.number().int().positive().max(MAX_CLAUDE_REMOTE_IDLE_RECLAIM_TIMEOUT_MINUTES),
+    default: 30,
+    description: 'Idle time in minutes before releasing an opted-in Claude remote process',
+    storageScope: 'account',
   },
   claudeUnifiedTerminalEnabled: {
     schema: z.boolean(),
@@ -368,6 +382,10 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
 
   return {
     claudeRemoteAgentSdkEnabled: readBoolean('claudeRemoteAgentSdkEnabled'),
+    claudeRemoteIdleReclaimEnabled: readBoolean('claudeRemoteIdleReclaimEnabled'),
+    claudeRemoteIdleReclaimTimeoutMinutes:
+      CLAUDE_REMOTE_PROVIDER_FIELDS.claudeRemoteIdleReclaimTimeoutMinutes.schema.safeParse(settings.claudeRemoteIdleReclaimTimeoutMinutes).data
+      ?? CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteIdleReclaimTimeoutMinutes,
     claudeUnifiedTerminalEnabled: readBoolean('claudeUnifiedTerminalEnabled'),
     claudeUnifiedTerminalQuestionResponseLocation: responseLocations.question,
     claudeUnifiedTerminalPermissionResponseLocation: responseLocations.permission,

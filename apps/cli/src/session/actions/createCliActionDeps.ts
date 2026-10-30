@@ -5,7 +5,6 @@ import {
   ACTION_OPERATION_RPC_METHODS_V1,
   ActionOperationListV1ResponseSchema,
   ActionOperationGetV1ResponseSchema,
-  buildBackendTargetKey,
   getActionSpec,
   listNativeReviewEngines,
   normalizeSessionMetadataForRead,
@@ -18,11 +17,9 @@ import {
   type SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol';
 import {
-  AGENT_IDS,
   LEGACY_ACP_SESSION_MODES_STATE_KEY,
   SESSION_MODES_STATE_KEY,
   assertNonEscalatingPermissionMode,
-  getProviderCliRuntimeSpec,
   parsePermissionIntentAlias,
   readMetadataAliasValue,
   resolvePermissionPrivilegeFromSessionMetadata,
@@ -33,6 +30,7 @@ import { createCliApprovalsArtifactStore } from '@/approvals/cliApprovalsArtifac
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { getPreferredHostName } from '@/daemon/machine/metadata';
 import type { Credentials } from '@/persistence';
+import { buildAgentBackendItems } from './buildAgentBackendItems';
 import { readSettings } from '@/persistence';
 import { readNonBlankSessionControlIdentifier } from '@/agent/runtime/sessionControlIdentifiers';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -187,12 +185,6 @@ function normalizeActionToolExposureSurface(surface: unknown): 'session_agent' |
 
 function notSupported(): never {
   throw new Error('action_not_supported_in_cli');
-}
-
-function normalizeLimit(value: unknown): number | null {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return Math.max(1, Math.min(200, Math.floor(parsed)));
 }
 
 function normalizeString(value: unknown): string | null {
@@ -435,22 +427,6 @@ function readSessionModesState(metadata: Record<string, unknown> | null): Readon
   }> | null;
 }
 
-function buildAgentBackendItems(params: Readonly<{ limit?: unknown }>): readonly Readonly<{
-  targetKey: string;
-  label: string;
-  enabled: true;
-  agentId: AgentId;
-}>[] {
-  const limit = normalizeLimit(params.limit);
-  const items = AGENT_IDS.map((agentId) => ({
-    targetKey: buildBackendTargetKey({ kind: 'builtInAgent', agentId }),
-    label: getProviderCliRuntimeSpec(agentId).title,
-    enabled: true as const,
-    agentId,
-  }));
-  return limit ? items.slice(0, limit) : items;
-}
-
 export function createCliActionInventoryDeps(params: Readonly<{
   token: string;
   credentials?: Credentials;
@@ -535,7 +511,11 @@ export function createCliActionInventoryDeps(params: Readonly<{
       })),
     }),
     agentsBackendsList: async (args) => ({
-      items: buildAgentBackendItems({ limit: (args as { limit?: unknown }).limit }),
+      items: buildAgentBackendItems({
+        settings: await readLiveActionAccountSettings(params.credentials),
+        includeDisabled: (args as { includeDisabled?: unknown }).includeDisabled === true,
+        limit: (args as { limit?: unknown }).limit,
+      }),
     }),
     agentsModelsList: async (args) => {
       const agentId = args.agentId;

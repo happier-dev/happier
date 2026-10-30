@@ -16,6 +16,11 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
   maxItems: number;
   chunkBytes?: number;
   maxOversizeLineBytes?: number;
+  /**
+   * Cheap pre-parse test. Rejected lines are consumed without being parsed; the page's
+   * terminal line is always parsed so tailOffsetBytes still excludes an incomplete record.
+   */
+  lineFilter?: (lineBytes: Buffer) => boolean;
 }>): Promise<Readonly<{
   items: readonly JsonlParsedLine[];
   nextEndOffsetBytes: number;
@@ -49,6 +54,7 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
   let carry = Buffer.alloc(0);
   let tailOffsetBytes: number | null = null;
   let oldestConsumedStartOffsetBytes: number | null = null;
+  let filteredLineCount = 0;
 
   const fh = await open(params.filePath, 'r');
   try {
@@ -57,6 +63,8 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
       const canContinueOversizeFirstLine =
         remainingBytes <= 0 &&
         collectedNewestFirst.length === 0 &&
+        // A filtered line was complete, so the carry is not one oversized first record.
+        filteredLineCount === 0 &&
         carry.length > 0 &&
         carry.length < maxOversizeLineBytes;
       if (remainingBytes <= 0 && !canContinueOversizeFirstLine) break;
@@ -77,8 +85,12 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
       const carryStartOffset = end;
 
       let segmentEndIndex = combined.length;
-      for (let i = combined.length - 1; i >= 0 && collectedNewestFirst.length < maxItems; i--) {
-        if (combined[i] !== 0x0a) continue; // '\n'
+      // Native newline search: a per-byte JS loop dominated full-file tail scans.
+      for (
+        let i = combined.lastIndexOf(0x0a, combined.length - 1); // '\n'
+        i >= 0 && collectedNewestFirst.length < maxItems;
+        i = i > 0 ? combined.lastIndexOf(0x0a, i - 1) : -1
+      ) {
         const segmentStartIndex = i + 1;
         const segmentEndIndexExclusive = segmentEndIndex;
         const segment = combined.slice(segmentStartIndex, segmentEndIndexExclusive);
@@ -88,7 +100,10 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
           segmentStartIndex < chunk.length
             ? combinedStartOffset + segmentStartIndex
             : carryStartOffset + (segmentStartIndex - chunk.length);
-        const parsed = tryParseJsonlLine(segment);
+        const skipped: boolean = tailOffsetBytes !== null && segment.length > 0
+          && params.lineFilter !== undefined && !params.lineFilter(segment);
+        if (skipped) filteredLineCount += 1;
+        const parsed: unknown = skipped ? null : tryParseJsonlLine(segment);
         oldestConsumedStartOffsetBytes = oldestConsumedStartOffsetBytes === null
           ? startOffsetAbs
           : Math.min(oldestConsumedStartOffsetBytes, startOffsetAbs);
@@ -109,11 +124,14 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
       end = start;
 
       if (end === 0 && carry.length > 0 && collectedNewestFirst.length < maxItems) {
-        const parsed = tryParseJsonlLine(carry);
+        const skipped: boolean = tailOffsetBytes !== null && params.lineFilter !== undefined && !params.lineFilter(carry);
+        const parsed: unknown = skipped ? null : tryParseJsonlLine(carry);
         oldestConsumedStartOffsetBytes = 0;
         if (tailOffsetBytes === null) tailOffsetBytes = parsed !== null ? initialEnd : 0;
         if (parsed !== null) {
           collectedNewestFirst.push({ value: parsed, startOffsetBytes: 0, endOffsetBytes: carry.length });
+          carry = Buffer.alloc(0);
+        } else if (skipped) {
           carry = Buffer.alloc(0);
         }
       }
@@ -123,7 +141,8 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
   }
 
   const items = collectedNewestFirst.reverse();
-  const nextEndOffsetBytes = items.length > 0
+  // Filtered lines older than the oldest kept item are consumed too; do not reread them.
+  const nextEndOffsetBytes = items.length > 0 && params.lineFilter === undefined
     ? items[0].startOffsetBytes
     : (oldestConsumedStartOffsetBytes ?? initialEnd);
   assertJsonlReadProgress({ consumedBytes: initialEnd - nextEndOffsetBytes, remainingSourceBytes: end,

@@ -7,6 +7,7 @@ import { getCodexElicitationToolCallId as getCodexElicitationToolCallIdFromModul
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createExecutableShim } from '@/testkit/fs/executableShim';
 import { removeTempDir } from '@/testkit/fs/tempDir';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 
 // NOTE: This test suite uses mocks because the real Codex CLI / MCP transport
 // is not guaranteed to be available in CI or local test environments.
@@ -55,10 +56,13 @@ vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => {
     return { StdioClientTransport, __transportInstances: instances };
 });
 
+const nativeNotificationHandlers = vi.hoisted(() => [] as Array<(data: { params: { msg: unknown } }) => void>);
+const nativeRequestHandlers = vi.hoisted(() => [] as Array<(request: { params: unknown }) => Promise<unknown>>);
+
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
     class Client {
-        setNotificationHandler() {}
-        setRequestHandler() {}
+        setNotificationHandler(_schema: unknown, handler: (data: { params: { msg: unknown } }) => void) { nativeNotificationHandlers.push(handler); }
+        setRequestHandler(_schema: unknown, handler: (request: { params: unknown }) => Promise<unknown>) { nativeRequestHandlers.push(handler); }
         async connect() {}
         async close() {}
     }
@@ -91,6 +95,62 @@ afterEach(async () => {
     envScope = createEnvKeyScope(envKeys);
     for (const dir of TEMP_DIRS) await removeTempDir(dir);
     TEMP_DIRS.clear();
+});
+
+describe('CodexMcpClient provider backflow', () => {
+    it('observes native elicitation ingress even when permission policy denies without output', async () => {
+        const { CodexMcpClient } = await import('./codexMcpClient');
+        const observed: string[] = [];
+        const client = new CodexMcpClient({ mode: 'mcp-server', onProviderTurnEvent: () => observed.push('request') });
+        client.setThreadIdForResume('selected-thread');
+        try {
+            await client.connect();
+            const receive = nativeRequestHandlers.at(-1)!;
+            const response = await receive({ params: {
+                codex_elicitation: 'exec-approval', codex_call_id: 'call-1', codex_command: ['pwd'],
+            } });
+            expect(response).toMatchObject({ action: 'decline', decision: 'denied' });
+            expect(observed).toEqual(['request']);
+        } finally {
+            await client.disconnect();
+        }
+    });
+
+    it.each([
+        { thread_id: 'selected-thread', threadId: 'foreign-thread' },
+        { session_id: 'selected-thread', sessionId: 'foreign-thread' },
+        { thread_id: 'selected-thread', data: { threadId: 'foreign-thread' } },
+    ])('rejects ambiguous native thread identity without postponing silence (%j)', async (conflictingIdentity) => {
+        vi.useFakeTimers();
+        const notices: unknown[] = [];
+        const lifecycle = createSessionTurnLifecycle({
+            sessionId: 'mcp-selected-session', turnStallWarnMs: 1000,
+            enqueueSessionTurn: async () => {},
+            onTurnStallNotice: (notice) => notices.push(notice),
+        });
+        try {
+            const { CodexMcpClient } = await import('./codexMcpClient');
+            const client = new CodexMcpClient({ onProviderTurnEvent: () => lifecycle.observeProviderTurnEvent() });
+            client.setThreadIdForResume('selected-thread');
+            const receive = nativeNotificationHandlers.at(-1)!;
+            await lifecycle.beginTurn({ provider: 'codex' });
+            await vi.advanceTimersByTimeAsync(600);
+            // SessionId and ThreadId are distinct in rust-v0.160.0 protocol.rs;
+            // the explicit thread identifies ownership, rather than session equality.
+            receive({ params: { msg: { type: 'session_configured', thread_id: 'selected-thread', session_id: 'runtime-session' } } });
+            await vi.advanceTimersByTimeAsync(600);
+            expect(notices).toEqual([]);
+            receive({ params: { msg: { type: 'token_count', ...conflictingIdentity } } });
+            expect(client.getSessionId()).toBe('selected-thread');
+            await vi.advanceTimersByTimeAsync(400);
+            expect(notices).toHaveLength(1);
+            expect(notices[0]).toMatchObject({ lastEventAgeMs: 1000 });
+        } finally {
+            await lifecycle.endSession();
+            vi.useRealTimers();
+        }
+    });
+
 });
 
 describe('CodexMcpClient elicitation ids', () => {

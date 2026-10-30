@@ -12,6 +12,7 @@ import {
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { normalizeAcpPlan, type NormalizedAcpPlanSnapshot } from '@/agent/acp/plans';
 import { buildGrokAcpBackendOptions } from '@/backends/grok/acp/backend';
+import { cursorUpdateTodosRequestSchema } from '@/backends/cursor/acp/extensions/schemas';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -57,7 +58,7 @@ const extensionParams = {
 function writeExtensionProbeAgentScript(params: {
   dir: string;
   resultFile: string;
-  scenario: 'request' | 'notification' | 'error' | 'abort' | 'abort-with-update' | 'outgoing' | 'steer';
+  scenario: 'request' | 'notification' | 'connection-scoped-notification' | 'error' | 'abort' | 'abort-with-update' | 'outgoing' | 'steer';
 }): string {
   const src = `
     const fs = require('node:fs');
@@ -136,6 +137,18 @@ function writeExtensionProbeAgentScript(params: {
           }
           pendingPromptId = id;
           const scenario = ${JSON.stringify(params.scenario)};
+          if (scenario === 'connection-scoped-notification') {
+            for (const params of [
+              { todos: [] },
+              { sessionId: 'test-session', todos: [] },
+              { sessionId: 'foreign-session', todos: [] },
+              { sessionId: 42, todos: [] },
+            ]) {
+              send({ jsonrpc: '2.0', method: 'cursor/update_todos', params });
+            }
+            setTimeout(finishPrompt, 25);
+            continue;
+          }
           if (scenario === 'notification') {
             send({
               jsonrpc: '2.0',
@@ -303,6 +316,8 @@ describe('AcpBackend ACP extension dispatch', () => {
       });
 
       const backend = new AcpBackend(backendOptions);
+      let providerEvents = 0;
+      backend.onProviderTurnEvent(() => { providerEvents += 1; });
 
       try {
         const started = await backend.startSession();
@@ -317,6 +332,7 @@ describe('AcpBackend ACP extension dispatch', () => {
           signalAborted: false,
         });
         expect(readNestedRecord(result, 'params')).toMatchObject({ value: 'request' });
+        expect(providerEvents).toBe(1);
       } finally {
         await backend.dispose().catch(() => {});
       }
@@ -434,6 +450,8 @@ describe('AcpBackend ACP extension dispatch', () => {
       });
 
       const backend = new AcpBackend(backendOptions);
+      let providerEvents = 0;
+      backend.onProviderTurnEvent(() => { providerEvents += 1; });
 
       try {
         const started = await backend.startSession();
@@ -447,8 +465,33 @@ describe('AcpBackend ACP extension dispatch', () => {
             value: 'notify',
           },
         ]);
+        expect(providerEvents).toBe(1);
       } finally {
         await backend.dispose().catch(() => {});
+      }
+    });
+  }, 10_000);
+
+  it('attributes connection-scoped Cursor events while preserving foreign identities stripped by their schema', async () => {
+    await withTempDir('happier-acp-cursor-event-', async (dir) => {
+      const scriptPath = writeExtensionProbeAgentScript({
+        dir, resultFile: `${dir}/unused.json`, scenario: 'connection-scoped-notification',
+      });
+      const backend = new AcpBackend({
+        agentName: 'test', cwd: dir, command: process.execPath, args: [scriptPath],
+        extensionHandlers: [defineAcpExtensionNotification({
+          method: 'cursor/update_todos', params: cursorUpdateTodosRequestSchema, handler: () => {},
+        })],
+      });
+      let providerEvents = 0;
+      backend.onProviderTurnEvent(() => { providerEvents += 1; });
+      try {
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'trigger native Cursor progress');
+        await backend.waitForResponseComplete(1_000);
+        expect(providerEvents).toBe(2);
+      } finally {
+        await backend.dispose();
       }
     });
   }, 10_000);

@@ -6,7 +6,7 @@ import {
     resolveScreenFrameInsets,
     resolveSidebarInsetSplit,
     type HorizontalSafeArea,
-} from './horizontalSafeArea';
+} from './horizontalSafeAreaResolvers';
 
 // Folded iPhone Duo: the system vertical bar sits in the right 84pt.
 const DUO_FOLDED = { left: 0, right: 84 } as const;

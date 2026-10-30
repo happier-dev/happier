@@ -295,6 +295,16 @@ request lifecycle. Handoff imports publish complete transcripts through
 `atomicFileWrite`, replacing file identity so incremental readers invalidate
 their previous state. A failed import leaves the previous transcript intact.
 
+The title reader persists that state to `claude-direct-session-titles.json` beside
+the daemon's `daemon.state.json`, using its canonical lifecycle directory
+(`servers/<HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID or active server id>/`). Each relay
+daemon keeps its own entries when several daemons share one Happier home.
+Writes use a short debounce through `atomicFileWrite`, so a restarted
+daemon validates the cached prefix instead of rescanning whole transcripts. Tail
+scans parse only lines that can hold a title record; other lines are consumed
+without JSON parsing. Unexpected persistence failures are file-logged without cached
+title content; failed writes remain pending for a later flush.
+
 ## Installables, auth, and coverage
 
 | Feature | Status | Exact source files | Current behavior / special cases | Unified architecture migration notes |

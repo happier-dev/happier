@@ -9,8 +9,56 @@ import type { ClaudeWorkflowTaskReference } from '../workflows/claudeWorkflowTas
 import type { SessionHookData } from '../utils/startHookServer';
 import { createClaudeUnifiedHookLifecycleBridge } from './createClaudeUnifiedHookLifecycleBridge';
 import { TERMINAL_INPUT_QUIET_PERIOD_MS } from '@/agent/runtime/terminal/injection/arbiter';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import type { TurnStallNotice } from '@/agent/runtime/session/turn/stallWatch';
+import { createClaudeUnifiedInputArbiter } from './createClaudeUnifiedInputArbiter';
+import type { ClaudeUnifiedSessionHookSubscription } from './createClaudeUnifiedHookLifecycleBridge';
 
 describe('createClaudeUnifiedHookLifecycleBridge', () => {
+  it('counts fresh main hooks for turn silence while startup replay and sidechain hooks stay inert', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const notices: TurnStallNotice[] = [];
+    const turn = createSessionTurnLifecycle({
+      sessionId: 'happier-session', enqueueSessionTurn: async () => {},
+      turnStallWarnMs: 100, onTurnStallNotice: notice => notices.push(notice),
+    });
+    // Hook delivery and terminal injection are external boundaries; both lifecycle owners stay real.
+    let hook: Parameters<ClaudeUnifiedSessionHookSubscription>[0] | undefined;
+    const arbiter = createClaudeUnifiedInputArbiter({
+      injectPrompt: async batch => ({ status: 'injected', at: Date.now(), bytesWritten: batch.message.length }),
+    });
+    const bridge = createClaudeUnifiedHookLifecycleBridge({
+      subscribeClaudeSessionHooks: callback => { hook = callback; return () => { hook = undefined; }; },
+      arbiter, completionQuiescenceMs: 0,
+      onProviderEvent: () => turn.observeProviderTurnEvent(),
+      readProviderSessionId: () => 'native-main',
+    });
+    try {
+      await turn.beginTurn({ provider: 'claude' });
+      bridge.start({ abortSignal: new AbortController().signal });
+      await vi.advanceTimersByTimeAsync(75);
+      hook?.({ hook_event_name: 'PostToolUse', session_id: 'native-main' });
+      await vi.advanceTimersByTimeAsync(75);
+      hook?.({ hook_event_name: 'PostToolUse', session_id: 'native-main' }, { startupReplay: true, observedAt: 0 });
+      hook?.({ hook_event_name: 'PostToolUse', session_id: 'native-main', agent_id: 'child' });
+      hook?.({ hook_event_name: 'PermissionRequestCompleted', session_id: 'native-main' });
+      hook?.({ hook_event_name: 'PostToolUse', session_id: 'stale-native-session' });
+      await vi.advanceTimersByTimeAsync(24);
+      expect(notices).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(notices).toMatchObject([{ lastEventAgeMs: 100 }]);
+      hook?.({ hook_event_name: 'SessionStart', source: 'compact', session_id: 'native-next' });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(notices).toHaveLength(2);
+    } finally {
+      bridge.dispose();
+      await arbiter.dispose();
+      await turn.completeTurn({ provider: 'claude' });
+      vi.useRealTimers();
+    }
+  });
+
   it('emits no target Activity truth when the unified bridge is disposed', async () => {
     const handle = {
       report: vi.fn(async () => {}),

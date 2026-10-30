@@ -3837,6 +3837,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                         title: "Claude Code 實驗功能",
                         footer: "這些設定同時適用於由 Happier 啟動的 Claude 本機工作階段（終端）與遠端工作階段（Agent SDK）。"
                     },
+                    claudeIdleReclaim: {
+                        title: "閒置工作階段",
+                        footer: "下一則提示會恢復同一個 Claude 工作階段，可能需要稍長一點時間。記憶體中的狀態將被釋放。背景工作、排程工作和檔案檢查點會使程序繼續執行。統一終端機工作階段會保持執行。"
+                    },
                     claudeRemoteSdk: {
                         title: "經典執行階段（Agent SDK 後備）",
                         footer: "當統一終端執行階段關閉或不可用時，使用 Agent SDK 路徑。"
@@ -3920,6 +3924,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "強制啟用 Agent Teams",
                         subtitle: "在所有由 Happier 啟動的 Claude 工作階段中啟用 Claude Code 的實驗性 Agent Teams（代理群）功能。"
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "釋放閒置的 Claude 程序",
+                        subtitle: "在一段閒置時間後釋放記憶體。預設關閉。"
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "閒置時間（分鐘）",
+                        subtitle: "選擇啟用此選項後，遠端 Claude 工作階段保持就緒的時間。"
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "使用 Agent SDK 後備",

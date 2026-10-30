@@ -116,6 +116,8 @@ export interface CanUseToolRequest extends ControlRequest {
     input: unknown
     /** Canonical provider key for this tool call; preserve it unchanged for permission ownership. */
     tool_use_id?: string
+    agent_id?: string
+    agentId?: string
 }
 
 export interface CanUseToolControlRequest {
@@ -173,7 +175,7 @@ export interface CanCallToolCallback {
     (
         toolName: string,
         input: unknown,
-        options: { signal: AbortSignal; toolUseId?: string | null },
+        options: { signal: AbortSignal; toolUseId?: string | null; agentId?: string | null },
     ): Promise<PermissionResult>
 }
 

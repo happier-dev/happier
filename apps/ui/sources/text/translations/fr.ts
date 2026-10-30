@@ -3868,6 +3868,10 @@ export const fr: TranslationStructure = {
                         title: "Expérimentations Claude Code",
                         footer: "Ces réglages s’appliquent aux sessions Claude locales (terminal) comme distantes (Agent SDK) démarrées par Happier."
                     },
+                    claudeIdleReclaim: {
+                        title: "Sessions inactives",
+                        footer: "Ton prochain prompt reprend la même session Claude et peut prendre un peu plus de temps. L’état en mémoire est libéré. Les tâches en arrière-plan, le travail planifié et les points de contrôle des fichiers la maintiennent active. Les sessions de terminal unifié restent actives."
+                    },
                     claudeRemoteSdk: {
                         title: "Runtime classique (repli Agent SDK)",
                         footer: "Utilise le chemin Agent SDK quand le runtime terminal unifié est désactivé ou indisponible."
@@ -3951,6 +3955,14 @@ export const fr: TranslationStructure = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Forcer l’activation des Agent Teams",
                         subtitle: "Active les Agent Teams expérimentales de Claude Code (essaim d’agents) dans toutes les sessions Claude démarrées par Happier."
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "Libérer les processus Claude inactifs",
+                        subtitle: "Libère de la mémoire après une période calme. Désactivé par défaut."
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "Inactivité avant libération (minutes)",
+                        subtitle: "Choisis combien de temps une session Claude distante activée reste prête."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Utiliser le repli Agent SDK",

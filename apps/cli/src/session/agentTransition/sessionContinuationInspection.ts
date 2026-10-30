@@ -19,6 +19,7 @@ import { CATALOG_AGENT_IDS } from '@/backends/types';
 import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveConfiguredAcpBackendFromAccountSettings';
 import { materializeConfiguredAcpEnvironment } from '@/agent/acp/catalog/configured/materializeConfiguredAcpEnvironment';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { isBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
 import { resolveSessionPersistedRuntimeIdentity } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import type { Credentials } from '@/persistence';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -102,8 +103,7 @@ export function resolveSessionContinuationTargetAgent(
     const backendTarget = selection.backendTarget;
     if (backendTarget?.kind !== 'configuredAcpBackend' || !accountSettings) return { type: 'unavailable' };
     const backend = resolveConfiguredAcpBackendFromAccountSettings(accountSettings, backendTarget.backendId);
-    if (!backend
-      || (accountSettings.backendEnabledByTargetKey as Readonly<Record<string, unknown>> | undefined)?.[buildBackendTargetKey(backendTarget)] === false) {
+    if (!backend || !isBackendEnabledByAccountSettings({ backendTarget, settings: accountSettings })) {
       return { type: 'unavailable' };
     }
     if ((selection.acpSessionModeId != null && backend.capabilities.supportsModes === 'no')

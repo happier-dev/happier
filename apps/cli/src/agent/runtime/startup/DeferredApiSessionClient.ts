@@ -24,6 +24,7 @@ import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/prot
 import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
 
 export type DeferredApiSessionTarget = Readonly<{
+  sessionTurnLifecycle?: SessionClientPort['sessionTurnLifecycle'];
   subscribeToSessionConnectionState?: StreamedTranscriptWriterSession['subscribeToSessionConnectionState'];
   sessionId: string;
   rpcHandlerManager: RpcHandlerManagerLike;
@@ -95,6 +96,10 @@ export type DeferredApiSessionTarget = Readonly<{
  * implemented via TDD in follow-up commits.
  */
 export class DeferredApiSessionClient {
+  get sessionTurnLifecycle(): SessionClientPort['sessionTurnLifecycle'] {
+    return this.target?.sessionTurnLifecycle;
+  }
+
   sessionId: string;
   private readonly limits: DeferredSessionBufferLimits;
   readonly rpcHandlerManager: RpcHandlerManagerLike;

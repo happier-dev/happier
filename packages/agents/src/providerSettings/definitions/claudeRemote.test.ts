@@ -10,6 +10,21 @@ import {
 } from './claudeRemote.js';
 
 describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
+  it('keeps idle reclamation opt-in and carries a validated duration', () => {
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({})).toMatchObject({
+      claudeRemoteIdleReclaimEnabled: false,
+      claudeRemoteIdleReclaimTimeoutMinutes: 30,
+    });
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({
+      claudeRemoteIdleReclaimEnabled: true,
+      claudeRemoteIdleReclaimTimeoutMinutes: 45,
+    })).toMatchObject({ claudeRemoteIdleReclaimEnabled: true, claudeRemoteIdleReclaimTimeoutMinutes: 45 });
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({
+      claudeRemoteIdleReclaimEnabled: 'true',
+      claudeRemoteIdleReclaimTimeoutMinutes: 0,
+    })).toMatchObject({ claudeRemoteIdleReclaimEnabled: false, claudeRemoteIdleReclaimTimeoutMinutes: 30 });
+  });
+
   it('defaults both unified response locations to app and terminal', () => {
     expect(buildClaudeRemoteOutgoingMessageMetaExtras({})).toMatchObject({
       claudeUnifiedTerminalQuestionResponseLocation: 'app_and_terminal',

@@ -440,6 +440,7 @@ describe('claudeRemoteAgentSdk stream events', () => {
             } as any;
         });
         const runtimeActivityAdapter = {
+            readCurrentState: () => 'idle' as const,
             publishBeforeRuntimeStart: vi.fn(async () => {}),
             activateObservation: vi.fn(async () => {
                 readinessOrder.push('runtime-offered');

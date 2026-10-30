@@ -7,7 +7,7 @@ import type { SessionMediaSource } from '@/agent/core/AgentMessage';
 
 type RecordLike = Record<string, unknown>;
 
-type ToolKind = 'command' | 'mcp' | 'file-change';
+type ToolKind = 'command' | 'mcp' | 'file-change' | 'web-search' | 'image-view' | 'sleep';
 type PermissionRequestToolName = 'request_permissions';
 
 type NotificationEnvelope = Readonly<{
@@ -160,6 +160,31 @@ function readToolContextFromItem(item: RecordLike): ToolContext | null {
         };
     }
 
+    if (itemType === 'websearch') {
+        return {
+            toolKind: 'web-search',
+            name: 'WebSearch',
+            input: omitKeys(item, ['id', 'itemId', 'type', 'itemType', 'results']),
+        };
+    }
+
+    // Rollouts record image views and sleeps as the `view_image` and `sleep` tools.
+    if (itemType === 'imageview') {
+        return {
+            toolKind: 'image-view',
+            name: 'view_image',
+            input: omitKeys(item, ['id', 'itemId', 'type', 'itemType']),
+        };
+    }
+
+    if (itemType === 'sleep') {
+        return {
+            toolKind: 'sleep',
+            name: 'sleep',
+            input: omitKeys(item, ['id', 'itemId', 'type', 'itemType']),
+        };
+    }
+
     if (itemType !== 'mcptoolcall') return null;
 
     const server = readString(item.server);
@@ -260,6 +285,8 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
                     const itemId = readContextCompactionItemId(item);
                     if (itemId) return [{ type: 'context-compaction', phase: 'started', itemId }];
                 }
+                // A started web search has no query yet; its completed item emits the call and result together.
+                if (item && readItemType(item) === 'websearch') return [];
                 const resolved = resolveToolContext(params);
                 if (!resolved) return [];
                 return [{

@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { FeaturesResponseSchema, type ActionOperationSnapshotV1, type SessionHandoffPrepareTargetRequestV2 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createProviderCliFixture } from '@/testkit/process/providerCliFixture';
 
 async function removeTestDirectory(path: string): Promise<void> {
   await rm(path, {
@@ -67,6 +68,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
 
   it('prepares existing-state through the native store without transfer and retains the mode across restart', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-existing-prepare-'));
+    const providerEnv = await createProviderCliFixture(['claude']);
     const claudeHome = join(activeServerDir, 'claude-home');
     const targetPath = join(activeServerDir, 'workspace');
     const previousClaudeHome = process.env.CLAUDE_CONFIG_DIR;
@@ -77,6 +79,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       await mkdir(join(claudeHome, 'projects', 'existing-project'), { recursive: true });
       await mkdir(targetPath);
       await writeFile(transcriptPath, transcript);
+      const processEnv = { ...process.env, ...providerEnv };
       vi.resetModules();
       vi.doMock('@/configuration', async () => {
         const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
@@ -107,7 +110,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
             }
             const environment = await resolveSpawnChildEnvironment({
               options: _options, existingSessionMetadata: metadata,
-              profileEnvironmentVariables: {}, daemonSpawnHooks: null, processEnv: process.env,
+              profileEnvironmentVariables: {}, daemonSpawnHooks: null, processEnv,
               logDebug: () => {}, logInfo: () => {}, logWarn: () => {},
             });
             if (!environment.ok) {
@@ -122,7 +125,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
           resolveExistingStateEnvironment: async () => {
             environmentRequested = true;
             await environmentReady;
-            return process.env;
+            return processEnv;
           },
         });
         return manager;

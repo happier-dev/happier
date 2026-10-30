@@ -1,43 +1,37 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { AcpBackend } from '../AcpBackend';
-import { defaultTransport } from '../../transport';
+import type { AgentMessage } from '@/agent/core';
 import { logger } from '@/ui/logger';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { createAcpToolCallLifecycle } from '../updates/toolCalls/createAcpToolCallLifecycle';
+import { AcpReplayCapture } from '../history/acpReplayCapture';
 
 const envScope = createEnvKeyScope(['HAPPIER_ACP_MAX_UPDATES_PER_NOTIFICATION']);
 
+function createBackend(): AcpBackend {
+  return new AcpBackend({
+    agentName: 'test',
+    cwd: process.cwd(),
+    command: process.execPath,
+  });
+}
+
 describe('AcpBackend session/update max updates guard', () => {
-  it('truncates excessive updates per notification using an env override', () => {
+  it('truncates excessive updates per notification using an env override', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     envScope.patch({ HAPPIER_ACP_MAX_UPDATES_PER_NOTIFICATION: '1' });
+    const backend = createBackend();
+    const emitted: AgentMessage[] = [];
+    backend.onMessage((message) => emitted.push(message));
+    const internal = backend as unknown as {
+      turnGeneration: number;
+      dispatchedPromptTurnGeneration: number | null;
+      handleSessionUpdate(params: unknown): Promise<void>;
+    };
+    internal.turnGeneration = 1;
+    internal.dispatchedPromptTurnGeneration = 1;
     try {
-      const emitted: any[] = [];
-      const toolCalls = createAcpToolCallLifecycle({
-        transport: defaultTransport,
-        emit: (msg) => emitted.push(msg),
-        getToolNameContext: () => ({ recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }),
-      });
-      const fakeBackend: any = {
-        options: { agentName: 'test' },
-        transport: defaultTransport,
-        replayCapture: null,
-        sessionUpdateShapeLogger: { log: () => {} },
-        toolCalls,
-        idleTimeout: null,
-        turnGeneration: 1,
-        dispatchedPromptTurnGeneration: 1,
-        toolCallCountSincePrompt: 0,
-        emit: (msg: any) => emitted.push(msg),
-        emitIdleStatus: () => emitted.push({ type: 'status', status: 'idle' }),
-        isCurrentTurnGenerationClosed: () => false,
-      };
-      fakeBackend.filterPromptTurnUpdatesByDispatch = (AcpBackend as any).prototype.filterPromptTurnUpdatesByDispatch;
-      fakeBackend.createHandlerContext = (AcpBackend as any).prototype.createHandlerContext;
-
-      const handleSessionUpdate = (AcpBackend as any).prototype.handleSessionUpdate as (params: any) => void;
-      handleSessionUpdate.call(fakeBackend, {
+      await internal.handleSessionUpdate({
         updates: [
           {
             sessionUpdate: 'tool_call',
@@ -58,37 +52,44 @@ describe('AcpBackend session/update max updates guard', () => {
         ],
       });
 
-      expect(toolCalls.get('call_1')).not.toBeNull();
-      expect(toolCalls.get('call_2')).toBeNull();
-      expect(emitted.filter((m) => m.type === 'tool-call').length).toBe(1);
+      expect(emitted.filter((message) => message.type === 'tool-call')).toEqual([
+        expect.objectContaining({ callId: 'call_1' }),
+      ]);
       expect(warnSpy).toHaveBeenCalledTimes(1);
     } finally {
+      await backend.dispose();
       envScope.restore();
       warnSpy.mockRestore();
     }
   });
 
   it('captures replay updates before the live prompt-generation filter rejects them', async () => {
-    const captured: unknown[] = [];
-    const fakeBackend: any = {
-      options: { agentName: 'test' },
-      replayCapture: { handleUpdate: (update: unknown) => captured.push(update) },
-      sessionUpdateShapeLogger: { log: () => {} },
-      waitingForResponse: false,
-      turnGeneration: 0,
-      dispatchedPromptTurnGeneration: null,
-      filterPromptTurnUpdatesByDispatch: (AcpBackend as any).prototype.filterPromptTurnUpdatesByDispatch,
+    const backend = createBackend();
+    const emitted: AgentMessage[] = [];
+    backend.onMessage((message) => emitted.push(message));
+    const replayCapture = new AcpReplayCapture();
+    const internal = backend as unknown as {
+      replayCapture: AcpReplayCapture | null;
+      handleSessionUpdate(params: unknown): Promise<void>;
     };
-
-    await (AcpBackend as any).prototype.handleSessionUpdate.call(fakeBackend, {
+    const notification = {
       update: {
         sessionUpdate: 'agent_message_chunk',
         content: { type: 'text', text: 'restored transcript' },
       },
-    });
+    };
 
-    expect(captured).toEqual([
-      expect.objectContaining({ sessionUpdate: 'agent_message_chunk' }),
-    ]);
+    try {
+      internal.replayCapture = replayCapture;
+      await internal.handleSessionUpdate(notification);
+      expect(replayCapture.finalize()).toEqual([
+        { type: 'message', role: 'agent', text: 'restored transcript' },
+      ]);
+      internal.replayCapture = null;
+      await internal.handleSessionUpdate(notification);
+      expect(emitted).toEqual([]);
+    } finally {
+      await backend.dispose();
+    }
   });
 });

@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentMessage } from '@/agent/core';
+import type { AgentBackend, AgentMessage } from '@/agent/core';
 import { logger } from '@/ui/logger';
 import { buildPiBridgeExtensionSource } from '../bridgeExtension/piBridgeExtensionSource';
 import { PI_BRIDGE_CONFIG_PATH_FLAG } from '../bridgeExtension/piBridgeExtensionEnv';
@@ -96,7 +96,13 @@ readline.createInterface({ input: process.stdin }).on('line', async line => {
   it('records repeated extension submissions once each through the bridge and ignores native user echoes', async () => {
     const backend = createBackend();
     const messages: AgentMessage[] = [];
-    backend.onMessage((message) => messages.push(message));
+    let observations = 0;
+    const observationsAtUserMessages: number[] = [];
+    (backend as AgentBackend).onProviderTurnEvent?.(() => { observations += 1; });
+    backend.onMessage((message) => {
+      messages.push(message);
+      if (message.type === 'user-message') observationsAtUserMessages.push(observations);
+    });
     const { sessionId } = await backend.startSession();
     await backend.sendPrompt(sessionId, 'inject');
     await expect.poll(() => messages.filter((message) => message.type === 'user-message')).toEqual([
@@ -106,6 +112,9 @@ readline.createInterface({ input: process.stdin }).on('line', async line => {
     expect(messages.filter((message) => message.type === 'terminal-output')).toEqual([]);
     const firstUser = messages.findIndex((message) => message.type === 'user-message');
     expect(messages[firstUser + 1]).toMatchObject({ type: 'status', status: 'running' });
+    // The second extension turn has no host-owned pendingTurn, but its native
+    // activity must still reach the Session lifecycle observer.
+    expect(observationsAtUserMessages[1]).toBeGreaterThan(observationsAtUserMessages[0]);
   });
 
   it('keeps extension input out of diagnostic traces while recording its user row', async () => {
