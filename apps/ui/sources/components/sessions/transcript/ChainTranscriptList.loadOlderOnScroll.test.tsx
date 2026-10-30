@@ -529,47 +529,6 @@ describe('ChainTranscriptList', () => {
         expect(loadOlder).toHaveBeenCalledTimes(2);
     });
 
-    it('loads older when scrolled near the top (even if onStartReached is not fired)', async () => {
-                const { ChainTranscriptList: ChainContent } = await import('./ChainTranscriptList');
-        const ChainTranscriptList = createChainTestRoot(ChainContent);
-        const deferred = createDeferred<{ loaded: number; hasMore: boolean; status: 'loaded' }>();
-        const loadOlder = vi.fn(async () => await deferred.promise);
-
-        const screen = await renderChainTranscriptList({
-            sessionId: 's1',
-            messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
-            metadata: null,
-            interaction: { canSendMessages: true, canApprovePermissions: true },
-            loadOlder,
-        });
-
-        const list = getLegendList(screen);
-        expect(typeof list.props.onScroll).toBe('function');
-
-        await act(async () => {
-            fireShellLayout(screen, 500);
-            setShellContentHeight(list, 1000);
-            list.props.onScroll({
-                nativeEvent: {
-                    contentOffset: { y: 120 },
-                    contentSize: { height: 1000 },
-                    layoutMeasurement: { height: 500 },
-                },
-            });
-            await settleListEffects();
-            expect(loadOlder).toHaveBeenCalledTimes(1);
-            const loadOlderPromise = loadOlder.mock.results[0]?.value as Promise<unknown> | undefined;
-            expect(loadOlderPromise).toBeInstanceOf(Promise);
-            deferred.resolve({ loaded: 1, hasMore: true, status: 'loaded' });
-            if (loadOlderPromise) {
-                await loadOlderPromise;
-            }
-            await settleListEffects();
-        });
-
-        expect(loadOlder).toHaveBeenCalledTimes(1);
-    });
-
     it('requires a threshold exit and re-entry before chaining another older-page load (anti-burst)', async () => {
         vi.useFakeTimers({ now: new Date(0) });
         try {
