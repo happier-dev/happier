@@ -66,7 +66,7 @@ describe('Runner credential selection resolution V1', () => {
       ...request,
       creatorAccountId: 'caller-chosen',
     }).success).toBe(false);
-    expect(RunnerCredentialSelectionResolutionResponseV1Schema.safeParse({
+    const response = {
       v: 1, status: 'resolved',
       credentialSelectionBinding: {
         v: 1,
@@ -75,8 +75,16 @@ describe('Runner credential selection resolution V1', () => {
         revision: 7,
         application: request.application,
         sourceRevision: request.sourceRevision,
-        modelId: 'gpt-5',
       },
-    }).success).toBe(false);
+      displayFacts: { v: 1, homeId: 'home-a', homeName: 'Acme Home', requesterId: 'account-a', requesterName: 'Alice', teamId: 'team-a', teamName: '研究開発チーム 🌍' },
+    } as const;
+    expect(RunnerCredentialSelectionResolutionResponseV1Schema.parse(response)).toEqual(response);
+    expect(RunnerCredentialSelectionResolutionResponseV1Schema.safeParse({
+      ...response,
+      credentialSelectionBinding: { ...response.credentialSelectionBinding, modelId: 'gpt-5' },
+    })).toMatchObject({
+      success: false,
+      error: { issues: [{ code: 'unrecognized_keys', path: ['credentialSelectionBinding'], keys: ['modelId'] }] },
+    });
   });
 });

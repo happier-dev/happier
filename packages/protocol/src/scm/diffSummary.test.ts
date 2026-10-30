@@ -266,44 +266,25 @@ describe('SCM diff-summary protocol schemas', () => {
     expect(result?.success).toBe(false);
   });
 
-  it('keeps sourceKey purity: receipt-keyed inputs do not vary with modelSelector (Q12 cache-anti-pollution invariant)', async () => {
-    // Contract: SCM-DIFF-SUMMARY consumers (incl. SCM-DIFF-SUMMARY-2 cache impl) MUST treat
-    // sourceKey as derived from `(source.kind, turnId, checkpointReceiptId)` only — never from
-    // modelSelector. The protocol layer cannot enforce derivation, but it documents the invariant
-    // by accepting two structurally-equivalent inputs that differ only in modelSelector and
-    // confirming the schema does not project modelSelector into any output sourceKey echo. Any
-    // future implementation that bakes modelSelector into sourceKey must change this test
-    // intentionally so reviewers see the policy break.
-    const protocol = await import('./diffSummary.js') as Record<string, unknown>;
-    const inputSchema = protocol.ScmDiffSummaryGenerateInputSchema as z.ZodMiniType | undefined;
-
-    expect(inputSchema).toMatchObject({ parse: expect.any(Function) });
+  it('keeps sourceKey purity: receipt-keyed inputs do not vary with modelSelector (Q12 cache-anti-pollution invariant)', () => {
     const baseInput = {
       cwd: '/repo',
       source: { kind: 'turnCheckpoint' as const },
       turnId: 'turn-1',
       checkpointReceiptId: 'checkpoint.diff_computed',
     };
-    const withSelectorA = inputSchema?.parse({
+    const withSelectorA = diffSummary.ScmDiffSummaryGenerateInputSchema.parse({
       ...baseInput,
       modelSelector: { profileId: 'fast-summary' },
-    }) as Record<string, unknown>;
-    const withSelectorB = inputSchema?.parse({
+    });
+    const withSelectorB = diffSummary.ScmDiffSummaryGenerateInputSchema.parse({
       ...baseInput,
       modelSelector: { profileId: 'thorough-summary', backendTargetKey: 'gpt-4' },
-    }) as Record<string, unknown>;
-
-    // Cache identity inputs (the fields any compliant sourceKey impl is allowed to consume) MUST
-    // be identical. modelSelector is allowed to differ but MUST NOT participate in cache identity.
-    expect({
-      sourceKind: (withSelectorA.source as { kind: string }).kind,
-      turnId: withSelectorA.turnId,
-      checkpointReceiptId: withSelectorA.checkpointReceiptId,
-    }).toEqual({
-      sourceKind: (withSelectorB.source as { kind: string }).kind,
-      turnId: withSelectorB.turnId,
-      checkpointReceiptId: withSelectorB.checkpointReceiptId,
     });
+
+    expect(withSelectorA.modelSelector).not.toEqual(withSelectorB.modelSelector);
+    expect(diffSummary.buildScmComparisonSourceKey(withSelectorA))
+      .toBe(diffSummary.buildScmComparisonSourceKey(withSelectorB));
   });
 
   it('rejects unknown fields in authority-bearing input and output envelopes', () => {

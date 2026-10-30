@@ -10,13 +10,6 @@ function readComparableKeyFunction(name: string): ComparableKeyFunction {
   return candidate as ComparableKeyFunction;
 }
 
-describe('server URL comparable key exports', () => {
-  it('exports the identity helpers', () => {
-    readComparableKeyFunction('canonicalizeServerUrlForIdentity');
-    readComparableKeyFunction('createServerUrlComparableKey');
-  });
-});
-
 describe('canonicalizeServerUrlForIdentity', () => {
   it('normalizes case, trims whitespace, and strips path/query/hash to origin identity', () => {
     const canonicalize = readComparableKeyFunction('canonicalizeServerUrlForIdentity');

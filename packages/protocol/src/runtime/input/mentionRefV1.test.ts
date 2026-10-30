@@ -73,8 +73,8 @@ describe('mention reference grammar', () => {
     });
   });
 
-  it('rejects an authority form, a malformed escape and an empty opaque part', () => {
-    // D-8: the authority form would embed a device-local profile id in a persisted reference.
+  it('accepts slash-prefixed opaque parts and rejects malformed references', () => {
+    // Slashes after the first colon remain part of the opaque component.
     expect(parseMentionRefV1('session://scope/abc')).toEqual({
       scheme: 'session',
       opaque: '//scope/abc',

@@ -308,6 +308,24 @@ describe('Team logo admission contract', () => {
     const decoded = decodeTeamLogoSourceV1(input.image);
     expect(decoded).toEqual({ status: 'ok', bytes: pngBytes, mimeType: 'image/png' });
 
+    const atLimitBytes = new Uint8Array(TEAM_LOGO_MAX_SOURCE_BYTES_V1);
+    atLimitBytes.set(pngBytes);
+    const atLimit = TeamLogoSetInputV1Schema.parse({
+      ...input,
+      image: { ...input.image, dataBase64: Buffer.from(atLimitBytes).toString('base64') },
+    });
+    const atLimitResult = decodeTeamLogoSourceV1(atLimit.image);
+    expect(atLimitResult.status).toBe('ok');
+    if (atLimitResult.status === 'ok') expect(atLimitResult.bytes.byteLength).toBe(TEAM_LOGO_MAX_SOURCE_BYTES_V1);
+
+    const oversizedBytes = new Uint8Array(TEAM_LOGO_MAX_SOURCE_BYTES_V1 + 1);
+    oversizedBytes.set(pngBytes);
+    const oversized = TeamLogoSetInputV1Schema.parse({
+      ...input,
+      image: { ...input.image, dataBase64: Buffer.from(oversizedBytes).toString('base64') },
+    });
+    expect(decodeTeamLogoSourceV1(oversized.image)).toEqual({ status: 'invalid', reason: 'too_large' });
+
     expect(decodeTeamLogoSourceV1({ mimeType: 'image/png', dataBase64: '!!!not base64!!!' }))
       .toEqual({ status: 'invalid', reason: 'malformed' });
     expect(decodeTeamLogoSourceV1({ mimeType: 'image/png', dataBase64: '' }))

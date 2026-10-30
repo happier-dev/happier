@@ -312,7 +312,7 @@ export const PROTOCOL_WIRE_COMPATIBILITY_INVENTORY: readonly ProtocolWireCompati
       'packages/protocol/src/execution/runs/index.test.ts',
       'packages/protocol/src/rpc/executionRuns.test.ts',
       'packages/protocol/src/daemon/executionRuns.test.ts',
-      'packages/protocol/src/rpc/daemonExecutionRuns.test.ts',
+      'packages/protocol/src/rpc/wireCompatibility.test.ts',
       'packages/protocol/src/sessions/continueWithReplay.test.ts',
       'apps/cli/src/api/machine/rpcHandlers.test.ts',
       'apps/cli/src/api/machine/rpcHandlers.externalSessions.executionSurfaces.test.ts',

@@ -121,18 +121,19 @@ describe('team invitation creation input', () => {
   });
 
   it('requires the reissue intent to address one exact existing invitation', () => {
-    expect(TeamInvitationReissueInputV1Schema.safeParse({
+    const input = TeamInvitationReissueInputV1Schema.parse({
       v: 1,
       teamId: 'team-1',
       invitationId: 'inv-1',
       recipientEmail: null,
       requestKey: 'req-3',
-    }).success).toBe(true);
-    expect(TeamInvitationReissueInputV1Schema.safeParse({
-      v: 1,
-      teamId: 'team-1',
-      requestKey: 'req-3',
-    }).success).toBe(false);
+    });
+    expect(input.invitationId).toBe('inv-1');
+    const { invitationId: _invitationId, ...withoutInvitationId } = input;
+    expect(TeamInvitationReissueInputV1Schema.safeParse(withoutInvitationId)).toMatchObject({
+      success: false,
+      error: { issues: [{ code: 'invalid_type', path: ['invitationId'] }] },
+    });
   });
 });
 
@@ -293,8 +294,16 @@ describe('bearer confinement in projections', () => {
       emailDelivery: 'unavailable',
       linkDelivery: 'unavailable',
     }).success).toBe(true);
-    expect(TeamInvitationsPageV1Schema.safeParse({ items: [], nextCursor: null }).success).toBe(false);
-    expect(TeamInvitationsPageV1Schema.safeParse({ items: [], nextCursor: null, emailDelivery: 'available' }).success).toBe(false);
+    const { emailDelivery: _emailDelivery, ...withoutEmailDelivery } = page;
+    const { linkDelivery: _linkDelivery, ...withoutLinkDelivery } = page;
+    expect(TeamInvitationsPageV1Schema.safeParse(withoutEmailDelivery)).toMatchObject({
+      success: false,
+      error: { issues: [{ path: ['emailDelivery'] }] },
+    });
+    expect(TeamInvitationsPageV1Schema.safeParse(withoutLinkDelivery)).toMatchObject({
+      success: false,
+      error: { issues: [{ path: ['linkDelivery'] }] },
+    });
     expect(TeamInvitationsPageV1Schema.safeParse({ ...page, emailDelivery: true }).success).toBe(false);
     expect(TeamInvitationsPageV1Schema.safeParse({ ...page, emailDelivery: 'maybe' }).success).toBe(false);
     expect(TeamInvitationsPageV1Schema.safeParse({ ...page, linkDelivery: 'maybe' }).success).toBe(false);

@@ -48,8 +48,21 @@ describe('terminal byte stream protocol', () => {
     expect(schema.safeParse({ ...valid, encoding: 'utf8' }).success).toBe(false);
     expect(schema.safeParse({ ...valid, data: '@@@', byteLength: 0 }).success).toBe(false);
     expect(schema.safeParse({ ...valid, byteLength: 4 }).success).toBe(false);
-    expect(schema.safeParse({ ...valid, byteLength: api.TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES + 1 }).success)
-      .toBe(false);
+    const atLimitBytes = new Uint8Array(api.TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES);
+    expect(schema.parse({
+      ...valid,
+      byteLength: atLimitBytes.byteLength,
+      data: api.encodeTerminalStreamBytes(atLimitBytes),
+    }).byteLength).toBe(api.TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES);
+    const oversizedBytes = new Uint8Array(api.TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES + 1);
+    expect(schema.safeParse({
+      ...valid,
+      byteLength: oversizedBytes.byteLength,
+      data: api.encodeTerminalStreamBytes(oversizedBytes),
+    })).toMatchObject({
+      success: false,
+      error: { issues: [{ code: 'too_big', path: ['byteLength'], maximum: api.TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES }] },
+    });
     expect(schema.safeParse({ ...valid, data: Uint8Array.from([1, 2, 3]) }).success).toBe(false);
   });
 

@@ -28,7 +28,7 @@ describe('daemon npm registry profile RPC contract', () => {
     })).toEqual({ protocolVersion: 1, revision: 1, profiles, pausedSources });
   });
   it('projects bounded secret-free profiles and paused source state', () => {
-    const parsed = DaemonNpmRegistryProfileSnapshotV1Schema.parse({
+    const snapshot = {
       protocolVersion: 1,
       revision: 3,
       profiles: [{
@@ -49,10 +49,24 @@ describe('daemon npm registry profile RPC contract', () => {
         reason: 'profile_removed',
         updatedAtMs: 122,
       }],
-    });
+    };
+    const parsed = DaemonNpmRegistryProfileSnapshotV1Schema.parse(snapshot);
 
     expect(parsed.profiles[0]).not.toHaveProperty('credentialSecretRef');
     expect(JSON.stringify(parsed)).not.toContain('token');
+    for (const secretField of [
+      { credentialSecretRef: 'secret-ref' },
+      { token: 'secret-value' },
+    ]) {
+      expect(DaemonNpmRegistryProfileSnapshotV1Schema.safeParse({
+        ...snapshot,
+        ...secretField,
+      }).success).toBe(false);
+      expect(DaemonNpmRegistryProfileSnapshotV1Schema.safeParse({
+        ...snapshot,
+        profiles: [{ ...snapshot.profiles[0], ...secretField }],
+      }).success).toBe(false);
+    }
   });
 
   it('accepts credential input only on the login mutation and never accepts raw headers', () => {
@@ -75,6 +89,7 @@ describe('daemon npm registry profile RPC contract', () => {
       profileId: 'registry_acme',
       expectedRevision: 3,
       mutationId: 'mutation-12345678',
+      credential: { kind: 'bearer_token', secret: 'secret-value' },
       authorizationHeader: 'Bearer secret-value',
     }).success).toBe(false);
 
