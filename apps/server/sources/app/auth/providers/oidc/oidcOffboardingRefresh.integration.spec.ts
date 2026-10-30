@@ -12,6 +12,7 @@ import { auth } from "@/app/auth/auth";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 import { decryptString } from "@/modules/encrypt";
 import { createAppCloseTracker } from "@/app/api/testkit/appLifecycle";
+import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { applyEnvValues } from "@/testkit/env";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
@@ -22,6 +23,7 @@ function createTestApp() {
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
+    enableAuthentication(typed);
     return trackApp(typed);
 }
 

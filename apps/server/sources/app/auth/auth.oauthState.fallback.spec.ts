@@ -3,13 +3,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
 
 const dbAccountFindUniqueMock = vi.hoisted(() => vi.fn());
-vi.mock("@/storage/db", () => ({
-    db: {
+vi.mock("@/storage/db", async () => {
+    const { createDbTransactionMock, inTxPostgresControlStatementMock } = await import("@/app/api/testkit/dbMocks");
+    const boundary = {
+        ...inTxPostgresControlStatementMock,
         account: {
             findUnique: (...args: unknown[]) => dbAccountFindUniqueMock(...args),
         },
-    },
-}));
+    };
+    const { wrapDb } = createDbTransactionMock(() => boundary);
+    return { db: wrapDb(boundary) };
+});
 
 /**
  * Both cases reset modules and re-import the auth graph, then run the real
@@ -57,6 +61,8 @@ describe("auth (oauth state fallback)", { timeout: 120_000 }, () => {
             extras: { role: "admin" },
             authTokenKind: "account",
             authority: "present_user",
+            authTokenMintedAuthority: "present_user",
+            tokenEpoch: 0,
             legacy: false,
         });
 

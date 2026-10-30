@@ -4,9 +4,10 @@ import { applyEnvValues, restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
 
 const dbAccountFindUniqueMock = vi.hoisted(() => vi.fn());
 vi.mock("@/storage/db", async () => {
-    const { createDbTransactionMock } = await import("@/app/api/testkit/dbMocks");
+    const { createDbTransactionMock, inTxPostgresControlStatementMock } = await import("@/app/api/testkit/dbMocks");
     // Only persistent database IO is replaced; auth and inTx retain their real logic.
     const boundary = {
+        ...inTxPostgresControlStatementMock,
         account: {
             findUnique: (...args: unknown[]) => dbAccountFindUniqueMock(...args),
         },

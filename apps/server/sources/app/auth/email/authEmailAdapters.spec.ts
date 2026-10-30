@@ -64,20 +64,6 @@ describe("auth email adapters", () => {
         expect(sent[0].html).toContain(reset.resetUrl);
     });
 
-    it("classifies a transport error as a retryable delivery failure", async () => {
-        const { transport } = createRecordingTransport(async () => {
-            throw new Error(`SMTP rejected ${reset.to.address} ${reset.resetUrl} secret-password`);
-        });
-
-        const result = await createSmtpAuthEmailDelivery({ config, transport }).deliver(reset);
-
-        expect(result).toEqual({
-            status: "failed",
-            reason: "transport_failed",
-            detail: "SMTP submission failed",
-        });
-    });
-
     it("classifies an incomplete render as a render failure and never submits it", async () => {
         const { sent, transport } = createRecordingTransport();
 
@@ -105,6 +91,11 @@ describe("auth email adapters", () => {
         });
         const result = await createSmtpAuthEmailDelivery({ config, transport }).deliver(reset);
 
+        expect(result).toEqual({
+            status: "failed",
+            reason: "transport_failed",
+            detail: "SMTP submission failed",
+        });
         expect(JSON.stringify(result)).not.toContain(reset.resetUrl);
         expect(JSON.stringify(result)).not.toContain("secret-password");
         const summary = describeAuthEmailDeliveryFailure(reset, result);

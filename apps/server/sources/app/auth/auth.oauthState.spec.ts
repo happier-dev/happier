@@ -17,11 +17,6 @@ describe("auth (oauth state tokens)", () => {
         restoreEnv(envBackup);
     });
 
-    it("exposes createOauthStateToken + verifyOauthStateToken helpers", () => {
-        expect(typeof (auth as any).createOauthStateToken).toBe("function");
-        expect(typeof (auth as any).verifyOauthStateToken).toBe("function");
-    });
-
     it("round-trips oauth state tokens for auth + connect flows", async () => {
         const token = await (auth as any).createOauthStateToken({
             flow: "connect",

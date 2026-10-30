@@ -65,9 +65,11 @@ describe("githubConnect token storage (integration)", () => {
 
         const identity = await db.accountIdentity.findFirst({
             where: { accountId: account.id, provider: "github" },
-            select: { token: true },
+            select: { token: true, providerUserId: true, providerLogin: true },
         });
         expect(identity).toBeTruthy();
+        expect(identity?.providerUserId).toBe("123");
+        expect(identity?.providerLogin).toBe("alice");
         expect(identity!.token).toBeNull();
     });
 
@@ -100,39 +102,6 @@ describe("githubConnect token storage (integration)", () => {
 
         const dbUser = await db.account.findUnique({ where: { id: account.id }, select: { avatar: true } });
         expect(dbUser?.avatar).toBeNull();
-    });
-
-    it("creates an AccountIdentity row for the GitHub profile", async () => {
-        const { githubConnect } = await import("./githubConnect");
-
-        const account = await db.account.create({
-            data: { publicKey: `pk-${Date.now()}-id` },
-            select: { id: true },
-        });
-
-        vi.stubGlobal(
-            "fetch",
-            vi.fn(async () => ({
-                ok: true,
-                arrayBuffer: async () => new ArrayBuffer(1),
-            })) as any,
-        );
-
-        const githubProfile = {
-            id: 124,
-            login: "alice_2",
-            name: "Alice Example",
-            avatar_url: "https://avatars.example.test/a.png",
-        };
-
-        await githubConnect(Context.create(account.id), githubProfile as any, "access-token");
-
-        const identity = await db.accountIdentity.findFirst({
-            where: { accountId: account.id, provider: "github" },
-        });
-        expect(identity).toBeTruthy();
-        expect(identity?.providerUserId).toBe("124");
-        expect(identity?.providerLogin).toBe("alice_2");
     });
 
     it("persists GitHub access tokens when GITHUB_STORE_ACCESS_TOKEN=true", async () => {
