@@ -5,6 +5,8 @@ export function resolveTsxCliInvocation(params) {
     const processExecPath = params.processExecPath ?? process.execPath;
     const existsSync = params.existsSync ?? defaultExistsSync;
     const platform = params.platform ?? process.platform;
+    // This launcher executes server source; built entrypoints keep default exports.
+    const sourceArgs = ["--conditions=happier-source"];
     const directCliCandidates = [
         resolve(params.repoRoot, "node_modules", "tsx", "dist", "cli.cjs"),
         resolve(params.repoRoot, "apps", "server", "node_modules", "tsx", "dist", "cli.cjs"),
@@ -13,7 +15,7 @@ export function resolveTsxCliInvocation(params) {
         if (existsSync(candidate)) {
             return {
                 command: processExecPath,
-                argsPrefix: [candidate],
+                argsPrefix: [candidate, ...sourceArgs],
             };
         }
     }
@@ -25,8 +27,8 @@ export function resolveTsxCliInvocation(params) {
     ];
     for (const candidate of fallbackCandidates) {
         if (existsSync(candidate)) {
-            return { command: candidate, argsPrefix: [] };
+            return { command: candidate, argsPrefix: sourceArgs };
         }
     }
-    return { command: fallbackCandidates[0], argsPrefix: [] };
+    return { command: fallbackCandidates[0], argsPrefix: sourceArgs };
 }
