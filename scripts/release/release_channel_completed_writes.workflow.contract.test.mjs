@@ -36,12 +36,15 @@ test('accepted completed Docker and generic npm writes are skipped through admit
 
 test('current SDK integrity requests override generic npm completion from an older origin', () => {
   const source = workflow();
-  for (const selected of ['publish_plugin_sdk', 'publish_sdk']) {
-    const state = context(source);
-    state.needs.resolve_resume.outputs.npm_complete = 'true';
-    state.needs.plan.outputs[selected] = 'true';
-    assert.equal(evaluate(source.jobs.publish_npm.if, state), true, selected);
-    assert.equal(evaluate(source.jobs.publish_npm.with[selected], state), true, `${selected} reaches the canonical publisher`);
+  for (const environment of ['preview', 'production']) {
+    for (const selected of ['publish_plugin_sdk', 'publish_sdk']) {
+      const state = context(source);
+      state.inputs.environment = environment;
+      state.needs.resolve_resume.outputs.npm_complete = 'true';
+      state.needs.plan.outputs[selected] = 'true';
+      assert.equal(evaluate(source.jobs.publish_npm.if, state), true, `${environment}: ${selected}`);
+      assert.equal(evaluate(source.jobs.publish_npm.with[selected], state), true, `${environment}: ${selected} reaches the canonical publisher`);
+    }
   }
 });
 

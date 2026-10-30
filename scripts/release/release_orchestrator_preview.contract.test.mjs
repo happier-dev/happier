@@ -396,7 +396,8 @@ test('promote-ui native_submit uses the shared Expo submit script (handles previ
 
   const buildUiMobileLocal = await loadWorkflow('build-ui-mobile-local.yml');
   assert.match(buildUiMobileLocal, /node \.mobile-control\/scripts\/pipeline\/run\.mjs ui-mobile-release/);
-  assert.match(buildUiMobileLocal, /--action "\$\{\{\s*inputs\.action == 'build_and_submit' && 'native_submit' \|\| 'native'\s*\}\}"/);
+  // The parsed native-action mapping and both consumers are covered by
+  // build_ui_mobile_local_uses_ui_mobile_release.workflow.contract.test.mjs.
   assert.doesNotMatch(buildUiMobileLocal, /node scripts\/pipeline\/run\.mjs expo-submit/);
 
   const run = await loadFile('scripts/pipeline/run.mjs');

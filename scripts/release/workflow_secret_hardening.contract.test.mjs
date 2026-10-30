@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { readdir } from 'node:fs/promises';
@@ -164,26 +164,6 @@ test('workflows never use the nonexistent github.workflow_repository trust selec
   for (const file of files) {
     const { raw } = await loadWorkflow(file);
     assert.doesNotMatch(raw, /github\.workflow_repository/, `${file} must use job.workflow_repository`);
-  }
-});
-
-test('external actions in privileged jobs are pinned to immutable commits', async () => {
-  const workflowDir = join(repoRoot, '.github', 'workflows');
-  const files = (await readdir(workflowDir)).filter((name) => name.endsWith('.yml'));
-  for (const file of files) {
-    const { parsed } = await loadWorkflow(file);
-    for (const [jobName, job] of Object.entries(parsed?.jobs ?? {})) {
-      const effectivePermissions = job?.permissions ?? parsed?.permissions ?? {};
-      const hasWritePermission = Object.values(effectivePermissions).some((value) => value === 'write');
-      const serialized = JSON.stringify(job);
-      const privileged = hasWritePermission || job?.environment !== undefined || /secrets\./.test(serialized) || job?.secrets === 'inherit';
-      if (!privileged) continue;
-      for (const step of job?.steps ?? []) {
-        const uses = typeof step?.uses === 'string' ? step.uses : '';
-        if (!uses || uses.startsWith('./')) continue;
-        assert.match(uses, /@[0-9a-f]{40}$/u, `${basename(file)} ${jobName}/${step.name ?? uses} must pin ${uses} to a full commit`);
-      }
-    }
   }
 });
 

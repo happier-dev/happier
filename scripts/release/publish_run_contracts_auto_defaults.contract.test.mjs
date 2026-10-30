@@ -28,6 +28,7 @@ test('publish-cli-binaries defaults to run-contracts=auto (skips locally)', asyn
       env: {
         ...process.env,
         GITHUB_ACTIONS: '',
+        GH_REPO: 'happier-dev/happier',
         HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: publishedVersionsFixture,
       },
       encoding: 'utf8',
@@ -59,6 +60,7 @@ test('publish-cli-binaries defaults to run-contracts=auto (runs on GitHub Action
       env: {
         ...process.env,
         GITHUB_ACTIONS: 'true',
+        GH_REPO: 'happier-dev/happier',
         HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: publishedVersionsFixture,
       },
       encoding: 'utf8',
@@ -90,6 +92,7 @@ test('publish-ui-web defaults to run-contracts=auto (skips locally)', async () =
       env: {
         ...process.env,
         GITHUB_ACTIONS: '',
+        GH_REPO: 'happier-dev/happier',
         HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: publishedVersionsFixture,
       },
       encoding: 'utf8',

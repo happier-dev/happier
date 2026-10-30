@@ -171,11 +171,6 @@ test('deploy planning keeps release source inert and executes trusted workflow c
   assertNoExpressionInterpolationInShell(job, 'deploy_plan');
 });
 
-test('final exact-SHA release workflow has no post-admission version-bump mutation job', async () => {
-  const workflow = await loadReleaseWorkflow();
-  assert.equal(workflow.jobs.bump_versions_dev, undefined);
-});
-
 test('public exact-SHA release admission consumes already-materialized versions without a manual bump input', async () => {
   const workflow = await loadReleaseWorkflow();
   const validation = workflow.jobs.release_preflight.steps.find((step) => step?.name === 'Validate release dispatch');

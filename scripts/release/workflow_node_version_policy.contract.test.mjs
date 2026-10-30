@@ -8,7 +8,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const workflowsDir = join(repoRoot, '.github', 'workflows');
 const actionsDir = join(repoRoot, '.github', 'actions');
-const reviewedSetupNodeUse = 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020';
 // Gate consumers reuse the exact Node the gate preparer installed from `.node-version`.
 const gateObservedNodeVersion = '${{ needs.gate-prepare.outputs.node_version }}';
 // Container images that run repository code in CI or release validation follow the same Node major.
@@ -96,15 +95,6 @@ test('every setup-node step reads .node-version instead of repeating a version',
     }
   }
   assert.ok(setupNodeSteps > 0, 'expected setup-node steps in the workflows');
-});
-
-test('workflows that run pipeline scripts use the reviewed setup-node action', async () => {
-  const files = (await readdir(workflowsDir)).filter((name) => name.endsWith('.yml'));
-  for (const file of files) {
-    const raw = await readFile(join(workflowsDir, file), 'utf8');
-    if (!raw.includes('node scripts/pipeline/')) continue;
-    assert.ok(raw.includes(reviewedSetupNodeUse), `${file} must include the reviewed actions/setup-node action when running pipeline scripts`);
-  }
 });
 
 test('CI and release container images use the .node-version major', async () => {

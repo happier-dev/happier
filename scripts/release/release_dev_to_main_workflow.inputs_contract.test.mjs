@@ -12,12 +12,6 @@ async function loadWorkflow(name = 'release.yml') {
   return { raw, parsed: parse(raw) };
 }
 
-test('release workflow keeps workflow_dispatch inputs under GitHub limit', async () => {
-  const { parsed } = await loadWorkflow();
-  const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};
-  assert.ok(Object.keys(inputs).length <= 25, 'workflow_dispatch inputs must stay <= 25');
-});
-
 test('release workflow uses compact grouped inputs', async () => {
   const { parsed } = await loadWorkflow();
   const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};

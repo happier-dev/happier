@@ -31,7 +31,7 @@ for (const { channel, rollingTag, versionSuffix } of [
         env: {
           ...process.env,
           GH_TOKEN: '',
-          GH_REPO: '',
+          GH_REPO: 'happier-dev/happier',
           GITHUB_REPOSITORY: '',
           HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({ github: {}, npm: {} }),
         },

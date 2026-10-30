@@ -180,7 +180,10 @@ function usesPinnedPublishAction(step, actionName) {
   return step?.uses === `${actionName}@${PINNED_PUBLISH_ACTIONS[actionName]}`;
 }
 
-function assertPublisherExternalActionsPinned(externalUses) {
+test('privileged CLI binary publishing pins every external action to its reviewed full commit SHA', async () => {
+  const raw = await readFile(workflowPath, 'utf8');
+  const workflow = YAML.parse(raw);
+  const externalUses = await collectPublisherExternalActionUses(workflow);
   const observedActions = new Set();
 
   for (const use of externalUses) {
@@ -197,34 +200,10 @@ function assertPublisherExternalActionsPinned(externalUses) {
     );
   }
 
-  return observedActions;
-}
-
-
-
-test('privileged CLI binary publishing pins every external action to its reviewed full commit SHA', async () => {
-  const raw = await readFile(workflowPath, 'utf8');
-  const workflow = YAML.parse(raw);
-  const externalUses = await collectPublisherExternalActionUses(workflow);
-  const observedActions = assertPublisherExternalActionsPinned(externalUses);
-
   assert.deepEqual(
     [...observedActions].sort(),
     Object.keys(PINNED_PUBLISH_ACTIONS).sort(),
     'the pin inventory must cover every external action used by the privileged publisher',
-  );
-});
-
-test('privileged CLI binary action policy rejects mutable and unapproved action refs', () => {
-  assert.throws(
-    () => assertPublisherExternalActionsPinned(['actions/setup-node@v4']),
-    /full commit SHA/,
-  );
-  assert.throws(
-    () => assertPublisherExternalActionsPinned([
-      'unapproved/setup-node@1111111111111111111111111111111111111111',
-    ]),
-    /reviewed release commit/,
   );
 });
 

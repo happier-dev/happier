@@ -116,16 +116,6 @@ test('a fresh preview mobile or desktop request runs the canonical UI intent pro
   assert.equal(evaluate(source.jobs.deploy_plan.if, state), true);
 });
 
-test('generic prior npm completion does not suppress requested public SDK publication', () => {
-  const source = workflow();
-  for (const selected of ['publish_plugin_sdk', 'publish_sdk']) {
-    const state = context(source);
-    state.needs.resolve_resume.outputs.npm_complete = 'true';
-    state.needs.plan.outputs[selected] = 'true';
-    assert.equal(evaluate(source.jobs.publish_npm.if, state), true, selected);
-  }
-});
-
 test('every channel job reads outputs only from existing directly declared dependencies', () => {
   const source = workflow();
   const missing = [];

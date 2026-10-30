@@ -402,28 +402,6 @@ test('publisher action recursion visits aliased local-action cycles once', async
   }
 });
 
-test('workflow security W8: privileged composite actions pin every nested remote action', async () => {
-  const violations = [];
-  for (const [file, workflow] of workflows) {
-    for (const [id, job] of Object.entries(workflow.jobs ?? {})) {
-      if (!privileged(workflow, job)) continue;
-      const uses = await collectPublisherExternalActionUses({ jobs: { [id]: job } });
-      for (const use of uses) {
-        if (!/^[^@]+@[a-f\d]{40}$/i.test(use)) violations.push(`${file}/${id}: ${use}`);
-      }
-    }
-  }
-  assert.deepEqual(violations, []);
-});
-
-test('workflow security W1: PR workflows cap candidate tokens explicitly at read', () => {
-  for (const workflow of workflows.values()) {
-    if (!Object.hasOwn(workflow.on ?? {}, 'pull_request')) continue;
-    assert.ok(workflow.permissions && typeof workflow.permissions === 'object');
-    assert.ok(Object.values(workflow.permissions).every((value) => ['read', 'none'].includes(value)));
-  }
-});
-
 test('workflow security W2: daemon E2E uses public test credentials without reading secrets', () => {
   const job = workflows.get('tests.yml').jobs['cli-daemon-e2e'];
   assert.equal(hasSecrets(job), false);

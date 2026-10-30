@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -184,17 +184,9 @@ test('release-note projection requires only consumed bounded destinations and om
   assert.equal(Object.hasOwn(bundle.projections, 'storyDeck'), false);
 });
 
-test('release-note projection keeps the stable GitHub and preview rolling narratives identical', () => {
-  const bundle = buildReleaseNotesBundle(
-    changelogWithSection(`${approvedProjections()}\n\nOne approved public narrative.`),
-    releaseInput(),
-  );
-
-  assert.equal(bundle.projections.github.markdown, bundle.projections.rollingRelease.markdown);
-});
-
-test('release-note projection command emits JSON only to stdout or writes the same JSON to --out', () => {
+test('release-note projection command emits JSON only to stdout or writes the same JSON to --out', (t) => {
   const fixture = writeChangelog(changelogWithSection(`${approvedProjections()}\n\nA concise public release note.`));
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }));
   const stdoutResult = spawnSync(
     process.execPath,
     [
