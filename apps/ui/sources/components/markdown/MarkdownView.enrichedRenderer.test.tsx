@@ -171,20 +171,27 @@ describe('MarkdownView (enriched renderer)', () => {
     it('lets callers handle enriched markdown links before opening externally', async () => {
         const { MarkdownView } = await import('./MarkdownView');
         const onLinkPress = vi.fn(() => true);
+        const external = await import('@/utils/url/openExternalUrl');
+        // Observe the real URL owner; the shared React Native harness owns the OS boundary.
+        const openExternal = vi.spyOn(external, 'openExternalUrl');
+        try {
+            const url = 'http://localhost:18829/repo/src/index.ts:8';
+            const screen = await renderScreen(
+                <MarkdownView markdown={`[src](${url})`} selectable profile="transcript" onLinkPress={onLinkPress} />,
+            );
+            const enrichedRun = screen.findByType('EnrichedMarkdownText');
 
-        const screen = await renderScreen(
-            React.createElement(MarkdownView as any, {
-                markdown: '[src](http://localhost:18829/repo/src/index.ts:8)',
-                selectable: true,
-                profile: 'transcript',
-                onLinkPress,
-            }),
-        );
+            await act(async () => { enrichedRun.props.onLinkPress({ url }); });
+            expect(onLinkPress).toHaveBeenCalledWith(url);
+            expect(openExternal).not.toHaveBeenCalled();
 
-        const enrichedRun = screen.findByType('EnrichedMarkdownText');
-        enrichedRun.props.onLinkPress({ url: 'http://localhost:18829/repo/src/index.ts:8' });
-
-        expect(onLinkPress).toHaveBeenCalledWith('http://localhost:18829/repo/src/index.ts:8');
+            onLinkPress.mockReturnValue(false);
+            await act(async () => { enrichedRun.props.onLinkPress({ url }); });
+            expect(openExternal).toHaveBeenCalledOnce();
+            expect(openExternal).toHaveBeenCalledWith(url);
+        } finally {
+            openExternal.mockRestore();
+        }
     });
 
     it.each([
