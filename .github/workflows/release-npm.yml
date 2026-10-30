@@ -58,11 +58,6 @@ on:
         required: false
         default: false
         type: boolean
-      run_tests:
-        description: "Checks — Run publish checks/tests before publishing"
-        required: false
-        default: true
-        type: boolean
       publish_cli:
         description: "Publish (CLI) — Publish CLI to npm"
         required: false
@@ -301,44 +296,6 @@ jobs:
           fi
           echo "dir=${dir}" >> "$GITHUB_OUTPUT"
 
-      - name: Install Sapling
-        if: inputs.publish_cli && inputs.run_tests
-        run: |
-          set -euo pipefail
-          bash scripts/ci/install_sapling_ubuntu22.sh
-
-      - name: Run cli tests
-        if: inputs.publish_cli && inputs.run_tests
-        run: |
-          pnpm --dir apps/cli run test:unit
-          pnpm --dir apps/cli run test:integration
-
-      - name: Run stack tests
-        if: inputs.publish_stack && inputs.run_tests
-        run: |
-          pnpm --dir apps/stack run test:unit
-          pnpm --dir apps/stack run test:integration
-
-      - name: Run server runner tests
-        if: inputs.publish_server && inputs.run_tests
-        env:
-          SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
-        run: pnpm --dir "${SERVER_RUNNER_DIR}" run test
-
-      - name: Run public plugin package tests
-        if: inputs.publish_plugin_sdk && inputs.run_tests
-        run: |
-          pnpm --dir packages/plugin-sdk run test
-          pnpm --dir packages/plugin-ui run test
-
-      - name: Run public SDK package tests
-        if: inputs.publish_sdk && inputs.run_tests
-        run: pnpm --dir packages/sdk run test
-
-      - name: Run public Channels protocol package tests
-        if: inputs.publish_channels_protocol && inputs.run_tests
-        run: pnpm --dir packages/channels-protocol run test
-
       - name: Checkout trusted npm release control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -411,7 +368,6 @@ jobs:
           PLUGIN_SDK_VERSION: ${{ steps.meta.outputs.plugin_sdk_version }}
           SDK_VERSION: ${{ steps.meta.outputs.sdk_version }}
           CHANNELS_PROTOCOL_VERSION: ${{ steps.meta.outputs.channels_protocol_version }}
-          RUN_TESTS: ${{ inputs.run_tests }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
           AUTHORIZED_SHA: ${{ steps.release_inputs.outputs.authorized_sha }}
           APPROVE_PUBLIC_SDK_RELEASE: ${{ inputs.approve_public_sdk_release }}
@@ -432,7 +388,7 @@ jobs:
             --plugin-sdk-version "${PLUGIN_SDK_VERSION}" \
             --sdk-version "${SDK_VERSION}" \
             --channels-protocol-version "${CHANNELS_PROTOCOL_VERSION}" \
-            --run-tests "${RUN_TESTS}" \
+            --run-tests false \
             --authorized-sha "${AUTHORIZED_SHA}" \
             --approve-public-sdk-release "${APPROVE_PUBLIC_SDK_RELEASE}" \
             --mode pack

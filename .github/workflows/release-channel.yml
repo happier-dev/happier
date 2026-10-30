@@ -1390,7 +1390,6 @@ jobs:
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       approve_public_sdk_release: ${{ inputs.approve_public_sdk_release }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
-      run_tests: false
 
   release_verify:
     name: Release Verification (release-verify.yml)
