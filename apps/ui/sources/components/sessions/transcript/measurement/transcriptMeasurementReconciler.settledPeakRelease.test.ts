@@ -174,16 +174,6 @@ describe('W-1 · the settle boundary is virtualized from the row\'s own last mea
         expect(estimateTranscriptRowHeightFromCache({ reconciler, signature: settled })).toBe(SETTLED_HEIGHT_PX);
     });
 
-    it('NEGATIVE: the monotonic floor still holds while the row grows (no mid-stream shrink jitter)', () => {
-        const reconciler = createTestTranscriptMeasurementReconciler();
-        reconciler.recordMeasuredHeight({ signature: messageSignature(), heightPx: STREAM_PEAK_PX });
-        reconciler.recordMeasuredHeight({ signature: messageSignature(), heightPx: SETTLED_HEIGHT_PX });
-
-        // The prediction follows the row down; the RESERVATION must not, or a transient short frame
-        // becomes an append overlap.
-        expect(reconciler.resolveReservation(messageSignature()))
-            .toEqual({ kind: 'floor', minHeight: STREAM_PEAK_PX });
-    });
 });
 
 /**

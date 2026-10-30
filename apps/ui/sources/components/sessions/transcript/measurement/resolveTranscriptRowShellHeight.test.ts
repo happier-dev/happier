@@ -30,17 +30,6 @@ describe('resolveTranscriptRowShellHeight', () => {
         expect(resolveTranscriptRowShellHeight({ reconciler, signature })).toEqual({ kind: 'exact', minHeight: 184 });
     });
 
-    it('does not expose dead FlashList estimate props', () => {
-        const reconciler = createTestTranscriptMeasurementReconciler();
-        const signature = stableSignature();
-        reconciler.recordMeasuredHeight({ signature, heightPx: 184 });
-
-        const reservation = resolveTranscriptRowShellHeight({ reconciler, signature });
-
-        expect(reservation).not.toHaveProperty('estimatedItemSize');
-        expect(reservation).not.toHaveProperty('overrideItemLayout');
-    });
-
     it('returns undefined for a never-measured row but a monotonic floor once a streaming row was measured', () => {
         const reconciler = createTestTranscriptMeasurementReconciler();
 

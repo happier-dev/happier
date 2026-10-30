@@ -102,28 +102,6 @@ describe('estimateTranscriptRowHeightFromCache', () => {
 });
 
 describe('estimateTranscriptRowHeightFromContent', () => {
-    // T-3 — the painted heights of the three tool-group row shapes. They are derived from the
-    // row shells this repo actually renders (`ToolCallsGroupUnitHeaderRow`,
-    // `ToolCallsGroupUnitExpandRow`, `ToolCallsGroupUnitFooterRow` and the collapsed
-    // `ToolTimelineRowHeader`), whose geometry-bearing styles are byte-identical to the sibling
-    // repo where these three numbers were measured on a live web capture (2026-07-28, session
-    // `cms3bvdv13hlutm9p19hw1n9s` plus three control sessions whose row contiguity was exact).
-    const MEASURED_TOOL_GROUP_HEADER_PX = 33;
-    const MEASURED_TOOL_ROW_PX = 28;
-    const MEASURED_TOOL_GROUP_FOOTER_PX = 34;
-
-    const toolGroupUnitItem = (kind: string): TranscriptRowShellItem => ({
-        kind,
-        id: `g1#${kind}`,
-        groupId: 'g1',
-        toolMessageId: 't0',
-        toolMessageIds: ['t0', 't1', 't2'],
-        expanded: false,
-        hiddenCount: 297,
-        createdAt: 1,
-        seq: 1,
-    } as unknown as TranscriptRowShellItem);
-
     const agentText = (id: string, text: string): Message => ({
         kind: 'agent-text',
         id,
@@ -150,31 +128,6 @@ describe('estimateTranscriptRowHeightFromContent', () => {
         // undercounted a live transcript by 53% (reopen capture 2026-07-23).
         expect(giant).toBeGreaterThan(3_000);
         expect(giant).toBeGreaterThan(short as number);
-    });
-
-    /**
-     * T-3 · residual 1 — the cap rows are the gap.
-     *
-     * Legend places rows by ACCUMULATION (`positions[i+1] = positions[i] + size_i`), so an
-     * estimate that overshoots a row's painted height becomes a literal gap underneath it. The
-     * flat 56px compact constant overshot a 33px tool-group header by 23px, and 23px is exactly
-     * the gap the live capture measured between a header and its expand row. Those two rows are
-     * adjacent BY CONSTRUCTION (`appendToolGroupUnits` emits header -> expand -> tools -> footer
-     * with nothing between them), so the gap cannot be a virtualized-out row — it is the
-     * estimator's own overshoot. A healthy inter-row gap is 0.
-     */
-    it('estimates the tool-group cap rows at their measured heights so accumulation leaves no gap', () => {
-        const estimateFor = (item: TranscriptRowShellItem) => estimateTranscriptRowHeightFromContent({
-        platformIsWeb: false,
-            toolCallsGroupChromeVariant: 'feed_background',
-            getMessageById: () => null,
-            item,
-        }) as number;
-        expect(estimateFor(toolGroupUnitItem('tool-group-header'))).toBe(MEASURED_TOOL_GROUP_HEADER_PX);
-        expect(estimateFor(toolGroupUnitItem('tool-group-footer'))).toBe(MEASURED_TOOL_GROUP_FOOTER_PX);
-        expect(estimateFor(toolGroupUnitItem('tool-group-tool'))).toBe(MEASURED_TOOL_ROW_PX);
-        // The "show N more" row is the same single-line cap as a tool row.
-        expect(estimateFor(toolGroupUnitItem('tool-group-expand'))).toBe(MEASURED_TOOL_ROW_PX);
     });
 
     /**

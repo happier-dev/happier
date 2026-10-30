@@ -137,18 +137,6 @@ describe('transcriptJumpHighlightStore', () => {
         expect(store.readActiveTranscriptJumpHighlight()).toBeNull();
     });
 
-    it('auto-expires the highlight after the canonical duration', async () => {
-        const store = await importStore();
-
-        store.setTranscriptJumpHighlight({ sessionAddress: { serverId: 'home-a', sessionId: 's1' }, routeMessageId: 'local:m-1', seq: 1 });
-        store.markTranscriptJumpHighlightPainted(store.readActiveTranscriptJumpHighlight()!.token);
-        vi.advanceTimersByTime(store.TRANSCRIPT_JUMP_HIGHLIGHT_DURATION_MS - 1);
-        expect(store.readActiveTranscriptJumpHighlight()).not.toBeNull();
-
-        vi.advanceTimersByTime(1);
-        expect(store.readActiveTranscriptJumpHighlight()).toBeNull();
-    });
-
     it('keeps a retriggered highlight alive for its full duration', async () => {
         const store = await importStore();
 

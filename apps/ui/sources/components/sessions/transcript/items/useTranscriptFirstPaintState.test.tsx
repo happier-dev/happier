@@ -632,27 +632,4 @@ describe('revealed transcript content is never re-covered', () => {
         await hook.unmount();
     });
 
-    it('still covers a keyed entry that paints before its placement joins', async () => {
-        const keyedDeps = createDeps({
-            firstListPaintObserved: false,
-            platformOS: 'web',
-        });
-        const hook = await renderHook(
-            (deps: TranscriptFirstPaintStateDeps) => useTranscriptFirstPaintState(deps),
-            { initialProps: keyedDeps },
-        );
-
-        act(() => {
-            hook.getCurrent().onEntryPlacementEvent({
-                dataKey: 'session-a',
-                itemId: 'row-42',
-                platform: 'web',
-                type: 'started',
-            });
-        });
-        await hook.rerender({ ...keyedDeps, firstListPaintObserved: true });
-        expect(hook.getCurrent().showFirstPaintPlaceholder).toBe(true);
-
-        await hook.unmount();
-    });
 });

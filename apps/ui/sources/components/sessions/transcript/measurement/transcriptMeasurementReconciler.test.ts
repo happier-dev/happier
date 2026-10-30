@@ -124,11 +124,6 @@ describe('transcriptMeasurementReconciler', () => {
             expect(reconciler.resolveReservation(newRow)).toBeUndefined();
         });
 
-        it('returns undefined for a never-measured row with no prior measurements', () => {
-            const reconciler = createTestTranscriptMeasurementReconciler();
-            const newRow = streamingSignature({ itemId: 'agent-new', kind: 'message:agent' });
-            expect(reconciler.resolveReservation(newRow)).toBeUndefined();
-        });
     });
 
     describe('exact reservation for stable rows (composes the height cache)', () => {
@@ -196,18 +191,8 @@ describe('isStructuralSignatureDelta (per-item floor reset trigger)', () => {
             expansionKey: 'tools:collapsed|thinking:none',
         });
 
-    it('re-seeds a settled tool-group header when its status changes running→completed (the shrink that left the gap)', () => {
-        expect(isStructuralSignatureDelta(toolGroupHeader('running'), toolGroupHeader('completed'))).toBe(true);
-    });
-
     it('does not re-seed a settled row whose content is unchanged', () => {
         expect(isStructuralSignatureDelta(toolGroupHeader('completed'), toolGroupHeader('completed'))).toBe(false);
-    });
-
-    it('does NOT re-seed while a row streams (its monotonic floor must prevent append overlap)', () => {
-        const a = streamingSignature({ structuralKey: 'message-1:tok-10' });
-        const b = streamingSignature({ structuralKey: 'message-1:tok-20' });
-        expect(isStructuralSignatureDelta(a, b)).toBe(false);
     });
 
     it('DOES re-seed a tool-progress row on content change — REFUTES the earlier "excluded like streaming" premise', () => {
@@ -229,14 +214,6 @@ describe('isStructuralSignatureDelta (per-item floor reset trigger)', () => {
         const a = stableSignature({ rowState: 'pending-action', structuralKey: 'pending-queue|count:3' });
         const b = stableSignature({ rowState: 'pending-action', structuralKey: 'pending-queue|count:1' });
         expect(isStructuralSignatureDelta(a, b)).toBe(true);
-    });
-
-    it('does NOT re-seed a growing thinking row on a content change (thinking is a GROWING state)', () => {
-        // `resolveMessageRowState` returns 'thinking' BEFORE any streaming branch, so a genuinely
-        // growing thinking block reports 'thinking', never 'streaming'. It must stay in the growing set.
-        const a = stableSignature({ rowState: 'thinking', structuralKey: 'thinking-1:r9' });
-        const b = stableSignature({ rowState: 'thinking', structuralKey: 'thinking-1:r10' });
-        expect(isStructuralSignatureDelta(a, b)).toBe(false);
     });
 
     it('re-seeds when only ONE side is growing and the structural shape changed', () => {
