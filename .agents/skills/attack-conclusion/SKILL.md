@@ -1,6 +1,6 @@
 ---
 name: attack-conclusion
-description: Adversarial self-review of your own conclusion, fix, or root-cause verdict before handoff — alternative causes, neighboring cases, blast radius, environment gap, hypothesis lock, subtraction, and a scan for fake-competence patterns. Use as a compact author check before non-trivial handoff and as a structured attack at substantial review or ship boundaries; pair with autoreview only when the selected boundary calls for it.
+description: Adversarial self-review of your own conclusion, fix, or root-cause verdict before handoff — first for unneeded machinery (which owner already decides this, what can be deleted, net mechanism delta, flow shape, instant revocation), then alternative causes, neighboring cases, blast radius, environment gap, hypothesis lock, subtraction, and a scan for fake-competence patterns. Use as a compact author check before non-trivial handoff and as a structured attack at substantial review or ship boundaries; pair with autoreview only when the selected boundary calls for it.
 ---
 
 # Attack Your Conclusion
@@ -9,21 +9,36 @@ Before handing over a conclusion, switch roles completely: you are no longer the
 
 The test of whether you actually switched roles: did you go looking for evidence that would change your mind, or only re-inspect the evidence that formed the conclusion?
 
+## First: too much machinery (always)
+
+Before deleting or narrowing anything, trace every caller of the touched function, hook or component up to each entry point and mark each one affected or not applicable, with a reason.
+
+Over-building is the more frequent failure, so run these before the standard attacks, for every change:
+
+1. **Which owner already decides this?** For each check, state, code, retry, cache, timer or guard you added, find the existing owner of that fact. If one exists, use its result and delete yours; a second place deciding the same fact is the defect.
+2. **What can I delete?** Name what the change makes obsolete (old guards, fallbacks, codes, states, copies of a check in other processes) and remove it in the same change. Then run the subtraction attack below on each addition.
+3. **Net mechanism delta.** Count checks, states, error codes, timers, retries and files as `+added / −removed`. Each addition carries its one line: harm prevented, how it is reachable, evidence, owner. The delta goes in the handoff.
+4. **Does each touched flow keep its shape?** Run its shape-contract count tests (`.agents/skills/happier-performance/references/flow-budgets.md`) where they exist. A count that now multiplies with layers, hops, retries or per-step re-checks is a finding. There are no numeric targets.
+5. **Did you build instant revocation?** Withdrawal takes effect at the next natural boundary. Mid-operation re-checks and kill-on-revoke belong only to open-ended interactive access (a live terminal, an open stream).
+6. **Did you protect against a plugin, or the user against themselves?** Plugins are trusted, unsandboxed code. The protections that stay are against other people, secrets out of transcripts and logs, and E2EE toward the server.
+
 ## The standard attacks — in order of cheapness, each as a runnable check
 
 1. **Alternative cause or falsifier.** Ask what else could explain the same evidence. When the evidence supports a materially different candidate, name it and run the cheapest discriminating observation; when the mechanism is directly established, do not manufacture a second hypothesis—identify and run the cheapest observation that could falsify the conclusion instead.
-2. **Neighboring cases.** The fix works for the reproduced case. Run the case next door: the empty list, the second invocation, the other platform, the resumed session, the concurrent caller.
+2. **Neighboring cases.** The fix works for the reproduced case. Run the case next door: the empty list, the second invocation, the other platform, the resumed session, the concurrent caller. A neighbouring case that fails is fixed at the owner the cases share, not with a guard per case.
 3. **Blast radius.** What consumes what you changed? Search callers, readers, subscribers, tests, serialized forms. "Nothing else uses this" is a claim — re-derive it, don't assert it.
 4. **Environment gap.** Does the conclusion survive where the code actually runs, or only in the harness? Host tests encode the same assumptions the author had. For user-visible behavior, use the risk-appropriate browser/device gate in `.agents/skills/happier-testing`.
 5. **Hypothesis lock.** Are you explaining the evidence, or explaining your first hypothesis? Re-read the raw evidence pretending you just arrived and have no favorite.
 
 Run the cheap attacks; an attack that is just worry is not an attack. If you cannot state what would falsify the conclusion, it is not a conclusion yet — it is a preference.
 
+An attack never adds code by itself. A gap you reproduce, or a concrete reachable scenario, becomes a fix at its owner. A gap you only imagine ("a race might", "in case it is revoked") goes into residual risk as a note.
+
 ## Architecture-impact attack
 
 Apply root **Scope-preserving solution economy** during this attack: preserve the complete feature outcome, challenge unsupported implementation machinery rather than the feature itself, and try folding behavior into the canonical owner before accepting a split-brain or parallel path.
 
-Run this only when the change establishes or moves an owner, crosses package boundaries, introduces persistence or concurrency, materially changes a public interface, or performs a substantial refactor. Skip it for routine local and mechanical work.
+Run the complexity ledger below only when the change establishes or moves an owner, crosses package boundaries, introduces persistence or concurrency, materially changes a public interface, or performs a substantial refactor. Skip the ledger for routine local and mechanical work; the subtraction and split-brain attacks below apply to every change.
 
 Build a compact complexity ledger from the diff and affected callers:
 
@@ -59,7 +74,7 @@ Schedule adversarial review with the work at the boundary defined by root `AGENT
 
 ## Output
 
-For a formal independent review, record each material attack, what was run, and what it showed or why it was skipped. For routine author self-check, keep the record compact and include only landed changes, failed/skipped decision-material checks, and residual risk in the normal handoff. Any attack that landed goes to the top of the handoff (see `.agents/skills/handoff-report`), not the bottom.
+For a formal independent review, record each material attack, what was run, and what it showed or why it was skipped. For routine author self-check, keep the record compact and include only landed changes, the net mechanism delta, failed/skipped decision-material checks, and residual risk in the normal handoff. Any attack that landed goes to the top of the handoff (see `.agents/skills/handoff-report`), not the bottom.
 
 ## Failure this prevents
 

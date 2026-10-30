@@ -65,7 +65,7 @@ Monitor runs through the discovered action contract: use start-and-wait or `exec
 - **Lane reports stay short:** follow root board/report hygiene.
   - **Format:** the verdict block comes first, then a row table (check → verdict → evidence pointer), then residual risk.
   - **Raw evidence:** observations, counts and logs go to JSON or log files under the lane's evidence folder, pointed to rather than pasted.
-  - **Reruns:** a resumed or relaunched lane replaces sections in place instead of appending history. Reports of several hundred lines burned orchestrator and digest context in Fork A, 2026-10-27.
+  - **Reruns:** a resumed or relaunched lane replaces sections in place instead of appending history.
 - **Subagent final messages ≤ 20 lines.** The final message is for the orchestrator, not the user;
   everything else belongs in the lane report file. Long final messages are pure orchestrator-context
   burn.
@@ -140,7 +140,7 @@ Monitor runs through the discovered action contract: use start-and-wait or `exec
 
 - **Sol verifies; Opus doesn't re-review Sol by default.** Boundary/challenge reviews run as two Sol reviewers with an
   adversarial brief (re-derive each claim from current bytes, deletion test, look for the simpler design, check owner
-  stances). The orchestrator spot-checks only load-bearing claims. Opus review is reserved for ship-boundary or taste calls. Exception: reviews of authorization, credential or encryption seams run on Claude Opus by default, because OpenAI's cybersecurity filter refuses or kills Codex security reviews (N2, 2026-10-27/28).
+  stances). The orchestrator spot-checks only load-bearing claims. Opus review is reserved for ship-boundary or taste calls. Exception: reviews of authorization, credential or encryption seams run on Claude Opus by default, because OpenAI's cybersecurity filter refuses or kills Codex security reviews (N2, 2026-10-27/28). Exception (owner 2026-10-29): every Sol intent or simplification report gets an Opus challenge before owner approval, using the "Challenge pass" in `.agents/skills/happier-review/references/intent-review.md`.
 - **Sol digests, the orchestrator reads digests.** After a wave, one Sol run reads all lane reports and applies root
   **Validation**'s evidence-reuse rule, then writes one short digest with evidence pointers; the orchestrator reads that plus targeted lines, never whole
   reports or long board threads.

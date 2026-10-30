@@ -1,6 +1,6 @@
 ---
 name: happier-review
-description: Conduct evidence-backed Happier code, plan-completeness, session, worktree, feature, commit, branch, PR, codebase, and release-readiness reviews with affected-corridor analysis, high-confidence finding triage, meaningful parallel lanes, proportionate but comprehensive QA, optional root-cause fixes, and independent closeout. Use for deep review, audit, QA, pre-merge assessment, plan-vs-implementation verification, review-and-fix loops, or when asked to inspect all related code rather than only changed lines.
+description: Conduct evidence-backed Happier code, intent, plan-completeness, session, worktree, feature, commit, branch, PR, codebase, and release-readiness reviews with affected-corridor analysis, high-confidence finding triage, meaningful parallel lanes, proportionate but comprehensive QA, optional root-cause fixes, and independent closeout. Use for deep review, intent review, audit, QA, pre-merge assessment, plan-vs-implementation verification, review-and-fix loops, or when asked to inspect all related code rather than only changed lines.
 ---
 
 # Happier Review
@@ -13,7 +13,7 @@ Determine five independent values before reviewing:
 
 1. **Target** — session, worktree, plan, feature/corridor, commit, branch/PR, bounded codebase, or release validation.
 2. **Intent basis** — user request, plan, issue, PR description, ADR, or documented contract.
-3. **Output mode** — `report`, `comment`, `qa`, `staged`, or `fix`.
+3. **Output mode** — `report`, `intent`, `comment`, `qa`, `staged`, or `fix`.
 4. **QA surfaces** — automated, browser, device, CLI/API/daemon, persistence/compatibility, platform, or release.
 5. **Review class** — `advisory`, `boundary`, or `ship`.
 
@@ -22,6 +22,7 @@ Infer these from clear wording; ask only when the wrong target/base/mode would m
 Mode rules:
 
 - `report`: review and QA only; recommendations, no source/config/test edits.
+- `intent`: read-only, deletion-default review of what every mechanism protects; read [intent-review.md](references/intent-review.md). Owners answer the evidence questions; the reviewer judges the whole owner. It is the canonical intent method, including its challenge pass and program campaign; use its deliverables; run QA where needed to decide a harm, without creating a general QA ledger for this mode.
 - `comment`: same as report, with concise PR-style comments backed by the full evidence record.
 - `qa`: exercise the requested behavior and investigate failures without source edits or a general code-review mandate.
 - `staged`: finish and present the reviewed finding/fix set, then wait for approval before source edits.
@@ -73,7 +74,7 @@ Always review:
 
 - functional correctness and completeness;
 - regression and blast radius;
-- canonical ownership, split-brains, and bypasses;
+- canonical ownership, split-brains, and bypasses, including a fact re-decided or re-checked beside the owner that already decides it;
 - user-facing mutations through the Action executor at construction time; treat direct transport or settings writes from UI components as findings under [happier-implement §4](../happier-implement/SKILL.md#4-select-the-smallest-coherent-systemic-change), using the canonical `scripts/testing/lib/uiActionParity.ts` walker;
 - error/failure behavior;
 - test value and validation sufficiency;
@@ -82,10 +83,10 @@ Always review:
 
 Activate conditional scopes only when reachable:
 
-- security, auth, authorization, privacy, and secret handling;
+- security, auth, authorization, privacy, and secret handling. Plugins are trusted, unsandboxed code: a missing protection against a plugin, or of users against themselves, is not a finding; protection against other people, secrets out of transcripts and logs, and E2EE toward the server are;
 - persistence, migrations, data integrity, transactions, idempotency, and concurrency;
 - API/wire/CLI/IPC contracts and compatibility/version skew;
-- performance, scalability, rendering, resource, or process lifecycle. For these, apply `.agents/skills/happier-performance` (§2 patterns, §5 verdicts). A guard, cache, memo, yield, timer, retry or slower interval is a finding until the producer is shown to emit only real changes; include same-pattern leads;
+- performance, scalability, rendering, resource, or process lifecycle. For these, apply `.agents/skills/happier-performance` (§2 patterns, §5 verdicts). Investigate whether a guard, cache, memo, yield, timer, retry or slower interval masks a producer defect; require a reproduction or concrete reachable scenario before raising a finding;
 - UI/UX/accessibility and browser/device behavior;
 - provider/catalog ownership;
 - plugin extension points: each new or grown plugin SDK / `@happier-dev/plugin-ui` seam has an owner, a plugin-author example and a published-docs update; a component a plugin page would also need lives in plugin-ui and the host consumes it from there;
@@ -134,7 +135,7 @@ Read [orchestration.md](references/orchestration.md) whenever delegation is used
 
 Review changed behavior first, while reading as much unchanged corridor code as correctness requires. When a durable workspace exists, store bulky logs and inventories there; otherwise keep tool output bounded to summaries plus decisive excerpts without creating ad-hoc artifacts.
 
-Review may begin against moving, dirty, partial, or completed work. Record a concise observed basis: applicable plan revision, current HEAD and dirty-state acknowledgement, relevant paths/symbols/flows, checks run, and runtime artifact when relevant. Advisory review can report defects, emerging split-brains, incomplete wiring, unsafe direction, or plan drift without claiming completeness. Boundary and ship verdicts reconcile only materially affected observations that changed during the review; never freeze, hash, lease, manifest, or globally snapshot the worktree for review orchestration.
+Review may begin against moving, dirty, partial, or completed work. Record a concise observed basis: applicable plan revision, relevant paths/symbols/flows, checks run, and runtime artifact when relevant; add a commit hash or dirty-state note only when a claim depends on it. Advisory review can report defects, emerging split-brains, incomplete wiring, unsafe direction, or plan drift without claiming completeness. Boundary and ship verdicts reconcile only materially affected observations that changed during the review; never freeze, hash, lease, manifest, or globally snapshot the worktree for review orchestration.
 
 Authors perform compact in-place self-review during implementation without creating a formal review program. Formal independent review is normally batched at substantial integrated boundaries, explicit user-requested review points, and high-risk triggers that cannot safely wait—not after every lane, commit, gate, or microchange.
 
@@ -152,15 +153,19 @@ For every candidate finding:
 5. reject style preference, theoretical edge cases, and unsupported rewrites;
 6. deduplicate by originating failure, root cause, and canonical owner.
 
-Only high-confidence, objective, actionable issues become findings. Material uncertainty stays an investigation question with its falsifying check; immaterial uncertainty is discarded. Use [review-standard.md](references/review-standard.md) for the finding and comment contracts.
+Only high-confidence, objective, actionable issues with a reproduction or concrete reachable scenario become findings; otherwise they are notes, with a falsifying check for material uncertainty. Use [review-standard.md](references/review-standard.md) for the finding and comment contracts.
 
 Any decision-material finding, refutation, or "already fixed" claim inherited from a prior report, round, or external review is re-verified against the current relevant implementation before entering a verdict. Carried claims not re-verified remain labeled assumptions; use numeric verified-N-of-M accounting only when that census itself changes the decision. A green test asserting defective behavior is wrong-contract evidence, not acceptance; with an authorized fix, apply [happier-testing's old-behavior test update rule](../happier-testing/SKILL.md#workflow).
 
 Reviewers may investigate and propose any evidence-backed correction, simplification, addition, removal, mechanism, process change, or plan amendment relevant to the target. Findings are candidate claims, not implementation orders or plan authority. The orchestrator adjudicates four dimensions separately: claim (`CONFIRMED`, `REFUTED`, `INVESTIGATE`), impact (`MATERIAL`, `IMMATERIAL`, `UNRELATED`), proposed response (`ACCEPT`, `REPLACE_WITH_SIMPLER_FIX`, `DEFER`, `REJECT`), and authority (`WITHIN_PLAN`, `AMENDMENT_REQUIRED`, `OUT_OF_SCOPE`). A mechanism-sized response still requires a reproduced failure, reachable risk, or named live consumer.
 
-After accepted fixes, review the changed finding delta and affected corridor. Restart a full round only when the approved contract, architecture, scope, review boundary, or risk materially changed. If repeated rounds keep finding hazards created by the proposed mechanism, stop hardening it and run a deletion/simplification or redesign test.
+For a finding whose proposed response adds a check, state, code, retry or guard, ask first which owner already decides that fact. If an owner does, the response is to use or fix that owner, not to add a check beside it. A mid-operation revocation re-check outside open-ended interactive access is a finding (revocation takes effect at the next natural boundary), and so is a numeric call, check or size budget presented as a requirement.
 
-When a fix introduces or extends an owner (an operation, status, admission or lifecycle owner), the delta review lists every pre-existing entry point and consumer of that concept and states, for each, whether it now goes through the owner. One entry point that still decides on its own is a finding. On 2026-10-28 three successive fix reviews each found the same shape: a new owner beside an unretired entry point (a second approval tracker, five consumers still mapping unknown to unavailable, one cold-mount read missing).
+Every review output states the net mechanism delta of the reviewed change (checks, states, error codes, timers, retries, files: `+added / −removed`) and, for touched flows with shape-contract tests in `.agents/skills/happier-performance/references/flow-budgets.md`, their counts before and after. An addition without its one-line justification (harm, how reachable, evidence, owner) is a finding.
+
+After accepted fixes, review only the finding delta and the paths needed to verify its fix and regressions. Restart a full round only when the approved contract, architecture, scope, review boundary, or risk materially changed. After three fixes on one owner, use `intent` mode before a fourth patch. Evidence: `.project/OWNER-RULINGS.md` (10-29 guardrails); `.project/plans/2026-10-29-program-census/RESUME-DECISIONS.md` §2.
+
+When a fix introduces or extends an owner (an operation, status, admission or lifecycle owner), the delta review lists every pre-existing entry point and consumer of that concept and states, for each, whether it now goes through the owner. One reachable entry point that still decides on its own is a finding: it is the split-brain itself, so it needs no separate scenario.
 
 ## 8. Fix coherently when authorized
 
@@ -173,17 +178,17 @@ In `fix` mode, or after approval in `staged` mode:
 - rerun the affected QA rows and risk-appropriate broader lanes;
 - re-review the changed corridor for regressions, split-brains, and complexity added by the fix;
 - check file shape: new code sits in a focused module in the owner's domain folder with a context-short name. Growing an already-large file, or adding a file whose name restates its folder, is a finding.
-- ask explicitly whether the fix is the cleanest appropriately bounded root-cause change: green tests, a small diff, and a plausible local repair do not answer that. A guard, special case, cache, fallback or narrowly passing test that leaves the defective owner in place is a finding.
+- ask explicitly whether the fix is the cleanest appropriately bounded root-cause change: green tests, a small diff, and a plausible local repair do not answer that. A guard, special case, cache, fallback or narrowly passing test that leaves the defective owner in place is a finding; state the fix's net mechanism delta, and treat a fix round that only adds as a reason to run `intent` mode.
 
 For approved plan-backed work, a finding does not authorize deviation from the plan. If the root-cause fix would materially change an approved requirement, mark it `AMENDMENT_REQUIRED`, document the evidence and smallest proposed amendment, and wait for user approval before implementing that deviation.
 
-Never edit implementation files in `report` or `comment` mode.
+Never edit implementation files in `report`, `intent`, `qa` or `comment` mode.
 
 ## 9. Boundary and ship closeout
 
 Before a non-trivial boundary or ship verdict:
 
-1. run `.agents/skills/attack-conclusion` against alternative causes, neighboring cases, blast radius, environment gap, hypothesis lock, split-brains, and compatibility provenance;
+1. run `.agents/skills/attack-conclusion`, starting with its machinery questions (which owner already decides this, what can be deleted, net mechanism delta), then against alternative causes, neighboring cases, blast radius, environment gap, hypothesis lock, split-brains, and compatibility provenance;
 2. use `.agents/skills/verify-claims` for decision-material delegated claims consolidated at this boundary;
 3. use autoreview only when the approved boundary, explicit user request, or risk-selected closeout calls for an advisory independent diff reviewer—not automatically after each vertical or microchange;
 4. require a reviewer different from the author of the reviewed vertical for release, schema/data, security-critical, and user-visible ship gates; require a wholly separate validation session only when release or security policy says so;
@@ -208,6 +213,7 @@ A review is complete only when:
 - every material plan outcome/invariant, when applicable, has an evidence-backed status;
 - every material QA row has a final disposition and evidence;
 - every accepted finding is verified, deduplicated, and assigned a root-cause fix or explicit decision;
+- the net mechanism delta is stated and every addition is justified;
 - no decision-material question or suspected issue is silently unresolved;
 - independent closeout required by risk has completed;
 - unreviewed surfaces, failed/skipped checks, blockers, and residual risks are prominent.

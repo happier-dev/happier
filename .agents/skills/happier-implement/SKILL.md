@@ -56,13 +56,25 @@ Prefer, in order, to add nothing when the complete outcome already holds; correc
 
 Smallest coherent does not mean smallest diff. Update every materially affected caller, reader, writer, consumer, platform path, and compatibility direction. Remove or migrate active competing owners and bypasses when the authorized outcome makes them obsolete. Do not centralize coincidental similarity across distinct bounded contexts or absorb unrelated debt.
 
-When a change alters a shared fact's shape, vocabulary, timing, readiness, acquisition, error code or a projection's carried fields, enumerate every writer and reader of that fact by symbol, store slice, hook, schema and error code. A strict-parse consumer counts as a reader, and so does a twin projection of the same fact (tool list vs prompt docs, client vs daemon spelling, UI vs agent path). Update each in the same change or state why it is unreachable, and run the existing suites that import the changed owner. List the sweep in the handoff. A fix that lands only where its RED measured it, while a sibling keeps the defect, is incomplete.
+Before changing a shared fact or contract (shape, vocabulary, timing, readiness, acquisition, publication, error code, projection fields, geometry/policy, public prop/helper signature, union member, kind, enum or parameter type), inventory every writer and reader across packages by symbol, store slice, hook, schema and error code. Include strict-parse readers, tests/testkits and twin projections (tool list vs prompt docs, client vs daemon spelling, UI vs agent path); record one line per consumer naming its need and the test covering its distinct behaviour (consumers that read the owner's result the same way share one test), add missing coverage or explain why none is needed, update each in the same change or explain its unreachability, run existing suites importing the changed owner, and list the sweep in the handoff. Reviewers re-derive it from symbols. A fix that leaves a reachable sibling defective is incomplete.
 
-The same applies before changing any shared contract: acquisition, readiness, publication, a geometry or policy owner, a public prop or helper signature. Write the consumer inventory first. One line per consumer, tests and testkits included: what it needs from the contract, and which test covers it. A consumer with no covering test gets one, or the handoff says why none is needed. Reviewers re-derive the list from symbols, not from the author's summary.
+Before tightening schema strictness, run the released/predecessor/stored-shape census in [happier-compatibility §2](../happier-compatibility/SKILL.md#2-establish-evidence-backed-baselines).
+
+Prefer exhaustive switches or `satisfies` checks for union consumers so the compiler names omissions; every map or list keyed by a canonical union is generated from that union, checked with `satisfies Record<Union, ...>` where applicable, or covered by an equivalence test against the canonical union. A hand-maintained subset must state its narrower domain rather than silently omitting members. A shared-checkout package typecheck may already be red or stop at an earlier package; it does not replace the inventory.
+
+Place code by root `AGENTS.md` "Files, folders, and moves". New behaviour goes in a focused module inside the owner's domain folder, named with the folder as context: don't restate the folder in the file name, and avoid `utils`/`helpers`/`manager`. Don't grow an already-large file. When a change touches a responsibility that lives inside one, extract that responsibility into its own sibling module as part of the change, keeping the original exports and package aliases so importers don't change. Delete what the change makes obsolete.
 
 A user-facing mutation is wired through the Action executor when it is built. A direct transport or settings write from a UI component is a review finding. Extend the canonical walker `scripts/testing/lib/uiActionParity.ts` rather than running a census afterwards.
 
+Every wait names the fact that ends it. A readiness gate, acquisition wait or loading state must cite the producer of its settling fact, including the absent, disabled, unreachable and failed outcomes, and a test reaches each one. A wait whose ending fact has no producer is a state that cannot end and is a defect, not a safe default; read through the existing owner instead of gating on optional inputs (a Session directory, a live daemon, a plugin declaration) the read does not need.
+
+Security guards ship with [happier-testing's owner-positive guard test](../happier-testing/SKILL.md#seam-tests-required-when-a-change-crosses-a-seam), including admission, isolation, custody and authority changes.
+
 Before adding a protocol, registry, table, state machine, gate, lease, generation, fallback, cache, or parallel path, name the approved requirement, reproduced failure, external contract, or reachable risk it serves. Apply the deletion test. If the mechanism only adds concepts while required behavior survives without it, do not build it.
+
+Each fact is decided once at its owner, and consumers use its typed result. Do not add a re-check of an owner's fact in another function, process or surface; if one seems needed, fix the owner.
+
+Do not add consumer-side retries, caches or fallbacks before reproducing the cause; fix the producer at its canonical owner. Evidence: `.project/OWNER-RULINGS.md` (10-29 guardrails); `.project/plans/2026-10-29-program-census/RESUME-DECISIONS.md` §2.
 
 Treat every timeout, retry count, quota, request/body or collection-size cap, truncation threshold, and similar guard as an owner-level product decision. Search for the containing operation's canonical deadline or resource boundary first and reuse it; do not add a shorter phase-local cutoff or guessed "safe" number. If no real contract or measured resource failure requires a bound, add none. When one is required, keep its derivation beside the owner, preserve valid data when paging or explicit incompleteness can do so safely, make activation observable, and prove both the rejecting/timeout case and valid behavior beyond the previously tempting arbitrary cutoff.
 
@@ -85,7 +97,11 @@ Use the fastest reliable mechanism for the work:
 - formatters and deterministic validators;
 - batched retrieval with compact output.
 
+Before parking, identify the exact missing producer and its current owner, then recheck current source and the authoritative completion event. If the producer is unowned, necessary and within the approved scope, claim it at the existing owner and implement that consumed vertical. Otherwise name the external owner, decision or authority needed. Park only the dependent work, with a named resume trigger, and resume the existing lane when that trigger arrives.
+
 Preview broad transformations, establish their match set, inspect representative and aggregate diffs, and validate omissions plus unintended matches. Do not build tooling when a few direct edits are safer and faster.
+
+Each generated-output family has one canonical regeneration command; its drift guard points to that command instead of only refusing stale output. A spec owner may run that writer under its existing publication lock, then run the governance check; verify the lock exists first, otherwise name the gap and coordinate with the publication owner rather than creating a second writer.
 
 ## 6. Resolve uncertainty with evidence
 
@@ -96,12 +112,15 @@ Uncertainty is an investigation task, not a reason to skip in-scope work. Classi
 - Use `.agents/skills/happier-testing`. Production behavior changes require meaningful RED for the intended observable contract, minimal coherent GREEN, then refactoring with tests green.
 - Mock only genuine system boundaries; keep internal domain behavior real.
 - Implement through the canonical/public owner boundary and a consumed path, not a dormant horizontal spine.
+- Add a consumer only with its producer's export, schema, migration, registration or declaration available. For removals/renames of shared exports, specs and Actions, migrate consumers first and remove the producer last in one atomic edit batch; retain temporary compatibility exports if work must stop midway. Before ending each such batch, run `pnpm check:entry-loads` (hstack-exec AUTO) for fresh-process loads of changed Protocol/SDK modules and shipped entry graphs (daemon, CLI, server, UI catalog and SDK browser); report results or missing graph coverage. Incident basis: `.project/plans/2026-10-29-program-census/RESUME-DECISIONS.md` §2 (10-29 shared-package load break).
 - Use `.agents/skills/happier-compatibility` for released wire, semantic, persistence, migration, upgrade, coexistence, or rollback seams.
-- When editing the name or bytes of a local-only/development-exposed migration, resolve the deterministic repo-local development stack for the current checkout and inspect its ledger. If that migration is applied there, in-place reconciliation is automatically authorized and mandatory in the same task: preserve the database, never delete/reset/recreate/replace/clean it, do not ask for confirmation or create a backup/clone, and follow the repo-local procedure in `.agents/skills/happier-compatibility`.
-- The last migration editor owns a fresh repo-local reconciliation immediately before handoff. A source-level test or clean migration test does not replace this loaded persisted-state gate.
+- Editing the name or bytes of a local-only or development-exposed migration that the current checkout's repo-local development stack has applied makes in-place reconciliation of that database authorized and mandatory in the same task: follow root `AGENTS.md` "Compatibility and version skew" and the procedure in `apps/stack/AGENTS.md`. The last migration editor owns it immediately before handoff; a source-level or clean migration test does not replace it.
 - Use relevant UI/design/React/React Native skills for user-facing work under `DESIGN.md` and package instructions.
+- Before fixing UI behaviour, apply [happier-testing's live-first reproduction and frame evidence](../happier-testing/SKILL.md#live-validation-gates).
 - Preserve performance, continuity, accessibility, security, privacy, and Windows/Linux/macOS behavior wherever the changed corridor can materially differ.
 - A failure that crosses a process, package or transport boundary carries its closed reason code, phase and retryability from the producer to one presenter. Never carry payloads or content in that failure metadata. Wrappers keep the canonical code rather than re-wrapping it into a generic `unavailable`, `unknown` or `invalid_parameters`. Readers that can't decide return an explicit unknown variant, never a negative fact. Callers never loop on a non-retryable code. The deciding test asserts the code at the outermost consumer, plus one "non-retryable code → settles with zero re-polls" case.
+
+In delivery/queue pipelines, every skip or `continue` records a settled decision or an explicit hold with its release trigger. Acknowledge a request or intent as consumed only after its effect is applied.
 
 Classify unexpected failures before changing code: production defect, test drift, harness drift, environment/resource failure, external-contract change, or unrelated failure. A green test is invalid evidence when the harness suppresses errors, mocks away the deciding path, or asserts the defective contract.
 
@@ -109,7 +128,9 @@ Classify unexpected failures before changing code: production defect, test drift
 
 Run the narrowest deciding GREEN check, then broaden according to reachability, silence of failure, blast radius, and reversibility. Exercise relevant happy, edge, failure, cancellation, recovery, persistence, compatibility, platform, and neighboring-owner behavior without manufacturing Cartesian matrices.
 
-When the change crosses a seam (composition root, registration, Action family, transport, persistence, another program's contract), follow `happier-testing` § "Seam tests": one composed test through the real wiring plus a producer→consumer contract check is part of done.
+Report verification gates per item, preserving each item's pass, failure or blocked prerequisite rather than marking an entire batch failed because one item failed.
+
+When the change crosses a seam, follow [happier-testing's seam tests](../happier-testing/SKILL.md#seam-tests-required-when-a-change-crosses-a-seam).
 
 For user-visible or environment-dependent changes, run the composed live browser/device/CLI/API/daemon recipe against the relevant loaded source/build when authorized and available. If that proof cannot run, use `IMPLEMENTED_NOT_VERIFIED` and name the missing prerequisite; do not substitute more internal checks and claim completion.
 
@@ -117,13 +138,15 @@ Do not guess an expected result that cannot be derived from the user request, ap
 
 ## 9. Review and correct at useful boundaries
 
-Continuously perform compact author self-review without creating a separate review program. Inspect bypasses, split-brains, neighboring cases, environment gaps, and complexity introduced by the change; run `.agents/skills/attack-conclusion` before a non-trivial handoff.
+Continuously perform compact author self-review without creating a separate review program. Ask first which owner already decides each thing the change added and what it lets you delete, then inspect bypasses, split-brains, neighboring cases, environment gaps, and complexity introduced by the change; run `.agents/skills/attack-conclusion` before a non-trivial handoff.
 
 Use `.agents/skills/happier-review` for an explicit review request, a substantial integrated boundary, a risk-selected independent gate, or a review-plus-fix loop. Review findings are candidate claims. Re-derive accepted findings, separate defect from proposed mechanism, and cluster fixes by originating cause and canonical owner.
 
-After a fix batch, recheck the accepted-finding delta and affected corridor. Repeat a full review only when the contract, architecture, scope, boundary, or risk materially changed.
+After a fix batch, recheck only the accepted-finding delta and paths needed to verify it. After three fixes on one owner, stop before a fourth patch and run [happier-review's intent mode](../happier-review/references/intent-review.md) on the whole owner. Repeat a full review only when the contract, architecture, scope, boundary, or risk materially changed.
 
 ## 10. Close from evidence
+
+Report verification as four separate facts: source landed; built/published declarations fresh; loaded in an identified runtime; live journey or whole page observed. Never infer a later fact from an earlier one.
 
 For work linked to a GitHub issue, keep the source correction, commit relationship, public response, release availability, and issue closure as distinct facts:
 
@@ -140,6 +163,16 @@ For work linked to a GitHub issue, keep the source correction, commit relationsh
 When the complete correction is integrated and verified on canonical `dev`, include `stage:source` for every affected open issue in the next authorized GitHub mutation. Omit it only when the issue already has the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state that reason explicitly. Under exact authorization, include it in the preview; under a standing grant that covers issue labels, apply and report it without another prompt. If mutation authority is absent, report the pending proposal instead of applying it or silently leaving the issue outside the release queue. Local work, `../0.2`, an open pull request, or an unmerged commit does not qualify. Normal release workflows advance later labels; implementation agents do not predict or pre-advance channels.
 
 Keep human handoff separate from availability. After a source correction, choose among three states: retain `needs:maintainer` only when a named project-side review, diagnosis, implementation, or engineering correction remains; use `needs:reporter` when an authorized public request makes external confirmation or diagnostics the next decision-material human input, even if the reporter must first wait for a named release stage; or clear both when only merge/release progression, promotion, publication, release-owned certification, backlog scheduling, or eventual closure remains. `stage:*` records the release prerequisite. Do not use `needs:maintainer` as a generic release-queue marker, and do not use hidden saved-reply directives to manufacture mutation authority.
+
+Before choosing an outcome, check the closing questions and answer each in the handoff:
+
+- every user-visible capability added or changed has its Action with the plan's approval default, and `scripts/testing/lib/uiActionParity.ts` finds no UI mutation that bypasses the Action executor;
+- each new persisted value lives where root `AGENTS.md` places it, never in settings unless a person changes it deliberately;
+- ingress coverage satisfies [happier-testing's ingress rule](../happier-testing/SKILL.md#seam-tests-required-when-a-change-crosses-a-seam);
+- each new producer, timer or poll satisfies [happier-performance's landing checks](../happier-performance/SKILL.md#3-landing-checks-for-a-perf-relevant-change);
+- any plugin SDK or `@happier-dev/plugin-ui` seam that grew has its plugin-author example and published-docs update;
+- user-visible pages were compared whole against their lab or reference in light, dark and phone, and the program's journey step was exercised on the loaded runtime;
+- every mechanism this change added passes the deletion test, the handoff states the net mechanism delta (`+added / −removed`), and it says how far the work is from complete.
 
 Use these outcomes:
 
