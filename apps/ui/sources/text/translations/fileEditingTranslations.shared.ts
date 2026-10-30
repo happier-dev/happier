@@ -1,9 +1,11 @@
+import { fileAiSuggestionsTranslations, fileAiSuggestionControls, fileNextEditTranslations } from './fileAiSuggestionsTranslations.shared';
 // The file editor's states, conflict and compare choices, offline lines and phone keys (P4 U2/U3/U5/U6).
 type Agent = { agent: string };
 type Machine = { machine: string };
 type Count = { count: number };
 
 const en = {
+  aiSuggestions: { ...fileAiSuggestionsTranslations.en, ...fileAiSuggestionControls.en, ...fileNextEditTranslations.en },
   statusEditing: 'Editing',
   statusUnsaved: 'Unsaved',
   statusSaving: 'Saving',
@@ -82,6 +84,7 @@ export const fileEditingTranslations: Record<
 > = {
   en,
   fr: {
+    aiSuggestions: { ...fileAiSuggestionsTranslations.fr, ...fileAiSuggestionControls.fr, ...fileNextEditTranslations.fr },
     statusEditing: 'Modification',
     statusUnsaved: 'Non enregistré',
     statusSaving: 'Enregistrement',
@@ -144,6 +147,7 @@ export const fileEditingTranslations: Record<
       redo: 'Rétablir',
   },
   de: {
+    aiSuggestions: { ...fileAiSuggestionsTranslations.de, ...fileAiSuggestionControls.de, ...fileNextEditTranslations.de },
     statusEditing: 'Bearbeiten',
     statusUnsaved: 'Nicht gespeichert',
     statusSaving: 'Speichern',
@@ -208,6 +212,7 @@ export const fileEditingTranslations: Record<
       redo: 'Wiederholen',
   },
   es: {
+    aiSuggestions: { ...fileAiSuggestionsTranslations.es, ...fileAiSuggestionControls.es, ...fileNextEditTranslations.es },
     statusEditing: 'Editando',
     statusUnsaved: 'Sin guardar',
     statusSaving: 'Guardando',
@@ -269,6 +274,7 @@ export const fileEditingTranslations: Record<
       redo: 'Rehacer',
   },
   ca: {
+    aiSuggestions: { ...fileAiSuggestionsTranslations.ca, ...fileAiSuggestionControls.ca, ...fileNextEditTranslations.ca },
     statusEditing: 'Editant',
     statusUnsaved: 'Sense desar',
     statusSaving: 'Desant',
@@ -331,6 +337,7 @@ export const fileEditingTranslations: Record<
       redo: 'Refés',
   },
   it: {
+    aiSuggestions: { ...fileAiSuggestionsTranslations.it, ...fileAiSuggestionControls.it, ...fileNextEditTranslations.it },
     statusEditing: 'Modifica',
     statusUnsaved: 'Non salvato',
     statusSaving: 'Salvataggio',
@@ -392,6 +399,7 @@ export const fileEditingTranslations: Record<
       redo: 'Ripeti',
   },
   pt: {
+    aiSuggestions: { ...fileAiSuggestionsTranslations.pt, ...fileAiSuggestionControls.pt, ...fileNextEditTranslations.pt },
     statusEditing: 'Editando',
     statusUnsaved: 'Não salvo',
     statusSaving: 'Salvando',
@@ -453,6 +461,7 @@ export const fileEditingTranslations: Record<
       redo: 'Refazer',
   },
   pl: {
+    aiSuggestions: { ...fileAiSuggestionsTranslations.pl, ...fileAiSuggestionControls.pl, ...fileNextEditTranslations.pl },
     statusEditing: 'Edycja',
     statusUnsaved: 'Niezapisane',
     statusSaving: 'Zapisywanie',
@@ -511,6 +520,7 @@ export const fileEditingTranslations: Record<
       redo: 'Ponów',
   },
   ru: {
+    aiSuggestions: { ...fileAiSuggestionsTranslations.ru, ...fileAiSuggestionControls.ru, ...fileNextEditTranslations.ru },
     statusEditing: 'Редактирование',
     statusUnsaved: 'Не сохранено',
     statusSaving: 'Сохранение',
@@ -567,6 +577,7 @@ export const fileEditingTranslations: Record<
       redo: 'Повторить',
   },
   ja: {
+    aiSuggestions: { ...fileAiSuggestionsTranslations.ja, ...fileAiSuggestionControls.ja, ...fileNextEditTranslations.ja },
     statusEditing: '編集中',
     statusUnsaved: '未保存',
     statusSaving: '保存中',
@@ -621,6 +632,7 @@ export const fileEditingTranslations: Record<
       redo: 'やり直す',
   },
   'zh-Hans': {
+    aiSuggestions: { ...fileAiSuggestionsTranslations['zh-Hans'], ...fileAiSuggestionControls['zh-Hans'], ...fileNextEditTranslations['zh-Hans'] },
     statusEditing: '编辑中',
     statusUnsaved: '未保存',
     statusSaving: '正在保存',
@@ -674,6 +686,7 @@ export const fileEditingTranslations: Record<
       redo: '重做',
   },
   'zh-Hant': {
+    aiSuggestions: { ...fileAiSuggestionsTranslations['zh-Hant'], ...fileAiSuggestionControls['zh-Hant'], ...fileNextEditTranslations['zh-Hant'] },
     statusEditing: '編輯中',
     statusUnsaved: '未儲存',
     statusSaving: '正在儲存',
