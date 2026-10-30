@@ -31,7 +31,7 @@ for (const { channel, rollingTag } of [
     ],
     {
       cwd: repoRoot,
-      env: { ...process.env },
+      env: { ...process.env, GH_REPO: 'happier-dev/happier' },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,

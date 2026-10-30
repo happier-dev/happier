@@ -82,7 +82,7 @@ test('production desktop publish assets are a flat signed immutable envelope', a
     await writeFile(keyPath, 'test release key\n');
     await writeFile(
       join(binDir, 'minisign'),
-      '#!/bin/sh\nset -eu\nout=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "-x" ]; then out="$2"; shift 2; continue; fi\n  shift\ndone\nprintf "test signature\\n" > "$out"\n',
+      '#!/bin/sh\nset -eu\nIFS= read -r passphrase\nout=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "-x" ]; then out="$2"; shift 2; continue; fi\n  shift\ndone\nprintf "test signature\\n" > "$out"\n',
     );
     await chmod(join(binDir, 'minisign'), 0o755);
     await writePlatformArtifact(

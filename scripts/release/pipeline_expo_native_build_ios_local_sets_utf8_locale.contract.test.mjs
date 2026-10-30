@@ -12,14 +12,24 @@ function writeExecutable(filePath, content) {
   fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o700 });
 }
 
-test('expo native-build local iOS forces UTF-8 locale env for CocoaPods', () => {
+test('expo native-build local iOS forces UTF-8 locale env for CocoaPods', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-eas-ios-locale-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
 
   // Satisfy commandExists('fastlane') and commandExists('pod') checks.
   writeExecutable(path.join(binDir, 'fastlane'), ['#!/usr/bin/env bash', 'exit 0', ''].join('\n'));
   writeExecutable(path.join(binDir, 'pod'), ['#!/usr/bin/env bash', 'exit 0', ''].join('\n'));
+  // Repository setup is an OS boundary, not part of the CocoaPods locale contract.
+  writeExecutable(path.join(binDir, 'git'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  "init -q"|"rev-parse --verify HEAD") exit 0 ;;',
+    '  *) echo "unexpected Git invocation: $*" >&2; exit 1 ;;',
+    'esac',
+    '',
+  ].join('\n'));
 
   const outJson = path.join(dir, 'out.json');
   const artifactOut = path.join(dir, 'app.ipa');
@@ -57,6 +67,7 @@ test('expo native-build local iOS forces UTF-8 locale env for CocoaPods', () => 
     ...process.env,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
     EXPO_TOKEN: 'test-token',
+    HAPPIER_PIPELINE_STAGE_EAS_LOCAL_BUILD: '',
   };
 
   const stdout = execFileSync(

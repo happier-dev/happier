@@ -16,8 +16,9 @@ function writeExecutable(filePath, content) {
   fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o700 });
 }
 
-function runPublishTarball({ githubActions }) {
+function runPublishTarball(t, { githubActions }) {
   const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
 
@@ -83,12 +84,12 @@ function runPublishTarball({ githubActions }) {
   return `${stdout}\n${fs.readFileSync(stubLogPath, 'utf8')}`;
 }
 
-test('publish-tarball sets NPM_CONFIG_PROVENANCE=false by default locally', () => {
-  const stdout = runPublishTarball({ githubActions: false });
+test('publish-tarball sets NPM_CONFIG_PROVENANCE=false by default locally', (t) => {
+  const stdout = runPublishTarball(t, { githubActions: false });
   assert.match(stdout, /NPM_CONFIG_PROVENANCE=false/);
 });
 
-test('publish-tarball sets NPM_CONFIG_PROVENANCE=true by default in GitHub Actions', () => {
-  const stdout = runPublishTarball({ githubActions: true });
+test('publish-tarball sets NPM_CONFIG_PROVENANCE=true by default in GitHub Actions', (t) => {
+  const stdout = runPublishTarball(t, { githubActions: true });
   assert.match(stdout, /NPM_CONFIG_PROVENANCE=true/);
 });
