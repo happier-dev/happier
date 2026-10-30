@@ -270,6 +270,24 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         }, idleMs);
     };
 
+    const retainEntryUse = (entry: PoolEntry): void => {
+        entry.inUseCount += 1;
+        if (entry.idleDisconnectTimer) {
+            clearTimeout(entry.idleDisconnectTimer);
+            entry.idleDisconnectTimer = null;
+        }
+    };
+
+    const releaseEntryUse = (entry: PoolEntry): void => {
+        entry.inUseCount = Math.max(0, entry.inUseCount - 1);
+        if (entry.inUseCount > 0 || entry.teardownRequested) return;
+        if (entry.backgroundTask) {
+            fireAndForget(stopEntrySocket(entry, true), { tag: 'scoped-rpc-background-disconnect' });
+        } else {
+            scheduleIdleDisconnect(entry);
+        }
+    };
+
     const createEntry = (
         serverUrl: string,
         reachabilityServerUrl: string,
@@ -471,11 +489,7 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         }
         // Reserve this entry before anything below can await: an idle teardown that
         // ran in between would otherwise remove the entry this client is acquiring.
-        entry.inUseCount += 1;
-        if (entry.idleDisconnectTimer) {
-            clearTimeout(entry.idleDisconnectTimer);
-            entry.idleDisconnectTimer = null;
-        }
+        retainEntryUse(entry);
         if (redundantCarrierRelease) {
             // Settled before this call returns, so no carrier release outlives the
             // acquire that started it. A failure is not this acquisition's failure;
@@ -489,13 +503,8 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
         const releaseOnce = () => {
             if (released) return;
             released = true;
-            entry.inUseCount = Math.max(0, entry.inUseCount - 1);
             params.signal?.removeEventListener('abort', releaseOnce);
-            if (backgroundTask) {
-                fireAndForget(stopEntrySocket(entry, true), { tag: 'scoped-rpc-background-disconnect' });
-            } else {
-                scheduleIdleDisconnect(entry);
-            }
+            releaseEntryUse(entry);
         };
 
         params.signal?.addEventListener('abort', releaseOnce, { once: true });
@@ -510,7 +519,11 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
 
         return {
             get connected() { return entry.socket.connected; },
-            emitWithAck: (event: string, payload: any) => entry.socket.emitWithAck(event, payload),
+            retain: () => {
+                retainEntryUse(entry);
+                return () => releaseEntryUse(entry);
+            },
+            emitWithAck: (...args: Parameters<SocketLike['emitWithAck']>) => entry.socket.emitWithAck(...args),
             timeout: (ms: number) => entry.socket.timeout(ms),
             emit: (event: string, payload: any) => entry.socket.emit(event, payload),
             on: (event: string, listener: (...args: any[]) => void) => entry.socket.on(event, listener),

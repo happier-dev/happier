@@ -407,6 +407,41 @@ it('distinguishes an unsealed pre-execution refusal from response decryption fai
   expect(readRpcRequestDisposition(refusal)).toBe('notSent');
   expect(readRpcRequestDisposition(undecodable)).toBe('outcomeUnknown');
 });
+it.each(['reply', 'disconnect'] as const)('retains an issued native ACK after local cancellation until %s', async outcome => {
+  const socket = await setup();
+  let acknowledge!: (value: unknown) => void;
+  let observeIssued!: () => void;
+  const issued = new Promise<void>(resolve => { observeIssued = resolve; });
+  server.sockets.sockets.forEach(remote => remote.on('rpc-call', (_payload, ack) => {
+    acknowledge = ack;
+    observeIssued();
+  }));
+  let uses = 0;
+  // This lease is the resource boundary; the real native socket still owns its
+  // timeout scope, buffering, cancellation packet and acknowledgement promise.
+  const lease = {
+    get connected() { return socket.connected; },
+    timeout: socket.timeout.bind(socket),
+    emit: socket.emit.bind(socket),
+    retain: () => {
+      uses += 1;
+      return () => { uses -= 1; };
+    },
+  };
+  const controller = new AbortController();
+  const pending = emitWithAckCancellable({ socket: lease, event: 'rpc-call', payload: {},
+    requestId: 'retained-ack', signal: controller.signal, timeoutMs: null }).catch((error: unknown) => error);
+  await issued;
+  expect(uses).toBe(1);
+  controller.abort();
+  const failure = await pending;
+  expect(failure).toMatchObject({ code: 'SOCKET_RPC_ABORTED' });
+  expect(readRpcRequestDisposition(failure)).toBe('outcomeUnknown');
+  expect(uses).toBe(1);
+  if (outcome === 'reply') acknowledge({ ok: true });
+  else socket.disconnect();
+  await vi.waitFor(() => { expect(uses).toBe(0); });
+});
 it('cancels an issued call and marks the unresolved outcome', async () => {
   const socket = await setup();
   const controller = new AbortController();

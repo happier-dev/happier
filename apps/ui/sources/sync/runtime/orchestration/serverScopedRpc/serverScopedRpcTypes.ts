@@ -161,6 +161,8 @@ export type ScopedSocketConnectParams = Readonly<{
 export type ScopedSocketClient = Readonly<{
     /** Current physical transport readiness, not the logical holder's retention. */
     connected?: boolean;
+    /** Additional physical-entry use owned by the shared RPC issuer's native ACK. */
+    retain?: () => () => void;
     emitWithAck?: (event: string, payload: any) => Promise<unknown>;
     timeout: (ms: number) => { emitWithAck: (event: string, payload: any) => Promise<unknown> };
     emit: (event: string, payload: any) => void;
