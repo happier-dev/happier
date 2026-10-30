@@ -18,6 +18,7 @@ describe("session rollback eligibility projection", () => {
         expect(readSessionTurnRollbackEligibleStarts({ turns: [
             { rollbackState: "eligible", transcriptAnchorsJson: JSON.stringify({ startUserMessageSeq: 8 }) },
             { rollbackState: "eligible", transcriptAnchorsJson: JSON.stringify({ startUserMessageSeq: 2 }) },
+            { rollbackState: "eligible", transcriptAnchorsJson: JSON.stringify({ startUserMessageSeq: 8 }) },
             { rollbackState: "rolled_back", transcriptAnchorsJson: JSON.stringify({ startUserMessageSeq: 1 }) },
             { rollbackState: "eligible", transcriptAnchorsJson: "bad-json" },
         ] })).toEqual([2, 8]);

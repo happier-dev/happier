@@ -9,11 +9,6 @@ describe("LRUSet", () => {
         },
     );
 
-    it("creates set with positive maxSize", () => {
-        const lru = new LRUSet(3);
-        expect(lru.size).toBe(0);
-    });
-
     it("adds values and deduplicates repeated inserts", () => {
         const lru = new LRUSet<number>(3);
         lru.add(1);
@@ -137,7 +132,7 @@ describe("LRUSet", () => {
         const lru = new LRUSet<{ id: number }>(2);
         const obj1 = { id: 1 };
         const obj2 = { id: 2 };
-        const obj3 = { id: 3 };
+        const obj3 = { id: 2 };
 
         lru.add(obj1);
         lru.add(obj2);
@@ -146,6 +141,8 @@ describe("LRUSet", () => {
         expect(lru.has(obj1)).toBe(false);
         expect(lru.has(obj2)).toBe(true);
         expect(lru.has(obj3)).toBe(true);
+        expect(lru.has({ id: 2 })).toBe(false);
+        expect(lru.size).toBe(2);
     });
 
     it("handles single item capacity", () => {

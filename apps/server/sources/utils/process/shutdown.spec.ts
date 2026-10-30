@@ -156,22 +156,4 @@ describe("shutdown", () => {
         expect(order).toEqual(["iroh", "api:socket", "api:http", "db"]);
     });
 
-    it("runs api socket shutdown before api http shutdown and database teardown", async () => {
-        const { initiateShutdown, onShutdown } = await loadShutdownModule();
-        const order: string[] = [];
-
-        onShutdown("db", async () => {
-            order.push("db");
-        });
-        onShutdown("api:http", async () => {
-            order.push("api:http");
-        });
-        onShutdown("api:socket", async () => {
-            order.push("api:socket");
-        });
-
-        await initiateShutdown("test");
-
-        expect(order).toEqual(["api:socket", "api:http", "db"]);
-    });
 });
