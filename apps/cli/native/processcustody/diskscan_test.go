@@ -77,6 +77,86 @@ func (dir diskProgressBatchDirectory) entryBatches(ctx context.Context, visit fu
 	return backend, ctx.Err()
 }
 
+func TestDiskScanPublishesOnlyStuckTransitionWhenFolderDoesNotChange(t *testing.T) {
+	root := storageRenameTestRoot(t)
+	scratch := storageRenameTestRoot(t)
+	start := time.Unix(1_700_000_000, 0)
+	var clock atomic.Int64
+	clock.Store(start.UnixMilli())
+	originalOpen, originalNow, originalTicks := diskOpenDirectoryForScan, diskScanNow, diskScanProgressTicks
+	ticks := make(chan time.Time)
+	opened, release := make(chan struct{}), make(chan struct{})
+	diskScanNow = func() time.Time { return time.UnixMilli(clock.Load()) }
+	// The real OS clock and directory enumeration are the only controlled boundaries.
+	diskScanProgressTicks = func() (<-chan time.Time, func()) { return ticks, func() {} }
+	diskOpenDirectoryForScan = func(path string) (diskDirectory, error) {
+		dir, err := diskOpenRoot(path)
+		if err == nil && path == root {
+			close(opened)
+			return diskProgressBatchDirectory{dir, release}, nil
+		}
+		return dir, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	progress := make(chan diskProgress, 8)
+	done := make(chan error, 1)
+	go func() {
+		done <- diskScanStream(ctx, &diskControl{skipped: map[string]bool{}, changed: make(chan struct{}, 1)},
+			diskScanRequest{Root: root, ScratchDirectory: scratch}, func(value any) error {
+				if record, ok := value.(diskProgress); ok {
+					progress <- record
+				}
+				return nil
+			})
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("scan failed: %v", err)
+		}
+		diskOpenDirectoryForScan, diskScanNow, diskScanProgressTicks = originalOpen, originalNow, originalTicks
+	}()
+	select {
+	case <-opened:
+	case err := <-done:
+		t.Fatalf("directory never entered: %v", err)
+	}
+	advance := func(elapsed time.Duration) []diskProgress {
+		clock.Store(start.Add(elapsed).UnixMilli())
+		// The second unbuffered tick establishes completion of the first; its
+		// identical clock value cannot introduce another progress transition.
+		for range 2 {
+			select {
+			case ticks <- start.Add(elapsed):
+			case <-ctx.Done():
+				t.Fatal("scan stopped consuming clock ticks")
+			}
+		}
+		var records []diskProgress
+		for {
+			select {
+			case record := <-progress:
+				records = append(records, record)
+			default:
+				return records
+			}
+		}
+	}
+	if records := advance(0); len(records) != 1 || records[0].CurrentPath != diskPathID(root) || records[0].StuckSinceMs != 0 {
+		t.Fatalf("missing initial progress: %#v", records)
+	}
+	if records := advance(9 * time.Second); len(records) != 0 {
+		t.Errorf("unchanged folder republished before stuck: %#v", records)
+	}
+	if records := advance(10 * time.Second); len(records) != 1 || records[0].StuckSinceMs != start.UnixMilli() {
+		t.Errorf("expected one ten-second stuck transition: %#v", records)
+	}
+	if records := advance(11 * time.Second); len(records) != 0 {
+		t.Errorf("unchanged stuck folder republished: %#v", records)
+	}
+}
+
 func TestDiskScanPublishesFinishedFoldersBeforeParentCompletes(t *testing.T) {
 	root := storageRenameTestRoot(t)
 	finished, blocked := filepath.Join(root, "finished"), filepath.Join(root, "blocked")

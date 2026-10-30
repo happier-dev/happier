@@ -38,6 +38,10 @@ type diskStreamDirectory struct {
 }
 
 var diskScanNow = time.Now
+var diskScanProgressTicks = func() (<-chan time.Time, func()) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	return ticker.C, ticker.Stop
+}
 
 // Approved scan presentation: only name stalled work after ten seconds with
 // no completed metadata batch. This is an observation threshold, not a timeout.
@@ -460,14 +464,20 @@ func diskScanStream(ctx context.Context, control *diskControl, request diskScanR
 	}()
 	now := time.Now()
 	lastProgress := time.Time{}
+	var publishedProgress diskProgress
 	reportProgress := func() error {
 		current := diskScanNow()
 		if current.Sub(lastProgress) < 100*time.Millisecond {
 			return nil
 		}
-		if err := emit(diskStreamProgress(current, summary, inFlight)); err != nil {
+		progress := diskStreamProgress(current, summary, inFlight)
+		if progress == publishedProgress {
+			return nil
+		}
+		if err := emit(progress); err != nil {
 			return err
 		}
+		publishedProgress = progress
 		lastProgress = current
 		return nil
 	}
@@ -628,8 +638,8 @@ func diskScanStream(ctx context.Context, control *diskControl, request diskScanR
 		}
 		return nil
 	}
-	heartbeat := time.NewTicker(100 * time.Millisecond)
-	defer heartbeat.Stop()
+	heartbeat, stopHeartbeat := diskScanProgressTicks()
+	defer stopHeartbeat()
 	pendingPaths, err := diskNewPathSpool(request.ScratchDirectory, "pending-paths")
 	if err != nil {
 		return err
@@ -726,7 +736,7 @@ walk:
 				return err
 			}
 			break walk
-		case <-heartbeat.C:
+		case <-heartbeat:
 			if err := reportProgress(); err != nil {
 				return err
 			}
