@@ -13,6 +13,40 @@ describe('createCatalogDefinedCliAuthSpec', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
+  // FX 0.0.14 / 1a070af32cdf: output_contracts.zig StatusSnapshot.
+  it.each([
+    [{ kind: 'status', auth: 'Codex subscription', auth_refreshable: true }, { state: 'logged_in', method: 'oauth_cli' }],
+    [{ kind: 'status', auth: 'AI_GATEWAY_API_KEY', auth_refreshable: false }, { state: 'logged_in', method: 'api_key_env' }],
+    [{ kind: 'status', auth: 'missing', auth_refreshable: false }, { state: 'logged_out', reason: 'missing_credentials' }],
+    [{ kind: 'status', auth: 'Codex subscription', auth_refreshable: true, auth_expired: true }, { state: 'logged_out', reason: 'expired' }],
+    [{ kind: 'status', auth: 'host managed', auth_refreshable: false }, { state: 'unknown', reason: 'not_configured' }],
+    [{ kind: 'status', auth: 'future-source', auth_refreshable: false }, { state: 'unknown', reason: 'probe_failed' }],
+    [{ kind: 'other', auth: 'Codex subscription', auth_refreshable: true }, { state: 'unknown', reason: 'probe_failed' }],
+    [{ kind: 'status', auth: 'Codex subscription', auth_refreshable: true, auth_expired: 'true' }, { state: 'unknown', reason: 'probe_failed' }],
+    [null, { state: 'unknown', reason: 'probe_failed' }],
+  ])('interprets fx status %j through the catalog auth consumer', async (payload, expected) => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-fx-auth-'));
+    tempDirs.push(dir);
+    const scriptPath = join(dir, 'fx.js');
+    // A fake native executable is the system boundary; command resolution and parsing stay real.
+    await writeFile(scriptPath, `#!/usr/bin/env node\nif (JSON.stringify(process.argv.slice(2)) !== '["status","--json"]') process.exit(64);\nprocess.stdout.write(${JSON.stringify(JSON.stringify(payload))});\n`, 'utf8');
+    await chmod(scriptPath, 0o755);
+    const detectAuthStatus = createCatalogDefinedCliAuthSpec('fx').detectAuthStatus;
+    if (!detectAuthStatus) throw new Error('expected detectAuthStatus');
+    await expect(detectAuthStatus({ resolvedPath: scriptPath })).resolves.toEqual({ ...expected, source: 'command' });
+  });
+
+  it('keeps a failed fx command unknown even if stdout claims a valid login', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-fx-auth-failed-'));
+    tempDirs.push(dir);
+    const scriptPath = join(dir, 'fx.js');
+    await writeFile(scriptPath, '#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ kind: "status", auth: "fx login", auth_refreshable: true })); process.exit(1);\n', 'utf8');
+    await chmod(scriptPath, 0o755);
+    const detectAuthStatus = createCatalogDefinedCliAuthSpec('fx').detectAuthStatus;
+    if (!detectAuthStatus) throw new Error('expected detectAuthStatus');
+    await expect(detectAuthStatus({ resolvedPath: scriptPath })).resolves.toEqual({ state: 'unknown', reason: 'probe_failed', source: 'command' });
+  });
+
   it('detects logged-in Kiro auth status from whoami json', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-kiro-auth-'));
     tempDirs.push(dir);
