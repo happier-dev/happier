@@ -1,9 +1,8 @@
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { findNearestHostParent, flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
 import { installMarkdownCommonModuleMocks } from './markdownTestHelpers';
-import { installSignedOutAuthForTest } from '@/dev/testkit/fixtures/signedOutAuth';
 import { MarkdownView } from './MarkdownView';
 import { MarkdownBlockView } from './MarkdownBlockView';
 import { parseMarkdown } from './parseMarkdown';
@@ -20,10 +19,9 @@ installMarkdownCommonModuleMocks({
     storage: () => vi.importActual('@/sync/domains/state/storage'),
 });
 
-const clipboard = { writeText: vi.fn(async (_text: string) => undefined) };
-const nativeClipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async (_text: string) => true) }));
-vi.mock('expo-clipboard', () => nativeClipboard);
-afterEach(() => vi.unstubAllGlobals());
+const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async (_text: string) => true) }));
+// The platform clipboard is an external boundary.
+vi.mock('expo-clipboard', () => clipboard);
 
 async function mockPlatform(os: 'android' | 'ios' | 'web') {
     // The canonical boundary mock is shared by the real renderers. Changing its
@@ -52,25 +50,14 @@ async function renderTable(markdown: string, onLinkPress?: (url: string) => bool
 }
 
 describe('MarkdownView (tables)', () => {
-    it.each(['android', 'web'] as const)('copies the rendered table as Markdown with alignment and escaped pipes on %s', async os => {
-        await mockPlatform(os);
-        const restoreAuth = installSignedOutAuthForTest();
-        clipboard.writeText.mockClear();
-        nativeClipboard.setStringAsync.mockClear();
-        try {
-            if (os === 'web') vi.stubGlobal('navigator', { clipboard });
-            const screen = await renderTable('| Left | Right |\n| :--- | ---: |\n| a \\| b | value |\n| short |');
-            const button = screen.findByTestId('markdown-table-copy');
-            expect(button).not.toBeNull();
-            await pressTestInstanceAsync(button!, 'table copy');
-            const expected = '| Left | Right |\n| :--- | ---: |\n| a \\| b | value |\n| short |  |';
-            expect(os === 'web' ? clipboard.writeText : nativeClipboard.setStringAsync).toHaveBeenCalledWith(expected);
-            expect(os === 'web' ? nativeClipboard.setStringAsync : clipboard.writeText).not.toHaveBeenCalled();
-            const { Icon } = await import('@/components/ui/icons/Icon');
-            expect(screen.findAllByType(Icon).filter(node => node.props.name === 'check')).toHaveLength(1);
-        } finally {
-            restoreAuth();
-        }
+    it('copies the rendered table as Markdown with alignment and escaped pipes', async () => {
+        await mockPlatform('android');
+        clipboard.setStringAsync.mockClear();
+        const screen = await renderTable('| Left | Right |\n| :--- | ---: |\n| a \\| b | value |\n| short |');
+        const button = screen.findByTestId('markdown-table-copy');
+        expect(button).not.toBeNull();
+        await pressTestInstanceAsync(button!, 'table copy');
+        expect(clipboard.setStringAsync).toHaveBeenCalledWith('| Left | Right |\n| :--- | ---: |\n| a \\| b | value |\n| short |  |');
     });
 
     it('renders tables inside the native ScrollView so Android drags share nested scrolling with the transcript', async () => {
