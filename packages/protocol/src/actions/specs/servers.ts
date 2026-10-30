@@ -16,7 +16,7 @@ export const SERVER_DISCOVERY_ACTION_SPECS = Object.freeze([
     description: 'List servers configured in the client.',
     safety: 'safe',
     placements: ['voice_panel'],
-    bindings: { voiceClientToolName: 'listServers' },
+    bindings: { voiceClientToolName: 'listServers', mcpToolName: 'servers_list' },
     examples: {
       voice: { argsExample: '{"limit":50}' },
     },
@@ -24,8 +24,8 @@ export const SERVER_DISCOVERY_ACTION_SPECS = Object.freeze([
       ui: true,
       voice: true,
       agent: true,
-      mcp: false,
-      cli: false,
+      mcp: true,
+      cli: true,
       rpc: false,
       },
     inputHints: {
