@@ -166,3 +166,44 @@ test('Node release lookup cancels its real fetch transport', async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+// An unused HTTP body can remain open after headers; acquisition owns closing it.
+test.each([302, 500])('download closes a discarded HTTP %s response body', async (status) => {
+  const root = await mkdtemp(join(tmpdir(), 'acquisition-discarded-response-'));
+  let markClosed!: () => void;
+  const closed = new Promise<void>((resolve) => { markClosed = resolve; });
+  const server = createServer((req, res) => {
+    if (req.url === '/asset') {
+      res.end('verified destination');
+      return;
+    }
+    res.on('close', markClosed);
+    res.writeHead(status, status === 302 ? { location: '/asset' } : {});
+    res.write('unused body stays open');
+  });
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing server address');
+    const destinationPath = join(root, 'asset');
+    const operation = downloadGitHubReleaseAsset({
+      url: `http://127.0.0.1:${address.port}/discarded`, destinationPath,
+    });
+    if (status === 302) {
+      await operation;
+      expect(await readFile(destinationPath, 'utf8')).toBe('verified destination');
+    } else {
+      await expect(operation).rejects.toMatchObject({ errorCode: 'download-failed' });
+    }
+    expect(await Promise.race([
+      closed.then(() => true),
+      new Promise<false>((resolve) => { watchdog = setTimeout(() => resolve(false), 500); }),
+    ])).toBe(true);
+  } finally {
+    clearTimeout(watchdog);
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -49,13 +49,13 @@ async function openGitHubReleaseAssetResponse(
       const statusCode = Number(response.statusCode ?? 0);
       const location = typeof response.headers.location === 'string' ? response.headers.location.trim() : '';
       if (isRedirect(statusCode) && location) {
-        response.resume();
+        response.destroy();
         const nextUrl = new URL(location, target).toString();
         void openGitHubReleaseAssetResponse(nextUrl, headers, redirectCount + 1, signal).then(resolve, reject);
         return;
       }
       if (statusCode < 200 || statusCode >= 300) {
-        response.resume();
+        response.destroy();
         reject(new AgentCliDownloadError('download-failed', `[github-release] failed to download asset (${statusCode || 'unknown'})`));
         return;
       }
