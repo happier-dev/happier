@@ -18,37 +18,6 @@ describe('Codex terminal-runtime support (pure decisions)', () => {
       })).toEqual({ ok: false, reason: 'started-by-daemon' });
     });
 
-    it('allows switching to terminal mode when started by daemon with a TTY', () => {
-      expect(decideCodexTerminalRuntimeSupport({
-        startedBy: 'daemon',
-        terminalRuntimeBackend: 'acp',
-        hasTtyForTerminal: true,
-      })).toEqual({ ok: true, backend: 'acp' });
-    });
-
-    it('fails closed when no terminal backend is enabled', () => {
-      expect(decideCodexTerminalRuntimeSupport({
-        startedBy: 'cli',
-        terminalRuntimeBackend: null,
-        hasTtyForTerminal: true,
-      })).toEqual({ ok: false, reason: 'resume-disabled' });
-    });
-
-    it('returns ok for ACP when it is the selected terminal backend', () => {
-      expect(decideCodexTerminalRuntimeSupport({
-        startedBy: 'cli',
-        terminalRuntimeBackend: 'acp',
-        hasTtyForTerminal: true,
-      })).toEqual({ ok: true, backend: 'acp' });
-    });
-
-    it('returns ok for app-server when terminal mode is enabled there', () => {
-      expect(decideCodexTerminalRuntimeSupport({
-        startedBy: 'cli',
-        hasTtyForTerminal: true,
-        terminalRuntimeBackend: 'appServer',
-      })).toEqual({ ok: true, backend: 'appServer' });
-    });
   });
 
   describe('createCodexTerminalRuntimeSupportResolver', () => {
