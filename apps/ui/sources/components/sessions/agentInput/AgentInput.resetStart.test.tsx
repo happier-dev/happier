@@ -1,10 +1,23 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 installAgentInputCommonModuleMocks();
 const { AgentInput } = await import('./AgentInput');
+const { storage } = await import('@/sync/domains/state/storageStore');
+const initialPlacements = storage.getState().localSettings.navigationSurfacePlacementsV1;
+beforeEach(() => {
+    storage.setState(state => ({ localSettings: { ...state.localSettings,
+        navigationSurfacePlacementsV1: { ...initialPlacements,
+            composer: { orderedIds: [], placements: { 'delivery:resetStart': 'pinned' } } },
+    } }));
+});
+afterEach(() => {
+    storage.setState(state => ({ localSettings: { ...state.localSettings,
+        navigationSurfacePlacementsV1: initialPlacements,
+    } }));
+});
 
 describe('AgentInput reset start', () => {
     it('offers explicit reset send without submitting or mounting the detailed picker on composer mount', async () => {

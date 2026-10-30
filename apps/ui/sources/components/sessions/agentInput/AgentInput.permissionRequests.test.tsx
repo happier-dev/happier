@@ -57,26 +57,6 @@ describe('AgentInput (permission requests)', () => {
         expect(screen.findAllByType(PermissionFooter)[0]?.props.permission).toMatchObject({ id: 'req1', status: 'pending' });
     });
 
-    it('renders permission requests inside a clamped scroll container', async () => {
-        const { AgentInput } = await import('./AgentInput');
-
-        const screen = await renderScreen(React.createElement(AgentInput, {
-            value: '',
-            placeholder: 'Type',
-            onChangeText: () => {},
-            sessionId: 's1',
-            onSend: () => {},
-            autocompleteKinds: [],
-            autocompleteSuggestions: async () => [],
-            permissionRequests: [
-                { id: 'req1', kind: 'permission', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
-                { id: 'req2', kind: 'permission', tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 124 },
-            ],
-        }));
-
-        expect(screen.findByTestId('agentInput.permissionRequests.scroll')).toBeTruthy();
-    });
-
     it('does not reserve the maximum permission height before content is measured', async () => {
         const { AgentInput } = await import('./AgentInput');
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // The static storage graph reaches the Socket.IO transport; register its external boundary before any import.
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -17,6 +17,7 @@ installAgentInputCommonModuleMocks({
 });
 const runtime = installSessionPaneRuntimeTestHarness();
 const { storage } = await import('@/sync/domains/state/storageStore');
+const initialPlacements = storage.getState().localSettings.navigationSurfacePlacementsV1;
 let AgentInput: typeof import('./AgentInput')['AgentInput'];
 let Popover: typeof import('@/components/ui/popover')['Popover'];
 let FloatingOverlay: typeof import('@/components/ui/overlays/FloatingOverlay')['FloatingOverlay'];
@@ -27,6 +28,15 @@ beforeEach(async () => {
     storage.setState({ settings: { ...storage.getState().settings,
         agentInputEnterToSend: true, agentInputActionBarLayout: 'wrap', agentInputChipDensity: 'labels',
         sessionPermissionModeApplyTiming: 'immediate' } });
+    storage.setState(state => ({ localSettings: { ...state.localSettings,
+        navigationSurfacePlacementsV1: { ...initialPlacements,
+            composer: { orderedIds: [], placements: { resume: 'pinned' } } },
+    } }));
+});
+afterEach(() => {
+    storage.setState(state => ({ localSettings: { ...state.localSettings,
+        navigationSurfacePlacementsV1: initialPlacements,
+    } }));
 });
 
 describe('AgentInput (path popover)', () => {
