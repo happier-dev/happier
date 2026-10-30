@@ -58,6 +58,37 @@ function mountForm(element: React.ReactElement, context = createSurfaceContext()
 }
 
 describe('canonical Action Form presentation', () => {
+  it('keeps fields and Cancel usable while submission requires a completed draft', async () => {
+    const onSubmit = vi.fn();
+    const onCancel = vi.fn();
+    function DraftForm() {
+      const [value, setValue] = useState<Record<string, unknown>>({});
+      return <Form hints={{ submitLabel: 'Run', fields: [{ path: 'name', title: 'Name', widget: 'text', required: true }] }}
+        value={value} onChange={setValue} onSubmit={onSubmit} onCancel={onCancel}
+        submitDisabled={typeof value.name !== 'string' || value.name.length === 0} />;
+    }
+    const mount = mountForm(<DraftForm />);
+    try {
+      const input = mount.container.querySelector<HTMLInputElement>('input[aria-label="Name"]')!;
+      const button = (title: string) => [...mount.container.querySelectorAll<HTMLElement>('[role="button"]')]
+        .find(node => node.textContent === title)!;
+      expect(input.getAttribute('aria-disabled')).not.toBe('true');
+      expect(button('Run').getAttribute('aria-disabled')).toBe('true');
+      expect(button('Cancel').getAttribute('aria-disabled')).not.toBe('true');
+      await act(async () => { button('Run').click(); });
+      expect(onSubmit).not.toHaveBeenCalled();
+      await act(async () => { button('Cancel').click(); });
+      expect(onCancel).toHaveBeenCalledOnce();
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'release');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      expect(button('Run').getAttribute('aria-disabled')).not.toBe('true');
+      await act(async () => { button('Run').click(); });
+      expect(onSubmit).toHaveBeenCalledWith({ name: 'release' });
+    } finally { mount.unmount(); }
+  });
+
   it('renders and submits author defaults once while preserving explicit values and later replacements', async () => {
     const defaultHints: FormProps['hints'] = { fields: [
       { path: 'settings.name', title: 'Name', widget: 'text', defaultValue: 'Daily report' },

@@ -573,6 +573,8 @@ export type FormProps = Readonly<{
   cancelLabel?: string;
   issues?: Readonly<Record<string, string | undefined>>;
   disabled?: boolean;
+  /** Prevent submission of an incomplete draft while keeping fields and Cancel usable. */
+  submitDisabled?: boolean;
   busy?: boolean;
   testID?: string;
 }>;
@@ -648,7 +650,7 @@ function FormRoot(props: FormProps): ReactElement {
         <Button
           title={submitLabel}
           busy={submission.pending}
-          disabled={formDisabled}
+          disabled={formDisabled || props.submitDisabled === true}
           onPress={() => submission.submit(() => props.onSubmit(
             normalizeActionInputByFieldHints(spec, { ...value }),
           ))}

@@ -261,6 +261,10 @@ exact page colours (`HappierUiPalette`) and page chrome, and without them the
 colours resolve from the public theme snapshot. See the published guide
 "Settings and detail pages" (`apps/docs/content/docs/plugins/ui/configuration-pages.mdx`).
 
+In 0.3 development source, `Form.submitDisabled` blocks submission while keeping
+the draft fields and Cancel available. Use it for incomplete or invalid input;
+`Form.disabled` disables the whole form, and `busy` represents an active submission.
+
 ### Project detail navigation (0.3 development source)
 
 Project `appPage` surfaces use the ordinary `defineUiSurface` context and public
