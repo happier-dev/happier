@@ -61,7 +61,7 @@ export const HOME_DOMAIN_ACTION_IDS_V1 = [
   ...SHARED_SAVED_SECRET_ACTION_IDS_V1,
   ...ACTION_ID_FAMILIES_V1.session_organization_resources,
   'session.delete',
-  'session.folder.set',
+  'session.section.set',
   'session.tags.set',
 ] as const;
 
@@ -75,7 +75,7 @@ export type HomeDomainActionIdV1 =
   | ManagedGitHubAppActionIdV1
   | SharedSavedSecretActionIdV1
   | typeof ACTION_ID_FAMILIES_V1.session_organization_resources[number]
-  | 'session.delete' | 'session.folder.set' | 'session.tags.set';
+  | 'session.delete' | 'session.section.set' | 'session.tags.set';
 
 export const HomeDomainActionIdV1Schema = lazyZodSchema(() => z.enum(HOME_DOMAIN_ACTION_IDS_V1));
 

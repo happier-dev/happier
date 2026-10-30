@@ -12,16 +12,20 @@ export async function fetchAndApplySessionOrganizationSnapshot(params: Readonly<
     requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
     request?: Partial<SessionOrganizationSnapshotRequest>;
     shouldContinue?: () => boolean;
+    /** Runs only after a real response was admitted for the still-current Account. */
+    onSnapshotReceived?: () => void;
 }>): Promise<UiSessionOrganizationSnapshot | null> {
     const store = getStorage().getState();
     store.setSessionOrganizationLoading(params.serverId, true);
     store.setSessionOrganizationError(params.serverId, null);
     try {
+        let snapshotReceived = false;
         const response = await fetchSessionOrganizationSnapshot({
             credentials: params.credentials,
             serverUrl: params.serverUrl,
             requestAtEndpoint: params.requestAtEndpoint,
             request: params.request,
+            onSnapshotReceived: () => { snapshotReceived = true; },
         });
         if (params.shouldContinue && !params.shouldContinue()) return null;
         const snapshot = await openSessionOrganizationSnapshotDisplayEnvelopes({
@@ -29,11 +33,12 @@ export async function fetchAndApplySessionOrganizationSnapshot(params: Readonly<
             snapshot: response.snapshot,
         });
         if (params.shouldContinue && !params.shouldContinue()) return null;
-        getStorage().getState().applySessionOrganizationSnapshot(
-            params.serverId,
-            snapshot,
-            params.request,
-        );
+        // Older route compatibility may return a synthetic empty body. It proves neither
+        // membership nor absence, and must not clear retained values or seed known-null entries.
+        if (snapshotReceived) {
+            getStorage().getState().applySessionOrganizationSnapshot(params.serverId, snapshot, params.request);
+            params.onSnapshotReceived?.();
+        }
         return snapshot;
     } catch (error) {
         // A superseded request's failure belongs to the Account that sent it, not to

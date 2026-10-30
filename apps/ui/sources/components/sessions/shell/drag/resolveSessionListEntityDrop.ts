@@ -50,8 +50,8 @@ export function resolveSessionListFolderAssignmentDrop(params: Readonly<{
     const target = folderAssignmentTargets(params.item, params.context).find(candidate => candidate.folderId === params.folderId);
     if (!target) return refuse('unavailable');
     if (target.disabled) return refuse('no-change');
-    return { status: 'allowed', effect: { actionId: 'session.folder.set', input: {
-        sessionId: params.item.address.sessionId, folderId: target.folderId,
+    return { status: 'allowed', effect: { actionId: 'session.section.set', input: {
+        sessionId: params.item.address.sessionId, sectionId: target.folderId,
     }, preview: params.preview(target.folderId === null ? null : target.title) } };
 }
 

@@ -591,7 +591,7 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
   'follow.preview',
   'session.stop',
   'session.delete',
-  'session.folder.set',
+  'session.section.set',
   'session.tags.set',
   'session.title.set',
   'session.approval_reviewer.set',

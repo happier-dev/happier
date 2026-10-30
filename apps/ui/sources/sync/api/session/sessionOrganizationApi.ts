@@ -154,6 +154,8 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
     serverUrl?: string;
     requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
     request?: Partial<SessionOrganizationSnapshotRequest>;
+    /** Transport admission only: missing-route compatibility data is not an observed snapshot. */
+    onSnapshotReceived?: () => void;
 }>): Promise<SessionOrganizationSnapshotResponse> {
     const response = await fetchSessionOrganizationRoute({
         credentials: params.credentials,
@@ -169,7 +171,9 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
         }
         throw new HappyError(readErrorMessage(raw, 'Failed to fetch session organization snapshot'), false);
     }
-    return parseJsonBody(raw, SessionOrganizationSnapshotResponseSchema, 'Failed to fetch session organization snapshot');
+    const parsed = parseJsonBody(raw, SessionOrganizationSnapshotResponseSchema, 'Failed to fetch session organization snapshot');
+    params.onSnapshotReceived?.();
+    return parsed;
 }
 
 export async function importLegacySessionOrganization(params: Readonly<{

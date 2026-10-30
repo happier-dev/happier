@@ -38,6 +38,7 @@ import { TEAM_ACTION_IDS_V1 } from '../teams/actionsV1.js';
 import { MANAGED_GITHUB_APP_ACTION_IDS_V1 } from '../identity/githubApps.js';
 import { MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 } from '../identity/providers.js';
 import { EPHEMERAL_RUNNER_ACTION_IDS_V1 } from '../ephemeralRunner/actionIdsV1.js';
+import { AUTOMATION_OCCURRENCE_ACTION_IDS } from '../automations/occurrenceActionIds.js';
 import { SHARED_SAVED_SECRET_ACTION_IDS_V1 } from '../account/settings/savedSecretResourceActionIdsV1.js';
 import { PERSONAL_SAVED_SECRET_ACTION_IDS_V1 } from '../account/settings/personalSavedSecretActionsV1.js';
 import { ARTIFACT_ACCESS_ACTION_IDS_V1 } from '../artifacts/artifactAccessV1.js';
@@ -295,7 +296,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.exchange.control',
     'session.runtime.refresh',
     'session.delete',
-    'session.folder.set',
+    'session.section.set',
     'session.tags.set',
     'session.title.set',
     'session.status.set_reason',
@@ -332,7 +333,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.presentation.apply',
   ],
   session_organization_resources: [
-    'session.folders.list', 'session.folders.create', 'session.folders.rename', 'session.folders.delete',
+    'session.sections.list', 'session.sections.create', 'session.sections.update', 'session.sections.reorder', 'session.sections.delete', 'session.sections.archive',
     'session.tags.list', 'session.tags.create', 'session.tags.rename', 'session.tags.delete',
   ],
   intent_start: [
@@ -407,6 +408,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.delivery.mute.list',
   ],
   session_transcripts: [
+    'session.input.result.get',
     'session.transcript.get',
     'session.events.get',
     'session.log.tail',
@@ -722,6 +724,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   managed_machines: MANAGED_MACHINE_ACTION_IDS_V1,
   machine_presets: MACHINE_PRESET_ACTION_IDS_V1,
   ephemeral_runner: EPHEMERAL_RUNNER_ACTION_IDS_V1,
+  automation_occurrences: AUTOMATION_OCCURRENCE_ACTION_IDS,
   automation_events: [
     'automation.event.sources.list',
     'automation.event.admit',

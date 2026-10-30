@@ -1,7 +1,9 @@
 import axios from 'axios';
-import { CreateOrUpdateSessionOrganizationFolderRequestSchema, CreateOrUpdateSessionOrganizationFolderResponseSchema, CreateOrUpdateSessionOrganizationTagRequestSchema, CreateOrUpdateSessionOrganizationTagResponseSchema } from '@happier-dev/protocol/sessions/organization/mutations';
+import { CreateOrUpdateSessionOrganizationTagRequestSchema, CreateOrUpdateSessionOrganizationTagResponseSchema, type CreateOrUpdateSessionOrganizationFolderRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
-import { prepareSessionOrganizationDisplayEnvelopeForAccountModeV1, projectSessionOrganizationDisplayEnvelopeForReadV1 } from '@happier-dev/protocol/sessions/organization/content';
+import { prepareSessionOrganizationDisplayEnvelopeForAccountModeV1, projectSessionOrganizationDisplayEnvelopeForReadV1, openSessionOrganizationDisplayEnvelopeV1 } from '@happier-dev/protocol/sessions/organization/content';
+import type { SessionOrganizationFolder } from '@happier-dev/protocol/sessions/organization/folders';
+import type { SessionSectionFolderV1 } from '@happier-dev/protocol/actions/sessionSections';
 import type { AccountScopedCryptoMaterial, HomeDomainActionIdV1, SessionOrganizationContentEnvelope } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import { getRandomBytes } from '@/api/encryption';
@@ -45,11 +47,15 @@ export async function captureSessionOrganizationDisplayHost(params: Readonly<{
   };
   return {
     assertCurrent,
+    prepareFolderInput: (request: CreateOrUpdateSessionOrganizationFolderRequest): CreateOrUpdateSessionOrganizationFolderRequest =>
+      ({ ...request, display: prepare(request.display) }),
+    openFolder: (folder: SessionOrganizationFolder): SessionSectionFolderV1 => ({ ...folder,
+      displayState: folder.displayState ? { status: 'locked', reason: folder.displayState.reason }
+        : folder.display && folder.display.t !== (mode.mode === 'e2ee' ? 'encrypted' : 'plain')
+          ? { status: 'locked', reason: 'storage_mode_mismatch' }
+          : openSessionOrganizationDisplayEnvelopeV1({ envelope: folder.display, material }),
+    }),
     prepareInput: (actionId: HomeDomainActionIdV1, input: unknown): unknown => {
-      if (actionId === 'session.folders.create' || actionId === 'session.folders.rename') {
-        const parsed = CreateOrUpdateSessionOrganizationFolderRequestSchema.parse(input);
-        return { ...parsed, display: prepare(parsed.display) };
-      }
       if (actionId === 'session.tags.create' || actionId === 'session.tags.rename') {
         const parsed = CreateOrUpdateSessionOrganizationTagRequestSchema.parse(input);
         return { ...parsed, display: prepare(parsed.display) };
@@ -57,10 +63,6 @@ export async function captureSessionOrganizationDisplayHost(params: Readonly<{
       return input;
     },
     projectOutput: (actionId: HomeDomainActionIdV1, output: unknown): unknown => {
-      if (actionId === 'session.folders.create' || actionId === 'session.folders.rename') {
-        const { folder } = CreateOrUpdateSessionOrganizationFolderResponseSchema.parse(output);
-        return { folder: { ...folder, display: folder.displayState ? folder.display : project(folder.display) } };
-      }
       if (actionId === 'session.tags.create' || actionId === 'session.tags.rename') {
         const { tag } = CreateOrUpdateSessionOrganizationTagResponseSchema.parse(output);
         return { tag: { ...tag, display: tag.displayState ? tag.display : project(tag.display) } };

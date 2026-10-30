@@ -463,7 +463,7 @@ describe('createActionExecutor (session control)', () => {
         .resolves.toEqual({ ok: true, result: { status } });
     }
   });
-  it('executes folder and tag resource parity through the incumbent organization transport', async () => {
+  it('executes section and tag resource parity through the incumbent organization owner', async () => {
     const folder = { folderId: 'folder-1', folderKey: 'folder-1', parentFolderId: null,
       parentFolderKey: null, sortKey: null, display: { t: 'plain' as const, v: { name: 'Leads' } },
       archivedAt: null, createdAt: 1, updatedAt: 1 };
@@ -474,21 +474,21 @@ describe('createActionExecutor (session control)', () => {
     // This port is the Home's HTTP boundary; registry admission and result parsing remain real.
     const executor = createExecutor({ homeDomainAction: async ({ actionId }) => {
       const id = String(actionId);
-      if (id.endsWith('.list')) return { snapshot };
-      if (id === 'session.folders.delete') return { deletedFolderIds: ['folder-1'],
-        assignmentTargetFolderId: null, affectedAssignmentCount: 0 };
+      if (id === 'session.sections.list') return { sections: [section] };
+      if (id === 'session.tags.list') return { snapshot };
+      if (id === 'session.sections.delete') return { sectionId: 'folder-1', removed: true, affectedAssignmentCount: 0 };
       if (id === 'session.tags.delete') return { tagId: 'tag-1', removedAssignmentCount: 0 };
-      return id.startsWith('session.folders.') ? { folder } : { tag };
+      return id.startsWith('session.sections.') ? { section } : { tag };
     } });
-    const folderInput = { folderId: 'folder-1', folderKey: 'folder-1', parentFolderId: null,
-      parentFolderKey: null, sortKey: null, display: { t: 'plain' as const, v: { name: 'Leads' } } };
+    const section = { sectionId: 'folder-1', sortKey: null,
+      displayState: { status: 'available' as const, value: { name: 'Leads', icon: null } } };
     const tagInput = { tagId: 'tag-1', tagKey: 'tag-1', sortKey: null,
       display: { t: 'plain' as const, v: { label: 'Warm' } } };
     for (const [id, input, result] of [
-      ['session.folders.list', {}, { snapshot }],
-      ['session.folders.create', folderInput, { folder }],
-      ['session.folders.rename', folderInput, { folder }],
-      ['session.folders.delete', { folderId: 'folder-1' }, { deletedFolderIds: ['folder-1'], assignmentTargetFolderId: null, affectedAssignmentCount: 0 }],
+      ['session.sections.list', {}, { sections: [section] }],
+      ['session.sections.create', { name: 'Leads' }, { section }],
+      ['session.sections.update', { sectionId: 'folder-1', name: 'Leads' }, { section }],
+      ['session.sections.delete', { sectionId: 'folder-1' }, { sectionId: 'folder-1', removed: true, affectedAssignmentCount: 0 }],
       ['session.tags.list', {}, { snapshot }],
       ['session.tags.create', tagInput, { tag }],
       ['session.tags.rename', tagInput, { tag }],
@@ -603,13 +603,13 @@ describe('createActionExecutor (session control)', () => {
 
   it('executes delete and organization assignment through the existing Home HTTP owner', async () => {
     const homeDomainAction = vi.fn(async ({ actionId }: Parameters<NonNullable<ActionExecutorDeps['homeDomainAction']>>[0]) =>
-      actionId === 'session.folder.set' ? { sessionId: 's1', folderId: null }
+      actionId === 'session.section.set' ? { sessionId: 's1', sectionId: null, previousSectionId: null }
         : actionId === 'session.tags.set' ? { sessionId: 's1', tagIds: ['tag-1'] }
           : { success: true });
     const executor = createExecutor({ homeDomainAction });
     for (const [actionId, input] of [
       ['session.delete', { sessionId: 's1' }],
-      ['session.folder.set', { sessionId: 's1', folderId: null }],
+      ['session.section.set', { sessionId: 's1', sectionId: null }],
       ['session.tags.set', { sessionId: 's1', tagIds: ['tag-1'] }],
     ] as const) {
       await expect(executor.execute(actionId, input, {
@@ -622,9 +622,6 @@ describe('createActionExecutor (session control)', () => {
   it('binds parity Actions to the existing delete and organization routes', () => {
     for (const [actionId, input, request] of [
       ['session.delete', { sessionId: 's/1' }, { method: 'DELETE', path: '/v1/sessions/s%2F1', body: {} }],
-      ['session.folder.set', { sessionId: 's/1', folderId: null }, {
-        method: 'PUT', path: '/v2/session-organization/folder-assignments/s%2F1', body: { folderId: null },
-      }],
       ['session.tags.set', { sessionId: 's/1', tagIds: [] }, {
         method: 'PUT', path: '/v2/session-organization/tag-assignments/s%2F1', body: { tagIds: [] },
       }],

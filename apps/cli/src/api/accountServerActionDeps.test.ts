@@ -1246,7 +1246,7 @@ describe('Account API token HTTP adapter', () => {
     })).rejects.toThrow();
   });
 
-  it('materializes folder and tag resource displays for the exact E2EE Home and opens listed labels', async () => {
+  it('materializes section and tag resource displays for the exact E2EE Home and opens listed labels', async () => {
     const machineKey = new Uint8Array(32).fill(37);
     const token = 'selected-home-token';
     const material = { type: 'dataKey' as const, machineKey };
@@ -1258,7 +1258,7 @@ describe('Account API token HTTP adapter', () => {
       kind: 'session_organization_display', material, payload: display.v, randomBytes: tweetnacl.randomBytes,
     }) };
     const folder = { folderId: 'folder-1', folderKey: 'folder-key', parentFolderId: null,
-      parentFolderKey: null, sortKey: null, display: encrypted, archivedAt: null, createdAt: 1, updatedAt: 1 };
+      parentFolderKey: null, sortKey: 'a0', display: encrypted, archivedAt: null, createdAt: 1, updatedAt: 1 };
     const tag = { tagId: 'tag-1', tagKey: 'tag-key', sortKey: null, display: {
       t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: 'session_organization_display',
         material, payload: tagDisplay.v, randomBytes: tweetnacl.randomBytes }),
@@ -1285,21 +1285,28 @@ describe('Account API token HTTP adapter', () => {
     const executor = createActionExecutor(createAccountServerActionDeps({ token, credentials,
       serverId: 'home', serverHttpBaseUrl: 'http://account.test' }) as Parameters<typeof createActionExecutor>[0]);
     const context = { surface: 'mcp' as const, authority: 'account_automation' as const, serverId: 'home' };
-    const created = await executor.execute('session.folders.create', { folderKey: folder.folderKey,
-      parentFolderId: null, parentFolderKey: null, sortKey: null, display }, context);
+    const created = await executor.execute('session.sections.create', { name: 'Research' }, context);
     expect(created.ok ? undefined : created.errorCode).toBeUndefined();
     expect(created).toMatchObject({ ok: true });
     expect(await executor.execute('session.tags.rename', { tagId: tag.tagId, tagKey: tag.tagKey,
       sortKey: null, display: tagDisplay }, context)).toMatchObject({ ok: true });
     expect(stored.map(envelope => envelope && typeof envelope === 'object' && 'c' in envelope
       ? openAccountScopedBlobCiphertext({ kind: 'session_organization_display', material, ciphertext: String(envelope.c) })?.value
-      : null)).toEqual([display.v, tagDisplay.v]);
-    expect(await executor.execute('session.folders.list', {}, context)).toMatchObject({
-      ok: true, result: { snapshot: { folders: [{ display }], tags: [{ display: tagDisplay }] } },
+      : null)).toEqual([{ name: 'Research', icon: null }, tagDisplay.v]);
+    expect(await executor.execute('session.sections.list', {}, context)).toMatchObject({
+      ok: true, result: { sections: [{ sectionId: folder.folderId, displayState: { status: 'available', value: { name: 'Research', icon: null } } }] },
+    });
+    expect(await executor.execute('session.tags.list', {}, context)).toMatchObject({
+      ok: true, result: { snapshot: { tags: [{ tagId: tag.tagId, display: tagDisplay }] } },
     });
     const withoutKey = createActionExecutor(createAccountServerActionDeps({ token,
       serverId: 'home', serverHttpBaseUrl: 'http://account.test' }) as Parameters<typeof createActionExecutor>[0]);
     expect(await withoutKey.execute('session.tags.create', { tagKey: 'new-key', sortKey: null, display }, context))
+      .toMatchObject({ ok: false, errorCode: 'account_key_unavailable' });
+    expect(await withoutKey.execute('session.sections.list', {}, context)).toMatchObject({ ok: true, result: {
+      sections: [{ sectionId: folder.folderId, displayState: { status: 'locked', reason: 'account_key_unavailable' } }],
+    } });
+    expect(await withoutKey.execute('session.sections.update', { sectionId: folder.folderId, name: 'Changed' }, context))
       .toMatchObject({ ok: false, errorCode: 'account_key_unavailable' });
     expect(stored).toHaveLength(2);
   });

@@ -33,7 +33,7 @@ import {
   AutomationEventActionOutputSchemasV1 as legacyAutomationEventActionOutputSchemas,
 } from '../automations/automationEventV1.js';
 
-type AutomationActionIdV1 = Extract<ActionId, `automation.${string}`>;
+type AutomationActionIdV1 = Extract<ActionId, `automation.event.${string}` | `automation.conversation.${string}`>;
 
 describe('Event Automation ActionSpecs', () => {
   it('admits source telemetry by default while preserving explicit approval policy and event-admission confirmation', () => {

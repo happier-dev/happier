@@ -2596,6 +2596,8 @@ export type ActionExecutorDeps = Readonly<{
     actionId: HomeDomainActionIdV1;
     input: unknown;
     preparedRequest?: import('../../account/publicProfilePublication.js').PublicProfilePreparedRequestV1;
+    /** Section aggregate members re-enter ordinary archive admission. */
+    archiveSession?: (sessionId: string) => Promise<ActionExecuteResult>;
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<unknown>;

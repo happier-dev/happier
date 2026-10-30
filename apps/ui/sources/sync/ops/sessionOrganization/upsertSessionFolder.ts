@@ -23,6 +23,10 @@ function readCurrentFolderIds(serverId: string): Set<string> {
     return ids;
 }
 
+export function allocateSessionOrganizationFolderId(serverId: string): string {
+    return createSessionOrganizationOpaqueId({ prefix: 'folder', usedIds: readCurrentFolderIds(serverId) });
+}
+
 export async function upsertSessionFolder(params: Readonly<{
     credentials: AuthCredentials;
     serverId: string;
@@ -34,10 +38,7 @@ export async function upsertSessionFolder(params: Readonly<{
     params.assertCurrent?.();
     const request: ConcreteSessionOrganizationFolderRequest = {
         ...params.request,
-        folderId: params.request.folderId ?? createSessionOrganizationOpaqueId({
-            prefix: 'folder',
-            usedIds: readCurrentFolderIds(params.serverId),
-        }),
+        folderId: params.request.folderId ?? allocateSessionOrganizationFolderId(params.serverId),
         display: await prepareSessionOrganizationDisplayEnvelopeForWrite({
             credentials: params.credentials,
             envelope: params.request.display,

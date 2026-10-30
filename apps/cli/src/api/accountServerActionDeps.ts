@@ -1,4 +1,8 @@
 import axios, { type AxiosResponse } from 'axios';
+import { createHash, randomUUID } from 'node:crypto';
+import { executeSessionSectionActionV1, isSessionSectionActionIdV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { SessionOrganizationSnapshotRequestSchema, SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
+import { CreateOrUpdateSessionOrganizationFolderResponseSchema, DeleteSessionOrganizationFolderResponseSchema, SetSessionFolderAssignmentResponseSchema } from '@happier-dev/protocol/sessions/organization/mutations';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, AccountApiTokensServerErrorV1Schema, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1, AccountApiTokensCreateActionInputV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensListActionInputV1Schema, AccountApiTokensListActionOutputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensRevokeAllActionInputV1Schema, AccountApiTokensRevokeAllActionOutputV1Schema, AccountApiTokensUpdateActionInputV1Schema, AccountApiTokensUpdateActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 import { ProjectWorkerActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
@@ -922,11 +926,81 @@ export function createAccountServerActionDeps(input: Readonly<{
      * configured endpoint and the signed Account credential do, and the Home's
      * own transaction remains the authority for every governance decision.
      */
-    homeDomainAction: async ({ actionId, input: actionInput, preparedRequest, context: actionContext, signal }) => {
+    homeDomainAction: async ({ actionId, input: actionInput, preparedRequest, context: actionContext, signal, archiveSession }) => {
       const mismatch = await accountServerTargetMismatch(actionContext);
       if (mismatch) return mismatch;
-      const hasOrganizationDisplay = (actionId.startsWith('session.folders.') || actionId.startsWith('session.tags.'))
-        && !actionId.endsWith('.delete');
+      if (isSessionSectionActionIdV1(actionId)) {
+        const sectionCreateFolderId = actionId === 'session.sections.create' && actionContext.actionRequestId
+          ? `folder_${createHash('sha256').update(`session.sections.create\0${actionContext.actionRequestId}`).digest('hex').slice(0, 32)}`
+          : null;
+        const assertCurrent = async () => {
+          if (signal?.aborted || (input.isCredentialCurrent && !await input.isCredentialCurrent())) {
+            throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+          }
+        };
+        // Id-only assignment/removal has no private display to open or seal.
+        // Capture Account mode/material once, only when this invocation needs it.
+        let displayPromise: ReturnType<typeof captureSessionOrganizationDisplayHost> | undefined;
+        const getDisplay = () => displayPromise ??= captureSessionOrganizationDisplayHost({
+          token: input.token, credentials: input.credentials, serverHttpBaseUrl,
+          isCurrent: input.isCredentialCurrent, ...(signal ? { signal } : {}),
+        });
+        const request = async <TSchema extends z.ZodMiniType>(method: string, path: string, schema: TSchema, body?: unknown): Promise<z.output<TSchema> | ActionExecuteFailure> => {
+          await assertCurrent();
+          const headers = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method, path,
+            ...(body === undefined ? {} : { body }) });
+          if (!headers.ok) return externalAuthorizationUnavailable();
+          const sideEffectClass = method === 'GET' ? 'read' : 'external';
+          const dispatch = await dispatchAccountServerActionHttpRequest({ headers: headers.headers, method, path,
+            ...(body === undefined ? {} : { body }), ...(signal ? { signal } : {}), sideEffectClass });
+          if (!dispatch.ok) return dispatch;
+          const { response } = dispatch;
+          if (response.status >= 400) {
+            const rollback = readHomeDomainConfirmedRollbackV1(response.status, response.data);
+            if (rollback) return { ok: false, errorCode: rollback.code, error: rollback.code };
+            const named = readHomeDomainActionErrorV1(response.data);
+            if (named) return { ok: false, errorCode: named.code, error: named.code };
+            const error = z.strictObject({ error: z.string() }).safeParse(response.data);
+            if (error.success) return { ok: false, errorCode: error.data.error, error: error.data.error };
+            if (isAuthenticationStatus(response.status)) throw createAuthenticationHttpStatusError(response.status, 'Section authentication failed');
+            return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          }
+          if (method === 'GET') await assertCurrent();
+          return settleAccountServerActionHttpOutput({ data: response.data, outputSchema: schema, sideEffectClass });
+        };
+        return executeSessionSectionActionV1(actionId, actionInput, {
+          assertCurrent,
+          allocateFolderId: () => sectionCreateFolderId ?? `folder_${randomUUID().replaceAll('-', '')}`,
+          archiveSession,
+          readSnapshot: async requested => {
+            const parsed = SessionOrganizationSnapshotRequestSchema.parse(requested);
+            const query = new URLSearchParams();
+            for (const [key, value] of Object.entries(parsed)) {
+              if (Array.isArray(value)) { if (value.length) query.set(key, value.join(',')); }
+              else if (value !== undefined) query.set(key, String(value));
+            }
+            const result = await request('GET', `/v2/session-organization?${query}`, SessionOrganizationSnapshotResponseSchema);
+            if ('ok' in result) return result;
+            const folders = result.snapshot.folders.length
+              ? result.snapshot.folders.map((await getDisplay()).openFolder) : [];
+            return { folders, folderAssignments: result.snapshot.folderAssignments };
+          },
+          upsertFolder: async folder => {
+            const display = await getDisplay();
+            const result = await request('POST', '/v2/session-organization/folders', CreateOrUpdateSessionOrganizationFolderResponseSchema,
+              display.prepareFolderInput(folder));
+            return 'ok' in result ? result : display.openFolder(result.folder);
+          },
+          deleteFolder: folder => request('DELETE', `/v2/session-organization/folders/${encodeURIComponent(folder.folderId)}`,
+            DeleteSessionOrganizationFolderResponseSchema, folder),
+          setAssignment: (sessionId, folderId) => request('PUT', `/v2/session-organization/folder-assignments/${encodeURIComponent(sessionId)}`,
+            SetSessionFolderAssignmentResponseSchema, { folderId }),
+        });
+      }
+      // Assignment acknowledgements contain only ids, not private display
+      // envelopes. Do not capture keys or project them as inventory snapshots.
+      const hasOrganizationDisplay = actionId === 'session.tags.list'
+        || actionId === 'session.tags.create' || actionId === 'session.tags.rename';
       const organizationDisplay = hasOrganizationDisplay ? await captureSessionOrganizationDisplayHost({
         token: input.token, credentials: input.credentials, serverHttpBaseUrl,
         isCurrent: input.isCredentialCurrent, ...(signal ? { signal } : {}),

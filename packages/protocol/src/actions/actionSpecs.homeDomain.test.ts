@@ -18,7 +18,6 @@ import { resolveActionSurfaceAvailability } from './actionSurfaceAvailability.js
 describe('Home runtime Action parity', () => {
   it('publishes the target and supported assignment choice for organization deletion', () => {
     for (const [actionId, identity, behavior] of [
-      ['session.folders.delete', 'folderId', 'moveAssignmentsToParent'],
       ['session.tags.delete', 'tagId', 'removeAssignments'],
     ] as const) {
       const spec = serializeActionSpec(getActionSpec(actionId));
@@ -335,8 +334,8 @@ describe('Home and Teams Action family', () => {
       byAddress.set(address, ids);
     }
     expect(Object.fromEntries([...byAddress].filter(([, ids]) => ids.length > 1))).toEqual({
-      'GET /v2/session-organization': ['session.folders.list', 'session.tags.list'],
-      'POST /v2/session-organization/folders': ['session.folders.create', 'session.folders.rename'],
+      'GET /v2/session-organization': ['session.sections.list', 'session.sections.archive', 'session.tags.list'],
+      'POST /v2/session-organization/folders': ['session.sections.create', 'session.sections.update', 'session.sections.reorder'],
       'POST /v2/session-organization/tags': ['session.tags.create', 'session.tags.rename'],
     });
   });
@@ -474,7 +473,7 @@ describe('Home and Teams Action family', () => {
    * carries intents answered by Session or client owners.
    */
   it('keeps organization mutations Session-placed and durable deletion Account-placed', () => {
-    const sessionMutations = new Set(['session.folder.set', 'session.tags.set']);
+    const sessionMutations = new Set(['session.tags.set']);
     for (const actionId of HOME_DOMAIN_ACTION_IDS_V1) {
       expect(getActionSpec(actionId).executionPlacement, actionId)
         .toBe(sessionMutations.has(actionId) ? 'session' : 'account');
