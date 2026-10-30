@@ -23,7 +23,7 @@ const REGISTRY = {
 };
 
 test('never renders a secret default and escapes MDX syntax in cells', () => {
-  assert.equal(formatDefault({ sensitivity: 'secret', default: undefined }), 'secret');
+  assert.equal(formatDefault({ sensitivity: 'secret', default: 'not-for-publication' }), 'secret');
   assert.equal(escapeCell('a | <b> {c}'), 'a \\| &lt;b> \\{c\\}');
   assert.equal(formatType(REGISTRY.entries[0]), 'int 1–65535');
   assert.equal(formatType(REGISTRY.entries[2]), 'one of `postgres`, `sqlite`');

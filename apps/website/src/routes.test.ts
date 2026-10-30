@@ -123,12 +123,14 @@ describe('route table', () => {
     });
 
     it('escapes `<` inside JSON-LD so a script tag cannot be closed early', () => {
-        const head = headTagsFor(ROUTES[0]!);
+        const name = '</script><script>alert("route")</script>';
+        const head = headTagsFor({ ...ROUTES[0]!, jsonLd: [{ '@type': 'WebPage', name }] });
         const blocks = head.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g) ?? [];
-        expect(blocks.length).toBeGreaterThan(0);
+        expect(blocks).toHaveLength(1);
         for (const block of blocks) {
             const body = block.replace(/^<script[^>]*>/, '').replace(/<\/script>$/, '');
             expect(body).not.toMatch(/</);
+            expect(JSON.parse(body)).toMatchObject({ name });
         }
     });
 

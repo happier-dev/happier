@@ -12,6 +12,6 @@ test('protocol-backed website source commands prepare their canonical workspace 
     'node ../../scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs --for-component=apps/website',
   );
   for (const command of ['generate:plugin-manifest-schema', 'generate:marketplace-catalog', 'test:local', 'typecheck:local']) {
-    assert.equal(scripts[`pre${command}`], 'yarn -s prepare:workspace-deps', command);
+    assert.equal(scripts[`pre${command}`], 'pnpm --silent run prepare:workspace-deps', command);
   }
 });
