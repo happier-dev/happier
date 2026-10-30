@@ -53,31 +53,6 @@ import {
 } from "../providerAccountUsage/types";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
 
-type QualifiedConnectedAccountCredentialRouteDependencies = Readonly<{
-    listQualifiedConnectedAccounts:
-        typeof listQualifiedConnectedAccounts;
-    mutateQualifiedConnectedServiceCredential:
-        typeof mutateQualifiedConnectedServiceCredential;
-    readQualifiedConnectedServiceCredential:
-        typeof readQualifiedConnectedServiceCredential;
-    readQualifiedConnectedAccountConfiguration:
-        typeof readQualifiedConnectedAccountConfiguration;
-    mutateQualifiedConnectedAccountConfiguration:
-        typeof mutateQualifiedConnectedAccountConfiguration;
-    mutateQualifiedConnectedServiceCredentialHealth:
-        typeof mutateQualifiedConnectedServiceCredentialHealth;
-}>;
-
-const defaultDependencies:
-    QualifiedConnectedAccountCredentialRouteDependencies = {
-        listQualifiedConnectedAccounts,
-        mutateQualifiedConnectedServiceCredential,
-        readQualifiedConnectedServiceCredential,
-        readQualifiedConnectedAccountConfiguration,
-        mutateQualifiedConnectedAccountConfiguration,
-        mutateQualifiedConnectedServiceCredentialHealth,
-    };
-
 const StructuredServiceQuerySchema = z.strictObject({
     service: z.union([z.string(), z.array(z.string())]),
 });
@@ -188,13 +163,7 @@ function projectGroupPolicyForFeature(
 
 export function registerQualifiedConnectedAccountCredentialRoutesV4(
     app: Fastify,
-    dependencies:
-        Partial<QualifiedConnectedAccountCredentialRouteDependencies> = {},
 ): void {
-    const routeDependencies = {
-        ...defaultDependencies,
-        ...dependencies,
-    };
     app.get("/v4/connect/qualified/accounts", {
         preHandler: app.authenticate,
         schema: {
@@ -218,7 +187,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             return reply.code(400).send({ error: "invalid-params" });
         }
         const accounts =
-            await routeDependencies.listQualifiedConnectedAccounts({
+            await listQualifiedConnectedAccounts({
             accountId: request.userId,
             service,
         });
@@ -240,7 +209,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         },
     }, async (request, reply) => {
         const result =
-            await routeDependencies.mutateQualifiedConnectedServiceCredential({
+            await mutateQualifiedConnectedServiceCredential({
             accountId: request.userId,
             ...request.body,
         });
@@ -301,7 +270,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             return reply.code(400).send({ error: "invalid-params" });
         }
         const result =
-            await routeDependencies.readQualifiedConnectedServiceCredential({
+            await readQualifiedConnectedServiceCredential({
                 accountId: request.userId,
                 ref,
             });
@@ -347,7 +316,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             return reply.code(400).send({ error: "invalid-params" });
         }
         const configuration =
-            await routeDependencies.readQualifiedConnectedAccountConfiguration({
+            await readQualifiedConnectedAccountConfiguration({
                 accountId: request.userId,
                 target,
             });
@@ -380,7 +349,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         },
     }, async (request, reply) => {
         const result =
-            await routeDependencies.mutateQualifiedConnectedAccountConfiguration({
+            await mutateQualifiedConnectedAccountConfiguration({
                 accountId: request.userId,
                 target: request.body.target,
                 expectedCredentialRevision:
@@ -434,8 +403,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         },
     }, async (request, reply) => {
         const result =
-            await routeDependencies
-                .mutateQualifiedConnectedServiceCredentialHealth({
+            await mutateQualifiedConnectedServiceCredentialHealth({
                     accountId: request.userId,
                     ref: request.body.ref,
                     health: request.body.health,
