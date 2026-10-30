@@ -15,6 +15,7 @@ export function pickUpdaterSignature(platformKey, matches) {
       matches[0];
     if (!preferred) throw new Error('Expected at least one Windows updater signature; found 0');
     if (matches.length > 1) {
+      /** @param {string} file */
       const relative = (file) => path.relative(process.cwd(), file) || file;
       console.error(`Found multiple Windows updater signatures for ${platformKey}; using preferred artifact: ${relative(preferred)}`);
       console.error('All matches:');
