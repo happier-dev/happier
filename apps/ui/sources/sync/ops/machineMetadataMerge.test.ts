@@ -19,14 +19,6 @@ describe('mergeMachineMetadataForVersionMismatch', () => {
         });
         expect(merged).toMatchObject({ displayName: 'Edited name', finitePolicyV1: { accepting: false, runAtMost: 2 } });
     });
-    it('preserves displayName from intended metadata', () => {
-        const merged = mergeMachineMetadataForVersionMismatch({
-            latest: { host: 'h', platform: 'win32', happyCliVersion: '1', happyHomeDir: '/h', homeDir: '/u' } as any,
-            intended: { displayName: 'My PC' } as any,
-        });
-        expect((merged as any).displayName).toBe('My PC');
-    });
-
     it('preserves windowsRemoteSessionLaunchMode from intended metadata', () => {
         const merged = mergeMachineMetadataForVersionMismatch({
             latest: { host: 'h', platform: 'win32', happyCliVersion: '1', happyHomeDir: '/h', homeDir: '/u' } as any,

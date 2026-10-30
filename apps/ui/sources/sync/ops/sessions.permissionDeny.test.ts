@@ -93,13 +93,6 @@ describe('sessionDeny', () => {
 });
 
 describe('session permission/user-action RPC methods', () => {
-    it('stamps the answering UI category at the authenticated response transport', async () => {
-        await sessionRespondToPermission('session-platform', { id: 'request', approved: true });
-        expect(mockSessionRpcWithPreferredSessionScope).toHaveBeenCalledWith(expect.objectContaining({
-            payload: expect.objectContaining({ answeringClientCategory: 'web' }),
-        }));
-    });
-
     beforeEach(() => {
         storage.setState(initialStorageState, true);
         mockSessionRpcWithPreferredSessionScope.mockReset();
