@@ -32,6 +32,8 @@ describe('Antigravity ACP authentication setup diagnostics', () => {
         const record = createAcpRequestFailureLogRecord({ operation: 'NewSession', error: failure });
         expect(record).toEqual({
           operation: 'NewSession', failureKind: 'provider_rejection', requestErrorCode: scenario.code,
+          // The visible-reason preview keeps the provider message shape with every credential redacted.
+          sanitizedPreview: 'token: [REDACTED]',
           ...(scenario.authenticationSetupFailure ? { authenticationSetupFailure: true } : {}),
         });
         expect((failure as Error & { data?: unknown }).data).toEqual({});
