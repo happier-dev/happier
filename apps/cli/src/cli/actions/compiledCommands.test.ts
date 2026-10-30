@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
+import { SessionSpawnNewInputV2Schema as BeforeCommitObservationInputSchema } from '../../../../../packages/protocol/src/sessions/creation/testFixtures/sessionSpawnInputBeforeCommitObservation';
 
 import type { ActionSpec } from '@happier-dev/protocol';
 import { getActionSpec, listActionCliCommandDeclarations } from '@happier-dev/protocol';
@@ -20,6 +21,7 @@ import {
   resolveCompiledActionCliCompletionCandidatesWithDynamicOptions,
 } from './commandCompletion';
 import {
+  ACTION_CLI_SERVER_ID_FLAG,
   actionCliCommandInputArgv,
   composeActionCliInput,
   describeActionCliCommandFlags,
@@ -29,6 +31,30 @@ import {
   stripCliOwnedFlags,
   validateActionCliFlagCollisions,
 } from './parseCommandInput';
+
+it('keeps generated Session creation CLI fields and whole JSON safe for the strict pre-observation reader', () => {
+  const spec = getActionSpec('session.spawn_new');
+  const compiled = compileActionCliFields(spec);
+  const input = { creationKey: 'terminal-cli-create', executionTarget: { serverId: 'home', machineId: 'machine' },
+    directory: { kind: 'managed' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
+  const command = { fields: compiled.fields, positionals: [] };
+  const parsed = parseActionCliInput(command, ['--input-json', JSON.stringify(input)]);
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) throw new Error(parsed.message);
+  const admitted = composeActionCliInput({ parsed, canonicalSchema: spec.inputSchema,
+    callerSchema: compiled.callerSchema, wholeInputSchema: compiled.wholeInputSchema, bindInput: compiled.bindInput,
+    context: { actionId: spec.id, invocationId: 'terminal-cli-create', commandPath: ['actions', 'invoke'] } });
+  expect(admitted.ok).toBe(true);
+  if (!admitted.ok) throw new Error(admitted.message);
+  expect(BeforeCommitObservationInputSchema.safeParse(admitted.input).success).toBe(true);
+  expect(compiled.fields.some(field => field.path === 'observeSessionCommit')).toBe(false);
+  const observed = parseActionCliInput(command, ['--input-json', JSON.stringify({ ...input, observeSessionCommit: true })]);
+  expect(observed.ok).toBe(true);
+  if (!observed.ok) throw new Error(observed.message);
+  expect(composeActionCliInput({ parsed: observed, canonicalSchema: spec.inputSchema,
+    callerSchema: compiled.callerSchema, wholeInputSchema: compiled.wholeInputSchema, bindInput: compiled.bindInput,
+    context: { actionId: spec.id, invocationId: 'terminal-cli-create', commandPath: ['actions', 'invoke'] } }).ok).toBe(false);
+});
 
 it('accepts a matching interleaved Session selector with whole input but rejects a conflicting target', () => {
   const argv = ['session', 'capabilities', 'session-1', 'add'];
@@ -85,6 +111,16 @@ function compileFixture(cli: NonNullable<ActionSpec['cli']> = SEND_CLI, override
 }
 
 describe('compileActionCliCommands', () => {
+  it('routes pending edit to the selected Home without admitting the routing selector as content', () => {
+    const command = findCompiledActionCliCommand(['session', 'pending', 'edit']);
+    expect(command).toBeDefined();
+    if (!command) throw new Error('Pending edit command unavailable');
+    const input = { sessionId: 'pending-session', localId: 'queued-input', text: 'Edited', structuredInput: { v: 1 } };
+    const argv = [ACTION_CLI_SERVER_ID_FLAG, 'other-home', '--input-json', JSON.stringify(input)];
+    expect(readActionCliServerId(argv, command.acceptsServerId)).toBe('other-home');
+    expect(parseActionCliInput(command, stripTransportTokens(command, argv)))
+      .toMatchObject({ ok: true, canonicalBase: input, callerOverlay: {} });
+  });
   it('keeps hidden aliases and interleaved caller slots identical in published path completion', () => {
     const commands = compileFixture({
       commands: [
