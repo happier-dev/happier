@@ -13,7 +13,8 @@ describe('withRetry', () => {
     });
     const record = createAcpRequestFailureLogRecord({ operation: 'NewSession', error });
 
-    expect(record).toEqual({ operation: 'NewSession', failureKind: 'provider_rejection', requestErrorCode: -32000 });
+    expect(record).toEqual({ operation: 'NewSession', failureKind: 'provider_rejection', requestErrorCode: -32000,
+      sanitizedPreview: expect.any(String) });
     expect(JSON.stringify(record)).not.toContain(secret);
     expect(JSON.stringify(record)).not.toContain('onboarding_failed');
     expect(createAcpRequestFailureLogRecord({

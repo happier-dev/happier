@@ -61,6 +61,7 @@ import {
   DefaultTransport,
 } from '../transport';
 import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
+import { buildSafeProviderRejectionPreview } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import {
   type SessionUpdate,
   type HandlerContext,
@@ -1089,17 +1090,50 @@ export class AcpBackend implements AgentBackend {
   }
 
   private buildAcpMcpServersForSessionRequest(): NewSessionRequest['mcpServers'] {
-    if (!this.options.mcpServers) return [] as unknown as NewSessionRequest['mcpServers'];
-    const mcpServers = Object.entries(this.options.mcpServers).map(([name, config]) => ({
-      type: 'stdio',
+    return Object.entries(this.options.mcpServers ?? {}).map(([name, config]) => ({
       name,
       command: config.command,
       args: config.args || [],
       env: config.env
         ? Object.entries(config.env).map(([envName, envValue]) => ({ name: envName, value: envValue }))
         : [],
-    }));
-    return mcpServers as unknown as NewSessionRequest['mcpServers'];
+    } satisfies NewSessionRequest['mcpServers'][number]));
+  }
+
+  private readMcpStartupFailure(request: NewSessionRequest, error: unknown): Readonly<{
+    server: NewSessionRequest['mcpServers'][number];
+    preview: string;
+  }> | null {
+    const preview = buildSafeProviderRejectionPreview(error);
+    const errorRecord = asRecord(error);
+    const message = error instanceof Error ? error.message : (errorRecord ? getString(errorRecord, 'message') : undefined) ?? '';
+    if (!preview || !/\bmcp\b/iu.test(message)) return null;
+    const namedServers = request.mcpServers.filter((server) => {
+      const escapedName = server.name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+      return new RegExp(`(?:^|[^\\p{L}\\p{N}_.-])${escapedName}(?=$|[^\\p{L}\\p{N}_.-])`, 'u').test(message);
+    });
+    return namedServers.length === 1 ? { server: namedServers[0], preview } : null;
+  }
+
+  private async requestSessionWithMcpRecovery<T extends NewSessionRequest | LoadSessionRequest, R>(
+    request: T,
+    operation: (request: T, maxAttempts: number) => Promise<R>,
+  ): Promise<R> {
+    try {
+      return await operation(request, RETRY_CONFIG.maxAttempts);
+    } catch (error) {
+      const failure = this.readMcpStartupFailure(request, error);
+      if (!failure) throw error;
+      const { server: failedServer, preview } = failure;
+      const result = await operation({
+        ...request,
+        mcpServers: request.mcpServers.filter((server) => server !== failedServer),
+      }, 1);
+      const notice = `Continued without MCP server "${redactBugReportSensitiveText(failedServer.name)}": ${preview}`;
+      logger.infoFile('[AcpBackend] ' + notice);
+      this.emit({ type: 'event', name: 'message', payload: { message: notice } });
+      return result;
+    }
   }
 
   private async cleanupInitializedProcessConnection(params: { graceMs: number }): Promise<void> {
@@ -1251,6 +1285,7 @@ export class AcpBackend implements AgentBackend {
       });
 
 	    this.process = spawn(spec.command, spec.args, spec.options);
+	    const spawnedProcess = this.process;
 
 	    if (!this.process.stdin || !this.process.stdout || !this.process.stderr) {
 	      throw new Error('Failed to create stdio pipes');
@@ -1317,6 +1352,7 @@ export class AcpBackend implements AgentBackend {
     });
 
     this.process.on('error', (err) => {
+      if (this.process !== spawnedProcess) return;
       // Log to file only, not console
       logger.debug(`[AcpBackend] Process error:`, err);
       this.abortPendingExtensionHandlers('ACP process error');
@@ -1325,6 +1361,8 @@ export class AcpBackend implements AgentBackend {
     });
 
 	    this.process.on('exit', (code, signal) => {
+	      // Cleanup detaches this process before killing it; that exit is not another provider failure.
+	      if (this.process !== spawnedProcess) return;
 	      this.abortPendingExtensionHandlers('ACP process exited');
 	      const hasSignal = typeof signal === 'string' && signal.trim().length > 0;
 	      const hasNonZeroCode = typeof code === 'number' && Number.isFinite(code) && code !== 0;
@@ -1891,12 +1929,12 @@ export class AcpBackend implements AgentBackend {
 
       logger.debug(`[AcpBackend] Creating new session...`);
 
-      const sessionResponse = await withRetry(
+      const sessionResponse = await this.requestSessionWithMcpRecovery(newSessionRequest, (request, maxAttempts) => withRetry(
         async () => {
           let timeoutHandle: NodeJS.Timeout | null = null;
           try {
             const result = await Promise.race([
-              this.connection!.peer.newSession(newSessionRequest).then((res) => {
+              this.connection!.peer.newSession(request).then((res) => {
                 if (timeoutHandle) {
                   clearTimeout(timeoutHandle);
                   timeoutHandle = null;
@@ -1918,11 +1956,12 @@ export class AcpBackend implements AgentBackend {
         },
         {
           operationName: 'NewSession',
-          maxAttempts: RETRY_CONFIG.maxAttempts,
+          maxAttempts,
+          shouldRetry: (error) => this.readMcpStartupFailure(request, error) === null,
           baseDelayMs: RETRY_CONFIG.baseDelayMs,
           maxDelayMs: RETRY_CONFIG.maxDelayMs,
         }
-      );
+      ));
       const sessionId = readNonBlankOpaqueIdentifier(sessionResponse.sessionId);
       if (!sessionId) {
         throw new Error('New session response did not include a session id');
@@ -1994,17 +2033,17 @@ export class AcpBackend implements AgentBackend {
       const loadSessionRequest: LoadSessionRequest = {
         sessionId: normalized,
         cwd: this.options.cwd,
-        mcpServers: this.buildAcpMcpServersForSessionRequest() as unknown as LoadSessionRequest['mcpServers'],
+        mcpServers: this.buildAcpMcpServersForSessionRequest(),
       };
 
       logger.debug(`[AcpBackend] Loading session: ${normalized}`);
 
-      const sessionResponse = await withRetry(
+      const sessionResponse = await this.requestSessionWithMcpRecovery(loadSessionRequest, (request, maxAttempts) => withRetry(
         async () => {
           let timeoutHandle: NodeJS.Timeout | null = null;
           try {
             const result = await Promise.race([
-              this.connection!.peer.loadSession(loadSessionRequest).then((res) => {
+              this.connection!.peer.loadSession(request).then((res) => {
                 if (timeoutHandle) {
                   clearTimeout(timeoutHandle);
                   timeoutHandle = null;
@@ -2026,11 +2065,12 @@ export class AcpBackend implements AgentBackend {
         },
         {
           operationName: 'LoadSession',
-          maxAttempts: RETRY_CONFIG.maxAttempts,
+          maxAttempts,
+          shouldRetry: (error) => this.readMcpStartupFailure(request, error) === null,
           baseDelayMs: RETRY_CONFIG.baseDelayMs,
           maxDelayMs: RETRY_CONFIG.maxDelayMs,
         }
-      );
+      ));
 
       this.acpSessionId = normalized;
       logger.debug(`[AcpBackend] Session loaded: ${normalized}`);
@@ -2098,7 +2138,7 @@ export class AcpBackend implements AgentBackend {
       const request: ForkSessionRequest = {
         sessionId: normalized,
         cwd: typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : this.options.cwd,
-        mcpServers: this.buildAcpMcpServersForSessionRequest() as unknown as ForkSessionRequest['mcpServers'],
+        mcpServers: this.buildAcpMcpServersForSessionRequest(),
       };
 
       const response = await connection.peer.forkSession(request).catch((error) => {

@@ -83,6 +83,18 @@ function extractErrorText(error: unknown): string {
     .join(' ');
 }
 
+/** ACP/JSON-RPC rejection messages are provider evidence; never expose the arbitrary data bag. */
+export function buildSafeProviderRejectionPreview(error: unknown): string | null {
+  const record = readRecord(error);
+  if (typeof record?.code !== 'number' || !Number.isSafeInteger(record.code)) return null;
+  if (typeof record.message !== 'string') return null;
+  const preview = redactBugReportSensitiveText(record.message)
+    .replace(PI_PROVIDER_TOKEN_PATTERN, '[redacted-provider-token]')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  return preview ? preview.slice(0, 2_000) : null;
+}
+
 function readProviderLimitCategory(error: unknown) {
   const data = readRecord(readRecord(error)?.data);
   return readConnectedServiceLimitCategoryV1(data?.limitCategory)
@@ -455,6 +467,7 @@ export function classifyPrimarySessionRuntimeIssue(
         ?? piProviderFailure?.sanitizedPreview
         ?? buildSafeModelNotFoundPreview(input.error)
         ?? buildSafePiTerminalDiagnosticPreview({ provider, error: input.error })
+        ?? buildSafeProviderRejectionPreview(input.error)
         ?? sanitizedPreviewBySource[source]
       : 'Provider is temporarily limiting requests',
     ...(usageLimit === null ? {} : { usageLimit }),

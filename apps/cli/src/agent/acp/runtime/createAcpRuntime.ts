@@ -1222,20 +1222,26 @@ export function createAcpRuntime(params: {
   ): Promise<Extract<ACPMessageData, { type: 'turn_failed' }> | null> | null => {
     if (isAbortLikeError(detailRaw)) return null;
     const compatibilityMarkerId = beginCapturedLifecycleTurn(turn);
+    let failureTurnId: string | null = null;
     const issuePromise = surfacePrimarySessionRuntimeIssue({
       cause,
       provider: params.provider,
       providerTurnId: turn.providerTurnId,
       error: detailRaw,
       session: { sessionTurnLifecycle: params.session.sessionTurnLifecycle },
-      onFailureTurn: ({ issue }) => notifyAcceptedTurnFailure(detailRaw, issue),
+      allocateTurnWhenIdle: true,
+      onFailureTurn: ({ turnId, issue }) => {
+        failureTurnId = turnId;
+        notifyAcceptedTurnFailure(detailRaw, issue);
+      },
     });
     return Promise.all([compatibilityMarkerId, issuePromise]).then(([markerId, issue]) => {
       if (!params.session.sessionTurnLifecycle && issue) notifyAcceptedTurnFailure(detailRaw, issue);
-      if (markerId || !params.session.sessionTurnLifecycle) {
+      const id = markerId ?? failureTurnId;
+      if (id || !params.session.sessionTurnLifecycle) {
         return {
           type: 'turn_failed',
-          id: markerId ?? randomUUID(),
+          id: id ?? randomUUID(),
           ...(issue ? { issue } : {}),
         };
       }
@@ -1867,6 +1873,13 @@ export function createAcpRuntime(params: {
 
           case 'event': {
             const name = msg.name;
+            if (name === 'message') {
+              const message = asRecord(msg.payload)?.message;
+              if (typeof message === 'string' && message.trim()) {
+                params.messageBuffer.addMessage(message, 'status');
+                params.session.sendSessionEvent?.({ type: 'message', message });
+              }
+            }
             if (name === 'connected-service-runtime-auth-recovery') {
               const recoveryEvent = parseConnectedServiceRuntimeAuthRecoveryEvent(msg.payload);
               if (recoveryEvent) {

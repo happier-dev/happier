@@ -1,5 +1,5 @@
 import { providers } from '@happier-dev/agents';
-import type { SessionMessageRole } from '@happier-dev/protocol';
+import { SessionRuntimeIssueV1Schema, type SessionMessageRole } from '@happier-dev/protocol';
 
 import type { MessageMeta } from '../domains/messages/messageMetaTypes';
 import type { PeerMessageSender } from '../domains/messages/messageTypes';
@@ -359,6 +359,21 @@ export function normalizeRawMessage(
     }
     const raw = parsed.data as RawRecord;
     if (raw.role === 'user' && isSessionToolAnswerDeliveryMeta(raw.meta)) return null;
+
+    // Terminal markers also carry the provider's actionable failure. Keep their existing
+    // lifecycle processing, and project the issue through the ordinary session notice row.
+    if (raw.role === 'agent' && (raw.content.type === 'acp' || raw.content.type === 'codex')
+        && raw.content.data.type === 'turn_failed') {
+        const issue = SessionRuntimeIssueV1Schema.safeParse(raw.content.data.issue);
+        if (issue.success && typeof issue.data.sanitizedPreview === 'string' && issue.data.sanitizedPreview.trim()) {
+            return {
+                id, ...(seq !== undefined ? { seq } : {}), localId, createdAt,
+                role: 'event', isSidechain: false,
+                content: { type: 'message', message: issue.data.sanitizedPreview },
+                meta: raw.meta,
+            } satisfies NormalizedMessage;
+        }
+    }
 
     const toolResultContentToText = (content: unknown): string => {
         if (content === null || content === undefined) return '';
