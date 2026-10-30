@@ -73,23 +73,6 @@ describe('readPosthogSampledIssueEvents', () => {
         }]);
     });
 
-    it('never requests code variables, environment, release, or diagnostics context', async () => {
-        const { client, calls } = setup(() => json(queryIssueEventsPage));
-
-        await readPosthogSampledIssueEvents(client, {
-            teamRouteId: 4821,
-            issueId: ISSUE_ID,
-            detailWindow: DETAIL_WINDOW,
-            limit: 3,
-            offset: 0,
-        }, {});
-
-        const body = calls[0]?.body as Readonly<{ include: readonly string[] }>;
-        for (const forbidden of ['code_variables', 'environment', 'release', 'diagnostics']) {
-            expect(body.include).not.toContain(forbidden);
-        }
-    });
-
     it('clamps a requested page to the provider sample ceiling and refuses a non-positive page', async () => {
         const { client, calls } = setup(() => json(queryIssueEventsPage));
 

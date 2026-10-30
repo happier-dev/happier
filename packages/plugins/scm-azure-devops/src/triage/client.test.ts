@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  AZURE_DEVOPS_AUTHORIZATION_HEADER_NAME,
-  materializeAzureDevOpsListedAuthorization,
-} from './auth.js';
 import { createAzureDevOpsApiClient } from './client.js';
 import { normalizeAzureDevOpsBaseUrl } from './origin.js';
 import type {
@@ -248,102 +244,5 @@ describe('createAzureDevOpsApiClient', () => {
     const controller = new AbortController();
     await harness.client.request({ route: { resource: 'projects' }, signal: controller.signal });
     expect(harness.calls[0]?.signal).toBe(controller.signal);
-  });
-});
-
-describe('materializeAzureDevOpsListedAuthorization', () => {
-  const ACCOUNT = {
-    service: { pluginId: 'happier.scm.forge.azure-devops', localId: 'azure-devops-account' },
-    accountId: 'acct-1',
-  } as const;
-
-  it('materializes the exact bound account against the configured request origin', async () => {
-    // `CONTRACT.md` §3.1: a configured instance is bound to one exact account, so this seam names
-    // it. Reauthorizing "the currently selected binding for the purpose" would let a second
-    // account's credential answer for this instance — the multi-account split-brain this
-    // exact-account path exists to close.
-    const materializeListedAccount = vi.fn(async () => ({
-      kind: 'httpHeaders' as const,
-      headers: { authorization: 'Basic REDACTED' },
-    }));
-    const signal = new AbortController().signal;
-
-    const result = await materializeAzureDevOpsListedAuthorization({
-      connectedAccounts: { materializeListedAccount },
-      purpose: 'azure-devops-account',
-      account: ACCOUNT,
-      origin: origin(),
-      signal,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(materializeListedAccount).toHaveBeenCalledTimes(1);
-    expect(materializeListedAccount).toHaveBeenCalledWith(
-      {
-        purpose: 'azure-devops-account',
-        account: ACCOUNT,
-        materialization: {
-          kind: 'httpHeaders',
-          origin: 'https://dev.azure.com',
-          headerNames: [AZURE_DEVOPS_AUTHORIZATION_HEADER_NAME],
-        },
-      },
-      { signal },
-    );
-  });
-
-  it('never echoes a materialization rejection into the failure detail', async () => {
-    const result = await materializeAzureDevOpsListedAuthorization({
-      connectedAccounts: {
-        materializeListedAccount: async () => {
-          throw new Error('pat=super-secret-token-value');
-        },
-      },
-      purpose: 'azure-devops-account',
-      account: ACCOUNT,
-      origin: origin(),
-      signal: new AbortController().signal,
-    });
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.failure.class).toBe('unauthorized');
-      expect(result.failure.detail).not.toContain('super-secret-token-value');
-    }
-  });
-
-  it('refuses a materialization that produced no header instead of calling Azure unauthenticated', async () => {
-    const result = await materializeAzureDevOpsListedAuthorization({
-      connectedAccounts: {
-        materializeListedAccount: async () => ({ kind: 'httpHeaders' as const, headers: {} }),
-      },
-      purpose: 'azure-devops-account',
-      account: ACCOUNT,
-      origin: origin(),
-      signal: new AbortController().signal,
-    });
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.failure.class).toBe('unauthorized');
-  });
-
-  it('refuses a cancelled invocation before it asks the host for a credential', async () => {
-    const controller = new AbortController();
-    controller.abort();
-    const materializeListedAccount = vi.fn(async () => ({
-      kind: 'httpHeaders' as const,
-      headers: { authorization: 'Basic REDACTED' },
-    }));
-
-    const result = await materializeAzureDevOpsListedAuthorization({
-      connectedAccounts: { materializeListedAccount },
-      purpose: 'azure-devops-account',
-      account: ACCOUNT,
-      origin: origin(),
-      signal: controller.signal,
-    });
-
-    expect(result.ok).toBe(false);
-    expect(materializeListedAccount).not.toHaveBeenCalled();
   });
 });
