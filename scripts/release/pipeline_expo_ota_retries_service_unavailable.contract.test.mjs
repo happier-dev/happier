@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
@@ -38,12 +38,9 @@ function createStubBin(prefix) {
       `count="$(cat ${JSON.stringify(attemptsPath)} 2>/dev/null || echo 0)"`,
       'count="$((count + 1))"',
       `echo "$count" > ${JSON.stringify(attemptsPath)}`,
-      'if [[ "$count" -eq 1 ]]; then',
-      '  echo "Service Unavailable" >&2',
-      '  echo "Error: GraphQL request failed." >&2',
-      '  exit 1',
-      'fi',
-      'exit 0',
+      // The request was sent; a lost response cannot tell the publisher whether it was accepted.
+      'echo "Service Unavailable: socket hang up after request sent" >&2',
+      'exit 1',
       '',
     ].join('\n'),
   );
@@ -51,10 +48,10 @@ function createStubBin(prefix) {
   return { dir, binDir, attemptsPath, npxLogPath };
 }
 
-test('expo ota update retries when EAS update fails with Service Unavailable', () => {
+test('expo ota reports an unknown outcome without replaying a publish after a lost response', () => {
   const stub = createStubBin('happier-pipeline-expo-ota-retry-');
 
-  execFileSync(
+  const result = spawnSync(
     process.execPath,
     [
       path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'ota-update.mjs'),
@@ -74,7 +71,7 @@ test('expo ota update retries when EAS update fails with Service Unavailable', (
         EXPO_TOKEN: 'contract-test',
         SENTRY_AUTH_TOKEN: '',
         // Keep the test fast and deterministic.
-        HAPPIER_PIPELINE_EXPO_OTA_MAX_RETRIES: '1',
+        HAPPIER_PIPELINE_EXPO_OTA_MAX_RETRIES: '',
         HAPPIER_PIPELINE_EXPO_OTA_RETRY_DELAY_MS: '0',
       },
       encoding: 'utf8',
@@ -84,5 +81,7 @@ test('expo ota update retries when EAS update fails with Service Unavailable', (
   );
 
   const attempts = fs.readFileSync(stub.attemptsPath, 'utf8').trim();
-  assert.equal(attempts, '2');
+  assert.equal(attempts, '1');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /outcome[ -]unknown/i);
 });
