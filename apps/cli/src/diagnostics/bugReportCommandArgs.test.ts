@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { parseBugReportArgs } from './bugReportCommandArgs';
 
 describe('parseBugReportArgs', () => {
+  it('defaults to daemon and session logs with provider transcripts opt in, and supports independent exclusions', () => {
+    expect(parseBugReportArgs([]).logSelection).toEqual({ daemon: true, session: true, provider: false });
+    expect(parseBugReportArgs(['--no-include-daemon-logs', '--no-include-session-logs', '--include-provider-transcript']).logSelection)
+      .toEqual({ daemon: false, session: false, provider: true });
+    expect(parseBugReportArgs(['--include-daemon-logs', '--include-session-logs', '--no-include-provider-transcript']).logSelection)
+      .toEqual({ daemon: true, session: true, provider: false });
+  });
   it('treats -h as missing value for --provider-url instead of consuming it', () => {
     expect(() => parseBugReportArgs(['--provider-url', '-h'])).toThrow(/Missing value for --provider-url/);
   });

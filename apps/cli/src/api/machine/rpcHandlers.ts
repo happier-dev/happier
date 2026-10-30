@@ -19,6 +19,7 @@ import {
   AcpConfigOptionOverridesV1Schema,
   AgentRuntimeDescriptorV1Schema,
   BackendTargetRefSchema,
+  BugReportLogSelectionSchema,
   ConnectedServiceBindingsV1Schema,
   PendingFirstInputV1Schema,
   RestartAllSessionRunnersRequestV1Schema,
@@ -2338,8 +2339,19 @@ export function registerMachineRpcHandlers(params: Readonly<{
     }
   });
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS, async () => {
-    return await collectBugReportMachineDiagnosticsSnapshotForBugReport();
+  rpcHandlerManager.registerHandler(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS, async (rawParams: unknown) => {
+    const request = rawParams && typeof rawParams === 'object' ? rawParams as Record<string, unknown> : null;
+    if (!request || (!('sessionId' in request) && !('logSelection' in request))) {
+      return await collectBugReportMachineDiagnosticsSnapshotForBugReport();
+    }
+    const logSelection = BugReportLogSelectionSchema.partial().safeParse(request.logSelection ?? {});
+    if (!logSelection.success || (request.sessionId !== undefined && typeof request.sessionId !== 'string')) {
+      throw new Error('Invalid bug report diagnostics request');
+    }
+    return await collectBugReportMachineDiagnosticsSnapshotForBugReport({
+      sessionId: typeof request.sessionId === 'string' ? request.sessionId : undefined,
+      logSelection: logSelection.data,
+    }, { machineId: params.machineId });
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.BUGREPORT_GET_LOG_TAIL, async (params: any) => {

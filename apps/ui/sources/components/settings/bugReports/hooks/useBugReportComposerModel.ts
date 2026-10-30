@@ -1,6 +1,7 @@
 import React from 'react';
 
 import {
+  type BugReportLogSelection,
   BUG_REPORT_DEFAULT_ISSUE_OWNER,
   BUG_REPORT_DEFAULT_ISSUE_REPO,
 } from '@happier-dev/protocol';
@@ -8,7 +9,8 @@ import {
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { Profile } from '@/sync/domains/profiles/profile';
 
-import { collectBugReportDiagnosticsArtifacts } from '../bugReportDiagnostics';
+import type { BugReportSessionTarget } from '../bugReportDiagnostics';
+import { usePreparedBugReportDiagnostics } from './usePreparedBugReportDiagnostics';
 import type { BugReportsFeature } from '../bugReportFeatureDefaults';
 import type {
   BugReportDeploymentType,
@@ -30,6 +32,7 @@ export function useBugReportComposerModel(input: Readonly<{
   profile: Profile | null;
   serverUrlDefault: string;
   route: string;
+  sessionTarget?: BugReportSessionTarget | null;
 }>): {
   title: string;
   setTitle: (value: string) => void;
@@ -63,6 +66,9 @@ export function useBugReportComposerModel(input: Readonly<{
   setServerUrl: (value: string) => void;
   serverVersion: string;
   setServerVersion: (value: string) => void;
+  logSelection: BugReportLogSelection;
+  setLogSelection: (value: BugReportLogSelection) => void;
+  collectionStatuses: ReturnType<typeof usePreparedBugReportDiagnostics>['collectionStatuses'];
   includeDiagnostics: boolean;
   setIncludeDiagnostics: (value: boolean) => void;
   diagnosticsKinds: string[];
@@ -92,6 +98,8 @@ export function useBugReportComposerModel(input: Readonly<{
   const { buildDraftInput, ...draftFields } = draft;
 
   const {
+    logSelection,
+    setLogSelection,
     includeDiagnostics,
     setIncludeDiagnostics,
     diagnosticsKinds,
@@ -116,18 +124,16 @@ export function useBugReportComposerModel(input: Readonly<{
     includeDiagnostics,
   });
 
-  const collectDiagnosticsArtifacts = React.useCallback(async (args: {
-    machines: Machine[];
-    includeDiagnostics: boolean;
-    acceptedKinds: string[];
-    maxArtifactBytes: number;
-    contextWindowMs?: number;
-  }) => {
-    return await collectBugReportDiagnosticsArtifacts({
-      ...args,
-      pastedCliDoctorSnapshotJson,
-    });
-  }, [pastedCliDoctorSnapshotJson]);
+  const { collectDiagnosticsArtifacts, collectionStatuses } = usePreparedBugReportDiagnostics({
+    machines: input.machines,
+    includeDiagnostics,
+    acceptedKinds: diagnosticsKinds,
+    maxArtifactBytes: input.feature.maxArtifactBytes,
+    contextWindowMs: input.feature.contextWindowMs,
+    pastedCliDoctorSnapshotJson,
+    sessionTarget: input.sessionTarget,
+    logSelection,
+  });
 
   const { submitting, handleSubmit } = useBugReportComposerSubmit({
     feature: input.feature,
@@ -154,13 +160,7 @@ export function useBugReportComposerModel(input: Readonly<{
     disabled: submitting,
     includeDiagnostics,
     selectedKinds: diagnosticsKinds,
-    collectDiagnosticsArtifacts: async () => await collectDiagnosticsArtifacts({
-      machines: input.machines,
-      includeDiagnostics,
-      acceptedKinds: diagnosticsKinds,
-      maxArtifactBytes: input.feature.maxArtifactBytes,
-      contextWindowMs: input.feature.contextWindowMs,
-    }),
+    collectDiagnosticsArtifacts,
   });
 
   const similarIssues = useBugReportSimilarIssues({
@@ -178,6 +178,9 @@ export function useBugReportComposerModel(input: Readonly<{
 
   return {
     ...draftFields,
+    collectionStatuses,
+    logSelection,
+    setLogSelection,
     includeDiagnostics,
     setIncludeDiagnostics,
     diagnosticsKinds,

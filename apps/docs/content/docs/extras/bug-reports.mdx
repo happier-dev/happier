@@ -54,6 +54,22 @@ To reduce duplicate reports, Happier can search GitHub for potentially similar i
   - pass `--existing-issue-number <number>` to post the report as a comment on an existing issue
   - pass `--no-similar-issues` to skip duplicate searching in interactive mode
 
+## Session reports and diagnostic controls (development)
+
+The following flow is being developed in source and is not yet established as available in a released app. Report submission still depends on your server enabling bug reports.
+
+Open the session header menu and choose **Report an issue with this session** to start a report about that session. You can also open the existing report composer from app settings and use **Choose a session**. Both entry points use the same **Related session** picker when choosing or changing a session. A related session is optional: leave it empty for an app issue, or remove a selected session before sending. Without a related session, the app collects app diagnostics only, including local app logs when **App and daemon logs** is selected, with no machine or server logs. Select a session to attach logs from its own daemon and Happier session; the app does not choose another online machine automatically.
+
+Only a title and **What happened?** are required text fields. **Add more details** holds optional information such as reproduction steps and expected behavior; **Technical information** lets you review environment details.
+
+When diagnostics are included and the server accepts the relevant attachments, **App and daemon logs** and **Happier session logs** are selected by default. **Provider transcript** is off by default. Happier session logs can contain conversation excerpts. Automatic transcript attachment currently supports Claude Code and Codex, using matching files in their configured local homes; other agents or separate homes may have no transcript available.
+
+Choose **Technical information only** to exclude all raw logs, including the agent transcript. This keeps limited technical context, such as versions and collection status, rather than attaching whole settings, session metadata or runtime dumps. It does not add stack logs as a substitute for a missing selected log.
+
+Use **Preview diagnostics** to inspect the attachments and their collection status. Missing files, offline machines and older CLIs remain visible as unavailable or needing an update; they do not prevent sending the report text. Happier does not substitute a different session's logs. With the same session and collection settings, submission reuses the attachment contents prepared for the preview. Preview again after changing those settings.
+
+Report text is public in the GitHub issue or comment. Diagnostic attachments are sent privately to Happier maintainers. Collection redacts recognized secrets, but this does not remove all personal, project or conversation content. Review both your report text and attachments before sharing them.
+
 ## Crash recovery (development)
 
 Development source captures the latest UI exception, React component stack, timestamp, app/OTA metadata, loaded browser asset URLs, desktop wrapper version when available, OS details and recent action trail before either recovery restart action. Browser asset URLs can identify production bundles; a development Metro URL does not establish an exact source revision. **Restart and open bug report** also opens the report composer after restarting. These changes are not yet established as available in a released app.
@@ -82,6 +98,29 @@ happier bug-report \
 ```
 
 If required fields are missing in an interactive terminal, the CLI prompts for them. In non-interactive mode, pass all required flags.
+
+### Session selection and local export (development)
+
+These CLI options are under development and are not yet established as available in a released CLI. Use `--session-id <id>` to select the Happier session the report concerns. Omit it for a report without a related session.
+
+Control each log source with `--include-daemon-logs` / `--no-include-daemon-logs`, `--include-session-logs` / `--no-include-session-logs`, and `--include-provider-transcript` / `--no-include-provider-transcript`. Daemon and Happier session logs default to included; the agent transcript defaults to excluded. These selections apply when diagnostics are enabled and the server accepts those attachment kinds. The automatic transcript availability limits above also apply to the CLI.
+
+For technical context without raw logs, turn all three sources off. This example writes a local diagnostics bundle:
+
+```bash
+happier bug-report \
+  --title "Session connection issue" \
+  --summary "The session stopped receiving updates" \
+  --session-id "<happier-session-id>" \
+  --include-diagnostics \
+  --no-include-daemon-logs \
+  --no-include-session-logs \
+  --no-include-provider-transcript \
+  --accept-privacy-notice \
+  --export ./bug-report.json
+```
+
+`--export <path>` and `--dry-run --output <path>` collect and save the report locally, without uploading it or searching for similar issues. Collection may still contact the selected server for configuration or diagnostic information. The bundle includes your report text and the collected attachments; recognized secrets are redacted from collected diagnostic content, but your text and remaining log content still need review before sharing. Do not add `--attach`, `--attach-session-log` or `--attach-provider-transcript` when you want a report without raw logs or other file contents.
 
 ### Reporter GitHub username (optional)
 

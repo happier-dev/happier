@@ -13,6 +13,7 @@ import { collectBugReportDiagnosticsArtifacts } from '../bugReportDiagnostics';
 import type { BugReportsFeature } from '../bugReportFeatureDefaults';
 import { openBugReportFallbackIssueUrl, openBugReportIssueUrlSilently } from '../openBugReportFallback';
 import { submitBugReportToService } from '../bugReportServiceClient';
+import { bugReportErrorMessage, isBugReportDiagnosticsSuperseded } from '../bugReportErrorMessage';
 import { submitBugReportFromDraft, validateBugReportDraft } from '../bugReportSubmissionFlow';
 import type { BugReportComposerSubmissionInput } from '../bugReportSubmissionFlow';
 
@@ -113,8 +114,12 @@ export function useBugReportComposerSubmit(input: Readonly<{
       void clearPreRestartBugReportSnapshot();
       router.back();
     } catch (error) {
-      const baseMessage =
-        error instanceof Error ? error.message : t('bugReports.composer.alerts.submitFailedFallbackMessage');
+      if (isBugReportDiagnosticsSuperseded(error)) return;
+      const baseMessage = bugReportErrorMessage(error, t('bugReports.composer.alerts.submitFailedFallbackMessage'));
+      if (error instanceof Error && error.message === 'bug_report_diagnostics_scope_changed') {
+        await Modal.alert(t('bugReports.composer.alerts.submitFailedTitle'), baseMessage);
+        return;
+      }
       const fallback = await Modal.confirm(
         t('bugReports.composer.alerts.submitFailedTitle'),
         t('bugReports.composer.alerts.submitFailedBody', { message: baseMessage }),

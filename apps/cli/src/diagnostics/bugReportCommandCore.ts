@@ -218,10 +218,7 @@ export async function runBugReportCommand(
     interactive,
     promptInputFn: deps.promptInput,
   });
-  const summaryWithSessionId = parsed.sessionId
-    ? `${summary}\n\nHappier session id: ${parsed.sessionId}`
-    : summary;
-  const summaryWithReporter = appendBugReportReporterToSummary(summaryWithSessionId, parsed.githubUsername);
+  const summaryWithReporter = appendBugReportReporterToSummary(summary, parsed.githubUsername);
   const currentBehavior = parsed.currentBehavior.trim() || undefined;
   const expectedBehavior = parsed.expectedBehavior.trim() || undefined;
 
@@ -344,6 +341,8 @@ export async function runBugReportCommand(
         serverUrl: activeServer.serverUrl,
         activeServerId: activeServer.id,
         rawArgs: args,
+        sessionId: parsed.sessionId || undefined,
+        logSelection: parsed.logSelection,
         extraAttachments: parsed.attachments.length > 0 ? parsed.attachments : undefined,
       })
     : { artifacts: [], environment: baseEnvironment };

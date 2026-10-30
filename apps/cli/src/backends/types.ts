@@ -419,7 +419,7 @@ export type AgentCatalogEntry = Readonly<{
    * owns only the "where would that id's log be" step.
    */
   resolveAgentNativeSessionLogPath?: (
-    input: Readonly<{ vendorResumeId: string }>,
+    input: Readonly<{ vendorResumeId: string; metadata?: Record<string, unknown> }>,
   ) => Promise<string | null> | string | null;
   /**
    * Optional provider-owned goal control adapter for inactive/offline local sessions.

@@ -108,6 +108,8 @@ export const agent = {
       targetStrict: input.targetStrict === true,
     }),
   getDirectSessionProviderOps: async () => (await import('@/backends/claude/directSessions/providerOps')).claudeDirectSessionProviderOps,
+  resolveAgentNativeSessionLogPath: async (input) =>
+    await (await import('@/backends/claude/utils/resolveClaudeNativeSessionLogPath')).resolveClaudeNativeSessionLogPath(input),
   onTerminalAttachmentRetired: async ({ happyHomeDir, sessionId, attachmentInfo }) => {
     const result = await (await import('./endpointRecovery/claudeEndpointArtifacts'))
       .retireClaudeEndpointArtifactsForTerminalAttachment({

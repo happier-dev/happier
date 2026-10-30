@@ -376,7 +376,7 @@ export function resolveConnectedServiceCandidatePersistedSessionFile(
  */
 export async function resolveAgentNativeSessionLogPathThroughCatalog(
   agentId: AgentId | null | undefined,
-  input: Readonly<{ vendorResumeId: string }>,
+  input: Readonly<{ vendorResumeId: string; metadata?: Record<string, unknown> }>,
 ): Promise<string | null> {
   const catalogId = resolveCatalogAgentId(agentId);
   const entry = AGENTS[catalogId];

@@ -2,38 +2,45 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import {
     hasAcceptedBugReportArtifactKind,
+    BUG_REPORT_LOG_SOURCE_KINDS,
     inferBugReportDeploymentTypeFromServerUrl as inferDeploymentType,
     pushBugReportArtifact,
     resolveBugReportServerDiagnosticsLines,
-    sanitizeBugReportDaemonDiagnosticsPayload,
     sanitizeBugReportArtifactFileSegment,
-    sanitizeBugReportArtifactPath,
-    sanitizeBugReportStackContextPayload,
     sanitizeBugReportUrl,
     parseDoctorSnapshotSafe,
+    resolveBugReportLogSelection,
+    type BugReportLogSelection,
     type BugReportArtifactPayload,
 } from '@happier-dev/protocol';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getStorage } from '@/sync/domains/state/storage';
+import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { loadProfile, loadSyncReliabilityEvents } from '@/sync/domains/state/persistence';
 import { serverFetch } from '@/sync/http/client';
-import { machineCollectBugReportDiagnostics, machineGetBugReportLogTail } from '@/sync/ops/machines';
+import { machineCollectBugReportDiagnostics } from '@/sync/ops/machines';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
 import { getBugReportLogText } from '@/utils/system/bugReportLogBuffer';
 import { peekPreRestartBugReportSnapshot } from '@/utils/system/preRestartBugReportSnapshot';
 
 import type { BugReportDeploymentType } from './bugReportFallback';
 import { resolvePositiveInt, runAbortableWithTimeout, runWithTimeout } from './bugReportAsync';
-import { buildLatestSessionSnapshot } from './bugReportSessionSnapshot';
+import { buildSelectedSessionSnapshot } from './bugReportSessionSnapshot';
 
 export type BugReportDiagnosticsArtifact = BugReportArtifactPayload;
 
-type DiagnosticsCollectionStatus = 'collected' | 'skipped' | 'error';
+type DiagnosticsCollectionStatus = 'collected' | 'skipped' | 'error' | 'unavailable' | 'disabled' | 'unsupported';
+
+export type BugReportSessionTarget = Readonly<{
+    sessionId: string;
+    serverId: string;
+    accountId?: string | null;
+    machineId?: string | null;
+}>;
 
 type DiagnosticsCollectionEntry = {
     status: DiagnosticsCollectionStatus;
@@ -49,13 +56,10 @@ function pushArtifact(list: BugReportDiagnosticsArtifact[], artifact: BugReportD
     return list.length > before;
 }
 
-function toSanitizedLogFilename(path: string, fallback: string): string {
-    const basename = sanitizeBugReportArtifactPath(path) ?? fallback;
-    return sanitizeBugReportArtifactFileSegment(basename);
-}
-
 export async function collectBugReportDiagnosticsArtifacts(input: {
     machines: Machine[];
+    sessionTarget?: BugReportSessionTarget | null;
+    logSelection?: BugReportLogSelection;
     includeDiagnostics: boolean;
     acceptedKinds: string[];
     maxArtifactBytes: number;
@@ -67,6 +71,7 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
     nowMs?: number;
 }): Promise<{
     artifacts: BugReportDiagnosticsArtifact[];
+    collectionStatuses: Record<string, DiagnosticsCollectionEntry>;
     environment: {
         appVersion: string;
         platform: string;
@@ -78,6 +83,34 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
     };
 }> {
     const snapshot = getActiveServerSnapshot();
+    const storageState = getStorage().getState();
+    const profile = loadProfile();
+    const serverProfiles = listServerProfiles();
+    const sessionTarget = input.sessionTarget ? { ...input.sessionTarget } : null;
+    const serverId = sessionTarget?.serverId ?? snapshot.serverId;
+    const accountId = sessionTarget?.accountId !== undefined
+        ? sessionTarget.accountId
+        : (serverId === snapshot.serverId ? storageState.profileScope?.accountId ?? profile.id : null);
+    const serverProfile = serverProfiles.find((entry) => entry.id === serverId);
+    const targetServerUrl = serverId === snapshot.serverId ? snapshot.serverUrl : serverProfile?.serverUrl;
+    const logSelection = resolveBugReportLogSelection(input.logSelection);
+    const machineLogSelection = {
+        daemon: logSelection.daemon && hasAcceptedBugReportArtifactKind(input.acceptedKinds, BUG_REPORT_LOG_SOURCE_KINDS.daemon),
+        session: logSelection.session && hasAcceptedBugReportArtifactKind(input.acceptedKinds, BUG_REPORT_LOG_SOURCE_KINDS.session),
+        provider: logSelection.provider && hasAcceptedBugReportArtifactKind(input.acceptedKinds, BUG_REPORT_LOG_SOURCE_KINDS.provider),
+    };
+    const canCollectLocalLogs = !sessionTarget || (serverId === snapshot.serverId && accountId === profile.id);
+    const scopedSession = sessionTarget
+        ? storageState.sessionListViewDataByServerId?.[serverId]?.find((entry) => entry.type === 'session' && entry.session.id === sessionTarget.sessionId)
+        : null;
+    const hydratedSession = sessionTarget
+        && serverId === (storageState.profileScope?.serverId ?? snapshot.serverId)
+        && accountId === (storageState.profileScope?.accountId ?? profile.id)
+        ? storageState.sessions[sessionTarget.sessionId]
+        : null;
+    const targetMachineId = sessionTarget?.machineId
+        ?? resolveSessionMachineId(hydratedSession?.metadata)
+        ?? resolveSessionMachineId(scopedSession?.type === 'session' ? scopedSession.session.metadata : null);
     const appVersion = Constants.expoConfig?.version ?? 'unknown';
     const platform = Platform.OS;
     const osVersion = typeof Platform.Version === 'string' ? Platform.Version : String(Platform.Version ?? '');
@@ -88,14 +121,15 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
         platform,
         osVersion: osVersion || undefined,
         deviceModel,
-        serverUrl: sanitizeBugReportUrl(snapshot.serverUrl),
+        serverUrl: sanitizeBugReportUrl(targetServerUrl),
         serverVersion: undefined,
-        deploymentType: inferDeploymentType(snapshot.serverUrl),
+        deploymentType: inferDeploymentType(targetServerUrl ?? ''),
     } as const;
 
     if (!input.includeDiagnostics) {
         return {
             artifacts: [],
+            collectionStatuses: {},
             environment,
         };
     }
@@ -103,7 +137,6 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
     const artifacts: BugReportDiagnosticsArtifact[] = [];
     const machineDiagnosticsTimeoutMs = resolvePositiveInt(input.machineDiagnosticsTimeoutMs, 4_000, 100, 30_000);
     const serverDiagnosticsTimeoutMs = resolvePositiveInt(input.serverDiagnosticsTimeoutMs, 4_000, 100, 30_000);
-    const logTailTimeoutMs = resolvePositiveInt(input.logTailTimeoutMs, 4_000, 100, 30_000);
     const nowMs = resolvePositiveInt(input.nowMs, Date.now(), 0, Number.MAX_SAFE_INTEGER);
     const contextWindowMs = resolvePositiveInt(input.contextWindowMs, 30 * 60 * 1_000, 1_000, 24 * 60 * 60 * 1_000);
     const sinceMs = nowMs - contextWindowMs;
@@ -111,140 +144,154 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
         appLogs: { status: 'skipped', detail: 'no app logs collected' },
         userActions: { status: 'skipped', detail: 'no recent user actions' },
         preRestartSnapshot: { status: 'skipped', detail: 'no pre-restart snapshot found' },
-        latestSession: { status: 'skipped', detail: 'no recent session found' },
+        selectedSession: { status: 'skipped', detail: 'no session selected' },
+        daemon: logSelection.daemon ? { status: 'unavailable', detail: sessionTarget ? 'no machine diagnostics available' : 'no selected computer' } : { status: 'disabled' },
+        session: logSelection.session ? { status: 'unavailable', detail: sessionTarget ? 'selected session logs unavailable' : 'no session selected' } : { status: 'disabled' },
+        provider: logSelection.provider ? { status: 'unavailable', detail: sessionTarget ? 'selected provider logs unavailable' : 'no session selected' } : { status: 'disabled' },
         syncReliability: { status: 'skipped', detail: 'no persisted sync reliability events' },
         syncPerformance: { status: 'skipped', detail: 'sync performance telemetry disabled or empty' },
-        serverDiagnostics: { status: 'skipped', detail: 'source kind not accepted' },
+        serverDiagnostics: { status: 'skipped', detail: sessionTarget ? 'source kind not accepted or selected server/account unavailable' : 'no session selected' },
         machineDiagnostics: { status: 'skipped', detail: 'source kind not accepted' },
         pastedCliDoctorSnapshot: { status: 'skipped', detail: 'no pasted snapshot' },
     };
+    for (const kind of ['daemon', 'session', 'provider'] as const) {
+        if (logSelection[kind] && !machineLogSelection[kind]) {
+            diagnosticsCollection[kind] = { status: 'disabled', detail: 'artifact source kind not accepted by the server' };
+        }
+    }
 
-    const preRestart = await peekPreRestartBugReportSnapshot();
-    if (preRestart) {
-        let pushedAny = false;
-        // The composer owns the editable exception text. Reattaching the saved original here
-        // would silently undo the user's edits/redactions in the report fields.
-        pushedAny = pushArtifact(artifacts, {
-            filename: 'pre-restart-app-console.log',
-            sourceKind: 'ui-mobile',
-            contentType: 'text/plain',
-            content: preRestart.appLogs,
-        }, input) || pushedAny;
-        if (preRestart.userActions.length > 0) {
+    if (logSelection.daemon && canCollectLocalLogs) {
+        const preRestart = await peekPreRestartBugReportSnapshot();
+        if (preRestart) {
+            let pushedAny = false;
+            // The composer owns the editable exception text. Reattaching the saved original here
+            // would silently undo the user's edits/redactions in the report fields.
             pushedAny = pushArtifact(artifacts, {
-                filename: 'pre-restart-user-action-trail.json',
+                filename: 'pre-restart-app-console.log',
                 sourceKind: 'ui-mobile',
-                contentType: 'application/json',
-                content: JSON.stringify({
-                    capturedAt: new Date(preRestart.createdAtMs).toISOString(),
-                    actionCount: preRestart.userActions.length,
-                    actions: preRestart.userActions,
-                }, null, 2),
+                contentType: 'text/plain',
+                content: preRestart.appLogs,
             }, input) || pushedAny;
-        }
-        if (pushedAny) {
-            diagnosticsCollection.preRestartSnapshot = { status: 'collected' };
-        } else {
-            diagnosticsCollection.preRestartSnapshot = { status: 'skipped', detail: 'pre-restart snapshot was empty after trimming/redaction' };
-        }
-    }
-
-    const appLogs = getBugReportLogText(input.maxArtifactBytes, { sinceMs });
-    if (appLogs.trim()) {
-        const pushed = pushArtifact(artifacts, {
-            filename: 'app-console.log',
-            sourceKind: 'ui-mobile',
-            contentType: 'text/plain',
-            content: appLogs,
-        }, input);
-        if (pushed) diagnosticsCollection.appLogs = { status: 'collected' };
-    }
-
-    const userActions = getBugReportUserActionTrail({ sinceMs });
-    if (userActions.length > 0) {
-        const pushed = pushArtifact(artifacts, {
-            filename: 'user-action-trail.json',
-            sourceKind: 'ui-mobile',
-            contentType: 'application/json',
-            content: JSON.stringify({
-                capturedAt: new Date().toISOString(),
-                actionCount: userActions.length,
-                actions: userActions,
-            }, null, 2),
-        }, input);
-        if (pushed) diagnosticsCollection.userActions = { status: 'collected' };
-    }
-
-    try {
-        const syncReliabilityEvents = loadSyncReliabilityEvents()
-            .filter((event) => event.atMs >= sinceMs);
-        if (syncReliabilityEvents.length > 0) {
-            const pushed = pushArtifact(artifacts, {
-                filename: 'sync-reliability-events.json',
-                sourceKind: 'ui-mobile',
-                contentType: 'application/json',
-                content: JSON.stringify({
-                    capturedAt: new Date(nowMs).toISOString(),
-                    contextWindowMs,
-                    eventCount: syncReliabilityEvents.length,
-                    events: syncReliabilityEvents,
-                }, null, 2),
-            }, input);
-            if (pushed) {
-                diagnosticsCollection.syncReliability = { status: 'collected' };
+            if (preRestart.userActions.length > 0) {
+                pushedAny = pushArtifact(artifacts, {
+                    filename: 'pre-restart-user-action-trail.json',
+                    sourceKind: 'ui-mobile',
+                    contentType: 'application/json',
+                    content: JSON.stringify({
+                        capturedAt: new Date(preRestart.createdAtMs).toISOString(),
+                        actionCount: preRestart.userActions.length,
+                        actions: preRestart.userActions,
+                    }, null, 2),
+                }, input) || pushedAny;
+            }
+            if (pushedAny) {
+                diagnosticsCollection.preRestartSnapshot = { status: 'collected' };
             } else {
-                diagnosticsCollection.syncReliability = { status: 'skipped', detail: 'source kind not accepted or artifact was empty' };
+                diagnosticsCollection.preRestartSnapshot = { status: 'skipped', detail: 'pre-restart snapshot was empty after trimming/redaction' };
             }
         }
-    } catch {
-        diagnosticsCollection.syncReliability = { status: 'error', detail: 'failed to read persisted sync reliability events' };
-    }
 
-    try {
-        if (syncPerformanceTelemetry.isEnabled()) {
-            const syncPerformanceSnapshot = syncPerformanceTelemetry.snapshot();
-            if (syncPerformanceSnapshot.events.length > 0) {
+        const appLogs = getBugReportLogText(input.maxArtifactBytes, { sinceMs });
+        if (appLogs.trim()) {
+            const pushed = pushArtifact(artifacts, {
+                filename: 'app-console.log',
+                sourceKind: 'ui-mobile',
+                contentType: 'text/plain',
+                content: appLogs,
+            }, input);
+            if (pushed) diagnosticsCollection.appLogs = { status: 'collected' };
+        }
+
+        const userActions = getBugReportUserActionTrail({ sinceMs });
+        if (userActions.length > 0) {
+            const pushed = pushArtifact(artifacts, {
+                filename: 'user-action-trail.json',
+                sourceKind: 'ui-mobile',
+                contentType: 'application/json',
+                content: JSON.stringify({
+                    capturedAt: new Date().toISOString(),
+                    actionCount: userActions.length,
+                    actions: userActions,
+                }, null, 2),
+            }, input);
+            if (pushed) diagnosticsCollection.userActions = { status: 'collected' };
+        }
+
+        try {
+            const syncReliabilityEvents = loadSyncReliabilityEvents()
+                .filter((event) => event.atMs >= sinceMs);
+            if (syncReliabilityEvents.length > 0) {
                 const pushed = pushArtifact(artifacts, {
-                    filename: 'sync-performance-telemetry.json',
+                    filename: 'sync-reliability-events.json',
                     sourceKind: 'ui-mobile',
                     contentType: 'application/json',
                     content: JSON.stringify({
                         capturedAt: new Date(nowMs).toISOString(),
-                        eventCount: syncPerformanceSnapshot.events.length,
-                        telemetry: syncPerformanceSnapshot,
+                        contextWindowMs,
+                        eventCount: syncReliabilityEvents.length,
+                        events: syncReliabilityEvents,
                     }, null, 2),
                 }, input);
                 if (pushed) {
-                    diagnosticsCollection.syncPerformance = { status: 'collected' };
+                    diagnosticsCollection.syncReliability = { status: 'collected' };
                 } else {
-                    diagnosticsCollection.syncPerformance = { status: 'skipped', detail: 'source kind not accepted or artifact was empty' };
+                    diagnosticsCollection.syncReliability = { status: 'skipped', detail: 'source kind not accepted or artifact was empty' };
                 }
             }
+        } catch {
+            diagnosticsCollection.syncReliability = { status: 'error', detail: 'failed to read persisted sync reliability events' };
         }
-    } catch {
-        diagnosticsCollection.syncPerformance = { status: 'error', detail: 'failed to read sync performance telemetry snapshot' };
+
+        try {
+            if (syncPerformanceTelemetry.isEnabled()) {
+                const syncPerformanceSnapshot = syncPerformanceTelemetry.snapshot();
+                if (syncPerformanceSnapshot.events.length > 0) {
+                    const pushed = pushArtifact(artifacts, {
+                        filename: 'sync-performance-telemetry.json',
+                        sourceKind: 'ui-mobile',
+                        contentType: 'application/json',
+                        content: JSON.stringify({
+                            capturedAt: new Date(nowMs).toISOString(),
+                            eventCount: syncPerformanceSnapshot.events.length,
+                            telemetry: syncPerformanceSnapshot,
+                        }, null, 2),
+                    }, input);
+                    if (pushed) {
+                        diagnosticsCollection.syncPerformance = { status: 'collected' };
+                    } else {
+                        diagnosticsCollection.syncPerformance = { status: 'skipped', detail: 'source kind not accepted or artifact was empty' };
+                    }
+                }
+            }
+        } catch {
+            diagnosticsCollection.syncPerformance = { status: 'error', detail: 'failed to read sync performance telemetry snapshot' };
+        }
+
     }
 
-    const storageState = getStorage().getState();
-    const latestSessionSnapshot = buildLatestSessionSnapshot({
-        sessions: storageState.sessions,
+    const selectedSessionSnapshot = sessionTarget && hydratedSession ? buildSelectedSessionSnapshot({
+        sessionId: sessionTarget.sessionId,
+        sessions: { [hydratedSession.id]: hydratedSession },
         sessionMessages: storageState.sessionMessages,
         sessionPending: storageState.sessionPending,
-    });
-    if (latestSessionSnapshot) {
+    }) : null;
+    if (sessionTarget) {
         const pushed = pushArtifact(artifacts, {
-            filename: 'latest-session-summary.json',
+            filename: 'selected-session-summary.json',
             sourceKind: 'ui-mobile',
             contentType: 'application/json',
             content: JSON.stringify({
-                capturedAt: new Date().toISOString(),
-                latestSession: latestSessionSnapshot,
+                serverId,
+                accountId,
+                sessionId: sessionTarget.sessionId,
+                machineId: targetMachineId ?? null,
+                summary: selectedSessionSnapshot,
             }, null, 2),
         }, input);
-        if (pushed) diagnosticsCollection.latestSession = { status: 'collected' };
+        if (pushed) diagnosticsCollection.selectedSession = { status: 'collected' };
     }
 
-    if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'server')) {
+    if (sessionTarget && logSelection.daemon && canCollectLocalLogs && serverId === snapshot.serverId && getActiveServerSnapshot().generation === snapshot.generation && hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'server')) {
         const lines = resolveBugReportServerDiagnosticsLines(contextWindowMs);
         const serverSnapshot = await runAbortableWithTimeout(async (signal) => {
             const response = await serverFetch(`/v1/diagnostics/bug-report-snapshot?lines=${lines}`, {
@@ -274,126 +321,89 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
     }
 
     const allowDaemonDiagnostics = hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'daemon');
-    const allowStackDiagnostics = hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'stack-service');
-    const collectMachineDiagnostics = allowDaemonDiagnostics || allowStackDiagnostics;
-    const onlineMachines = collectMachineDiagnostics
-        ? input.machines.filter((machine) => isMachineOnline(machine)).slice(0, 3)
+    const collectMachineDiagnostics = hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'stack-service', ...Object.values(BUG_REPORT_LOG_SOURCE_KINDS));
+    // A selected session has exactly one machine authority. Missing metadata or an
+    // unavailable machine must never redirect collection to an unrelated machine.
+    const machineIds = collectMachineDiagnostics && accountId && sessionTarget && targetMachineId
+        ? [targetMachineId]
         : [];
     if (collectMachineDiagnostics) {
-        diagnosticsCollection.machineDiagnostics = onlineMachines.length > 0
+        diagnosticsCollection.machineDiagnostics = machineIds.length > 0
             ? { status: 'error', detail: 'machine diagnostics request timed out or failed' }
-            : { status: 'skipped', detail: 'no online machines available' };
+            : { status: 'skipped', detail: !accountId ? 'selected account unavailable' : sessionTarget ? 'selected session machine unavailable' : 'no selected computer' };
     }
 
-    for (const machine of onlineMachines) {
-        const machineIdSlug = sanitizeBugReportArtifactFileSegment(machine.id);
+    for (const machineId of machineIds) {
+        const machineIdSlug = sanitizeBugReportArtifactFileSegment(machineId);
         const diagnostics = await runWithTimeout(
-            async () => await machineCollectBugReportDiagnostics(machine.id, { timeoutMs: machineDiagnosticsTimeoutMs }),
+            async () => await machineCollectBugReportDiagnostics(machineId, {
+                timeoutMs: machineDiagnosticsTimeoutMs,
+                serverId,
+                accountId,
+                sessionId: sessionTarget?.sessionId,
+                logSelection: machineLogSelection,
+            }),
             machineDiagnosticsTimeoutMs,
         );
         if (!diagnostics) continue;
         diagnosticsCollection.machineDiagnostics = { status: 'collected' };
 
         if (allowDaemonDiagnostics) {
-            const daemonDiagnostics = sanitizeBugReportDaemonDiagnosticsPayload(diagnostics);
+            // Older daemons can ignore the additive exclusions. Keep their known
+            // structural facts only; never serialize arbitrary runtime/doctor fields.
             pushArtifact(artifacts, {
                 filename: `${machineIdSlug}-daemon-summary.json`,
                 sourceKind: 'daemon',
                 contentType: 'application/json',
                 content: JSON.stringify({
-                    machineId: machine.id,
-                    diagnostics: daemonDiagnostics,
+                    machineId,
+                    diagnostics: {
+                        daemonState: diagnostics.daemonState ? {
+                            pid: diagnostics.daemonState.pid,
+                            httpPort: diagnostics.daemonState.httpPort,
+                            startedAt: diagnostics.daemonState.startedAt,
+                            startedWithCliVersion: diagnostics.daemonState.startedWithCliVersion,
+                            hasControlToken: diagnostics.daemonState.hasControlToken,
+                        } : null,
+                        runtime: {
+                            platform: diagnostics.runtime.platform,
+                            nodeVersion: diagnostics.runtime.nodeVersion,
+                        },
+                    },
                 }, null, 2),
             }, input);
-
-            const doctorSnapshot = (diagnostics as { doctorSnapshot?: unknown }).doctorSnapshot;
-            if (doctorSnapshot) {
-                pushArtifact(artifacts, {
-                    filename: `${machineIdSlug}-cli-doctor-snapshot.json`,
-                    sourceKind: 'daemon',
-                    contentType: 'application/json',
-                    content: JSON.stringify({
-                        machineId: machine.id,
-                        doctorSnapshot,
-                    }, null, 2),
-                }, input);
-            }
         }
 
-        if (allowStackDiagnostics && diagnostics.stackContext) {
-            const stackContext = sanitizeBugReportStackContextPayload(diagnostics.stackContext);
-            pushArtifact(artifacts, {
-                filename: `${machineIdSlug}-stack-context.json`,
-                sourceKind: 'stack-service',
-                contentType: 'application/json',
-                content: JSON.stringify({
-                    machineId: machine.id,
-                    stackContext,
-                }, null, 2),
-            }, input);
-
-            if (diagnostics.stackContext.runtimeState) {
-                pushArtifact(artifacts, {
-                    filename: `${machineIdSlug}-stack-runtime.json`,
-                    sourceKind: 'stack-service',
-                    contentType: 'application/json',
-                    content: diagnostics.stackContext.runtimeState,
-                }, input);
+        const sessionDiagnostics = diagnostics.sessionDiagnostics;
+        const matchingSession = sessionDiagnostics
+            && sessionDiagnostics.context.sessionId === (sessionTarget?.sessionId ?? '')
+            && (!sessionDiagnostics.context.machineId || sessionDiagnostics.context.machineId === machineId)
+            && sessionDiagnostics.context.metadataStatus !== 'wrong-machine';
+        for (const kind of ['daemon', 'session', 'provider'] as const) {
+            if (!machineLogSelection[kind]) continue;
+            if (!matchingSession) {
+                diagnosticsCollection[kind] = { status: 'unsupported', detail: 'daemon did not confirm the requested log scope' };
+                continue;
             }
-        }
-
-        if (allowDaemonDiagnostics) {
-            const candidatePaths = new Set<string>();
-            if (diagnostics.daemonState?.daemonLogPath) {
-                candidatePaths.add(diagnostics.daemonState.daemonLogPath);
+            if (kind !== 'daemon' && (!sessionTarget || sessionDiagnostics.context.metadataStatus !== 'available')) {
+                diagnosticsCollection[kind] = { status: 'unavailable', detail: 'selected session metadata unavailable' };
+                continue;
             }
-            for (const log of diagnostics.daemonLogs) {
-                if (log.path) candidatePaths.add(log.path);
+            const log = sessionDiagnostics.logs.find((entry) => entry.kind === kind);
+            if (!log) {
+                diagnosticsCollection[kind] = { status: 'unavailable', detail: 'daemon returned no collection status' };
+                continue;
             }
-
-            const logPaths = Array.from(candidatePaths).slice(0, 2);
-            for (const logPath of logPaths) {
-                const tail = await runWithTimeout(
-                    async () => await machineGetBugReportLogTail(machine.id, {
-                        path: logPath,
-                        maxBytes: Math.min(120_000, input.maxArtifactBytes),
-                    }, { timeoutMs: logTailTimeoutMs }),
-                    logTailTimeoutMs,
-                );
-                if (!tail || !tail.ok) continue;
-
-                pushArtifact(artifacts, {
-                    filename: `${machineIdSlug}-${toSanitizedLogFilename(logPath, 'daemon.log')}.log`,
-                    sourceKind: 'daemon',
-                    contentType: 'text/plain',
-                    content: tail.tail,
-                }, input);
-            }
-        }
-
-        if (allowStackDiagnostics) {
-            const stackLogPaths = diagnostics.stackContext?.logCandidates ?? [];
-            for (const stackLogPath of stackLogPaths.slice(0, 2)) {
-                const stackTail = await runWithTimeout(
-                    async () => await machineGetBugReportLogTail(machine.id, {
-                        path: stackLogPath,
-                        maxBytes: Math.min(150_000, input.maxArtifactBytes),
-                    }, { timeoutMs: logTailTimeoutMs }),
-                    logTailTimeoutMs,
-                );
-                if (!stackTail || !stackTail.ok) continue;
-
-                pushArtifact(artifacts, {
-                    filename: `${machineIdSlug}-stack-${toSanitizedLogFilename(stackLogPath, 'stack.log')}.log`,
-                    sourceKind: 'stack-service',
-                    contentType: 'text/plain',
-                    content: stackTail.tail,
-                }, input);
+            if (log.status === 'collected' && log.artifact) {
+                const pushed = pushArtifact(artifacts, log.artifact, input);
+                diagnosticsCollection[kind] = pushed ? { status: 'collected' } : { status: 'skipped', detail: 'artifact source kind not accepted or empty' };
+            } else {
+                diagnosticsCollection[kind] = { status: log.status === 'collected' ? 'unavailable' : log.status, detail: log.detail };
             }
         }
     }
 
-    if (allowDaemonDiagnostics) {
+    if (allowDaemonDiagnostics && logSelection.daemon) {
         const pasted = String(input.pastedCliDoctorSnapshotJson ?? '').trim();
         if (pasted.length > 0) {
             const parsed = parseDoctorSnapshotSafe(pasted);
@@ -423,35 +433,19 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
         content: JSON.stringify({
             collectedAt: new Date().toISOString(),
             environment,
-            profile: (() => {
-                const profile = loadProfile();
-                return {
-                    id: profile.id,
-                    username: profile.username,
-                    linkedProviderIds: Array.from(new Set(
-                        (profile.linkedProviders ?? [])
-                            .map((provider) => String((provider as { id?: unknown }).id ?? '').trim())
-                            .filter(Boolean),
-                    )),
-                };
-            })(),
+            profile: { id: accountId },
             server: {
-                ...snapshot,
-                serverUrl: sanitizeBugReportUrl(snapshot.serverUrl) ?? snapshot.serverUrl,
+                serverId,
+                serverUrl: sanitizeBugReportUrl(targetServerUrl),
             },
-            serverProfiles: listServerProfiles().map((profile) => ({
-                id: profile.id,
-                name: profile.name,
-                source: profile.source ?? null,
-                serverUrl: sanitizeBugReportUrl(profile.serverUrl) ?? profile.serverUrl,
-                lastUsedAt: profile.lastUsedAt,
-            })),
+            logSelection,
             diagnosticsCollection,
         }, null, 2),
     }, input);
 
     return {
         artifacts,
+        collectionStatuses: diagnosticsCollection,
         environment,
     };
 }
