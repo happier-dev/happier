@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import * as tar from 'tar';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ensureManagedUvCommand, managedUvBinPath } from './managedUv.js';
 
 const network = vi.hoisted(() => ({ origin: '' }));
@@ -15,9 +15,13 @@ vi.mock('node:https', async importOriginal => ({
     return httpRequest(new URL(url.pathname, network.origin), options, callback);
   },
 }));
-afterEach(() => { network.origin = ''; });
+afterEach(() => { network.origin = ''; vi.unstubAllEnvs(); });
 
 describe('managed uv acquisition', () => {
+  beforeEach(() => {
+    // Both install-lock contenders belong to this fixture, independently of the worker's build admission.
+    vi.stubEnv('HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED', '1');
+  });
   it.skipIf(process.platform === 'win32')('extracts the pinned asset through the existing acquisition owner and reuses concurrent installation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-p9d-uv-bootstrap-'));
     const env = { HAPPIER_HOME_DIR: root, PATH: '' };

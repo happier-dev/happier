@@ -2,7 +2,7 @@ import { access, chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ensureManagedJavaScriptRuntimeCommand,
@@ -58,7 +58,12 @@ function createBootstrapDeps(params: Readonly<{
 }
 
 describe('managed JavaScript runtime bootstrap lock', () => {
+  beforeEach(() => {
+    // Both install-lock contenders belong to this fixture, independently of the worker's build admission.
+    vi.stubEnv('HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED', '1');
+  });
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await Promise.all(tempDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
   });
 
