@@ -1,31 +1,29 @@
-import { existsSync } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
-import { basename, join } from 'node:path';
+import { basename } from 'node:path';
 import {
+  BUG_REPORT_LOG_SOURCE_KINDS,
   hasAcceptedBugReportArtifactKind,
   inferBugReportDeploymentTypeFromServerUrl,
   pushBugReportArtifact,
   redactBugReportSensitiveText,
   resolveBugReportServerDiagnosticsLines,
-  sanitizeBugReportDaemonDiagnosticsPayload,
   sanitizeBugReportArtifactFileSegment,
   sanitizeBugReportArtifactPath,
-  sanitizeBugReportStackContextPayload,
   sanitizeBugReportUrl,
   trimBugReportTextToMaxBytes,
   type BugReportArtifactPayload,
   type BugReportEnvironmentPayload,
+  resolveBugReportLogSelection,
+  type BugReportLogSelection,
+  type BugReportSessionDiagnostics,
 } from '@happier-dev/protocol';
 
 import packageJson from '../../package.json';
-import { configuration } from '@/configuration';
 import { readCredentials, readSettings } from '@/persistence';
-import { collectBugReportMachineDiagnosticsSnapshot, readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
+import { readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
 import { collectBugReportMachineDiagnosticsSnapshotForBugReport } from '@/diagnostics/bugReportMachineDiagnosticsRecipe';
 import { normalizeBaseUrl, withAbortTimeout } from '@/diagnostics/httpClient';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
-import { buildDoctorSnapshot } from '@/ui/doctorSnapshot';
 
 export type BugReportExtraAttachmentInput = {
   path: string;
@@ -40,6 +38,8 @@ export type CollectBugReportDiagnosticsArtifactsInput = {
   serverUrl: string;
   activeServerId: string;
   rawArgs: string[];
+  sessionId?: string;
+  logSelection?: Partial<BugReportLogSelection>;
   extraAttachments?: BugReportExtraAttachmentInput[];
 };
 
@@ -92,34 +92,6 @@ type DiagnosticsCollectionEntry = {
 function formatDiagnosticsCollectionError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? 'unknown error');
   return trimBugReportTextToMaxBytes(redactBugReportSensitiveText(message), 256).trim() || 'unknown error';
-}
-
-async function readLatestLogTail(input: {
-  maxBytes: number;
-  suffix: string;
-  invertSuffix?: boolean;
-}): Promise<{ path: string; tail: string } | null> {
-  if (!existsSync(configuration.logsDir)) return null;
-  const entries = await readdir(configuration.logsDir);
-  const candidates = await Promise.all(entries
-    .filter((file) => file.endsWith('.log'))
-    .filter((file) => {
-      const matches = file.endsWith(input.suffix);
-      return input.invertSuffix ? !matches : matches;
-    })
-    .map(async (file) => {
-      const path = join(configuration.logsDir, file);
-      const metadata = await stat(path);
-      return { file, path, modified: metadata.mtimeMs };
-    }));
-  if (candidates.length === 0) return null;
-  candidates.sort((a, b) => b.modified - a.modified);
-  const selected = candidates[0];
-  const tail = await readBugReportLogTail(selected.path, input.maxBytes);
-  return {
-    path: selected.path,
-    tail,
-  };
 }
 
 export async function collectBugReportDiagnosticsArtifacts(
@@ -203,124 +175,40 @@ export async function collectBugReportDiagnosticsArtifacts(
   }
 
   const diagnosticsCollection: Record<string, DiagnosticsCollectionEntry> = {
-    cliLog: { status: 'skipped', detail: 'not attempted' },
     machineDiagnostics: { status: 'skipped', detail: 'source kind not accepted' },
-    daemonLogTails: { status: 'skipped', detail: 'source kind not accepted' },
-    stackLogTails: { status: 'skipped', detail: 'source kind not accepted' },
     serverDiagnostics: { status: 'skipped', detail: 'source kind not accepted' },
     extraAttachments: { status: 'skipped', detail: 'no attachments provided' },
   };
 
+  const logSelection = resolveBugReportLogSelection(input.logSelection);
+  let sessionDiagnostics: BugReportSessionDiagnostics | undefined;
   try {
-    if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'cli')) {
-      diagnosticsCollection.cliLog = { status: 'skipped', detail: 'no matching cli log file' };
-      const latestCliLog = await readLatestLogTail({
-        maxBytes: Math.min(150_000, input.maxArtifactBytes),
-        suffix: '-daemon.log',
-        invertSuffix: true,
-      });
-      if (latestCliLog && latestCliLog.tail.trim()) {
-        pushBugReportArtifact(artifacts, {
-          filename: 'cli.log',
-          sourceKind: 'cli',
-          contentType: 'text/plain',
-          content: latestCliLog.tail,
-        }, limits);
-        diagnosticsCollection.cliLog = { status: 'collected' };
-      }
+    const machineDiagnostics = await collectBugReportMachineDiagnosticsSnapshotForBugReport({
+      sessionId: input.sessionId,
+      logSelection: {
+        daemon: logSelection.daemon && hasAcceptedBugReportArtifactKind(input.acceptedKinds, BUG_REPORT_LOG_SOURCE_KINDS.daemon),
+        session: logSelection.session && hasAcceptedBugReportArtifactKind(input.acceptedKinds, BUG_REPORT_LOG_SOURCE_KINDS.session),
+        provider: logSelection.provider && hasAcceptedBugReportArtifactKind(input.acceptedKinds, BUG_REPORT_LOG_SOURCE_KINDS.provider),
+      },
+    }, { maxArtifactBytes: input.maxArtifactBytes });
+    sessionDiagnostics = machineDiagnostics.sessionDiagnostics;
+    diagnosticsCollection.machineDiagnostics = { status: 'collected' };
+    for (const entry of sessionDiagnostics?.logs ?? []) {
+      if (entry.status === 'collected' && entry.artifact) pushBugReportArtifact(artifacts, entry.artifact, limits);
+    }
+    if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'daemon')) {
+      pushBugReportArtifact(artifacts, {
+        filename: 'daemon-summary.json',
+        sourceKind: 'daemon',
+        contentType: 'application/json',
+        content: JSON.stringify({ daemonState: machineDiagnostics.daemonState, runtime: machineDiagnostics.runtime }, null, 2),
+      }, limits);
     }
   } catch (error) {
-    diagnosticsCollection.cliLog = { status: 'error', detail: formatDiagnosticsCollectionError(error) };
+    diagnosticsCollection.machineDiagnostics = { status: 'error', detail: formatDiagnosticsCollectionError(error) };
   }
 
-  if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'daemon', 'stack-service')) {
-    diagnosticsCollection.machineDiagnostics = { status: 'skipped', detail: 'no diagnostics payload available' };
-    if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'daemon')) {
-      diagnosticsCollection.daemonLogTails = { status: 'skipped', detail: 'no daemon log tail available' };
-    }
-    if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'stack-service')) {
-      diagnosticsCollection.stackLogTails = { status: 'skipped', detail: 'no stack log tail available' };
-    }
-    try {
-      const machineDiagnostics = await collectBugReportMachineDiagnosticsSnapshotForBugReport();
-      diagnosticsCollection.machineDiagnostics = { status: 'collected' };
-
-      if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'daemon')) {
-        const daemonDiagnostics = sanitizeBugReportDaemonDiagnosticsPayload(machineDiagnostics);
-        pushBugReportArtifact(artifacts, {
-          filename: 'daemon-summary.json',
-          sourceKind: 'daemon',
-          contentType: 'application/json',
-          content: JSON.stringify({
-            daemonState: daemonDiagnostics.daemonState,
-            logs: daemonDiagnostics.daemonLogs,
-            runtime: daemonDiagnostics.runtime,
-          }, null, 2),
-        }, limits);
-      }
-
-      if (machineDiagnostics.stackContext && hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'stack-service')) {
-        const stackContext = sanitizeBugReportStackContextPayload(machineDiagnostics.stackContext);
-        pushBugReportArtifact(artifacts, {
-          filename: 'stack-context.json',
-          sourceKind: 'stack-service',
-          contentType: 'application/json',
-          content: JSON.stringify(stackContext, null, 2),
-        }, limits);
-
-        if (machineDiagnostics.stackContext.runtimeState) {
-          pushBugReportArtifact(artifacts, {
-            filename: 'stack-runtime.json',
-            sourceKind: 'stack-service',
-            contentType: 'application/json',
-            content: machineDiagnostics.stackContext.runtimeState,
-          }, limits);
-        }
-      }
-
-      if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'daemon')) {
-        const daemonLogPath = machineDiagnostics.daemonState?.daemonLogPath || machineDiagnostics.daemonLogs[0]?.path || null;
-        if (daemonLogPath) {
-          try {
-            const daemonTail = await readBugReportLogTail(daemonLogPath, Math.min(150_000, input.maxArtifactBytes));
-            pushBugReportArtifact(artifacts, {
-              filename: 'daemon.log',
-              sourceKind: 'daemon',
-              contentType: 'text/plain',
-              content: daemonTail,
-            }, limits);
-            diagnosticsCollection.daemonLogTails = { status: 'collected' };
-          } catch {
-            // Optional artifact.
-          }
-        }
-      }
-
-      if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'stack-service')) {
-        const stackLogPaths = machineDiagnostics.stackContext?.logCandidates ?? [];
-        for (const stackLogPath of stackLogPaths.slice(0, 2)) {
-          let stackTail = '';
-          try {
-            stackTail = await readBugReportLogTail(stackLogPath, Math.min(150_000, input.maxArtifactBytes));
-          } catch {
-            continue;
-          }
-          const sanitizedStackLogName = sanitizeBugReportArtifactPath(stackLogPath) ?? 'stack.log';
-          pushBugReportArtifact(artifacts, {
-            filename: `stack-${sanitizeBugReportArtifactFileSegment(sanitizedStackLogName)}.log`,
-            sourceKind: 'stack-service',
-            contentType: 'text/plain',
-            content: stackTail,
-          }, limits);
-          diagnosticsCollection.stackLogTails = { status: 'collected' };
-        }
-      }
-    } catch (error) {
-      diagnosticsCollection.machineDiagnostics = { status: 'error', detail: formatDiagnosticsCollectionError(error) };
-    }
-  }
-
-  if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'server')) {
+  if (logSelection.daemon && hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'server')) {
     diagnosticsCollection.serverDiagnostics = { status: 'skipped', detail: 'missing credentials token' };
     try {
       if (credentialsToken) {
@@ -418,22 +306,12 @@ export async function collectBugReportDiagnosticsArtifacts(
       contextWindowMs: input.contextWindowMs ?? null,
       invocationSummary: summarizeInvocationArgs(input.rawArgs),
       diagnosticsCollection,
+      sessionDiagnostics: sessionDiagnostics ? {
+        context: sessionDiagnostics.context,
+        logs: sessionDiagnostics.logs.map(({ kind, status, detail }) => ({ kind, status, ...(detail ? { detail } : {}) })),
+      } : undefined,
     }, null, 2),
   }, limits);
-
-  if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'cli')) {
-    try {
-      const snapshot = await buildDoctorSnapshot();
-      pushBugReportArtifact(artifacts, {
-        filename: 'doctor-snapshot.json',
-        sourceKind: 'cli',
-        contentType: 'application/json',
-        content: JSON.stringify(snapshot, null, 2),
-      }, limits);
-    } catch {
-      // Optional artifact; cli-context.json already captures the basics.
-    }
-  }
 
   return { artifacts, environment };
 }

@@ -1513,6 +1513,17 @@ describe('registerMachineRpcHandlers', () => {
     expect(registered.has(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS)).toBe(true);
     expect(registered.has(RPC_METHODS.BUGREPORT_GET_LOG_TAIL)).toBe(true);
     expect(registered.has(RPC_METHODS.BUGREPORT_UPLOAD_ARTIFACT)).toBe(true);
+    const collectHandler = registered.get(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS)!;
+    const selected = await collectHandler({ logSelection: { daemon: false, session: false, provider: false } });
+    expect(selected.doctorSnapshot).toBeNull();
+    expect(selected.stackContext).toBeNull();
+    expect(selected.daemonLogs).toEqual([]);
+    expect(selected.sessionDiagnostics.logs).toEqual([
+      { kind: 'daemon', status: 'disabled' },
+      { kind: 'session', status: 'disabled' },
+      { kind: 'provider', status: 'disabled' },
+    ]);
+    await expect(collectHandler({ logSelection: { daemon: 'false' } })).rejects.toThrow('Invalid bug report diagnostics request');
   });
 
   it('registers session log tail handler (machine-scoped)', async () => {

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildLatestSessionSnapshot } from './bugReportSessionSnapshot';
+import { buildSelectedSessionSnapshot } from './bugReportSessionSnapshot';
 
 describe('bugReportSessionSnapshot', () => {
     it('returns null when no sessions exist', () => {
-        const snapshot = buildLatestSessionSnapshot({
+        const snapshot = buildSelectedSessionSnapshot({
+            sessionId: 'selected',
             sessions: {},
             sessionMessages: {},
             sessionPending: {},
@@ -12,8 +13,18 @@ describe('bugReportSessionSnapshot', () => {
         expect(snapshot).toBeNull();
     });
 
-    it('builds a sanitized summary for the latest session', () => {
-        const snapshot = buildLatestSessionSnapshot({
+    it('summarizes the explicitly selected session rather than the most recent one', () => {
+        const snapshot = buildSelectedSessionSnapshot({
+            sessionId: 'selected',
+            sessions: { selected: { id: 'selected', updatedAt: 1 }, latest: { id: 'latest', updatedAt: 2 } },
+            sessionMessages: {}, sessionPending: {},
+        });
+        expect(snapshot?.sessionId).toBe('selected');
+    });
+
+    it('builds a sanitized summary for the selected session', () => {
+        const snapshot = buildSelectedSessionSnapshot({
+            sessionId: 'latest',
             sessions: {
                 older: {
                     id: 'older',
@@ -72,7 +83,8 @@ describe('bugReportSessionSnapshot', () => {
             localId: null,
         }));
 
-        const snapshot = buildLatestSessionSnapshot({
+        const snapshot = buildSelectedSessionSnapshot({
+            sessionId: 'latest',
             sessions: {
                 latest: {
                     id: 'latest',

@@ -133,6 +133,7 @@ function isInsideWebModalCardBoundary(target: EventTarget | null): boolean {
 interface BaseModalProps {
     visible: boolean;
     onClose?: () => void;
+    accessibilityLabel?: string;
     children: React.ReactNode;
     closeOnBackdrop?: boolean;
     showBackdrop?: boolean;
@@ -161,6 +162,7 @@ function createWebModalPortalTarget(): HTMLElement | null {
 export function BaseModal({
     visible,
     onClose,
+    accessibilityLabel,
     children,
     closeOnBackdrop = true,
     showBackdrop = true,
@@ -338,7 +340,7 @@ export function BaseModal({
                                 closeOnBackdrop ? undefined : (e) => e.preventDefault()
                             }
                         >
-                              <Dialog.Title style={visuallyHiddenStyle}>{t('common.dialog')}</Dialog.Title>
+                              <Dialog.Title style={visuallyHiddenStyle}>{accessibilityLabel?.trim() || t('common.dialog')}</Dialog.Title>
                             {/* Host for web portals (e.g. popovers) that must live inside the dialog subtree. */}
                             <div
                                 data-happy-modal-portal-host=""

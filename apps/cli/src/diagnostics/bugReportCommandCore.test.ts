@@ -26,6 +26,7 @@ describe('runBugReportCommand export mode', () => {
       const result = await runBugReportCommand([
         '--title', 'Local diagnostics preview',
         '--summary', summary,
+        '--session-id', 'private-selected-session',
         '--no-include-diagnostics',
         ...exportFlags,
         outputPath,

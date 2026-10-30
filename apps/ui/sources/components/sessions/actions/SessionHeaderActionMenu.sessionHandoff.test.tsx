@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import * as runtimeFetch from '@/utils/system/runtimeFetch';
-import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import {
   installSessionActionsCommonModuleMocks,
   resetSessionActionsCommonModuleMockState,
@@ -541,6 +541,32 @@ describe('SessionHeaderActionMenu handoff', () => {
     const { voiceSessionBindingStore } = await import('@/voice/sessionBinding/voiceSessionBindingStore');
     for (const binding of voiceSessionBindingStore.getState().list()) {
       voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
+    }
+  });
+
+  it('opens a report for the session server and account from read-only offline sessions without prefilling public fields', async () => {
+    const originalActiveServerId = getActiveServerSnapshot().serverId;
+    const sourceProfile = upsertServerProfile({ serverUrl: 'https://header-report-source.example' });
+    const activeProfile = upsertServerProfile({ serverUrl: 'https://header-report-active.example' });
+    setActiveServerId(activeProfile.id);
+    resolveServerIdForSessionIdFromLocalCacheMock.mockReturnValue(sourceProfile.id);
+    const session = createSessionFixture({ id: 'report-source', serverId: sourceProfile.id, accessLevel: 'view', active: false, presence: 0 });
+    const credentialsSpy = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl) => ({
+      token: `header.${Buffer.from(JSON.stringify({ sub: serverUrl === sourceProfile.serverUrl ? 'source-account' : 'other-account' })).toString('base64url')}.signature`,
+    }));
+    try {
+      const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+      const dropdown = screen.findByType('DropdownMenu' as React.ElementType);
+      expect(dropdown.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'header.reportIssue' })]));
+      await act(async () => { dropdown.props.onSelect('header.reportIssue'); });
+      await findFireAndForgetByTag('SessionHeaderActionMenu.execute.reportIssue');
+      expect(sessionActionsModuleState.routerPushSpy).toHaveBeenCalledWith({
+        pathname: '/settings/report-issue',
+        params: { sessionId: 'report-source', serverId: sourceProfile.id, accountId: 'source-account' },
+      });
+    } finally {
+      credentialsSpy.mockRestore();
+      await act(async () => { setActiveServerId(originalActiveServerId); });
     }
   });
 

@@ -86,6 +86,7 @@ import { emitSessionResumeRequest } from '@/components/sessions/model/sessionRes
 import { buildSessionDebugInformationForSession } from '@/components/sessions/debug/sessionDebugInformation';
 import { copySessionDebugInformationToClipboard, isSessionCopyActionId } from '@/components/sessions/debug/sessionDebugClipboard';
 import { createSessionCopyMenuItem, SESSION_COPY_MENU_ITEM_ID } from '@/components/sessions/debug/sessionDebugMenuItem';
+import { resolveBugReportAccountIdForServer } from '@/components/settings/bugReports/bugReportSessionTarget';
 
 type SessionHeaderActionMenuProps = Readonly<{
   sessionId: string;
@@ -364,6 +365,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     }
 
     out.push(...actionItems);
+    out.push({ id: 'header.reportIssue', title: t('bugReports.reportSession') });
     if (open && !existingActionIds.has(SESSION_COPY_MENU_ITEM_ID)) {
       out.push(createSessionCopyMenuItem({
         iconColor: theme.colors.chrome.header.foreground,
@@ -423,6 +425,17 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         }
         setOpen(false);
         if (props.onSelectExtraItem?.(actionId) === true) return;
+        if (actionId === 'header.reportIssue') {
+          fireAndForget((async () => {
+            const serverId = sessionServerId ?? '';
+            const accountId = await resolveBugReportAccountIdForServer(serverId);
+            navigateWithBlurOnWeb(() => router.push({
+              pathname: '/settings/report-issue',
+              params: { sessionId: props.sessionId, serverId, accountId: accountId ?? '' },
+            }));
+          })(), { tag: 'SessionHeaderActionMenu.execute.reportIssue' });
+          return;
+        }
         if (isSessionCopyActionId(actionId)) {
           const currentSession = readCurrentSessionForOpenMenu(props.sessionId, session);
           fireAndForget(copySessionDebugInformationToClipboard(buildSessionDebugInformationForSession(currentSession), actionId), {

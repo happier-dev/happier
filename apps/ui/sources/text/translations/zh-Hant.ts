@@ -1153,7 +1153,49 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     bugReports: {
+        reportSession: "回報此工作階段的問題",
+        sessionPickerTitle: "相關工作階段",
+        sessionPickerSubtitle: "選擇此回報所涉及的工作階段。",
+        sessionPickerSearchPlaceholder: "搜尋工作階段",
+        sessionPickerNoResults: "沒有符合的工作階段",
+        noRelatedSession: "無相關工作階段",
         composer: {
+            scopeChanged: "選取的帳號已變更。請重新選擇工作階段，再附加診斷資訊。",
+            consent: {
+                title: "送出前",
+                understandTitle: "分享此回報與選取的診斷資訊",
+                understandSubtitle: "回報文字會公開。診斷附件會以非公開方式傳送給 Happier 維護者。工作階段記錄可能包含對話片段。",
+            },
+            issueDetails: {
+                subtitle: "只需標題和簡短描述即可開始。",
+                summaryLabel: "發生了什麼事？（必填）",
+                summaryPlaceholder: "請告訴我們出了什麼問題。",
+            },
+            addMoreDetails: "新增更多詳細資訊（選填）",
+            technicalInformation: "技術資訊",
+            relatedSession: "相關工作階段（選填）",
+            chooseSession: "選擇工作階段",
+            changeSession: "變更工作階段",
+            removeSession: "移除工作階段",
+            selectedSession: "已選擇工作階段",
+            logOptions: {
+                daemonTitle: "應用程式與 daemon 記錄",
+                daemonDetail: "應用程式活動，以及所選電腦與伺服器的連線記錄。",
+                sessionTitle: "Happier 工作階段記錄",
+                sessionDetail: "有助於我們調查此問題的工作階段活動。",
+                providerTitle: "供應商對話記錄",
+                providerDetail: "需要時附上供應商的工作階段對話記錄。",
+                technicalOnly: "僅包含技術資訊",
+                technicalOnlyDetail: "此回報不包含任何原始記錄。",
+            },
+            collection: {
+                collected: "已附加",
+                unavailable: "無法使用",
+                disabled: "未包含",
+                unsupported: "更新 CLI 以附加這些記錄",
+                skipped: "已略過",
+                error: "無法收集",
+            },
             diagnostics: {
                 pasteDoctorJson: {
                     title: 'CLI doctor JSON（選用）',

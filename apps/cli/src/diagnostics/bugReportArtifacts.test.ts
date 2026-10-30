@@ -1,12 +1,13 @@
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   readCredentialsMock,
   readSettingsMock,
-  collectBugReportMachineDiagnosticsSnapshotMock,
-  readBugReportLogTailMock,
+  readDaemonStateMock,
 } = vi.hoisted(() => ({
   readCredentialsMock: vi.fn<() => Promise<{ token: string } | null>>(async () => null),
   readSettingsMock: vi.fn(async () => ({
@@ -40,32 +41,7 @@ const {
       },
     },
   })),
-  collectBugReportMachineDiagnosticsSnapshotMock: vi.fn(async () => ({
-    daemonState: {
-      pid: 100,
-      httpPort: 3001,
-      startedAt: 1,
-      startedWithCliVersion: '1.0.0',
-      hasControlToken: true,
-      daemonLogPath: '/Users/alice/.happier/logs/daemon.log',
-    },
-    daemonLogs: [
-      { file: 'daemon.log', path: '/Users/alice/.happier/logs/daemon.log', modifiedAt: '2026-02-11T00:00:00.000Z' },
-    ],
-    runtime: {
-      cwd: '/Users/alice/private/project',
-      platform: 'darwin',
-      nodeVersion: 'v20.0.0',
-    },
-    stackContext: {
-      stackName: 'qa-stack',
-      stackEnvPath: '/Users/alice/private/project/.stack/env',
-      runtimeStatePath: '/Users/alice/private/project/.stack/stack.runtime.json',
-      runtimeState: '{"stackName":"qa-stack"}',
-      logCandidates: ['/Users/alice/private/project/.stack/logs/runner.log'],
-    },
-  })),
-  readBugReportLogTailMock: vi.fn(async (path: string) => `tail for ${path}`),
+  readDaemonStateMock: vi.fn(async () => null),
 }));
 
 vi.mock('@/configuration', () => ({
@@ -75,17 +51,14 @@ vi.mock('@/configuration', () => ({
     publicServerUrl: 'https://api.happier.dev',
     webappUrl: 'https://app.happier.dev',
     logsDir: '/path/that/does/not/exist',
+    happyHomeDir: '/path/that/does/not/exist',
   },
 }));
 
 vi.mock('@/persistence', () => ({
   readCredentials: readCredentialsMock,
   readSettings: readSettingsMock,
-}));
-
-vi.mock('@/diagnostics/bugReportMachineDiagnostics', () => ({
-  collectBugReportMachineDiagnosticsSnapshot: collectBugReportMachineDiagnosticsSnapshotMock,
-  readBugReportLogTail: readBugReportLogTailMock,
+  readDaemonState: readDaemonStateMock,
 }));
 
 import { collectBugReportDiagnosticsArtifacts } from './bugReportArtifacts';
@@ -120,9 +93,9 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     const stackContextArtifact = result.artifacts.find((entry) => entry.filename === 'stack-context.json');
 
     expect(cliContextArtifact).toBeDefined();
-    expect(doctorSnapshotArtifact).toBeDefined();
+    expect(doctorSnapshotArtifact).toBeUndefined();
     expect(daemonSummaryArtifact).toBeDefined();
-    expect(stackContextArtifact).toBeDefined();
+    expect(stackContextArtifact).toBeUndefined();
 
     const cliContext = JSON.parse(String(cliContextArtifact?.content ?? '{}')) as Record<string, unknown>;
     expect(cliContext.invocationArgs).toBeUndefined();
@@ -136,19 +109,9 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(cliContext.settingsActiveServerId).toBe('cloud');
     expect(cliContext.settingsServers).toBeDefined();
 
-    const doctorSnapshot = JSON.parse(String(doctorSnapshotArtifact?.content ?? '{}')) as Record<string, unknown>;
-    expect(JSON.stringify(doctorSnapshot)).not.toContain('admin:secret');
-    expect(JSON.stringify(doctorSnapshot)).not.toContain('?token=');
-
     const daemonSummary = JSON.parse(String(daemonSummaryArtifact?.content ?? '{}')) as Record<string, unknown>;
     expect(JSON.stringify(daemonSummary)).not.toContain('/Users/alice/');
-    expect(JSON.stringify(daemonSummary)).toContain('"daemonLogPath":"daemon.log"');
-
-    const stackContext = JSON.parse(String(stackContextArtifact?.content ?? '{}')) as Record<string, unknown>;
-    expect(JSON.stringify(stackContext)).not.toContain('/Users/alice/');
-    expect(JSON.stringify(stackContext)).toContain('"stackEnvPath":"env"');
-    expect(JSON.stringify(stackContext)).toContain('"runtimeStatePath":"stack.runtime.json"');
-    expect(JSON.stringify(stackContext)).toContain('"runner.log"');
+    expect(daemonSummary.daemonState).toBeNull();
   });
 
   it('skips daemon/stack/server collectors when accepted kinds only allow cli artifacts', async () => {
@@ -166,7 +129,6 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
       });
 
       expect(result.artifacts.every((artifact) => artifact.sourceKind === 'cli')).toBe(true);
-      expect(collectBugReportMachineDiagnosticsSnapshotMock).not.toHaveBeenCalled();
       const fetchUrls = fetchSpy.mock.calls.map((call) => String(call[0]));
       expect(fetchUrls.some((url) => url.startsWith('https://api.happier.dev'))).toBe(false);
     } finally {
@@ -199,49 +161,50 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(cliContext.invocationSummary?.flags ?? []).toContain('--api-key');
   });
 
-  it('uses basename-only stack log filenames for windows-style paths', async () => {
-    collectBugReportMachineDiagnosticsSnapshotMock.mockResolvedValueOnce({
-      daemonState: {
-        pid: 100,
-        httpPort: 3001,
-        startedAt: 1,
-        startedWithCliVersion: '1.0.0',
-        hasControlToken: true,
-        daemonLogPath: 'C:\\Users\\alice\\.happier\\logs\\daemon.log',
-      },
-      daemonLogs: [],
-      runtime: {
-        cwd: 'C:\\Users\\alice\\private\\project',
-        platform: 'win32',
-        nodeVersion: 'v20.0.0',
-      },
-      stackContext: {
-        stackName: 'qa-stack',
-        stackEnvPath: 'C:\\Users\\alice\\private\\project\\.stack\\env',
-        runtimeStatePath: 'C:\\Users\\alice\\private\\project\\.stack\\stack.runtime.json',
-        runtimeState: '{"stackName":"qa-stack"}',
-        logCandidates: ['C:\\Users\\alice\\private\\project\\.stack\\logs\\runner.log'],
-      },
-    });
-
+  it('omits raw server and stack collection when all log switches are false', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const result = await collectBugReportDiagnosticsArtifacts({
       includeDiagnostics: true,
-      acceptedKinds: ['stack-service'],
+      acceptedKinds: ['cli', 'daemon', 'stack-service', 'server'],
       maxArtifactBytes: 256_000,
       serverUrl: 'https://api.happier.dev',
       activeServerId: 'main',
       rawArgs: ['--title', 'bug'],
+      logSelection: { daemon: false, session: false, provider: false },
     });
+    expect(result.artifacts.map((entry) => entry.filename).sort()).toEqual(['cli-context.json', 'daemon-summary.json']);
+    const context = JSON.parse(result.artifacts.find((entry) => entry.filename === 'cli-context.json')!.content);
+    expect(context.sessionDiagnostics.logs.every((entry: { status: string }) => entry.status === 'disabled')).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
 
-    const stackLogArtifact = result.artifacts.find((entry) => entry.filename.endsWith('.log'));
-    expect(stackLogArtifact).toBeDefined();
-    expect(stackLogArtifact?.filename).toContain('runner.log');
-    expect(stackLogArtifact?.filename.toLowerCase()).not.toContain('users');
-    expect(stackLogArtifact?.filename).not.toContain('\\');
+  it('retains explicitly attached provider transcript consent when automatic log collection is off', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-explicit-report-attachment-'));
+    try {
+      const path = join(directory, 'explicit-transcript.jsonl');
+      await writeFile(path, 'explicitly selected provider conversation');
+      const result = await collectBugReportDiagnosticsArtifacts({
+        includeDiagnostics: true,
+        acceptedKinds: ['cli', 'provider-transcript'],
+        maxArtifactBytes: 256_000,
+        serverUrl: 'https://api.happier.dev',
+        activeServerId: 'main',
+        rawArgs: [],
+        logSelection: { daemon: false, session: false, provider: false },
+        extraAttachments: [{ path, sourceKind: 'provider-transcript' }],
+      });
+      expect(result.artifacts.find((entry) => entry.sourceKind === 'provider-transcript')?.content).toBe('explicitly selected provider conversation');
+      const context = JSON.parse(result.artifacts.find((entry) => entry.filename === 'cli-context.json')!.content);
+      expect(context.sessionDiagnostics.logs.find((entry: { kind: string }) => entry.kind === 'provider')).toEqual({ kind: 'provider', status: 'disabled' });
+      expect(JSON.stringify(context)).not.toContain('explicitly selected provider conversation');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('adds diagnostics collection status to cli context artifact', async () => {
-    collectBugReportMachineDiagnosticsSnapshotMock.mockRejectedValueOnce(new Error('machine diagnostics failed'));
+    readDaemonStateMock.mockRejectedValueOnce(new Error('machine diagnostics failed'));
 
     const result = await collectBugReportDiagnosticsArtifacts({
       includeDiagnostics: true,

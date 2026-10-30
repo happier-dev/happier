@@ -88,18 +88,41 @@ describe('utils/system/sentry (bug report replay)', () => {
         else process.env.EXPO_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE = previousOnErrorRate;
     });
 
-    it('flushes replay and returns replayId when capturing a bug report Sentry event', async () => {
-        const { initializeSentryOnce, captureBugReportSentryEvent } = await import('./sentry');
+    it('submits only the supplied attachment set without a surprise Sentry event or replay', async () => {
+        const { initializeSentryOnce } = await import('./sentry');
         initializeSentryOnce();
-        expect(sentryInitSpy).toHaveBeenCalledTimes(1);
-
-        const captured = await captureBugReportSentryEvent();
-        expect(sentryCaptureMessageSpy).toHaveBeenCalledTimes(1);
-        expect(replayFlushSpy).toHaveBeenCalledTimes(1);
-        expect(captured).toEqual(expect.objectContaining({
-            eventId: 'sentry-test-event-id',
-            replayId: 'replay-id-1',
-        }));
+        const { submitBugReportToService } = await import('@/components/settings/bugReports/bugReportServiceClient');
+        const artifact = { filename: 'reviewed-context.json', sourceKind: 'ui-mobile', contentType: 'application/json', content: '{"reviewed":true}' };
+        const uploaded: string[] = [];
+        let submittedArtifacts: unknown;
+        const fetchSpy = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            if (init?.method === 'PUT') {
+                uploaded.push(String(init.body));
+                return new Response('', { status: 200 });
+            }
+            if (url.pathname === '/v1/reports/session') {
+                const body = JSON.parse(String(init?.body));
+                submittedArtifacts = body.artifacts;
+                return new Response(JSON.stringify({ reportId: 'report-reviewed', uploadTargets: body.artifacts.map((_entry: unknown, index: number) => ({
+                    artifactId: `artifact-${index}`, objectKey: `object-${index}`, uploadUrl: `https://upload.example.test/${index}`, requiredHeaders: {},
+                })) }), { status: 200 });
+            }
+            return new Response(JSON.stringify({ reportId: 'report-reviewed', issueNumber: 782, issueUrl: 'https://github.com/happier-dev/happier/issues/782' }), { status: 200 });
+        });
+        vi.stubGlobal('fetch', fetchSpy);
+        try {
+            await submitBugReportToService({ providerUrl: 'https://reports.example.test', timeoutMs: 10_000,
+                issueOwner: 'happier-dev', issueRepo: 'happier', artifacts: [artifact],
+                form: { title: 'Report after review', summary: 'What happened', environment: { appVersion: 'test', platform: 'ios', deploymentType: 'cloud' },
+                    consent: { includeDiagnostics: true, acceptedPrivacyNotice: true } },
+            });
+            expect(submittedArtifacts).toEqual([{ filename: artifact.filename, contentType: artifact.contentType,
+                sizeBytes: new TextEncoder().encode(artifact.content).byteLength, sourceKind: artifact.sourceKind }]);
+            expect(uploaded).toEqual([artifact.content]);
+            expect(sentryCaptureMessageSpy).not.toHaveBeenCalled();
+            expect(replayFlushSpy).not.toHaveBeenCalled();
+        } finally { vi.unstubAllGlobals(); }
     });
 
     it('adds breadcrumbs when crash reports are enabled', async () => {
@@ -129,7 +152,7 @@ describe('utils/system/sentry (bug report replay)', () => {
         platformState.os = 'ios';
         platformState.version = '26.5';
 
-        const { initializeSentryOnce, captureBugReportSentryEvent } = await import('./sentry');
+        const { initializeSentryOnce } = await import('./sentry');
         initializeSentryOnce();
 
         expect(sentryInitSpy).toHaveBeenCalledTimes(1);
@@ -138,14 +161,6 @@ describe('utils/system/sentry (bug report replay)', () => {
         expect(initOptions).not.toHaveProperty('replaysSessionSampleRate');
         expect(initOptions).not.toHaveProperty('replaysOnErrorSampleRate');
         expect(initOptions).not.toHaveProperty('integrations');
-
-        const captured = await captureBugReportSentryEvent();
-        expect(sentryCaptureMessageSpy).toHaveBeenCalledTimes(1);
-        expect(replayFlushSpy).toHaveBeenCalledTimes(0);
-        expect(captured).toEqual(expect.objectContaining({
-            eventId: 'sentry-test-event-id',
-        }));
-        expect(captured?.replayId).toBeUndefined();
     });
 
     it('keeps replay enabled on iOS 26 when explicitly allowed', async () => {

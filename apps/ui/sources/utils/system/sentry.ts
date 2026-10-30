@@ -287,41 +287,6 @@ export function wrapWithSentryIfEnabled<T extends ComponentType<any>>(Component:
     return Sentry.wrap(Component) as unknown as T;
 }
 
-export type BugReportSentryEventInfo = {
-    eventId: string;
-    dsn: string;
-    environment?: string;
-    release?: string;
-    replayId?: string;
-};
-
-export async function captureBugReportSentryEvent(): Promise<BugReportSentryEventInfo | null> {
-    if (getFeatureBuildPolicyDecision(CRASH_REPORTS_FEATURE_ID) === 'deny') return null;
-    if (resolveCrashReportsOptOut()) return null;
-    const resolved = resolveSentryEnv();
-    if (!resolved) return null;
-
-    try {
-        const eventId = Sentry.captureMessage('Bug report submitted', {
-            level: "info",
-        });
-        if (cachedReplayIntegration && typeof cachedReplayIntegration.flush === 'function') {
-            try {
-                await cachedReplayIntegration.flush();
-            } catch {
-                // ignore
-            }
-        }
-        const replayId =
-            cachedReplayIntegration && typeof cachedReplayIntegration.getReplayId === 'function'
-                ? cachedReplayIntegration.getReplayId()
-                : undefined;
-        return { eventId, dsn: resolved.dsn, environment: resolved.environment, release: resolved.release, replayId };
-    } catch {
-        return null;
-    }
-}
-
 export function captureExceptionIfEnabled(
     error: unknown,
     context?: Readonly<{

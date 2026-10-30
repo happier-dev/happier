@@ -1172,13 +1172,13 @@ export const it: TranslationStructure = {
   appCrash: {
       saveDiagnostics: "Salva diagnostica",
       diagnosticsSaveFailed: "Impossibile salvare la diagnostica. I dettagli dell’errore sono ancora disponibili. Riprova o copiali.",
-      copyFailed: "Impossibile copiare i dettagli del crash. Riprova.",
-      discardFailed: "Impossibile eliminare il crash salvato. Riprova.",
-      restartWithoutReport: "Riavvia senza salvare",
-      reportSaveFailed: "Impossibile salvare i dettagli del crash. Copiali prima di riavviare oppure riprova la segnalazione.",
-      savedReportNotice: "Il crash salvato è mostrato qui sotto. Controllalo e modificalo prima di inviarlo. Resta su questo dispositivo fino all’invio o all’eliminazione.",
-      discardSavedReport: "Elimina il crash salvato",
-      stackTruncated: "Stack abbreviato per questo campo. Il crash completo resta salvato su questo dispositivo.",
+    copyFailed: "Impossibile copiare i dettagli del crash. Riprova.",
+    discardFailed: "Impossibile eliminare il crash salvato. Riprova.",
+    restartWithoutReport: "Riavvia senza salvare",
+    reportSaveFailed: "Impossibile salvare i dettagli del crash. Copiali prima di riavviare oppure riprova la segnalazione.",
+    savedReportNotice: "Il crash salvato è mostrato qui sotto. Controllalo e modificalo prima di inviarlo. Resta su questo dispositivo fino all’invio o all’eliminazione.",
+    discardSavedReport: "Elimina il crash salvato",
+    stackTruncated: "Stack abbreviato per questo campo. Il crash completo resta salvato su questo dispositivo.",
     title: "Qualcosa è andato storto",
     subtitle:
       "Happier ha riscontrato un errore imprevisto. Puoi riavviare l'interfaccia dell'app o copiare i dettagli per l'assistenza.",
@@ -1792,7 +1792,39 @@ export const it: TranslationStructure = {
   },
 
   bugReports: {
+    reportSession: "Segnala un problema con questa sessione",
+    sessionPickerTitle: "Sessione correlata",
+    sessionPickerSubtitle: "Scegli la sessione a cui si riferisce questa segnalazione.",
+    sessionPickerSearchPlaceholder: "Cerca sessioni",
+    sessionPickerNoResults: "Nessuna sessione corrispondente",
+    noRelatedSession: "Nessuna sessione correlata",
     composer: {
+      scopeChanged: "L’account selezionato è cambiato. Scegli di nuovo la sessione prima di allegare i dati diagnostici.",
+      addMoreDetails: "Aggiungi altri dettagli (facoltativo)",
+      technicalInformation: "Informazioni tecniche",
+      relatedSession: "Sessione correlata (facoltativa)",
+      chooseSession: "Scegli una sessione",
+      changeSession: "Cambia sessione",
+      removeSession: "Rimuovi sessione",
+      selectedSession: "Sessione selezionata",
+      logOptions: {
+        daemonTitle: "Log dell’app e del daemon",
+        daemonDetail: "Attività dell’app e log di connessione dal computer e dal server selezionati.",
+        sessionTitle: "Log della sessione Happier",
+        sessionDetail: "Attività della sessione che ci aiuta a indagare sul problema.",
+        providerTitle: "Trascrizione del provider",
+        providerDetail: "Trascrizione della sessione del provider, quando serve.",
+        technicalOnly: "Solo informazioni tecniche",
+        technicalOnlyDetail: "Escludi tutti i log grezzi da questa segnalazione.",
+      },
+      collection: {
+        collected: "Allegati",
+        unavailable: "Non disponibili",
+        disabled: "Non inclusi",
+        unsupported: "Aggiorna la CLI per allegare questi log",
+        skipped: "Ignorati",
+        error: "Impossibile raccogliere",
+      },
       alerts: {
         previewUnavailableTitle: "Anteprima non disponibile",
         previewUnavailableBody: "Impossibile creare l’anteprima della diagnostica.",
@@ -1855,15 +1887,14 @@ export const it: TranslationStructure = {
       },
       issueDetails: {
         title: "Descrivi il problema",
-        subtitle:
-          "Fornisci abbastanza dettagli per consentirci di riprodurre e diagnosticare rapidamente.",
+        subtitle: "Per iniziare bastano un titolo e una breve descrizione.",
         titleLabel: "Titolo (obbligatorio)",
         titlePlaceholder: "Titolo breve",
         githubUsernameLabel: "Username GitHub (opzionale)",
         githubUsernamePlaceholder:
           "Usato come contatto nel corpo dell’issue",
-        summaryLabel: "Riepilogo conciso (obbligatorio)",
-        summaryPlaceholder: "Riepilogo in un paragrafo",
+        summaryLabel: "Cos’è successo? (obbligatorio)",
+        summaryPlaceholder: "Raccontaci cosa è andato storto.",
         currentBehaviorLabel: "Comportamento attuale (opzionale)",
         currentBehaviorPlaceholder: "Cosa succede davvero?",
         expectedBehaviorLabel: "Comportamento previsto (opzionale)",
@@ -1922,11 +1953,9 @@ export const it: TranslationStructure = {
         },
       },
       consent: {
-        title: "Consenso",
-        understandTitle:
-          "Capisco che la diagnostica può includere metadati tecnici",
-        understandSubtitle:
-          "Non includere password, token di accesso o chiavi private.",
+        title: "Prima di inviare",
+        understandTitle: "Condividi questa segnalazione e i dati diagnostici selezionati",
+        understandSubtitle: "Il testo della segnalazione è pubblico. Gli allegati diagnostici vengono inviati privatamente ai manutentori di Happier. I log della sessione possono includere estratti delle conversazioni.",
       },
       submit: {
         requiredFieldsHint:
