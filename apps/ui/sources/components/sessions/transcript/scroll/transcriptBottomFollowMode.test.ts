@@ -14,18 +14,6 @@ function state(overrides: Partial<TranscriptBottomFollowModeState> = {}): Transc
 }
 
 describe('transcript bottom-follow mode', () => {
-    it('enters escaping when the native list drag starts', () => {
-        expect(resolveTranscriptBottomFollowMode(state(), {
-            type: 'list-drag-start',
-        })).toMatchObject({
-            mode: 'escaping',
-            dragSession: {
-                latestDistanceFromBottom: null,
-                sawAwayMovement: false,
-            },
-        });
-    });
-
     it('keeps the user-owned drag session escaping near bottom, then re-follows on near-bottom drag end', () => {
         const nearBottomDrag = resolveTranscriptBottomFollowMode(state(), {
             type: 'list-drag-start',

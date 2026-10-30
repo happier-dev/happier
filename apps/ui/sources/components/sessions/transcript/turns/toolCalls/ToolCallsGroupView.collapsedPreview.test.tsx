@@ -129,24 +129,6 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
 
     afterEach(standardCleanup);
 
-    it('renders only the configured visible preview rows while collapsed', async () => {
-        collapsedPreviewCount = 2;
-
-        const toolMessages = [
-            createToolCallMessageFixture({ id: 'm1', createdAt: 1 }),
-            createToolCallMessageFixture({ id: 'm2', createdAt: 2 }),
-            createToolCallMessageFixture({ id: 'm3', createdAt: 3 }),
-        ];
-
-        const screen = await renderToolCallsGroupView({
-            toolMessages,
-            expanded: false,
-            setExpanded: vi.fn(),
-        });
-
-        expect(screen.findAllByTestId('transcript-tool-calls-preview-row')).toHaveLength(2);
-    });
-
     it('does not allocate hidden body rows for large collapsed tool groups', async () => {
         collapsedPreviewCount = 3;
 

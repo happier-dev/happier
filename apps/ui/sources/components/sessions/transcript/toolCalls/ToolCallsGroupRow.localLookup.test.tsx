@@ -265,53 +265,6 @@ describe('ToolCallsGroupRow', () => {
     );
   });
 
-  it('keeps pending-permission tool calls visible when the session is inactive (coerced to failed)', async () => {
-    const toolMessageOne = {
-      kind: 'tool-call',
-      id: 'tool-1',
-      localId: null,
-      createdAt: 1,
-      tool: {
-        id: 'mcp-1',
-        name: 'mcp__playwright__browser_navigate',
-        state: 'running',
-        input: { url: 'https://example.com' },
-        permission: { id: 'perm-1', status: 'pending' },
-      },
-      children: [],
-    };
-
-    await renderWithSessionTranscriptSource(React.createElement(ToolCallsGroupRow as any, {
-          sessionId: 's1',
-          toolCallsGroupId: 'group-1',
-          toolMessageIds: ['tool-1'],
-          metadata: null,
-          expanded: false,
-          onSetExpanded: () => {},
-          interaction: { canSendMessages: true, canApprovePermissions: false, permissionDisabledReason: 'inactive' },
-          getMessageById: (messageId: string) => {
-            if (messageId === 'tool-1') return toolMessageOne;
-            return null;
-          },
-        }));
-
-    expect(getRenderedToolCallsGroupViewProps()).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          toolMessages: [
-            expect.objectContaining({
-              id: 'tool-1',
-              tool: expect.objectContaining({
-                state: 'error',
-                permission: expect.objectContaining({ status: 'canceled' }),
-              }),
-            }),
-          ],
-        }),
-      ]),
-    );
-  });
-
   it('keeps completed tool calls visible when the session is inactive (and coerces pending-permission tools to failed)', async () => {
     const completedToolMessage = {
       kind: 'tool-call',

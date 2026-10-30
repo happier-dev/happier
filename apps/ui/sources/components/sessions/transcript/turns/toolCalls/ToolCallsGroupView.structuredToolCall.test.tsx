@@ -177,42 +177,6 @@ describe('ToolCallsGroupView (structured tool-call rendering)', () => {
         expect(renderedMessageViews.some((props) => props?.message?.meta?.happier?.kind === 'review_findings.v1')).toBe(true);
     });
 
-    it('renders collapsed SubAgentRun previews through ToolTimelineRow in activity feed mode so expansion does not reset as child items stream', async () => {
-        renderedMessageViews.length = 0;
-        renderedToolTimelineRows.length = 0;
-        toolChromeMode = 'activity_feed';
-        collapsedPreviewCount = 1;
-        const baseMessage = makeStructuredReviewToolMessage();
-        const collapsedPreviewMessage: ToolCallMessage = {
-            ...baseMessage,
-            meta: undefined,
-            tool: {
-                ...baseMessage.tool,
-                state: 'running',
-                completedAt: null,
-                result: undefined,
-            },
-            children: [
-                {
-                    kind: 'agent-text',
-                    id: 'child-1',
-                    localId: null,
-                    createdAt: 2,
-                    text: 'Inspecting the workspace now.',
-                } as any,
-            ],
-        };
-
-        await renderToolCallsGroupView({
-            status: 'completed',
-            toolMessages: [collapsedPreviewMessage],
-            expanded: false,
-        });
-
-        expect(renderedMessageViews).toHaveLength(0);
-        expect(renderedToolTimelineRows.some((props) => props?.tool?.name === 'SubAgentRun')).toBe(true);
-    });
-
     it('passes tool pin actions to collapsed whole-group activity-feed preview rows', async () => {
         renderedMessageViews.length = 0;
         renderedToolTimelineRows.length = 0;

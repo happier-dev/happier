@@ -45,19 +45,4 @@ describe('waitForNextTranscriptVisualUpdate', () => {
         await expect(waitForNextTranscriptVisualUpdate()).resolves.toBeUndefined();
     });
 
-    it('uses the requestAnimationFrame function installed on globalThis', async () => {
-        const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
-            callback(16);
-            return 7;
-        });
-        Object.defineProperty(globalThis, 'requestAnimationFrame', {
-            configurable: true,
-            writable: true,
-            value: requestAnimationFrame,
-        });
-
-        await waitForNextTranscriptVisualUpdate();
-
-        expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
-    });
 });

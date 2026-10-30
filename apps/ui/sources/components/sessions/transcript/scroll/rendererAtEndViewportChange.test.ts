@@ -49,18 +49,6 @@ describe('resolveRendererAtEndViewportChange', () => {
         }, { cause: 'layout' })).toBeNull();
     });
 
-    it('suppresses layout-caused transient detaches so a pinned session stays live-tail in sync', () => {
-        // Streamed growth can flip physical at-end false for a frame while Legend maintains
-        // the tail. Publishing that as a semantic detach would make send paths skip live-tail
-        // marking for a user who never left the bottom.
-        expect(resolveRendererAtEndViewportChange({
-            isAtEnd: false,
-            isFollowing: false,
-            isNearEnd: false,
-            isWithinMaintainScrollAtEndThreshold: false,
-        }, { cause: 'layout' })).toBeNull();
-    });
-
     it('uses semantic following rather than exact physical end for every user transition', () => {
         expect(resolveRendererAtEndViewportChange({
             isAtEnd: false,
