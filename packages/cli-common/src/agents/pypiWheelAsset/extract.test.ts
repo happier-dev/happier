@@ -154,36 +154,16 @@ describe('extractExactWheelAsset', () => {
     await expect(stat(outputPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('uses a bounded inflate output length for oversized deflated wheel assets', async () => {
+  it.each([
+    { reportedUncompressedSize: 1, actualSize: 32 },
+    { reportedUncompressedSize: 8, actualSize: 16 },
+  ])('bounds inflated bytes when metadata reports $reportedUncompressedSize and output is $actualSize', async ({ reportedUncompressedSize, actualSize }) => {
     const wheelPath = await writeWheel([
       {
         name: 'google/antigravity/bin/localharness',
-        data: 'x'.repeat(32),
+        data: 'x'.repeat(actualSize),
         compressionMethod: 8,
-        reportedUncompressedSize: 1,
-      },
-    ]);
-    const outputDir = await mkdtemp(join(tmpdir(), 'happier-wheel-output-'));
-    tempDirs.add(outputDir);
-    const outputPath = join(outputDir, 'bin', 'localharness');
-
-    await expect(extractExactWheelAsset({
-      wheelPath,
-      assetPath: 'google/antigravity/bin/localharness',
-      outputPath,
-      maxAssetSizeBytes: 8,
-    })).rejects.toMatchObject({ code: 'wheel_asset_oversize' });
-
-    await expect(stat(outputPath)).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
-  it('bounds inflate output even when central directory metadata underreports the expansion size', async () => {
-    const wheelPath = await writeWheel([
-      {
-        name: 'google/antigravity/bin/localharness',
-        data: 'x'.repeat(16),
-        compressionMethod: 8,
-        reportedUncompressedSize: 8,
+        reportedUncompressedSize,
       },
     ]);
     const outputDir = await mkdtemp(join(tmpdir(), 'happier-wheel-output-'));

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { relayAccessProviderDescriptors as catalogDescriptors, relayAccessProviderIds as catalogIds } from './catalog';
 
 import {
     relayAccessProviderDescriptors,
@@ -17,5 +18,7 @@ describe('relayAccess public entrypoint', () => {
         ]);
         expect(relayAccessProviderDescriptors.map((descriptor) => descriptor.id)).toEqual(relayAccessProviderIds);
         expect(relayAccessProviders.map((provider) => provider.descriptor.id)).toEqual(relayAccessProviderIds);
+        expect(catalogIds).toEqual(relayAccessProviderIds);
+        expect(catalogDescriptors.map((descriptor) => descriptor.id)).toEqual(relayAccessProviderIds);
     });
 });

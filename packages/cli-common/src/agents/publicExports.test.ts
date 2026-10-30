@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { createManagedToolScratchDir } from './index.js';
+import { getHappierTempRoot } from '../tempDirs/index.js';
 
 describe('agents public exports', () => {
   it('exposes managed-tool scratch directories through the public agents barrel', async () => {
@@ -16,7 +17,7 @@ describe('agents public exports', () => {
         prefix: 'packed-cli',
       });
 
-      expect(dirname(scratchDir)).toBe(join(installDir, '.tmp'));
+      expect(dirname(scratchDir)).toBe(getHappierTempRoot(join(installDir, '.tmp')));
       await expect(access(scratchDir)).resolves.toBeUndefined();
     } finally {
       await rm(installDir, { force: true, recursive: true });

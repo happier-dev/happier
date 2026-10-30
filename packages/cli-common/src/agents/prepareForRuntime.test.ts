@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { resolvePlatformFromNodePlatform } from './install.js';
 import { prepareAgentCliForRuntime } from './prepareForRuntime.js';
+import { getHappierTempRoot } from '../tempDirs/index.js';
 
 function expectedOhMyPiReleaseAssetName(): string | null {
   if (process.platform === 'darwin' && process.arch === 'arm64') return 'omp-darwin-arm64';
@@ -60,7 +61,7 @@ describe('prepareAgentCliForRuntime managed_only', () => {
       const outcome = await pending;
       expect(outcome).toHaveProperty('error.name', 'AbortError');
       expect(existsSync(join(homeDir, 'tools', 'providers', 'gemini', 'current'))).toBe(false);
-      expect(await readdir(join(homeDir, 'tools', 'providers', 'gemini', '.tmp'))).toEqual([]);
+      expect(await readdir(getHappierTempRoot(join(homeDir, 'tools', 'providers', 'gemini', '.tmp')))).toEqual([]);
       const pid = Number(await readFile(marker, 'utf8'));
       expect(() => process.kill(pid, 0)).toThrow();
     } finally {

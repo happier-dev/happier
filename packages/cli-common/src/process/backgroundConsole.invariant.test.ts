@@ -51,7 +51,11 @@ describe('desktop background console invariant guard', () => {
       // The deadline owner forwards named options through its abort-aware conditional.
       // Verify that the forwarded object establishes the policy instead of exempting the file.
       let hiddenDeadlineOptions = false;
+      let forwardedDeadlineOptions: ts.Expression | undefined;
       const findDeadlineOptions = (node: ts.Node): void => {
+        if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'effectiveOptions') {
+          forwardedDeadlineOptions = node.initializer;
+        }
         if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'spawnOptions' && node.initializer && ts.isObjectLiteralExpression(node.initializer)) {
           hiddenDeadlineOptions = node.initializer.properties.some((property) => ts.isPropertyAssignment(property)
             && property.name.getText(source) === 'windowsHide'
@@ -66,7 +70,8 @@ describe('desktop background console invariant guard', () => {
       if (path === 'packages/cli-common/src/process/execFileWithDeadline.ts') findDeadlineOptions(source);
       const forwardsDeadlineOptions = (node: ts.Node | undefined): boolean => {
         if (!node) return false;
-        if (ts.isIdentifier(node)) return node.text === 'spawnOptions';
+        if (ts.isIdentifier(node)) return node.text === 'spawnOptions'
+          || (node.text === 'effectiveOptions' && forwardsDeadlineOptions(forwardedDeadlineOptions));
         if (ts.isConditionalExpression(node)) return forwardsDeadlineOptions(node.whenTrue) && forwardsDeadlineOptions(node.whenFalse);
         if (ts.isObjectLiteralExpression(node)) return node.properties.some((property) => ts.isSpreadAssignment(property) && forwardsDeadlineOptions(property.expression))
           && !node.properties.some((property) => ts.isPropertyAssignment(property) && property.name.getText(source) === 'windowsHide');

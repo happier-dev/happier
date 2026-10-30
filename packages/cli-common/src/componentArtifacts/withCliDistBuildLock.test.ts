@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, w
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     createWorkspaceLockLeaseValue,
@@ -17,7 +17,9 @@ function writeLockOwner(lockPath: string, owner: { pid: number; createdAtMs: num
 
 async function waitForCondition(predicate: () => boolean, label: string, timeoutMs = 1_000): Promise<void> {
     await new Promise<void>((resolvePromise, rejectPromise) => {
+        let poll: ReturnType<typeof setTimeout> | undefined;
         const timeout = setTimeout(() => {
+            if (poll) clearTimeout(poll);
             rejectPromise(new Error(`timed out waiting for ${label}`));
         }, timeoutMs);
         const check = () => {
@@ -26,13 +28,18 @@ async function waitForCondition(predicate: () => boolean, label: string, timeout
                 resolvePromise();
                 return;
             }
-            setTimeout(check, 5);
+            poll = setTimeout(check, 5);
         };
         check();
     });
 }
 
 describe('withCliDistBuildLock', () => {
+    beforeEach(() => {
+        // The fixture owns both temporary contenders; executor publication admission is not under test.
+        vi.stubEnv('HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED', '1');
+    });
+    afterEach(() => vi.unstubAllEnvs());
     it('inherits the exact current owner lease from the canonical child environment', async () => {
         const repoRoot = mkdtempSync(join(tmpdir(), 'cli-common-dist-lock-reentry-'));
         const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
@@ -249,6 +256,7 @@ describe('withCliDistBuildLock', () => {
     it('waits for a live owner to release the lock before entering', async () => {
         const repoRoot = mkdtempSync(join(tmpdir(), 'cli-common-dist-lock-'));
         const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
+        let releaseTimer: ReturnType<typeof setTimeout> | undefined;
         try {
             const nowMs = Date.now();
             writeLockOwner(lockPath, {
@@ -272,13 +280,14 @@ describe('withCliDistBuildLock', () => {
                 },
             );
 
-            setTimeout(() => {
+            releaseTimer = setTimeout(() => {
                 unlinkSync(lockPath);
             }, 30);
 
             await expect(promise).resolves.toBe('ok');
             expect(existsSync(lockPath)).toBe(false);
         } finally {
+            if (releaseTimer) clearTimeout(releaseTimer);
             rmSync(repoRoot, { recursive: true, force: true });
         }
     });
@@ -329,6 +338,7 @@ describe('withCliDistBuildLock', () => {
                 lockPath,
             });
             defaultAttempt = defaultWaitingAttempt;
+            void defaultWaitingAttempt.catch(() => {});
             await waitForCondition(() => existsSync(claimPath), 'CLI dist lock contender');
 
             nowMs += contentionWindowMs + 1;
@@ -359,6 +369,7 @@ describe('withCliDistBuildLock', () => {
                 timeoutMs: contentionWindowMs,
             });
             explicitAttempt = explicitWaitingAttempt;
+            void explicitWaitingAttempt.catch(() => {});
             await waitForCondition(() => existsSync(claimPath), 'explicit CLI dist lock contender');
 
             nowMs += contentionWindowMs + 1;
