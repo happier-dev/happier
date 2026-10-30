@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
+import { deriveReviewCommentStructuralMutationV1, projectReviewCommentStructuralMutationV1 } from './mutation.js';
 
 import {
   createReviewCommentLinkedIssueIdV1,
@@ -347,8 +348,8 @@ describe('ReviewCommentV1Schema', () => {
 
 describe('review comment mutation schemas', () => {
   it('defaults plugin-created comments to proposed unless direct write is explicit', () => {
-    expect(ReviewCommentActorRefV1Schema.parse({ kind: 'plugin', pluginId: 'review-deepsec' }).kind)
-      .toBe('plugin');
+    const actor = ReviewCommentActorRefV1Schema.parse({ kind: 'plugin', pluginId: 'review-deepsec' });
+    expect(actor.kind).toBe('plugin');
 
     const proposed = ReviewCommentCreateRequestV1Schema.parse({
       projectId: 'project-1',
@@ -368,15 +369,26 @@ describe('review comment mutation schemas', () => {
       authorIntent: 'open',
     });
     expect(direct.authorIntent).toBe('open');
+
+    const { authorIntent: _authorIntent, ...withoutIntent } = proposed;
+    for (const [input, expectedState] of [
+      [withoutIntent, 'proposed'],
+      [proposed, 'proposed'],
+      [direct, 'open'],
+    ] as const) {
+      const mutation = projectReviewCommentStructuralMutationV1('reviews.comments.create', input);
+      const derived = deriveReviewCommentStructuralMutationV1({
+        mutation,
+        accountId: 'account-1',
+        actor,
+        current: [],
+        runtime: { now: () => 1, createId: (prefix) => `${prefix}-1` },
+      });
+      expect(derived.records[0]?.structural).toMatchObject({ state: expectedState, author: actor });
+    }
   });
 
   it('requires evidence for resolving comments and emits append-only event rows', () => {
-    expect(() => ReviewCommentTransitionRequestV1Schema.parse({
-      commentId: 'comment-1',
-      toState: 'resolved',
-      clientMutationId: 'mutation-3',
-    })).toThrow();
-
     const transition = ReviewCommentTransitionRequestV1Schema.parse({
       commentId: 'comment-1',
       projectId: 'project-1',
@@ -387,6 +399,12 @@ describe('review comment mutation schemas', () => {
       clientMutationId: 'mutation-3',
     });
     expect(transition.toState).toBe('resolved');
+
+    const { evidence: _evidence, reason: _reason, ...withoutRationale } = transition;
+    expect(ReviewCommentTransitionRequestV1Schema.safeParse(withoutRationale)).toMatchObject({
+      success: false,
+      error: { issues: [{ code: 'custom', path: ['evidence'] }] },
+    });
 
     const event = ReviewCommentEventV1Schema.parse({
       eventId: 'event-1',

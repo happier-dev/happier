@@ -55,13 +55,16 @@ describe('resolveVisibleBuiltInAiLaunchProfilesV1', () => {
       profileEnabledById: {},
     };
     expect(resolveVisibleBuiltInAiLaunchProfilesV1({
-      evidence: { ...base, secretBindingsByProfileId: { deepseek: {} } },
+      evidence: { ...base, secretBindingsByProfileId: { 'azure-openai': {} } },
     })).toEqual([]);
     for (const invalid of [' saved-secret-id ', 'saved\nsecret', 'x'.repeat(257)]) {
       expect(resolveVisibleBuiltInAiLaunchProfilesV1({
-        evidence: { ...base, secretBindingsByProfileId: { deepseek: { DEEPSEEK_AUTH_TOKEN: invalid } } },
+        evidence: { ...base, secretBindingsByProfileId: { 'azure-openai': { AZURE_OPENAI_API_KEY: invalid } } },
       })).toEqual([]);
     }
+    expect(resolveVisibleBuiltInAiLaunchProfilesV1({
+      evidence: { ...base, secretBindingsByProfileId: { 'azure-openai': { AZURE_OPENAI_API_KEY: 'saved-secret-id' } } },
+    }).map((profile) => profile.id)).toEqual(['azure-openai']);
     expect(resolveVisibleBuiltInAiLaunchProfilesV1({
       evidence: { ...base, secretBindingsByProfileId: { deepseek: { DEEPSEEK_AUTH_TOKEN: 'saved-secret-id' } } },
     })).toEqual([]);

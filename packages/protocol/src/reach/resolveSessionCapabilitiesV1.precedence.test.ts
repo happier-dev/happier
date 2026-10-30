@@ -43,7 +43,7 @@ describe('resolveSessionCapabilitiesV1 predecessor place precedence', () => {
         },
       ],
       bindings: [
-        { id: 'all', serverId: 's1', enabled: true, target: { t: 'allMachines' }, createdAt: 0, updatedAt: 1 },
+        { id: 'all', serverId: 's1', enabled: true, target: { t: 'allMachines' }, createdAt: 0, updatedAt: 3 },
         { id: 'machine', serverId: 's1', enabled: true, target: { t: 'machine', machineId: 'm1' }, createdAt: 0, updatedAt: 2 },
         {
           id: 'ws',
@@ -51,7 +51,7 @@ describe('resolveSessionCapabilitiesV1 predecessor place precedence', () => {
           enabled: true,
           target: { t: 'workspace', machineId: 'm1', workspaceRoot: '/repo' },
           createdAt: 0,
-          updatedAt: 3,
+          updatedAt: 1,
         },
       ],
     });
@@ -59,6 +59,8 @@ describe('resolveSessionCapabilitiesV1 predecessor place precedence', () => {
     const resolved = resolveMcpMaterialization(settings, { machineId: 'm1', directory: '/repo/sub' });
     expect(resolved.serversByName.alpha.bindingId).toBe('ws');
     expect(resolved.serversByName.alpha.enabled).toBe(true);
+    expect(resolveMcpMaterialization(settings, { machineId: 'm1', directory: '/outside' }).serversByName.alpha.bindingId).toBe('machine');
+    expect(resolveMcpMaterialization(settings, { machineId: 'm2', directory: '/repo/sub' }).serversByName.alpha.bindingId).toBe('all');
   });
 
   it('chooses the longest matching workspaceRoot when multiple workspaces match', () => {
@@ -83,7 +85,7 @@ describe('resolveSessionCapabilitiesV1 predecessor place precedence', () => {
           enabled: true,
           target: { t: 'workspace', machineId: 'm1', workspaceRoot: '/repo' },
           createdAt: 0,
-          updatedAt: 1,
+          updatedAt: 2,
         },
         {
           id: 'ws2',
@@ -91,7 +93,7 @@ describe('resolveSessionCapabilitiesV1 predecessor place precedence', () => {
           enabled: true,
           target: { t: 'workspace', machineId: 'm1', workspaceRoot: '/repo/sub' },
           createdAt: 0,
-          updatedAt: 2,
+          updatedAt: 1,
         },
       ],
     });

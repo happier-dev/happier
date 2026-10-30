@@ -461,7 +461,7 @@ describe('Account Role artifact attribution', () => {
     await expect(execute({ actionId: 'roles.override.set', input: { roleId: 'scout', future: true }, context: { surface: 'cli' } })).rejects.toThrow();
   });
   it.each([
-    { context: { surface: 'cli', runtimeAccountId: 'account', actionCaller: { kind: 'host' } }, savedBy: { kind: 'person', accountId: 'account' } },
+    { context: { surface: 'cli', authority: 'present_user', runtimeAccountId: 'account', actionCaller: { kind: 'host' } }, savedBy: { kind: 'person', accountId: 'account' } },
     { context: { surface: 'mcp', runtimeAccountId: 'account', defaultSessionId: 'other-session', actionCaller: { kind: 'session', sessionId: 'admitted-session' } },
       savedBy: { kind: 'agent', accountId: 'account', sessionId: 'admitted-session' } },
   ] satisfies readonly { context: ActionExecutorContext; savedBy: unknown }[])('stamps retention, creation and update from the current caller ($savedBy.kind)', async ({ context, savedBy }) => {

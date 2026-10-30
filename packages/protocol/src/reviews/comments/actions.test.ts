@@ -268,12 +268,6 @@ describe('review comment operation contracts', () => {
   });
 
   it('requires explicit evidence for bulk resolution and exposes stable error codes', () => {
-    expect(() => ReviewCommentBulkTransitionRequestV1Schema.parse({
-      commentIds: ['comment-1'],
-      toState: 'resolved',
-      clientMutationId: 'mutation-1',
-    })).toThrow();
-
     const parsed = ReviewCommentBulkTransitionRequestV1Schema.parse({
       projectId: 'project-1',
       commentIds: ['comment-1'],
@@ -287,6 +281,12 @@ describe('review comment operation contracts', () => {
     expect(parsed.toState).toBe('resolved');
     expect(parsed.expectedState).toBe('open');
     expect(parsed.bulkActionId).toBe('bulk-1');
+
+    const { evidence: _evidence, reason: _reason, ...withoutRationale } = parsed;
+    expect(ReviewCommentBulkTransitionRequestV1Schema.safeParse(withoutRationale)).toMatchObject({
+      success: false,
+      error: { issues: [{ code: 'custom', path: ['evidence'] }] },
+    });
 
     const response = ReviewCommentBulkTransitionResponseV1Schema.parse({
       bulkActionId: 'bulk-1',

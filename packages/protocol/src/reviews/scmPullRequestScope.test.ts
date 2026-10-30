@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 import {
   SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY,
+  ScmPullRequestReviewObservationV1Schema,
   ScmPullRequestReviewScopeV1Schema,
   produceScmPullRequestReviewScope,
   resolveScmPullRequestReviewScope,
@@ -78,10 +79,22 @@ describe('ScmPullRequestReviewScopeV1Schema', () => {
   });
 
   it('refuses an observation missing the native revision or the observation time', () => {
-    expect(ScmPullRequestReviewScopeV1Schema.safeParse({
-      ...SCOPE,
-      observed: { baseSha: OBSERVED.baseSha, headSha: OBSERVED.headSha },
-    }).success).toBe(false);
+    const observed = ScmPullRequestReviewObservationV1Schema.parse(OBSERVED);
+    const { nativeRevision: _nativeRevision, ...withoutNativeRevision } = observed;
+    const { observedAtMs: _observedAtMs, ...withoutObservedAt } = observed;
+    for (const [incompleteObservation, missingField] of [
+      [withoutNativeRevision, 'nativeRevision'],
+      [withoutObservedAt, 'observedAtMs'],
+    ] as const) {
+      expect(ScmPullRequestReviewObservationV1Schema.safeParse(incompleteObservation)).toMatchObject({
+        success: false,
+        error: { issues: [{ code: 'invalid_type', path: [missingField] }] },
+      });
+      expect(ScmPullRequestReviewScopeV1Schema.safeParse({
+        ...SCOPE,
+        observed: incompleteObservation,
+      }).success).toBe(false);
+    }
     expect(ScmPullRequestReviewScopeV1Schema.safeParse({
       ...SCOPE,
       observed: { ...OBSERVED, observedAtMs: 1.5 },
