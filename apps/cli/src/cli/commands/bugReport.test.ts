@@ -751,7 +751,7 @@ describe('runBugReportCommand', () => {
     });
   });
 
-  it('appends --session-id to the submitted summary (B5)', async () => {
+  it('keeps the selected --session-id out of the submitted summary (B5)', async () => {
     const submissions: unknown[] = [];
     const deps = createDeps({
       submitBugReport: async (input) => {
@@ -772,11 +772,7 @@ describe('runBugReportCommand', () => {
     ], deps);
 
     expect(submissions).toHaveLength(1);
-    expect(submissions[0]).toMatchObject({
-      form: {
-        summary: expect.stringContaining('Happier session id: sess_abcdef123456'),
-      },
-    });
+    expect(submissions[0]).toMatchObject({ form: { summary: 'short summary' } });
   });
 
 });
