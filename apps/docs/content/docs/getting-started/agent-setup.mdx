@@ -14,9 +14,8 @@ agent's own account.
   Codex, running on the computer that should run your sessions. If your
   sessions should run on a server or dev box, start the agent there, or see
   [the remote option](#another-computer-over-ssh) below.
-- **A Happier account**, or a few minutes to create one in the
-  [app or web client](/getting-started/get-the-apps). The terminal cannot create
-  an account; it asks a device where you are already signed in to approve it.
+- **A phone or browser** to approve the sign-in. No account yet? You can create
+  one when you open the sign-in link.
 
 ## Paste this into your agent
 
@@ -30,10 +29,11 @@ agent fetch tools summarize a page and drop the exact flags.
 
 ## What your agent will and will not do
 
-It will ask a few questions first: where sessions should run, whether you
-already have an account, which relay you use, which coding agents you want, and
-whether this computer should stay reachable with no terminal open. It asks
-before each change and checks the result.
+It looks at this computer first, then proposes a plan with the usual choices
+already filled in: sessions run here, your account lives on Happier Cloud, and
+this computer stays reachable after a restart. You say yes or change what you
+want. It asks a question only when it cannot work out the answer, and it checks
+each step before the next.
 
 It will not ask you to paste passwords, API keys, recovery keys or tokens into
 the chat. Sign-in approval happens on your own device. Your agent's own login
@@ -98,6 +98,8 @@ command -v happier hprev hdev
 happier --version
 happier status
 happier service list
+command -v claude codex opencode gemini cursor-agent copilot
+tailscale status
 ```
 
 Windows (PowerShell):
@@ -108,6 +110,8 @@ Get-Command happier, hprev, hdev -ErrorAction SilentlyContinue
 happier --version
 happier status
 happier service list
+Get-Command claude, codex, opencode, gemini, cursor-agent, copilot -ErrorAction SilentlyContinue
+tailscale status
 ```
 
 `happier`, `hprev` and `hdev` are the stable, preview and dev release channels.
@@ -120,54 +124,57 @@ installed and healthy. If it already reports a signed-in, registered computer
 with healthy startup, setup is done. Skip to [Step 7](#step-7-check-the-coding-agent),
 then [Step 8](#step-8-prove-it-works).
 
-Also check which coding agents are already installed here, for example with
-`command -v claude codex opencode gemini` (macOS and Linux) or
-`Get-Command claude, codex -ErrorAction SilentlyContinue` (Windows).
+The agent check is a quick look; a missing command only means that agent is not
+on this shell's path. `tailscale status` only matters for one optional line in
+the plan. On macOS the Tailscale app keeps its command at
+`/Applications/Tailscale.app/Contents/MacOS/Tailscale`. If neither answers,
+treat Tailscale as not installed.
 
-### Step 2: Ask the setup questions
+### Step 2: Propose the plan
 
-Ask only the questions whose answers you do not already have. Skip a question
-when Step 1 already answered it, and say what you found instead. Number them so
-the person can answer in one message.
+Most people never need to choose anything. Fill in a plan from these defaults
+and from what Step 1 found, then ask for one yes:
 
-1. **Where should coding sessions run?** This computer, or another computer
-   such as a server or dev box? Happier runs the agent on that computer; it
-   never runs it in the cloud. If this is a laptop, mention that sessions stop
-   while it sleeps.
-2. **Do you already have a Happier account, and where are you signed in?**
-   Phone app, desktop app, or [web client](https://cloud.happier.dev)? The
-   sign-in step needs one of these. If they have no account, ask them to create
-   one in the app or web client now. You cannot create it from the terminal.
-3. **Which relay does your account live on?** The relay hosts the account and
-   syncs encrypted session state between devices.
-   - **Happier Cloud** (the usual choice);
-   - **a relay you already run**, by its URL; or
-   - **a new relay on this computer**.
+- **Sessions run on this computer.** That is why they started you here. If it is
+  a laptop, add that sessions pause while it sleeps.
+- **The account lives on Happier Cloud.** Add "unless you run your own Happier
+  server or were given a server address". If `happier status` already shows a
+  relay, keep that relay instead and do not mention the choice.
+- **This computer stays reachable after a restart**, with no terminal open. That
+  is automatic startup.
+- **The coding agents Step 1 found.** If it found none, ask the one question
+  people can answer: "Which AI subscription do you have: Claude, ChatGPT,
+  Gemini, Copilot, or something else?" Then pick the matching agent from
+  [Agent capabilities](/agents/capabilities): Claude Code for Claude, Codex for
+  ChatGPT, Gemini for Gemini, Copilot for GitHub Copilot.
 
-   An account exists only on the relay where it was created. If they have an
-   account, use the relay they created it on. If they are unsure, it is Happier
-   Cloud unless they set up their own.
-4. **Only if they chose a new relay on this computer: which devices must reach
-   it?** A relay on `localhost` is reachable only from this computer. For a
-   phone, they need Tailscale or a reachable LAN address. Read
-   [Onboarding, option B](/getting-started/onboarding)
-   before continuing, and follow its reachability guidance.
-5. **Should this computer stay reachable with no terminal open?** That is
-   automatic startup, the background service. Recommend yes for a desktop,
-   server or dev box.
-6. **Which coding agents do you want to use here?** List the ones Step 1 found.
-   Offer to install the ones they want that are missing.
-   [Agent capabilities](/agents/capabilities) lists every supported agent.
-7. **Only if Step 1 found an existing installation or service:** keep it as it
-   is, update it, or repair it? Explain what `happier status` reported first.
-   If more than one channel or service exists, ask whether that is intentional
-   before touching any of them.
-8. **Only if they mentioned preview or dev builds:** which channel? Default to
-   stable.
+If Tailscale is running, add one optional line to the Happier Cloud item: "You
+have Tailscale running, so you could host your own relay instead, on this
+computer or another one, reachable from devices on your tailnet. You would be
+running that server yourself." Do not recommend it over Happier Cloud. If they
+want it, follow [Hosting your own relay](#hosting-your-own-relay) instead of
+Step 4.
 
-Restate the plan in two or three lines and get a yes before Step 3.
+Ask more only when Step 1 makes it necessary:
 
-If the answer to question 1 is another computer, go to
+- **An existing installation or background service:** say what
+  `happier status` reported and ask whether to keep, update or repair it. If
+  more than one channel or service exists, ask whether that is intentional
+  before touching any of them.
+- **A preview or dev build** only when they ask for one. Otherwise use stable.
+
+For example:
+
+> Here is the plan. Say "go", or tell me what to change.
+> - Sessions run on this computer (I found Claude Code).
+> - Your account lives on Happier Cloud, unless you run your own Happier server
+>   or were given a server address.
+> - This computer stays reachable after restarts, with no terminal open.
+>
+> When it's time to sign in, I'll show you a link to open on your phone or in a
+> browser. If you don't have an account yet, you can create one there.
+
+If they want sessions to run on another computer, go to
 [Another computer over SSH](#another-computer-over-ssh).
 
 ### Step 3: Install the CLI
@@ -198,15 +205,20 @@ it by the full path the installer printed.
 
 ### Step 4: Point this computer at the relay
 
-Use the person's answer to question 3:
+Skip this step if `happier status` already showed the relay the plan keeps.
+For Happier Cloud:
 
 ```bash
 happier setup --cloud --yes
-happier setup --relay https://relay.example.com --yes
-happier setup --this-computer --yes
 ```
 
-Run only the one that matches. `--yes` runs every step that needs no answer.
+For a relay the person already runs, use its address:
+
+```bash
+happier setup --relay https://relay.example.com --yes
+```
+
+`--yes` runs every step that needs no answer.
 It stops at the sign-in, prints the command that finishes it, and **exits with
 a non-zero status on purpose**: setup is unfinished until a person approves the
 sign-in. That exit status is expected here, not a failure. Read the output; a
@@ -224,8 +236,11 @@ happier auth login --no-open --method web --wait-timeout 600
 ```
 
 It prints a link and waits up to ten minutes for approval. Show the person the
-link and ask them to open it in a browser where they are signed in to Happier,
-and approve. Do not open it yourself. If your shell tool has a shorter timeout
+link and ask them to open it on their phone or in a browser, then approve. If
+they are not signed in there, the app asks them to sign in or create an account
+first, then returns to the approval. Someone creating a new account should back
+it up afterwards, as [Start here](/getting-started) explains. Do not open the
+link yourself. If your shell tool has a shorter timeout
 than ten minutes, run the command in the background and keep reading its
 output.
 
@@ -237,7 +252,7 @@ registration without a new approval.
 
 ### Step 6: Automatic startup
 
-If the person wanted this computer to stay reachable (question 5):
+Unless the person declined it in the plan:
 
 ```bash
 happier service install
@@ -303,6 +318,43 @@ first and check the version requirement it states against `happier --version`.
   [session handoff](/sessions/session-handoff).
 - **Drive Happier from another agent or editor** with the
   [Happier MCP server](/extending/happier-as-mcp-server).
+
+### Hosting your own relay
+
+Only when the person chose this in Step 2. Confirm two things first:
+
+1. **Their phone is on the same tailnet.** The Tailscale app must be installed
+   and signed in to the same tailnet, or the phone cannot reach the relay. If it
+   is not, say so and let them reconsider.
+2. **Where the relay runs: this computer or another one.** A relay on this
+   computer is only up while this computer is.
+
+On this computer:
+
+```bash
+happier setup --this-computer --yes
+```
+
+It installs the relay and checks Tailscale. With Tailscale running, it publishes
+the relay to the tailnet. Read its last lines: they say whether the relay is
+reachable from other devices, and what to do if it is not.
+
+On another computer the person reaches by SSH, they run this in their own
+terminal, so they can check the host key:
+
+```bash
+happier relay host install --ssh user@host --mode system
+```
+
+Then point this computer at the address it printed:
+
+```bash
+happier setup --relay https://relay-address-it-printed --yes
+```
+
+Either way, the person creates their account on the new relay when they open
+the sign-in link in Step 5. Then continue with Step 5.
+[Onboarding, option B](/getting-started/onboarding) has the details.
 
 ### Another computer over SSH
 
