@@ -5,7 +5,7 @@ import type { Metadata } from '@/api/types';
 import { publishSessionRuntimeDescriptor } from './runtimeDescriptor';
 
 describe('publishSessionRuntimeDescriptor', () => {
-  it('skips publication when the next fingerprint normalizes to the last published fingerprint', async () => {
+  it.each([' fingerprint-1 ', 'fingerprint-1'])('skips publication when fingerprint %j matches the last published signature', async (fingerprint) => {
     const updateHappySessionMetadata = vi.fn(async () => undefined);
     const lastPublished: {
       sessionId: string | null;
@@ -17,42 +17,7 @@ describe('publishSessionRuntimeDescriptor', () => {
 
     await publishSessionRuntimeDescriptor({
       sessionId: 'session-1',
-      fingerprint: ' fingerprint-1 ',
-      publicationState: {
-        getSessionId: () => lastPublished.sessionId,
-        getFingerprint: () => lastPublished.fingerprint,
-        setSessionId: (sessionId) => {
-          lastPublished.sessionId = sessionId;
-        },
-        setFingerprint: (fingerprint) => {
-          lastPublished.fingerprint = fingerprint;
-        },
-      },
-      updateHappySessionMetadata,
-      runtimeDescriptor: null,
-      buildMetadata: (metadata) => metadata,
-    });
-
-    expect(updateHappySessionMetadata).not.toHaveBeenCalled();
-    expect(lastPublished).toEqual({
-      sessionId: 'session-1',
-      fingerprint: 'fingerprint-1',
-    });
-  });
-
-  it('skips duplicate publishes when the session id and fingerprint are unchanged', async () => {
-    const updateHappySessionMetadata = vi.fn(async () => undefined);
-    const lastPublished: {
-      sessionId: string | null;
-      fingerprint: string | null;
-    } = {
-      sessionId: 'session-1',
-      fingerprint: 'fingerprint-1',
-    };
-
-    await publishSessionRuntimeDescriptor({
-      sessionId: 'session-1',
-      fingerprint: 'fingerprint-1',
+      fingerprint,
       publicationState: {
         getSessionId: () => lastPublished.sessionId,
         getFingerprint: () => lastPublished.fingerprint,
