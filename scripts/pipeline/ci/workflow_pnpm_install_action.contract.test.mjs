@@ -46,11 +46,10 @@ test('Gate unit shell invokes one selected project suite and fails closed on nat
   const calls = path.join(root, 'calls');
   // pnpm is the process boundary; execute the real workflow shell unchanged.
   write(root, 'bin/pnpm', '#!/bin/sh\nprintf "%s|%s\\n" "${HAPPIER_VITEST_MAX_WORKERS-}" "$*" >> "$GATE_CALLS"\nprintf \'{"testResults":[]}\' > "$HAPPIER_UNIT_JSON_OUTPUT"\nexit "${GATE_CHILD_STATUS:-0}"\n', 0o755);
-  write(workspace, 'scripts/ci/reportGateRegressions.mjs', fs.readFileSync(path.join(repoRoot, 'scripts/ci/reportGateRegressions.mjs'), 'utf8'));
   const env = { PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, GATE_CALLS: calls,
     GATE_PACKAGES: 'cli protocol server plugins', GATE_VITEST_MAX_WORKERS: '2',
     HAPPIER_VITEST_MAX_WORKERS: '1', CLI_PREPARATION_OUTCOMES: 'success success',
-    HAPPIER_UNIT_JSON_OUTPUT: path.join(root, 'unit.json'), HAPPIER_GATE_TRIAGE_BASELINE: '' };
+    HAPPIER_UNIT_JSON_OUTPUT: path.join(root, 'unit.json') };
   const succeeded = runShellStep(step, workspace, runnerTemp, env);
   assert.equal(succeeded.status, 0, succeeded.stderr);
   assert.deepEqual(fs.readFileSync(calls, 'utf8').trim().split('\n'), ['2|run test:gate-unit cli protocol server plugins']);
