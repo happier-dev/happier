@@ -244,18 +244,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Admit Qualified V4 npm CLI payload publication
-        if: inputs.publish_cli
-        env:
-          RELEASE_CHANNEL: ${{ inputs.channel }}
-          SOURCE_SHA: ${{ steps.release_inputs.outputs.authorized_sha }}
-        run: |
-          node scripts/pipeline/release/admit-qualified-v4-npm-cli-payload.mjs \
-            --channel "$RELEASE_CHANNEL" \
-            --source-ref HEAD \
-            --source-sha "$SOURCE_SHA" \
-            --summary-file "$GITHUB_STEP_SUMMARY"
-
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6

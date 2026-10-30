@@ -473,6 +473,26 @@ test('qualified V4 activation CLI reads the exact pending migration set from Git
     postActivationPayloadDenied.stderr,
     /candidate payload.+qualifiedAccountsV4.+old-daemon rollback.+prohibited/i,
   );
+
+  // Exercise the npm entry's real final admission with the deployed baseline
+  // moving independently of candidate packing. Only npm itself is substituted.
+  runGit('remote', 'add', 'origin', gitRoot);
+  runGit('update-ref', 'refs/heads/deploy/preview/server', candidate);
+  const bin = join(gitRoot, 'bin');
+  await mkdir(bin);
+  const npmCalls = join(gitRoot, 'npm-calls');
+  await writeFile(join(bin, 'npm'), '#!/bin/sh\nprintf called >> "$NPM_CALLS"\n', { mode: 0o700 });
+  const finalAdmission = resolve(repoRoot, 'scripts/pipeline/release/admit-qualified-v4-npm-cli-payload.mjs');
+  const publication = spawnSync('bash', ['-ec',
+    '"$NODE" "$ADMISSION" --channel preview --source-ref refs/qualified-v4-payload-candidate --source-sha "$SOURCE_SHA"\nnpm publish fixture.tgz',
+  ], {
+    cwd: gitRoot, encoding: 'utf8',
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, NODE: process.execPath,
+      ADMISSION: finalAdmission, SOURCE_SHA: rollbackCandidate, NPM_CALLS: npmCalls },
+  });
+  assert.equal(publication.status, 1, publication.stderr);
+  assert.match(publication.stderr, /candidate payload.+qualifiedAccountsV4.+old-daemon rollback.+prohibited/i);
+  await assert.rejects(readFile(npmCalls), (error) => error?.code === 'ENOENT');
 });
 
 test('server migration admission rejects the read-state owner backfill until legacy API writers are drained', async (t) => {

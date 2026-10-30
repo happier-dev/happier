@@ -111,7 +111,7 @@ test('CLI binary publication uses secret-free source admission and immutable ret
   );
 });
 
-test('npm CLI publication uses the matching deployed server baseline before packing and publishing', async () => {
+test('npm CLI publication checks the deployed server baseline only at final publication', async () => {
   const workflow = YAML.parse(await readFile(npmWorkflowPath, 'utf8'));
   const release = workflow.jobs?.release;
   const publishCli = workflow.jobs?.['publish-cli'];
@@ -119,19 +119,7 @@ test('npm CLI publication uses the matching deployed server baseline before pack
     release,
     'Admit Qualified V4 npm CLI payload publication',
   );
-  assertPayloadAdmissionInvocation(admission, '${{ inputs.channel }}', {
-    candidateRef: 'HEAD',
-    candidateSha: '${{ steps.release_inputs.outputs.authorized_sha }}',
-  });
-  assert.equal(admission.if, 'inputs.publish_cli');
-  assert.ok(
-    release.steps.indexOf(admission)
-      > release.steps.findIndex((step) => step.name === 'Checkout source ref'),
-  );
-  assert.ok(
-    release.steps.indexOf(admission)
-      < release.steps.findIndex((step) => step.name === 'npm pack (pipeline)'),
-  );
+  assert.equal(admission, undefined, 'packing must not acquire a stale deployed-server admission');
 
   const finalAdmission = findStep(
     publishCli,
