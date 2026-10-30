@@ -7,8 +7,10 @@ import { hrefForDestinationRef } from '@/components/appShell/destinations/compac
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useSessionMachineName } from '@/components/sessions/agents/presentation/useSessionMachineName';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
+import { useSessionMachineDisplayIdentity } from '@/components/sessions/model/useSessionMachineTarget';
+import type { CheckoutMachineScope } from '@/components/workspaces/reachability/checkoutReachability';
 import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
-import { storage, useSessionDirectoryKind, useSessionProjectScmSnapshot, useSessionRepositoryTreeExpandedPaths, useSetting } from '@/sync/domains/state/storage';
+import { storage, useSessionDirectoryKind, useSessionProjectScmSnapshot, useSessionRepositoryTreeExpandedPaths, useSessionServerId, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
@@ -47,11 +49,16 @@ function SessionFilesRootHeading(props: Readonly<{ label: string }>) {
 }
 
 const ignoreUnavailableAction = () => {};
-function UnavailableSessionFiles(props: Readonly<{ rootLabel: string; machineName: string | null; onRetry: () => void }>) {
+function UnavailableSessionFiles(props: Readonly<{
+    rootLabel: string;
+    machineName: string | null;
+    machineScope: CheckoutMachineScope | null;
+    paneHeaderLine: PaneHeaderLine | null;
+}>) {
     const action = React.useMemo(() => <RepositoryTreeCreateMenu createEnabled={false} uploadEnabled={false} isWeb={Platform.OS === 'web'}
         uploadDestinationLabel={props.rootLabel} onSelect={ignoreUnavailableAction} />, [props.rootLabel]);
-    usePaneHeaderSlotContent(React.useMemo(() => ({ action }), [action]));
-    return <View style={styles.root}><RepositoryTreeRootErrorState kind="unavailable" machineName={props.machineName} onRetry={props.onRetry} /></View>;
+    usePaneHeaderSlotContent(React.useMemo(() => ({ action, line: props.paneHeaderLine }), [action, props.paneHeaderLine]));
+    return <View style={styles.root}><RepositoryTreeRootErrorState kind="unavailable" machineName={props.machineName} machineScope={props.machineScope} /></View>;
 }
 
 export type SessionRepositoryTreeBrowserViewProps = Readonly<{
@@ -75,7 +82,13 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     const target = useSessionWorkspaceTarget(props.sessionId, props.serverId);
     const scope = React.useMemo(() => target ? { serverId: target.serverId, machineId: target.machineId, rootPath: target.rootPath } : null,
         [target?.serverId, target?.machineId, target?.rootPath]);
-    const serverId = scope?.serverId ?? props.serverId;
+    const inferredServerId = useSessionServerId(props.sessionId, !scope && !props.serverId);
+    const serverId = scope?.serverId ?? props.serverId ?? inferredServerId;
+    const displayIdentity = useSessionMachineDisplayIdentity(scope ? '' : props.sessionId, serverId);
+    // Attribution explains the wait; only the target owner may enable filesystem effects.
+    const displayMachineScope = React.useMemo(() => serverId && displayIdentity.machineId && displayIdentity.basePath
+        ? { serverId, machineId: displayIdentity.machineId } : null,
+        [serverId, displayIdentity.machineId, displayIdentity.basePath]);
     const expandedPaths = useSessionRepositoryTreeExpandedPaths(props.sessionId);
     const setExpandedPaths = React.useCallback((paths: string[]) => storage.getState().setSessionRepositoryTreeExpandedPaths(props.sessionId, paths), [props.sessionId]);
     const withoutFolder = useSessionDirectoryKind(props.sessionId, serverId) === 'managed';
@@ -92,7 +105,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             ...serializeSessionPaneUrlState({ details: { kind: 'file', path } }) },
     }), [props.sessionId, serverId]);
     // The pane header's live line: where this Session works ("folder on machine"), then how many files changed (the Git pane's words).
-    const rootPath = scope?.rootPath ?? null;
+    const rootPath = scope?.rootPath ?? (displayIdentity.basePath || null);
     const repoChangedCount = React.useMemo(() => scmSnapshot?.repo.isRepo ? selectScmChangedFiles(scmSnapshot).length : null, [scmSnapshot]);
     const paneHeaderLine = React.useMemo((): PaneHeaderLine | null => {
         const folder = withoutFolder ? null : leafFolderName(rootPath);
@@ -121,7 +134,8 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     const scrollProps = React.useMemo(() => ({ onLayout: scrollFades.onViewportLayout, onContentSizeChange: scrollFades.onContentSizeChange,
         onScroll: scrollFades.onScroll, scrollEventThrottle: 16 }), [scrollFades.onViewportLayout, scrollFades.onContentSizeChange, scrollFades.onScroll]);
 
-    if (!scope) return <UnavailableSessionFiles rootLabel={rootLabel} machineName={machineName} onRetry={refreshScm} />;
+    if (!scope) return <UnavailableSessionFiles rootLabel={rootLabel} machineName={machineName}
+        machineScope={displayMachineScope} paneHeaderLine={paneHeaderLine} />;
     return (
         <WorkspaceRepositoryTreeBrowserView
             {...props}
