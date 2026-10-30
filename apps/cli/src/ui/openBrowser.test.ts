@@ -17,6 +17,8 @@ const envScope = createEnvKeyScope([
   'HEADLESS',
   'PATH',
   'WAYLAND_DISPLAY',
+  'WSL_DISTRO_NAME',
+  'WSL_INTEROP',
 ]);
 
 function overrideProcessRuntime({ platform, bunVersion }: { platform: NodeJS.Platform; bunVersion?: string }): () => void {
@@ -61,6 +63,8 @@ describe('openBrowser', () => {
       HAPPIER_NO_BROWSER_OPEN: undefined,
       HEADLESS: undefined,
       WAYLAND_DISPLAY: undefined,
+      WSL_DISTRO_NAME: undefined,
+      WSL_INTEROP: undefined,
     });
     openMock.mockResolvedValue(undefined);
 
@@ -87,6 +91,8 @@ describe('openBrowser', () => {
       HEADLESS: undefined,
       PATH: pathDir,
       WAYLAND_DISPLAY: undefined,
+      WSL_DISTRO_NAME: undefined,
+      WSL_INTEROP: undefined,
     });
     openMock.mockResolvedValue(undefined);
 
@@ -117,6 +123,8 @@ describe('openBrowser', () => {
       HEADLESS: undefined,
       PATH: pathDir,
       WAYLAND_DISPLAY: undefined,
+      WSL_DISTRO_NAME: undefined,
+      WSL_INTEROP: undefined,
     });
     openMock.mockResolvedValue(undefined);
 

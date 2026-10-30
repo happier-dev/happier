@@ -74,20 +74,24 @@ describe('acp token_count -> usage-report', () => {
   });
 
   it('does not allow __proto__ keys to mutate cost map prototypes', () => {
+    const cost = { component: 0.1, ['__proto__']: 1 };
+    expect(Object.hasOwn(cost, '__proto__')).toBe(true);
     const report = buildUsageReportFromAcpTokenCount({
       provider: 'pi' as any,
       sessionId: 'sess5',
       body: {
         type: 'token_count',
         tokens: { total: 3, input: 1, output: 2 },
-        cost: { component: 0.1, __proto__: 1 },
+        cost,
       },
     });
 
     expect(report).toBeTruthy();
-    expect(Object.getPrototypeOf((report as any).cost)).toBeNull();
-    expect((report as any).cost.component).toBe(0.1);
-    expect((report as any).cost.polluted).toBeUndefined();
+    if (!report) throw new Error('Expected numeric usage report');
+    expect(Object.getPrototypeOf(report.cost)).toBeNull();
+    expect(report.cost.component).toBe(0.1);
+    expect(Object.hasOwn(report.cost, '__proto__')).toBe(false);
+    expect(report.cost.polluted).toBeUndefined();
   });
 
   it('strips semantic cost fields from legacy usage-report payloads', () => {

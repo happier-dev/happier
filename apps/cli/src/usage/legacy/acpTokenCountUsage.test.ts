@@ -89,16 +89,19 @@ describe('acp token_count usage extraction', () => {
   });
 
   it('does not allow __proto__ token keys to mutate the resulting map prototype', () => {
+    const tokens = { input: 1, output: 2, ['__proto__']: 123 };
+    expect(Object.hasOwn(tokens, '__proto__')).toBe(true);
     const res = extractTokensFromAcpTokenCountMessage({
       type: 'token_count',
-      tokens: { input: 1, output: 2, __proto__: 123 },
+      tokens,
     });
 
     expect(res).toBeTruthy();
-    expect(Object.getPrototypeOf((res as any).tokens)).toBe(Object.prototype);
-    expect((res as any).tokens.input).toBe(1);
-    expect((res as any).tokens.output).toBe(2);
-    expect((res as any).tokens).not.toHaveProperty('__proto__', 123);
-    expect((res as any).tokens.polluted).toBeUndefined();
+    if (!res) throw new Error('Expected numeric token extraction');
+    expect(Object.getPrototypeOf(res.tokens)).toBe(Object.prototype);
+    expect(res.tokens.input).toBe(1);
+    expect(res.tokens.output).toBe(2);
+    expect(Object.hasOwn(res.tokens, '__proto__')).toBe(false);
+    expect(res.tokens.polluted).toBeUndefined();
   });
 });

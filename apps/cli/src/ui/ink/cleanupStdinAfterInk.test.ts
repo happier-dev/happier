@@ -1,3 +1,5 @@
+import { PassThrough } from 'node:stream';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanupStdinAfterInk } from './cleanupStdinAfterInk';
 
@@ -56,19 +58,23 @@ describe('cleanupStdinAfterInk', () => {
 
   it('drains buffered input and pauses stdin', async () => {
     vi.useFakeTimers();
-    const stdin = createFakeStdin();
+    const stdin = Object.assign(new PassThrough(), { isTTY: true, setRawMode: vi.fn() });
+    stdin.write('buffered input');
 
-    const promise = cleanupStdinAfterInk({ stdin, drainMs: 50 });
-    expect(stdin.__listenerCount('data')).toBe(1);
-    await vi.advanceTimersByTimeAsync(60);
-    await promise;
+    try {
+      const promise = cleanupStdinAfterInk({ stdin, drainMs: 50 });
+      expect(stdin.listenerCount('data')).toBe(1);
+      expect(stdin.setRawMode).toHaveBeenCalledWith(false);
+      expect(stdin.isPaused()).toBe(false);
+      await vi.advanceTimersByTimeAsync(60);
+      await promise;
 
-    const callNames = stdin.__calls.map((call) => call.name);
-    expect(callNames).toContain('setRawMode');
-    expect(callNames).toContain('resume');
-    expect(callNames).toContain('pause');
-    expect(callNames.indexOf('resume')).toBeLessThan(callNames.indexOf('pause'));
-    expect(stdin.__listenerCount('data')).toBe(0);
+      expect(stdin.readableLength).toBe(0);
+      expect(stdin.isPaused()).toBe(true);
+      expect(stdin.listenerCount('data')).toBe(0);
+    } finally {
+      stdin.destroy();
+    }
   });
 
   it('pauses immediately when drainMs is zero', async () => {
