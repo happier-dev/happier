@@ -108,14 +108,39 @@ describe('useTextInputCaretRect (native)', () => {
     });
 
     it('returns null when enabled is false', async () => {
-        const inputRef = createInputRef();
+        const handle = createMockHandle();
+        const inputRef = createInputRef(handle);
         const { useTextInputCaretRect } = await import('../useTextInputCaretRect.native');
 
-        const hook = await renderHook(() =>
-            useTextInputCaretRect({ inputRef, enabled: false }),
+        const hook = await renderHook(
+            ({ enabled }: { enabled: boolean }) => useTextInputCaretRect({ inputRef, enabled }),
+            { initialProps: { enabled: false } },
         );
 
+        expect(capturedHandler.onSelectionChange).toBeUndefined();
+        await act(async () => {
+            capturedHandler.onSelectionChange?.({
+                target: 42,
+                selection: {
+                    start: { x: 50, y: 10, position: 5 },
+                    end: { x: 50, y: 10, position: 5 },
+                },
+            });
+        });
+        expect(handle.measureInWindow).not.toHaveBeenCalled();
         expect(hook.getCurrent()).toBeNull();
+
+        await hook.rerender({ enabled: true });
+        await act(async () => {
+            capturedHandler.onSelectionChange?.({
+                target: 42,
+                selection: {
+                    start: { x: 50, y: 10, position: 5 },
+                    end: { x: 50, y: 10, position: 5 },
+                },
+            });
+        });
+        expect(hook.getCurrent()).toEqual({ left: 150, top: 210, height: 16 });
     });
 
     it('registers empty handler map when disabled (D38)', async () => {
@@ -128,17 +153,6 @@ describe('useTextInputCaretRect (native)', () => {
 
         // When disabled, handler map should be empty (no onSelectionChange)
         expect(capturedHandler.onSelectionChange).toBeUndefined();
-    });
-
-    it('registers onSelectionChange when enabled', async () => {
-        const inputRef = createInputRef();
-        const { useTextInputCaretRect } = await import('../useTextInputCaretRect.native');
-
-        await renderHook(() =>
-            useTextInputCaretRect({ inputRef, enabled: true }),
-        );
-
-        expect(capturedHandler.onSelectionChange).toBeDefined();
     });
 
     it('clears rect when enabled transitions from true to false', async () => {
@@ -208,6 +222,23 @@ describe('useTextInputCaretRect (native)', () => {
 
         // Should still be null (stale callback was ignored)
         expect(hook.getCurrent()).toBeNull();
+
+        // The disabled return value masks stored state. Reenable before another
+        // event so a stale callback cannot hide a resurrected rectangle.
+        await hook.rerender({ enabled: true });
+        expect(hook.getCurrent()).toBeNull();
+
+        await act(async () => {
+            capturedHandler.onSelectionChange?.({
+                target: 42,
+                selection: {
+                    start: { x: 50, y: 10, position: 5 },
+                    end: { x: 50, y: 10, position: 5 },
+                },
+            });
+            pendingCallback?.(110, 220, 300, 100);
+        });
+        expect(hook.getCurrent()).toEqual({ left: 160, top: 230, height: 16 });
     });
 
     it('ignores event when handle ref is null', async () => {

@@ -2,19 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { computeNativeCaretRect } from '../useTextInputCaretRect.native';
 
 describe('computeNativeCaretRect', () => {
-    it('computes window-relative caret rect from input offset and selection coordinates', () => {
-        const result = computeNativeCaretRect(
-            { x: 100, y: 200 },
-            { start: { x: 50, y: 10 }, end: { x: 50, y: 10 } },
-        );
-
-        expect(result).toEqual({
-            left: 150,
-            top: 210,
-            height: 16,
-        });
-    });
-
     it('computes height from selection span when start.y differs from end.y', () => {
         const result = computeNativeCaretRect(
             { x: 0, y: 0 },

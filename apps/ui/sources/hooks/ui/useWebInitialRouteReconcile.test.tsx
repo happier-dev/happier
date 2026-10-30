@@ -53,26 +53,6 @@ describe('useWebInitialRouteReconcile', () => {
         expect(routerReplaceSpy).toHaveBeenCalledWith('/terminal/connect');
     });
 
-    it('restores a session Home query when initial router hydration strips it from the same pathname', async () => {
-        const location = {
-            pathname: '/session/session-1',
-            search: '?serverId=home-b',
-            hash: '',
-        };
-        vi.stubGlobal('window', { location });
-
-        const { useWebInitialRouteReconcile } = await import('./useWebInitialRouteReconcile');
-        await renderHook(() => useWebInitialRouteReconcile({
-            routerPathname: '/session/session-1',
-            routerServerId: null,
-        }));
-
-        location.search = '';
-        await flushHookEffects({ cycles: 1, turns: 1, runAllTimers: true });
-
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-1?serverId=home-b');
-    });
-
     it('captures the scoped browser address before layout effects can rewrite the URL', async () => {
         const location = {
             pathname: '/session/session-1',

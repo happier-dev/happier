@@ -1,176 +1,139 @@
-import React from 'react';
+import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
+import {
+  createHomeGovernanceHarness,
+  installHomeGovernanceBoundaries,
+} from '@/dev/testkit/harness/homeGovernanceHarness';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+const { useTabState } = await import('./useTabState');
 
-const mocks = vi.hoisted(() => ({
-  useAuth: vi.fn(),
-  kvBulkGet: vi.fn(),
-  kvSet: vi.fn(),
-}));
+const kv = createAccountKvHttpFixture();
+const serverUrl = 'https://tab-state.example.test';
+const tabKey = 'ui:active-tab';
+let serverId: string;
+let beforeMutation: (() => Promise<void>) | null = null;
 
-vi.mock('@/auth/context/AuthContext', () => ({
-  useAuth: () => mocks.useAuth(),
-}));
+beforeEach(async () => {
+  await home.reset();
+  kv.reset();
+  beforeMutation = null;
+  serverId = await home.addHome({ name: 'Tab state', serverUrl, accountId: 'tab-account', currentAccount: true });
+  setRuntimeFetch(async (input, init) => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path === '/v1/kv' && init?.method === 'POST') {
+      const wait = beforeMutation;
+      beforeMutation = null;
+      await wait?.();
+    }
+    return await kv.handleFetch(input, init) ?? await home.request(input, init);
+  });
+});
 
-vi.mock('@/sync/api/account/apiKv', () => ({
-  kvBulkGet: (...args: any[]) => mocks.kvBulkGet(...args),
-  kvSet: (...args: any[]) => mocks.kvSet(...args),
-}));
+afterEach(async () => {
+  standardCleanup();
+  beforeMutation = null;
+  await home.reset();
+  vi.restoreAllMocks();
+});
+
+async function seedTab(value: string, version = 3) {
+  for (let previousVersion = -1; previousVersion < version; previousVersion += 1) {
+    const response = await kv.handleFetch(`${serverUrl}/v1/kv`, {
+      method: 'POST',
+      body: JSON.stringify({ mutations: [{ key: tabKey, value, version: previousVersion }] }),
+    });
+    expect(response?.status).toBe(200);
+  }
+}
+
+async function renderTabState() {
+  const credentials = await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId });
+  if (!credentials) throw new Error('Expected stored Account credentials');
+  return await renderHook(() => useTabState(), {
+    wrapper: ({ children }) => <InjectedAuthProvider credentials={credentials}>{children}</InjectedAuthProvider>,
+  });
+}
 
 describe('useTabState', () => {
-  afterEach(() => {
-    vi.resetModules();
-    vi.clearAllMocks();
-    delete process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
-  });
-
   it('loads the active tab from account KV on mount', async () => {
-    mocks.useAuth.mockReturnValue({ credentials: { token: 't' } });
-    mocks.kvBulkGet.mockResolvedValue({ values: [{ key: 'ui:active-tab', value: 'inbox', version: 3 }] });
+    await seedTab('inbox');
+    const hook = await renderTabState();
 
-    const { useTabState } = await import('./useTabState');
-    const seen: Array<{ tab: string; loading: boolean }> = [];
-
-    function Test() {
-      const { activeTab, isLoading } = useTabState();
-      React.useEffect(() => {
-        seen.push({ tab: activeTab, loading: isLoading });
-      }, [activeTab, isLoading]);
-      return null;
-    }
-
-    await renderScreen(<Test />);
-
-    expect(seen.at(-1)).toEqual({ tab: 'inbox', loading: false });
+    expect(hook.getCurrent()).toMatchObject({ activeTab: 'inbox', isLoading: false });
+    expect(kv.read(tabKey)).toEqual({ key: tabKey, value: 'inbox', version: 3 });
   });
 
   it('keeps the dev projects tab as a first-class stored tab', async () => {
-    mocks.useAuth.mockReturnValue({ credentials: { token: 't' } });
-    mocks.kvBulkGet.mockResolvedValue({ values: [{ key: 'ui:active-tab', value: 'projects', version: 3 }] });
+    await seedTab('projects');
+    const hook = await renderTabState();
 
-    const { useTabState } = await import('./useTabState');
-    const seen: Array<{ tab: string; loading: boolean }> = [];
-
-    function Test() {
-      const { activeTab, isLoading } = useTabState();
-      React.useEffect(() => {
-        seen.push({ tab: activeTab, loading: isLoading });
-      }, [activeTab, isLoading]);
-      return null;
-    }
-
-    await renderScreen(<Test />);
-
-    expect(seen.at(-1)).toEqual({ tab: 'projects', loading: false });
+    expect(hook.getCurrent()).toMatchObject({ activeTab: 'projects', isLoading: false });
   });
 
   it('normalizes stale route-owned settings tab state back to sessions', async () => {
-    mocks.useAuth.mockReturnValue({ credentials: { token: 't' } });
-    mocks.kvBulkGet.mockResolvedValue({ values: [{ key: 'ui:active-tab', value: 'settings', version: 3 }] });
+    await seedTab('settings');
+    const hook = await renderTabState();
 
-    const { useTabState } = await import('./useTabState');
-    const seen: Array<{ tab: string; loading: boolean }> = [];
-
-    function Test() {
-      const { activeTab, isLoading } = useTabState();
-      React.useEffect(() => {
-        seen.push({ tab: activeTab, loading: isLoading });
-      }, [activeTab, isLoading]);
-      return null;
-    }
-
-    await renderScreen(<Test />);
-
-    expect(seen.at(-1)).toEqual({ tab: 'sessions', loading: false });
+    expect(hook.getCurrent()).toMatchObject({ activeTab: 'sessions', isLoading: false });
   });
 
   it('persists changes back to KV with optimistic UI update', async () => {
-    mocks.useAuth.mockReturnValue({ credentials: { token: 't' } });
-    mocks.kvBulkGet.mockResolvedValue({ values: [] });
-    mocks.kvSet.mockResolvedValue(1);
-
-    const { useTabState } = await import('./useTabState');
-    const seen: string[] = [];
-
-    function Test() {
-      const { activeTab, setActiveTab } = useTabState();
-      React.useEffect(() => {
-        seen.push(activeTab);
-      }, [activeTab]);
-      React.useEffect(() => {
-        void setActiveTab('inbox');
-      }, [setActiveTab]);
-      return null;
+    const hook = await renderTabState();
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
+    beforeMutation = async () => { entered.resolve(); await release.promise; };
+    let pending: Promise<void> | undefined;
+    try {
+      await act(async () => {
+        pending = hook.getCurrent().setActiveTab('inbox');
+        await entered.promise;
+      });
+      expect(hook.getCurrent().activeTab).toBe('inbox');
+      expect(kv.read(tabKey)).toBeUndefined();
+    } finally {
+      release.resolve();
+      await act(async () => { await pending; });
     }
 
-    await renderScreen(<Test />);
-
-    expect(seen).toContain('inbox');
-    expect(mocks.kvSet).toHaveBeenCalledWith({ token: 't' }, 'ui:active-tab', 'inbox', -1);
+    expect(kv.read(tabKey)).toEqual({ key: tabKey, value: 'inbox', version: 0 });
+    expect(hook.getCurrent().activeTab).toBe('inbox');
   });
 
   it('does not persist route-owned settings as the main tab state', async () => {
-    mocks.useAuth.mockReturnValue({ credentials: { token: 't' } });
-    mocks.kvBulkGet.mockResolvedValue({ values: [] });
-    mocks.kvSet.mockResolvedValue(1);
+    const hook = await renderTabState();
+    await act(async () => { await hook.getCurrent().setActiveTab('settings'); });
 
-    const { useTabState } = await import('./useTabState');
-    const seen: string[] = [];
-
-    function Test() {
-      const { activeTab, setActiveTab } = useTabState();
-      React.useEffect(() => {
-        seen.push(activeTab);
-      }, [activeTab]);
-      React.useEffect(() => {
-        void setActiveTab('settings');
-      }, [setActiveTab]);
-      return null;
-    }
-
-    await renderScreen(<Test />);
-
-    expect(seen.at(-1)).toBe('sessions');
-    expect(mocks.kvSet).toHaveBeenCalledWith({ token: 't' }, 'ui:active-tab', 'sessions', -1);
+    expect(hook.getCurrent().activeTab).toBe('sessions');
+    expect(kv.read(tabKey)).toEqual({ key: tabKey, value: 'sessions', version: 0 });
   });
 
   it('retries the requested tab after a recoverable version mismatch', async () => {
-    mocks.useAuth.mockReturnValue({ credentials: { token: 't' } });
-    mocks.kvBulkGet
-      .mockResolvedValueOnce({ values: [] })
-      .mockResolvedValueOnce({ values: [{ key: 'ui:active-tab', value: 'sessions', version: 3 }] });
-    mocks.kvSet
-      .mockRejectedValueOnce(new Error('Failed to set key "ui:active-tab": version-mismatch (current version: 3)'))
-      .mockResolvedValueOnce(4);
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const hook = await renderTabState();
+    // Another HTTP writer advances the row after this reader saw no key.
+    await seedTab('sessions');
+    const requestsBefore = kv.readRequests().length;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const { useTabState } = await import('./useTabState');
-    let setActiveTab: ((tab: 'inbox') => Promise<void>) | null = null;
-    const seen: string[] = [];
+    await act(async () => { await hook.getCurrent().setActiveTab('inbox'); });
 
-    function Test() {
-      const tabState = useTabState();
-      setActiveTab = tabState.setActiveTab as (tab: 'inbox') => Promise<void>;
-      React.useEffect(() => {
-        seen.push(tabState.activeTab);
-      }, [tabState.activeTab]);
-      return null;
-    }
-
-    await renderScreen(<Test />);
-
-    await act(async () => {
-      await setActiveTab?.('inbox');
-    });
-
-    expect(seen.at(-1)).toBe('inbox');
-    expect(mocks.kvSet).toHaveBeenNthCalledWith(1, { token: 't' }, 'ui:active-tab', 'inbox', -1);
-    expect(mocks.kvSet).toHaveBeenNthCalledWith(2, { token: 't' }, 'ui:active-tab', 'inbox', 3);
-    expect(warnSpy).not.toHaveBeenCalled();
-    warnSpy.mockRestore();
+    expect(hook.getCurrent().activeTab).toBe('inbox');
+    expect(kv.read(tabKey)).toEqual({ key: tabKey, value: 'inbox', version: 4 });
+    expect(kv.readRequests().slice(requestsBefore)).toEqual([
+      { method: 'POST', path: '/v1/kv' },
+      { method: 'POST', path: '/v1/kv/bulk' },
+      { method: 'POST', path: '/v1/kv' },
+    ]);
+    expect(warn).not.toHaveBeenCalled();
   });
 });

@@ -1,13 +1,14 @@
 import * as React from 'react';
-import { act, create } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
 
 import { useEventCallback } from './useEventCallback';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('useEventCallback', () => {
-    it('returns a STABLE identity across renders (memo-stable callback prop)', () => {
+    it('returns a STABLE identity across renders (memo-stable callback prop)', async () => {
         const identities: Array<() => void> = [];
         let forceRender: (() => void) | null = null;
 
@@ -19,9 +20,7 @@ describe('useEventCallback', () => {
             return null;
         }
 
-        act(() => {
-            create(<Host />);
-        });
+        await renderScreen(<Host />);
         act(() => forceRender?.());
         act(() => forceRender?.());
 
@@ -31,7 +30,7 @@ describe('useEventCallback', () => {
         expect(new Set(identities).size).toBe(1);
     });
 
-    it('always invokes the LATEST closure (no stale capture)', () => {
+    it('always invokes the LATEST closure (no stale capture)', async () => {
         const observed: number[] = [];
         let stableHandler: (() => void) | null = null;
         let bump: (() => void) | null = null;
@@ -43,9 +42,7 @@ describe('useEventCallback', () => {
             return null;
         }
 
-        act(() => {
-            create(<Host />);
-        });
+        await renderScreen(<Host />);
         act(() => stableHandler?.()); // sees 0
         act(() => bump?.());
         act(() => stableHandler?.()); // must see 1, not the stale 0
@@ -55,7 +52,7 @@ describe('useEventCallback', () => {
         expect(observed).toEqual([0, 1, 2]);
     });
 
-    it('forwards arguments and return values to the latest closure', () => {
+    it('forwards arguments and return values to the latest closure', async () => {
         const holder: { fn: ((a: number, b: number) => number) | null } = { fn: null };
 
         function Host() {
@@ -63,9 +60,7 @@ describe('useEventCallback', () => {
             return null;
         }
 
-        act(() => {
-            create(<Host />);
-        });
+        await renderScreen(<Host />);
 
         expect(holder.fn).not.toBeNull();
         expect(holder.fn?.(2, 3)).toBe(5);
