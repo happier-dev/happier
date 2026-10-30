@@ -1,10 +1,4 @@
-import {
-  describeWorkspaceScriptTarget,
-  matchesWorkspaceScriptTarget,
-  resolveRootScriptWorkspaceTargets,
-  scanPnpmInvocations,
-} from './rootScriptWorkspaceTargets.ts';
-import { ROOT_UNIT_LANE_SCRIPT_NAME, TEST_LANE_DEFINITIONS, type LaneId } from './testLaneMap.ts';
+import { TEST_LANE_DEFINITIONS, type LaneId } from './testLaneMap.ts';
 
 export interface WorkflowScriptParityIssue {
   laneId?: LaneId | GovernanceCommandId;
@@ -16,15 +10,10 @@ export interface WorkflowScriptParityReport {
   packageLocalOnlyLaneIds: readonly LaneId[];
 }
 
-type TriggerMode = 'required' | 'optional' | 'report-only' | 'local-only';
-
 interface ParityDefinition {
   id: LaneId | GovernanceCommandId;
   rootScriptName: string;
   docsCommands: readonly string[];
-  workflowCommands: readonly string[];
-  workflowMode: 'all' | 'any';
-  triggerMode: TriggerMode;
   requiredScriptBodyPatterns?: readonly RegExp[];
 }
 
@@ -36,144 +25,27 @@ export type GovernanceCommandId =
   | 'test:migration:v2-zero:enforce'
   | 'test:migration:bundled-plugin-projections';
 
-const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = Object.freeze([
-  {
-    // Workflow coverage for the root unit lane is derived from the root script itself
-    // (see collectRootUnitLaneWorkflowIssues), not from a second maintained command list.
-    id: 'test',
-    rootScriptName: 'test',
-    docsCommands: ['pnpm run test'],
-    workflowCommands: [],
-    workflowMode: 'all',
-    triggerMode: 'required',
-  },
-  {
-    id: 'test:plugin-workspaces',
-    rootScriptName: 'test:plugin-workspaces',
-    docsCommands: ['pnpm run test:plugin-workspaces'],
-    workflowCommands: ['pnpm run test:plugin-workspaces'],
-    workflowMode: 'any',
-    triggerMode: 'required',
-  },
-  {
-    id: 'test:plugin-platform:source',
-    rootScriptName: 'test:plugin-platform:source',
-    docsCommands: ['pnpm run test:plugin-platform:source'],
-    workflowCommands: ['pnpm --filter @happier-dev/tests run test:plugin-platform:source'],
-    workflowMode: 'any',
-    triggerMode: 'required',
-  },
-  {
-    id: 'test:integration',
-    rootScriptName: 'test:integration',
-    docsCommands: ['pnpm run test:integration'],
-    workflowCommands: [
-      'pnpm --filter @happier-dev/app run test:integration',
-      'pnpm --filter @happier-dev/cli run test:integration',
-      'pnpm --dir apps/server run test:integration',
-      'pnpm --dir apps/stack run test:integration',
-    ],
-    workflowMode: 'all',
-    triggerMode: 'required',
-  },
-  {
-    id: 'cli:test:workspace-sync:real',
-    rootScriptName: 'test:workspace-sync:real',
-    docsCommands: ['pnpm run test:workspace-sync:real'],
-    workflowCommands: ['pnpm run test:workspace-sync:real'],
-    workflowMode: 'any',
-    triggerMode: 'required',
-  },
-  {
-    id: 'test:db-contract:docker',
-    rootScriptName: 'test:db-contract:docker',
-    docsCommands: ['pnpm run test:db-contract:docker'],
-    workflowCommands: ['pnpm --dir apps/server run test:server:db-contract'],
-    workflowMode: 'any',
-    triggerMode: 'optional',
-  },
-  {
-    id: 'test:e2e:core:fast',
-    rootScriptName: 'test:e2e:core:fast',
-    docsCommands: ['pnpm run test:e2e:core:fast'],
-    workflowCommands: ['pnpm run test:e2e:core:fast'],
-    workflowMode: 'any',
-    triggerMode: 'required',
-  },
-  {
-    id: 'test:e2e:core:slow',
-    rootScriptName: 'test:e2e:core:slow',
-    docsCommands: ['pnpm run test:e2e:core:slow'],
-    workflowCommands: ['pnpm run test:e2e:core:slow'],
-    workflowMode: 'any',
-    triggerMode: 'optional',
-  },
-  {
-    id: 'test:e2e:ui',
-    rootScriptName: 'test:e2e:ui',
-    docsCommands: ['pnpm run test:e2e:ui'],
-    workflowCommands: ['pnpm --silent run test:e2e:ui', 'pnpm run test:e2e:ui'],
-    workflowMode: 'any',
-    triggerMode: 'optional',
-  },
-  {
-    id: 'test:e2e:desktop:native',
-    rootScriptName: 'test:e2e:desktop:native',
-    docsCommands: ['pnpm run test:e2e:desktop:native'],
-    workflowCommands: [],
-    workflowMode: 'any',
-    triggerMode: 'local-only',
-  },
-  {
-    id: 'test:e2e:mobile',
-    rootScriptName: 'test:e2e:mobile',
-    docsCommands: ['pnpm run test:e2e:mobile'],
-    workflowCommands: ['pnpm --silent run test:e2e:mobile', 'pnpm run test:e2e:mobile'],
-    workflowMode: 'any',
-    triggerMode: 'optional',
-  },
-  {
-    id: 'test:agents',
-    rootScriptName: 'test:agents',
-    docsCommands: ['pnpm run test:agents'],
-    workflowCommands: ['pnpm --filter @happier-dev/tests run providers:run'],
-    workflowMode: 'any',
-    triggerMode: 'optional',
-  },
-  {
-    id: 'test:stress',
-    rootScriptName: 'test:stress',
-    docsCommands: ['pnpm run test:stress'],
-    workflowCommands: ['pnpm run test:stress'],
-    workflowMode: 'any',
-    triggerMode: 'optional',
-  },
-]);
+// Script/docs parity derives lane identity from the canonical lane inventory.
+// Parsed workflow execution coverage belongs to workflowWiring.contract.test.mjs.
+const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = TEST_LANE_DEFINITIONS
+  .filter((lane) => lane.rootScriptName !== null)
+  .map((lane) => ({ id: lane.id, rootScriptName: lane.rootScriptName!, docsCommands: [lane.rootCommand!] }));
 
 const GOVERNANCE_COMMAND_PARITY: readonly ParityDefinition[] = Object.freeze([
   {
     id: 'test:wiring:self',
     rootScriptName: 'test:wiring:self',
     docsCommands: ['pnpm run test:wiring:self'],
-    workflowCommands: ['pnpm run test:wiring:self'],
-    workflowMode: 'any',
-    triggerMode: 'required',
   },
   {
     id: 'test:wiring',
     rootScriptName: 'test:wiring',
     docsCommands: ['pnpm run test:wiring'],
-    workflowCommands: ['pnpm run test:wiring'],
-    workflowMode: 'any',
-    triggerMode: 'required',
   },
   {
     id: 'test:policy:self',
     rootScriptName: 'test:policy:self',
     docsCommands: ['pnpm run test:policy:self'],
-    workflowCommands: [],
-    workflowMode: 'any',
-    triggerMode: 'local-only',
     requiredScriptBodyPatterns: [
       /scripts\/testing\/migrations\/lib\/\*\.test\.ts/,
       /scripts\/testing\/migrations\/runtimeUnification\/validators\/\*\.test\.ts/,
@@ -183,26 +55,17 @@ const GOVERNANCE_COMMAND_PARITY: readonly ParityDefinition[] = Object.freeze([
     id: 'test:policy',
     rootScriptName: 'test:policy',
     docsCommands: ['pnpm run test:policy'],
-    workflowCommands: ['pnpm run test:policy'],
-    workflowMode: 'any',
-    triggerMode: 'required',
   },
   {
     id: 'test:migration:v2-zero:enforce',
     rootScriptName: 'test:migration:v2-zero:enforce',
     docsCommands: ['pnpm run test:migration:v2-zero:enforce'],
-    workflowCommands: [],
-    workflowMode: 'any',
-    triggerMode: 'local-only',
     requiredScriptBodyPatterns: [/scripts\/testing\/migrations\/validateV2ZeroInventory\.ts/, /--enforce/],
   },
   {
     id: 'test:migration:bundled-plugin-projections',
     rootScriptName: 'test:migration:bundled-plugin-projections',
     docsCommands: [],
-    workflowCommands: [],
-    workflowMode: 'any',
-    triggerMode: 'local-only',
     requiredScriptBodyPatterns: [
       /apps\/cli\/scripts\/build-owned\/generateBundledPluginEntries\.ts/,
       /--mode check/,
@@ -228,7 +91,6 @@ export const FEATURE_GATING_CONFIG_PATHS: readonly string[] = Object.freeze([
 
 export interface WorkflowScriptParityInput {
   packageJsonText: string;
-  workflowText: string;
   docsText: string;
   configTexts: Readonly<Record<string, string>>;
 }
@@ -251,88 +113,10 @@ function extractRootCommandMentions(text: string): CommandMention[] {
   }));
 }
 
-function hasAllCommands(text: string, commands: readonly string[]): boolean {
-  return commands.every((command) => text.includes(command));
-}
-
-function hasAnyCommand(text: string, commands: readonly string[]): boolean {
-  return commands.length === 0 ? true : commands.some((command) => text.includes(command));
-}
-
-const FINITE_PUBLIC_SDK_SCRIPT_NAME = 'check:public-sdk:finite:local';
-const FINITE_PUBLIC_SDK_WORKSPACE_TEST_TASK = 'test:finite';
-
-/**
- * The workflow substitutes one aggregate command for the per-workspace test steps, so its unit
- * coverage is exactly what that root script runs. Reading the turbo tasks and `--filter` targets out
- * of the script body keeps the allowance removal-sensitive: dropping the workspace test task, or
- * dropping a workspace from the filter, withdraws the credit instead of leaving a mirrored list that
- * cannot notice either change.
- */
-function resolveFinitePublicSdkTestWorkspaces(
-  scripts: Readonly<Record<string, string>>,
-): ReadonlySet<string> {
-  const tokens = (scripts[FINITE_PUBLIC_SDK_SCRIPT_NAME] ?? '').split(/\s+/u).filter((token) => token.length > 0);
-  const runIndex = tokens.indexOf('run');
-  if (runIndex === -1) return new Set();
-  const tasks: string[] = [];
-  for (const token of tokens.slice(runIndex + 1)) {
-    if (token.startsWith('-')) break;
-    tasks.push(token);
-  }
-  if (!tasks.includes(FINITE_PUBLIC_SDK_WORKSPACE_TEST_TASK)) return new Set();
-  const workspaces = new Set<string>();
-  for (const token of tokens) {
-    if (token.startsWith('--filter=')) workspaces.add(token.slice('--filter='.length));
-  }
-  return workspaces;
-}
-
-/**
- * The root unit lane runs one workspace test script per workspace. CI must run the same set, so the
- * expected commands are read out of the root script instead of a parallel maintained list.
- */
-function collectRootUnitLaneWorkflowIssues(
-  input: WorkflowScriptParityInput,
-  scripts: Readonly<Record<string, string>>,
-): WorkflowScriptParityIssue[] {
-  const issues: WorkflowScriptParityIssue[] = [];
-  const workflowScan = scanPnpmInvocations(input.workflowText);
-  const workflowTargets = [
-    ...workflowScan.workspaceTargets,
-    ...workflowScan.rootScriptRefs.flatMap((scriptName) => resolveRootScriptWorkspaceTargets(scripts, scriptName)),
-  ]
-    .filter((target) => target.scriptName.startsWith('test'));
-  const seen = new Set<string>();
-  const finitePublicSdkTaskRuns = /\bpnpm(?:\s+(?:--silent|-s))?\s+run\s+check:public-sdk:finite(?:\s|$)/u.test(input.workflowText);
-  const finitePublicSdkWorkspaces = resolveFinitePublicSdkTestWorkspaces(scripts);
-
-  for (const target of resolveRootScriptWorkspaceTargets(scripts, ROOT_UNIT_LANE_SCRIPT_NAME)) {
-    if (!target.scriptName.startsWith('test')) continue;
-    const workspaceLabel = describeWorkspaceScriptTarget(target);
-    if (seen.has(workspaceLabel)) continue;
-    seen.add(workspaceLabel);
-
-    if (
-      !workflowTargets.some((candidate) => matchesWorkspaceScriptTarget(target, candidate))
-      && !(finitePublicSdkTaskRuns && target.packageName !== null && finitePublicSdkWorkspaces.has(target.packageName))
-    ) {
-      issues.push({
-        laneId: 'test',
-        message: `Workflow coverage is missing for test: no CI step runs the ${workspaceLabel} test script.`,
-      });
-    }
-  }
-
-  return issues;
-}
-
 export function collectWorkflowScriptParityReport(input: WorkflowScriptParityInput): WorkflowScriptParityReport {
   const issues: WorkflowScriptParityIssue[] = [];
   const scripts = parseScripts(input.packageJsonText);
   const docsCommands = new Set(extractRootCommandMentions(input.docsText).map((mention) => mention.command));
-
-  issues.push(...collectRootUnitLaneWorkflowIssues(input, scripts));
 
   for (const definition of [...CANONICAL_LANE_PARITY, ...GOVERNANCE_COMMAND_PARITY]) {
     if (!(definition.rootScriptName in scripts)) {
@@ -359,30 +143,6 @@ export function collectWorkflowScriptParityReport(input: WorkflowScriptParityInp
           message: `Docs are missing command ${command}.`,
         });
       }
-    }
-
-    if (definition.triggerMode === 'local-only') {
-      continue;
-    }
-
-    const workflowMatches =
-      definition.workflowMode === 'all'
-        ? hasAllCommands(input.workflowText, definition.workflowCommands)
-        : hasAnyCommand(input.workflowText, definition.workflowCommands);
-
-    if (!workflowMatches) {
-      issues.push({
-        laneId: definition.id,
-        message: `Workflow coverage is missing for ${definition.id}.`,
-      });
-    }
-  }
-
-  for (const mention of extractRootCommandMentions(input.workflowText)) {
-    if (!(mention.scriptName in scripts)) {
-      issues.push({
-        message: `Workflow references unknown root command ${mention.command}.`,
-      });
     }
   }
 

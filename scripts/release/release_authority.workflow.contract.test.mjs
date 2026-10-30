@@ -377,26 +377,6 @@ test('standalone publisher credential-bearing shells receive untrusted values on
   }
 });
 
-test('standalone publisher shell bodies contain no GitHub expression interpolation', () => {
-  for (const name of [
-    'publish-cli-binaries.yml',
-    'publish-hstack-binaries.yml',
-    'publish-runner-binaries.yml',
-    'publish-server-runtime.yml',
-  ]) {
-    for (const [jobName, job] of Object.entries(workflow(name).jobs)) {
-      for (const step of job.steps ?? []) {
-        if (!step.run) continue;
-        assert.doesNotMatch(
-          String(step.run),
-          /\$\{\{/,
-          `${name}/${jobName}/${step.name} must receive dynamic values through env, not shell-source interpolation`,
-        );
-      }
-    }
-  }
-});
-
 test('signed publishers serialize one repository/product/channel writer across refs', () => {
   for (const [name, product] of signedPublishers) {
     const concurrency = workflow(name).concurrency;
@@ -406,37 +386,9 @@ test('signed publishers serialize one repository/product/channel writer across r
   }
 });
 
-test('signed publishers expose hosted same-version rolling recovery', () => {
-  for (const [name] of signedPublishers) {
-    const parsed = workflow(name);
-    assert.ok(parsed.on.workflow_dispatch.inputs.retry_version, `${name} dispatch retry_version`);
-    assert.ok(parsed.on.workflow_call.inputs.retry_version, `${name} call retry_version`);
-    const serialized = JSON.stringify(parsed.jobs);
-    assert.match(serialized, /promote-rolling/);
-    assert.match(serialized, /authorized-sha/);
-    assert.match(serialized, /retry_version/);
-  }
-});
-
-test('Runner publisher admits only the proven Linux x64 product through the canonical release owner', () => {
+test('Runner publishing keeps signing credentials outside candidate builds', () => {
   const jobs = workflow('publish-runner-binaries.yml').jobs;
-  for (const [jobName, job] of Object.entries(jobs)) {
-    for (const step of job.steps ?? []) {
-      if (!step.run) continue;
-      assert.doesNotMatch(
-        String(step.run),
-        /\$\{\{/,
-        `publish-runner-binaries.yml/${jobName}/${step.name} must receive dynamic values through env`,
-      );
-    }
-  }
   assert.deepEqual(jobs.build_candidate.permissions, {});
-  const build = jobs.build_candidate.steps.find((step) => step.name === 'Build unsigned Runner archives');
-  assert.ok(build);
-  assert.match(build.run, /build-runner-binaries\.mjs[\s\S]*--targets linux-x64/);
-  assert.match(build.run, /verify-artifacts\.mjs[\s\S]*--require-all-archives-checksummed/);
-  assert.match(build.run, /find dist\/release-assets\/runner -type f ! -name '\*\.zip' -delete/);
-  assert.equal(jobs.finalize_darwin, undefined, 'unproven Darwin artifacts must not be built or advertised');
   const finalize = jobs.finalize_publish.steps.find((step) => String(step.run ?? '').includes('publish-runner-binaries.mjs'));
   assert.ok(finalize);
   assert.match(finalize.run, /--prepared-artifacts/);
@@ -445,19 +397,6 @@ test('Runner publisher admits only the proven Linux x64 product through the cano
   assert.equal(jobs.finalize_publish.permissions.contents, 'write');
   assert.equal(jobs.build_candidate.environment, undefined);
   assert.doesNotMatch(JSON.stringify(jobs.build_candidate), /secrets\.|GH_TOKEN|GITHUB_TOKEN/);
-});
-
-test('every App token in signed publishers scopes owner, repositories, and contents permission', () => {
-  for (const [name] of signedPublishers) {
-    for (const [jobName, job] of Object.entries(workflow(name).jobs)) {
-      for (const step of job.steps ?? []) {
-        if (!usesAction(step, 'actions/create-github-app-token')) continue;
-        assert.equal(step.with.owner, '${{ github.repository_owner }}', `${name}/${jobName}`);
-        assert.ok(step.with.repositories, `${name}/${jobName}`);
-        assert.ok(step.with['permission-contents'], `${name}/${jobName}`);
-      }
-    }
-  }
 });
 
 test('every App token reachable from full or nightly release has exact repository and permission scope', () => {

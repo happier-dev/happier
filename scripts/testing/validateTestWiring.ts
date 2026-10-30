@@ -73,7 +73,6 @@ export function loadDefaultParityInput(rootDir: string = process.cwd()): Workflo
 
     return {
       packageJsonText: readFileSync(join(rootDir, 'package.json'), 'utf8'),
-      workflowText: readFileSync(join(rootDir, '.github/workflows/tests.yml'), 'utf8'),
       docsText: readFileSync(join(rootDir, 'apps/docs/content/docs/development/testing.mdx'), 'utf8'),
       configTexts,
     };
@@ -145,11 +144,10 @@ export async function collectWiringReport(filePaths: readonly string[], options:
     }
   }
 
-  const hasExplicitParityInput = options.packageJsonText !== undefined || options.workflowText !== undefined || options.docsText !== undefined || options.configTexts !== undefined;
+  const hasExplicitParityInput = options.packageJsonText !== undefined || options.docsText !== undefined || options.configTexts !== undefined;
   const parityInput = hasExplicitParityInput
     ? {
         packageJsonText: options.packageJsonText ?? '',
-        workflowText: options.workflowText ?? '',
         docsText: options.docsText ?? '',
         configTexts: options.configTexts ?? {},
       }

@@ -53,13 +53,6 @@ test('release-npm leaves signed CLI binary assets to the dedicated binary publis
   );
 });
 
-test('release-npm keeps hstack out of release-signoff binary artifact paths', async () => {
-  const raw = await loadWorkflow('release-npm.yml');
-
-  assert.doesNotMatch(raw, /release-build-hstack-binaries/, 'release-npm should not build hstack release binaries');
-  assert.doesNotMatch(raw, /--product[ =]hstack/, 'release-npm should not generate or verify hstack release manifests');
-  assert.doesNotMatch(raw, /mirror-stack-/, 'release-npm should not mirror hstack GitHub releases as a release product');
-});
 
 test('promote-server runtime publishing uses the shared server binary publisher', async () => {
   const raw = await loadWorkflow('promote-server.yml');

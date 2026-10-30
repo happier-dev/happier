@@ -82,6 +82,8 @@ test('wiring rejects a dropped required job or root lane, even when its command 
   assert.ok(wiringViolations(missingLane, scripts).includes('Missing root test lane test:plugin-workspaces'));
   const missingSdkTest = { ...scripts, 'check:public-sdk:finite:local': scripts['check:public-sdk:finite:local'].replace('test:finite', '') };
   assert.ok(wiringViolations(workflow, missingSdkTest).includes('Missing root test lane test'));
+  const missingSdkFilter = { ...scripts, 'check:public-sdk:finite:local': scripts['check:public-sdk:finite:local'].replace('--filter=@happier-dev/plugin-ui', '') };
+  assert.ok(wiringViolations(workflow, missingSdkFilter).includes('Missing root test lane test'));
 });
 
 test('wiring survives step renames and YAML formatting round trips', () => {

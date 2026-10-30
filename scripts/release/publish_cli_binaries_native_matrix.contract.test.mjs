@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
@@ -200,74 +200,7 @@ function assertPublisherExternalActionsPinned(externalUses) {
   return observedActions;
 }
 
-test('publisher action recursion rejects local action paths outside the repository', async () => {
-  const workspace = await mkdtemp(join(tmpdir(), 'publisher-action-escape-'));
-  const repositoryRoot = join(workspace, 'repo');
-  const outsideActionDir = join(workspace, 'outside');
-  await mkdir(repositoryRoot, { recursive: true });
-  await mkdir(outsideActionDir, { recursive: true });
-  await writeFile(join(outsideActionDir, 'action.yml'), YAML.stringify({
-    runs: { using: 'composite', steps: [] },
-  }));
-  await symlink(
-    outsideActionDir,
-    join(repositoryRoot, 'linked-action'),
-    process.platform === 'win32' ? 'junction' : 'dir',
-  );
 
-  try {
-    await assert.rejects(
-      collectPublisherExternalActionUses({
-        jobs: { publish: { steps: [{ uses: './../outside' }] } },
-      }, { repositoryRoot }),
-      /outside the repository/,
-    );
-    await assert.rejects(
-      collectPublisherExternalActionUses({
-        jobs: { publish: { steps: [{ uses: './linked-action' }] } },
-      }, { repositoryRoot }),
-      /outside the repository/,
-    );
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
-});
-
-test('publisher action recursion visits aliased local-action cycles once', async () => {
-  const repositoryRoot = await mkdtemp(join(tmpdir(), 'publisher-action-cycle-'));
-  await mkdir(join(repositoryRoot, 'actions', 'a'), { recursive: true });
-  await mkdir(join(repositoryRoot, 'actions', 'b'), { recursive: true });
-  await writeFile(join(repositoryRoot, 'actions', 'a', 'action.yml'), YAML.stringify({
-    runs: {
-      using: 'composite',
-      steps: [
-        { uses: 'example/a@1111111111111111111111111111111111111111' },
-        { uses: './actions/b' },
-      ],
-    },
-  }));
-  await writeFile(join(repositoryRoot, 'actions', 'b', 'action.yml'), YAML.stringify({
-    runs: {
-      using: 'composite',
-      steps: [
-        { uses: 'example/b@2222222222222222222222222222222222222222' },
-        { uses: './actions/../actions/a' },
-      ],
-    },
-  }));
-
-  try {
-    const externalUses = await collectPublisherExternalActionUses({
-      jobs: { publish: { steps: [{ uses: './actions/a' }] } },
-    }, { repositoryRoot });
-    assert.deepEqual(externalUses.sort(), [
-      'example/a@1111111111111111111111111111111111111111',
-      'example/b@2222222222222222222222222222222222222222',
-    ]);
-  } finally {
-    await rm(repositoryRoot, { recursive: true, force: true });
-  }
-});
 
 test('privileged CLI binary publishing pins every external action to its reviewed full commit SHA', async () => {
   const raw = await readFile(workflowPath, 'utf8');

@@ -46,45 +46,6 @@ function createPackageJsonText(): string {
   );
 }
 
-function createWorkflowText(): string {
-  return `
-jobs:
-  testing:
-    steps:
-      - run: pnpm --filter privacy-kit run test
-      - run: pnpm --filter @happier-dev/protocol run test
-      - run: pnpm --filter @happier-dev/peer-mediation run test
-      - run: pnpm --filter @happier-dev/transfers run test
-      - run: pnpm --filter @happier-dev/agents run test
-      - run: pnpm --filter @happier-dev/cli-common run test
-      - run: pnpm --filter @happier-dev/support run test
-      - run: pnpm --filter @happier-dev/connection-supervisor run test
-      - run: pnpm --filter @happier-dev/bootstrap run test
-      - run: pnpm --filter @happier-dev/plugin-sdk run test
-      - run: pnpm --filter @happier-dev/plugin-ui run test
-      - run: pnpm run test:plugin-workspaces
-      - run: pnpm --filter @happier-dev/tests run test:plugin-platform:source
-      - run: pnpm --filter @happier-dev/app run test:unit
-      - run: pnpm --filter @happier-dev/app run test:integration
-      - run: pnpm --filter @happier-dev/cli run test:unit
-      - run: pnpm --filter @happier-dev/cli run test:integration
-      - run: pnpm --dir apps/server run test:unit
-      - run: pnpm --dir apps/server run test:integration
-      - run: pnpm --dir apps/server run test:server:db-contract
-      - run: pnpm --dir packages/relay-server run test
-      - run: pnpm --dir apps/stack run test:unit
-      - run: pnpm --dir apps/stack run test:integration
-      - run: pnpm run test:e2e:core:fast
-      - run: pnpm run test:e2e:core:slow
-      - run: pnpm --silent run test:e2e:ui
-      - run: pnpm run test:workspace-sync:real
-      - run: pnpm --silent run test:e2e:mobile
-      - run: pnpm --filter @happier-dev/tests run providers:run all smoke
-      - run: pnpm run test:stress
-      - run: pnpm run test:wiring:self && pnpm run test:wiring && pnpm run test:policy
-`;
-}
-
 function createDocsText(): string {
   return `
 \`\`\`bash
@@ -130,10 +91,9 @@ function createFeatureGatingConfigTexts(): Record<string, string> {
   };
 }
 
-test('accepts aligned package scripts, workflow commands, docs commands, and feature gating configs', () => {
+test('accepts aligned package scripts, docs commands, and feature gating configs', () => {
   const report = collectWorkflowScriptParityReport({
     packageJsonText: createPackageJsonText(),
-    workflowText: createWorkflowText(),
     docsText: createDocsText(),
     configTexts: createFeatureGatingConfigTexts(),
   });
@@ -147,7 +107,6 @@ test('flags missing governance docs and feature gating drift', () => {
 
   const report = collectWorkflowScriptParityReport({
     packageJsonText: createPackageJsonText(),
-    workflowText: createWorkflowText(),
     docsText: createDocsText().replace('pnpm run test:policy\n', ''),
     configTexts,
   });
@@ -160,7 +119,6 @@ test('flags missing governance docs and feature gating drift', () => {
 test('keeps migration governance optional in routine CI and docs', () => {
   const report = collectWorkflowScriptParityReport({
     packageJsonText: createPackageJsonText(),
-    workflowText: createWorkflowText(),
     docsText: createDocsText()
       .replace('pnpm run test:inventory\n', '')
       .replace('pnpm run test:migration:inventory\n', '')
@@ -171,81 +129,12 @@ test('keeps migration governance optional in routine CI and docs', () => {
   assert.deepEqual(report.issues, []);
 });
 
-test('flags shared package unit workflow drift when peer mediation coverage falls out of the root lane', () => {
-  const report = collectWorkflowScriptParityReport({
-    packageJsonText: createPackageJsonText(),
-    workflowText: createWorkflowText().replace('      - run: pnpm --filter @happier-dev/peer-mediation run test\n', ''),
-    docsText: createDocsText(),
-    configTexts: createFeatureGatingConfigTexts(),
-  });
-
-  const messages = report.issues.map((issue) => issue.message).join('\n');
-  assert.match(messages, /Workflow coverage is missing for test/);
-});
-
-test('recognizes the exact finite public SDK task as unit coverage for its three workspaces', () => {
-  const workflowText = createWorkflowText()
-    .replace('      - run: pnpm --filter @happier-dev/plugin-sdk run test\n', '')
-    .replace('      - run: pnpm --filter @happier-dev/plugin-ui run test\n', '')
-    .replace('      - run: pnpm run test:plugin-workspaces\n', '      - run: pnpm run check:public-sdk:finite\n      - run: pnpm run test:plugin-workspaces\n');
-  const report = collectWorkflowScriptParityReport({
-    packageJsonText: createPackageJsonText(),
-    workflowText,
-    docsText: createDocsText(),
-    configTexts: createFeatureGatingConfigTexts(),
-  });
-  assert.doesNotMatch(report.issues.map((issue) => issue.message).join('\n'), /@happier-dev\/(?:plugin-sdk|plugin-ui|sdk) test script/u);
-});
-
-test('withholds finite public SDK credit from a workspace its turbo filter no longer covers', () => {
-  const packageJsonText = createPackageJsonText().replace(
-    '--filter=@happier-dev/plugin-sdk --filter=@happier-dev/plugin-ui --filter=@happier-dev/sdk',
-    '--filter=@happier-dev/plugin-sdk --filter=@happier-dev/sdk',
-  );
-  const workflowText = createWorkflowText()
-    .replace('      - run: pnpm --filter @happier-dev/plugin-sdk run test\n', '')
-    .replace('      - run: pnpm --filter @happier-dev/plugin-ui run test\n', '')
-    .replace('      - run: pnpm run test:plugin-workspaces\n', '      - run: pnpm run check:public-sdk:finite\n      - run: pnpm run test:plugin-workspaces\n');
-  const report = collectWorkflowScriptParityReport({
-    packageJsonText,
-    workflowText,
-    docsText: createDocsText(),
-    configTexts: createFeatureGatingConfigTexts(),
-  });
-
-  const messages = report.issues.map((issue) => issue.message).join('\n');
-  assert.match(messages, /no CI step runs the @happier-dev\/plugin-ui test script/u);
-  assert.doesNotMatch(messages, /no CI step runs the @happier-dev\/plugin-sdk test script/u);
-});
-
-test('withholds finite public SDK credit when the command no longer runs the workspace test task', () => {
-  const packageJsonText = createPackageJsonText().replace(
-    'turbo run api:finite test:finite typecheck:finite',
-    'turbo run api:finite typecheck:finite',
-  );
-  const workflowText = createWorkflowText()
-    .replace('      - run: pnpm --filter @happier-dev/plugin-sdk run test\n', '')
-    .replace('      - run: pnpm --filter @happier-dev/plugin-ui run test\n', '')
-    .replace('      - run: pnpm run test:plugin-workspaces\n', '      - run: pnpm run check:public-sdk:finite\n      - run: pnpm run test:plugin-workspaces\n');
-  const report = collectWorkflowScriptParityReport({
-    packageJsonText,
-    workflowText,
-    docsText: createDocsText(),
-    configTexts: createFeatureGatingConfigTexts(),
-  });
-
-  const messages = report.issues.map((issue) => issue.message).join('\n');
-  assert.match(messages, /no CI step runs the @happier-dev\/plugin-sdk test script/u);
-  assert.match(messages, /no CI step runs the @happier-dev\/plugin-ui test script/u);
-});
-
-test('requires the derived plugin workspace test runner in scripts, docs, and CI', () => {
+test('requires the derived plugin workspace test runner in scripts and docs', () => {
   const packageJson = JSON.parse(createPackageJsonText());
   delete packageJson.scripts['test:plugin-workspaces'];
 
   const report = collectWorkflowScriptParityReport({
     packageJsonText: JSON.stringify(packageJson, null, 2),
-    workflowText: createWorkflowText().replace('      - run: pnpm run test:plugin-workspaces\n', ''),
     docsText: createDocsText().replace('pnpm run test:plugin-workspaces\n', ''),
     configTexts: createFeatureGatingConfigTexts(),
   });
@@ -253,7 +142,6 @@ test('requires the derived plugin workspace test runner in scripts, docs, and CI
   const messages = report.issues.map((issue) => issue.message).join('\n');
   assert.match(messages, /Missing root script test:plugin-workspaces/);
   assert.match(messages, /Docs are missing command pnpm run test:plugin-workspaces/);
-  assert.match(messages, /Workflow coverage is missing for test:plugin-workspaces/);
 });
 
 test('flags root self-lane drift when migration lib self-tests fall out of test:policy:self', () => {
@@ -262,7 +150,6 @@ test('flags root self-lane drift when migration lib self-tests fall out of test:
 
   const report = collectWorkflowScriptParityReport({
     packageJsonText: JSON.stringify(packageJson, null, 2),
-    workflowText: createWorkflowText(),
     docsText: createDocsText(),
     configTexts: createFeatureGatingConfigTexts(),
   });
@@ -273,29 +160,15 @@ test('flags root self-lane drift when migration lib self-tests fall out of test:
   assert.ok(messages.includes('scripts\\/testing\\/migrations\\/runtimeUnification\\/validators\\/\\*\\.test\\.ts'));
 });
 
-test('flags unknown root commands mentioned in docs or workflow', () => {
+test('flags unknown root commands mentioned in docs', () => {
   const report = collectWorkflowScriptParityReport({
     packageJsonText: createPackageJsonText(),
-    workflowText: `${createWorkflowText()}\n      - run: pnpm run test:not-real`,
     docsText: `${createDocsText()}\npnpm run test:imaginary`,
     configTexts: createFeatureGatingConfigTexts(),
   });
 
   const messages = report.issues.map((issue) => issue.message).join('\n');
-  assert.match(messages, /Workflow references unknown root command pnpm run test:not-real/);
   assert.match(messages, /Docs reference unknown root command pnpm run test:imaginary/);
-});
-
-test('tracks required workflow coverage for the real workspace-sync lane', () => {
-  const report = collectWorkflowScriptParityReport({
-    packageJsonText: createPackageJsonText(),
-    workflowText: createWorkflowText(),
-    docsText: createDocsText(),
-    configTexts: createFeatureGatingConfigTexts(),
-  });
-
-  const messages = report.issues.map((issue) => issue.message).join('\n');
-  assert.doesNotMatch(messages, /test:workspace-sync:real/);
 });
 
 test('requires the native desktop e2e root script and docs even though workflow coverage stays local-only', () => {
@@ -304,7 +177,6 @@ test('requires the native desktop e2e root script and docs even though workflow 
 
   const report = collectWorkflowScriptParityReport({
     packageJsonText: JSON.stringify(packageJson, null, 2),
-    workflowText: createWorkflowText(),
     docsText: createDocsText().replace('pnpm run test:e2e:desktop:native\n', ''),
     configTexts: createFeatureGatingConfigTexts(),
   });
@@ -312,23 +184,17 @@ test('requires the native desktop e2e root script and docs even though workflow 
   const messages = report.issues.map((issue) => issue.message).join('\n');
   assert.match(messages, /Missing root script test:e2e:desktop:native/);
   assert.match(messages, /Docs are missing command pnpm run test:e2e:desktop:native/);
-  assert.doesNotMatch(messages, /Workflow coverage is missing for test:e2e:desktop:native/);
 });
 
 test('wires shared SDK packages into the default root validation lanes', () => {
   const packageJson = JSON.parse(readFileSync(join(ROOT_DIR, 'package.json'), 'utf8')) as {
     scripts: Record<string, string>;
   };
-  const workflowText = readFileSync(join(ROOT_DIR, '.github/workflows/tests.yml'), 'utf8');
   const unitTargets = resolveRootScriptWorkspaceTargets(packageJson.scripts, 'test:unit');
   const typecheckCommandText = ROOT_TYPECHECK_COMMANDS.map((command) => command.args.join(' ')).join('\n');
   for (const name of ['voice-modelpacks', 'terminal-native', 'sherpa-native', 'support', 'peer-mediation', 'plugin-sdk', 'plugin-ui', 'channels-protocol']) {
     assert.ok(unitTargets.some((target) => target.packageName === `@happier-dev/${name}` && target.scriptName === 'test'), `${name} must run through the root unit owner`);
   }
-  // The published Channels protocol package sat outside every ordinary lane while the lane-map
-  // unit fixture asserted the opposite from a root command it wrote itself. These two assertions
-  // read the real root script and the real workflow, so the fixture can no longer be friendlier
-  // than the commands CI actually runs.
   assert.equal(packageJson.scripts['typecheck:inner'], 'node --experimental-strip-types scripts/testing/runTypecheck.ts');
   assert.match(typecheckCommandText, /turbo run typecheck:source:finite/);
   assert.match(typecheckCommandText, /--filter=@happier-dev\/terminal-native/);
@@ -338,10 +204,6 @@ test('wires shared SDK packages into the default root validation lanes', () => {
     'Support source compilation is reused as its typecheck evidence before the source-only Turbo lane',
   );
   assert.match(typecheckCommandText, /--filter=@happier-dev\/plugin-ui/);
-  assert.match(workflowText, /pnpm run test:shared-packages --mode ci/);
-  assert.match(workflowText, /pnpm run check:public-sdk:finite/);
-  assert.doesNotMatch(workflowText, /pnpm --filter @happier-dev\/plugin-sdk run test/);
-  assert.doesNotMatch(workflowText, /pnpm --filter @happier-dev\/plugin-ui run test/);
 });
 
 test('routes the root ordinary integration lane through the Stack executor', () => {
@@ -362,30 +224,17 @@ test('runs current-source Plugin Platform contracts without a release representa
   const testsPackageJson = JSON.parse(readFileSync(join(ROOT_DIR, 'packages/tests/package.json'), 'utf8')) as {
     scripts?: Record<string, string | undefined>;
   };
-  const workflowText = readFileSync(join(ROOT_DIR, '.github/workflows/tests.yml'), 'utf8');
   const sourceLane = testsPackageJson.scripts?.['test:plugin-platform:source'] ?? '';
 
   assert.match(sourceLane, /run-contract-tests\.mjs/);
   assert.match(sourceLane, /public-only\.test\.mjs/);
   assert.doesNotMatch(sourceLane, /pack-fixture|installedTarballProof|\.tgz|tarball/i);
-  assert.match(workflowText, /pnpm --filter @happier-dev\/tests run test:plugin-platform:source/);
-  assert.doesNotMatch(workflowText, /build:plugin-platform:natural|test:plugin-platform:packed-/);
 });
 
-test('runs plugin workspace unit tests only through the derived workspace runner', () => {
-  const workflowText = readFileSync(join(ROOT_DIR, '.github/workflows/tests.yml'), 'utf8');
-
-  assert.match(workflowText, /^  plugin-workspaces-unit:\n/m);
-  assert.match(workflowText, /run: pnpm run test:plugin-workspaces/);
-  assert.doesNotMatch(workflowText, /pnpm --filter @happier-dev\/plugins-[a-z0-9-]+ run test/);
-  assert.doesNotMatch(workflowText, /pnpm --filter @happier-dev\/plugins-[a-z0-9-]+ run typecheck/);
-});
-
-test('keeps plugin workspace typechecks reachable when plugin workspace tests fail', () => {
+test('keeps the canonical plugin workspace typecheck command available', () => {
   const packageJson = JSON.parse(readFileSync(join(ROOT_DIR, 'package.json'), 'utf8')) as {
     scripts?: Record<string, string | undefined>;
   };
-  const workflowText = readFileSync(join(ROOT_DIR, '.github/workflows/tests.yml'), 'utf8');
 
   assert.equal(
     packageJson.scripts?.['typecheck:plugin-workspaces'],
@@ -394,50 +243,6 @@ test('keeps plugin workspace typechecks reachable when plugin workspace tests fa
   assert.equal(
     packageJson.scripts?.['typecheck:plugin-workspaces:local'],
     'node --experimental-strip-types scripts/testing/runPluginWorkspaceTests.ts typecheck',
-  );
-  assert.match(
-    workflowText,
-    /- name: Run every plugin workspace test\n        run: pnpm run test:plugin-workspaces\n\n      - name: Run every plugin workspace typecheck\n        if: \$\{\{ !cancelled\(\) \}\}\n        run: pnpm run typecheck:plugin-workspaces/,
-  );
-});
-
-test('keeps the repository typecheck reachable when the governance validators fail', () => {
-  const workflowText = readFileSync(join(ROOT_DIR, '.github/workflows/tests.yml'), 'utf8');
-  const typecheckJob = workflowText.slice(workflowText.indexOf('\n  typecheck:\n'));
-  const guardedTypecheckStep = /- name: Run typecheck\n        if: \$\{\{ !cancelled\(\) \}\}\n        run: pnpm run typecheck/;
-
-  // The wiring/policy validators must not be able to swallow the
-  // typecheck evidence: a red governance gate has to leave the typecheck result visible.
-  assert.match(typecheckJob, /- name: Run governance validators\n        if: \$\{\{ !cancelled\(\) \}\}/);
-  assert.match(typecheckJob, guardedTypecheckStep);
-  assert.doesNotMatch(
-    typecheckJob.replace(guardedTypecheckStep, '- name: Run typecheck\n        run: pnpm run typecheck'),
-    guardedTypecheckStep,
-  );
-});
-
-test('keeps targeted reusable CI callers from inheriting plugin workspace coverage', () => {
-  const targetedWorkflowPaths = [
-    '.github/workflows/providers-contracts.yml',
-    '.github/workflows/release-verify.yml',
-    '.github/workflows/release-source-validation.yml',
-    '.github/workflows/self-host-e2e.yml',
-    '.github/workflows/stress-tests.yml',
-  ];
-
-  for (const workflowPath of targetedWorkflowPaths) {
-    const workflowText = readFileSync(join(ROOT_DIR, workflowPath), 'utf8');
-    assert.match(
-      workflowText,
-      /uses: \.\/\.github\/workflows\/tests\.yml[\s\S]*?with:[\s\S]*?run_shared_packages: false[\s\S]*?run_plugin_workspaces: false/,
-      workflowPath,
-    );
-  }
-
-  const manualDispatchText = readFileSync(join(ROOT_DIR, '.github/workflows/tests-dispatch.yml'), 'utf8');
-  assert.match(
-    manualDispatchText,
-    /run_plugin_workspaces: \$\{\{ needs\.resolve\.outputs\.run_plugin_workspaces == 'true' \}\}/,
   );
 });
 

@@ -317,8 +317,11 @@ async function securityViolations(workflows, rule, options = {}) {
       }
       const exposed = hasSecrets({ env: workflow.env, job }) || tokenExposure({ env: workflow.env, job }) || job.secrets === 'inherit';
       const candidateReadToken = isCandidateJob(file, workflow, id, job) && readOnly(permissions) && onlyBuiltinToken(workflow, job);
+      // Local callees are inspected in this same suite and own their admission.
+      // An external workflow is opaque here and cannot inherit that exemption.
+      const inspectedCallee = typeof job.uses === 'string' && job.uses.startsWith('./.github/workflows/');
       if (rule === 'actor-admission' && exposed && !allowed && !candidateReadToken
-        && !job.uses && !guardedByActor(jobs, id)) {
+        && !inspectedCallee && !guardedByActor(jobs, id)) {
         violations.push(`${label}: credential-bearing job has no required actor guard`);
       }
     }
@@ -658,6 +661,9 @@ test('reviewed security mutations distinguish the added trust boundaries', async
       delete workflow.jobs.release_actor_guard;
       workflow.jobs.publish.steps.shift();
       workflow.jobs.publish.env = { GITHUB_TOKEN: '${{ github.token }}' };
+    }],
+    ['unknown external reusable publisher', 'actor-admission', (workflow) => {
+      workflow.jobs.external = { uses: `example/repo/.github/workflows/publish.yml@${'a'.repeat(40)}`, secrets: 'inherit' };
     }],
     ['wrong guard team', 'actor-admission', (workflow) => { workflow.jobs.release_actor_guard.steps.at(-1).with = { team_slug: 'everyone' }; }],
     ['wrong guard checkout', 'actor-admission', (workflow) => { workflow.jobs.release_actor_guard.steps[0].with.ref = '${{ github.sha }}'; }],

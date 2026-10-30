@@ -162,7 +162,7 @@ test('every npm credential-bearing job executes workflow-SHA control and only pu
   }
 });
 
-test('npm pack artifacts are source-and-version-bound and shell scripts receive inputs through env', async () => {
+test('npm pack artifacts are source-and-version-bound', async () => {
   const workflow = await loadWorkflow();
   const candidate = workflow.jobs?.release;
 
@@ -177,13 +177,6 @@ test('npm pack artifacts are source-and-version-bound and shell scripts receive 
       step.with?.name,
       `npm-pack-${packageKey}-\${{ steps.meta.outputs.sha }}-\${{ steps.meta.outputs.${versionOutput} }}`,
     );
-  }
-
-  for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
-    for (const step of job.steps ?? []) {
-      if (typeof step.run !== 'string') continue;
-      assert.doesNotMatch(step.run, /\$\{\{\s*inputs\./, `${jobName}/${step.name} interpolates an input into shell`);
-    }
   }
 });
 

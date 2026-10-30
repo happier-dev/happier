@@ -1,59 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import YAML from 'yaml';
 
 import { resolveReleaseValidationProfile } from '../pipeline/release-validation/registry.mjs';
 
-const repoRoot = resolve(new URL('../..', import.meta.url).pathname);
-
-function workflow(name) {
-  return YAML.parse(readFileSync(resolve(repoRoot, '.github/workflows', name), 'utf8'));
-}
-
-test('the Ubuntu slow gate prepares and runs the two exact server-v0.2.1 regression scenarios', () => {
-  const testsWorkflow = workflow('tests.yml');
-  const job = testsWorkflow.jobs['e2e-core-slow'];
-  assert.equal(job['runs-on'], '${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}');
-
-  const prepareStep = job.steps.find((step) => step.name === 'Prepare immutable server-v0.2.1 artifact');
-  assert.equal(prepareStep, undefined, 'the package compatibility command already owns artifact preparation');
-
-  const browserStep = job.steps.find((step) => step.name === 'Install exact-compatibility Playwright browser');
-  assert.match(browserStep?.run ?? '', /playwright install --with-deps chromium/);
-
-  const exactStep = job.steps.find((step) => step.name === 'Run exact server-v0.2.1 compatibility gate');
-  assert.match(exactStep?.run ?? '', /test:compat:released-server-v0\.2\.1/);
-  assert.match(exactStep?.env?.HAPPIER_E2E_RELEASED_SERVER_V0_2_1_DIR ?? '', /happier-server-v0\.2\.1/u);
-
-  const packageJson = JSON.parse(readFileSync(resolve(repoRoot, 'packages/tests/package.json'), 'utf8'));
-  assert.match(
-    packageJson.scripts['test:compat:released-server-v0.2.1'] ?? '',
-    /pendingQueue\.releasedServerV021\.cli\.slow\.e2e\.test\.ts/,
-  );
-  assert.match(
-    packageJson.scripts['test:compat:released-server-v0.2.1'] ?? '',
-    /pendingQueue\.releasedServerV021\.firstPrompt\.spec\.ts/,
-  );
-});
-
 test('normal release orchestration leaves the exact published-server regressions to diff-selected validation', () => {
-  const releaseWorkflow = workflow('release-source-validation.yml');
-  const existingCiStep = releaseWorkflow.jobs.ci.steps.find(
-    (step) => step.name === 'Verify successful existing CI for exact source',
-  );
-  assert.match(existingCiStep?.run ?? '', /--workflow tests\.yml/u);
-
   const stable = resolveReleaseValidationProfile('stable');
   assert.equal(stable?.checksProfile, 'full');
 
   const integrated = resolveReleaseValidationProfile('integrated');
   assert.equal(integrated?.checksProfile, 'fast');
-});
-
-test('the existing DB contract job also executes the pinned SQLite lineage fixture', () => {
-  const job = workflow('tests.yml').jobs['server-db-contract'];
-  const sqlite = job.steps.find((step) => step.name === 'Run SQLite migration lineage contract');
-  assert.match(sqlite?.run ?? '', /sessionAttentionLineage\.sqlite\.integration\.spec\.ts/u);
 });

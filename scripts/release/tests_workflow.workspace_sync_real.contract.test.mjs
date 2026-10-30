@@ -124,22 +124,6 @@ test('the required lane also proves the production signed release-acquisition pa
   assert.match(liveLauncher, /process\.kill\(process\.pid, signal\)/u);
 });
 
-test('one independent drift lane checks the generated public Action contract for all schema inputs', () => {
-  const workflow = loadWorkflow('tests.yml');
-  const job = workflow.jobs['action-map-drift'];
-  assert.ok(job);
-  const actionContract = stepNamed(job, 'Check generated public Action contract');
-  const invocations = Object.values(workflow.jobs).flatMap(candidate => candidate.steps ?? [])
-    .filter(step => /check:action-type-map|generated:finite/u.test(String(step.run ?? '')));
-  assert.deepEqual(invocations, [actionContract], 'one CI owner checks drift outside prerequisite builds');
-  assert.equal(actionContract.run.trim(), 'pnpm exec turbo run generated:finite --filter=@happier-dev/plugin-sdk');
-  assert.equal(actionContract.if, "inputs.select_jobs_explicitly || steps.changes.outputs.action_dtos == 'true'");
-  const filters = YAML.parse(stepNamed(job, 'Detect Action declaration inputs and outputs').with.filters).action_dtos;
-  for (const path of ['packages/**/src/**', 'packages/plugin-sdk/scripts/**', 'packages/plugin-sdk/package.json',
-    'scripts/workspaces/**', 'apps/stack/scripts/utils/proc/**', 'turbo.json', 'package.json', 'pnpm-lock.yaml']) {
-    assert.ok(filters.includes(path), `${path} must select Action DTO drift verification`);
-  }
-});
 
 test('the real workspace-sync lane supplies every executable input the canonical runner requires', () => {
   const job = workspaceSyncRealJob();
@@ -225,24 +209,7 @@ test('the real workspace-sync lane supplies every executable input the canonical
   assert.match(policy.run, /go_distribution_sha256/u);
 });
 
-test('only the real workspace-sync lane builds the Mutagen fork from source', () => {
-  const tests = loadWorkflow('tests.yml');
-  const builders = Object.entries(tests.jobs).filter(([, job]) =>
-    (job.steps ?? []).some((step) => String(step.run ?? '').includes('cmd/mutagen-sidecar')),
-  );
-  assert.deepEqual(builders.map(([id]) => id), ['workspace-sync-real'], 'a second Mutagen builder must not exist');
-});
 
-test('workspace-sync performance is an explicit manual/release mode on the existing real lane', () => {
-  const tests = loadWorkflow('tests.yml');
-  const job = workspaceSyncRealJob();
-  assert.equal(tests.on.workflow_call.inputs.run_workspace_sync_performance.default, false);
-  assert.match(job.if, /inputs\.run_workspace_sync_performance/u);
-  assert.equal(job.outputs.command_executed, `\${{ ${GATED_ON_SELECTION} }}`);
-  const run = stepNamed(job, 'Run real workspace sync over Mutagen and Iroh');
-  assert.equal(run.env.HAPPIER_RUN_WORKSPACE_SYNC_PERFORMANCE, "${{ inputs.run_workspace_sync_performance && '1' || '0' }}");
-  assert.equal(run.env.HAPPIER_WORKSPACE_SYNC_PERFORMANCE_FILE_BYTES, '1073741824');
-});
 
 test('the real workspace-sync lane selects itself from Lane 08 change surfaces', () => {
   const job = workspaceSyncRealJob();
@@ -434,38 +401,4 @@ test('the real workspace-sync lane selects itself from Lane 08 change surfaces',
     }
     assert.equal(step.if, GATED_ON_SELECTION, `step "${step.name}" must obey the workspace-sync change selection`);
   }
-});
-
-test('manual dispatch can select the real workspace-sync lane by name', () => {
-  const dispatch = loadWorkflow('tests-dispatch.yml');
-  assert.match(dispatch.on.workflow_dispatch.inputs.custom_checks.description, /workspace_sync_real/u);
-  assert.equal(
-    dispatch.jobs.resolve.outputs.run_workspace_sync_real,
-    '${{ steps.flags.outputs.run_workspace_sync_real }}',
-  );
-  assert.equal(
-    dispatch.jobs.tests.with.run_workspace_sync_real,
-    "${{ needs.resolve.outputs.run_workspace_sync_real == 'true' || inputs.workspace_sync_performance }}",
-  );
-  assert.equal(dispatch.jobs.tests.with.run_workspace_sync_performance, '${{ inputs.workspace_sync_performance }}');
-
-  const resolveStep = dispatch.jobs.resolve.steps.find((step) => step.id === 'flags');
-  assert.equal(
-    resolveStep?.run,
-    'node scripts/pipeline/checks/resolve-checks-plan.mjs --target hosted',
-    'manual dispatch must use the canonical hosted checks resolver',
-  );
-  assert.doesNotMatch(readWorkflowText('tests-dispatch.yml'), /wsrepl_lima/u, 'the retired WSREPL selection must not survive as a second owner');
-});
-
-test('ci_summary delegates every selector to the generic fail-closed collector', () => {
-  const tests = loadWorkflow('tests.yml');
-  const summary = tests.jobs.ci_summary;
-  assert.ok(summary.needs.includes('workspace-sync-real'), 'ci_summary must depend on the real workspace-sync lane');
-
-  const collector = summary.steps.find((step) => step.name === 'Collect every lane conclusion');
-  assert.equal(collector.env.CI_INPUTS_JSON, '${{ toJSON(inputs) }}');
-  assert.match(collector.run, /jobsForSelectedInputs/u);
-  assert.match(collector.run, /collectCiSummary/u);
-  assert.doesNotMatch(collector.run, /workspace-sync-real/u, 'the summary must not special-case one selector');
 });

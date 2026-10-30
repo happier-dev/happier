@@ -43,7 +43,6 @@ test('collectWiringReport surfaces invalid feature tags and miswired lane names'
 test('collectWiringReport merges parity issues when repo metadata drifts', async () => {
   const report = await collectWiringReport(['packages/tests/suites/core-e2e/login.test.ts'], {
     packageJsonText: JSON.stringify({ scripts: { test: 'pnpm --silent run test:unit' } }),
-    workflowText: '',
     docsText: '',
     configTexts: {},
   });
