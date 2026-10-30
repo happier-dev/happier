@@ -22,7 +22,7 @@ import { runMcpServeCommand } from './serve';
 // Transform the real MCP composition before the target-pinning workload's deadline.
 await import('@/mcp/createExternalMcpServer');
 
-type ObservedDaemonRequest = Readonly<{ path: string; authorization: string | null }>;
+type ObservedDaemonRequest = Readonly<{ path: string; controlToken: string | null }>;
 
 const pluginTool = {
   toolId: 'acme.review.plugin/review-tool',
@@ -43,6 +43,7 @@ const pluginTool = {
     additionalProperties: false,
   },
   surfaces: ['mcp' as const],
+  toolExposure: { mcp: 'direct' as const },
 };
 
 const pluginActionSpec = ActionDefinitionV1Schema.parse({
@@ -59,8 +60,8 @@ async function startDaemonControlServer(
   const server: Server = createServer((request, response) => {
     observed.push({
       path: request.url ?? '',
-      authorization: typeof request.headers.authorization === 'string'
-        ? request.headers.authorization
+      controlToken: typeof request.headers['x-happier-daemon-token'] === 'string'
+        ? request.headers['x-happier-daemon-token']
         : null,
     });
     response.setHeader('content-type', 'application/json');
@@ -231,6 +232,7 @@ describe('happier mcp serve daemon target pinning', () => {
           '/plugins/actions/execute',
         ]);
         expect(attackerRequests).toEqual([]);
+        expect(selectedRequests.every(({ controlToken }) => controlToken === 'selected-control-token')).toBe(true);
         enterPhase('verify-selected-settings');
         expect(await readFile(join(homeDir, 'settings.json'), 'utf8')).toBe(persistedBefore);
 

@@ -13,7 +13,6 @@ import type { Settings } from '@/persistence';
 
 // HTTP and cache-file I/O are boundaries. Catalog admission, semantic edits,
 // Account publication, and SavedSecret hydration run through their real owners.
-vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn(), isAxiosError: () => false } }));
 vi.mock('@/persistence', async importOriginal => {
   const actual = await importOriginal<typeof import('@/persistence')>();
   return { ...actual,
@@ -67,6 +66,8 @@ async function changeRules(state: 'on' | 'inherit') {
 
 describe('MCP command catalog admission', () => {
   beforeEach(() => {
+    vi.spyOn(axios, 'get');
+    vi.spyOn(axios, 'post');
     resetInMemoryAccountSettingsContextForTests();
     process.exitCode = undefined;
     catalog = { v: 1, servers: [server], bindings: [] };
@@ -100,7 +101,7 @@ describe('MCP command catalog admission', () => {
       return { status: 200, data: { status: 'updated', revision, cursor: revision } };
     });
   });
-  afterEach(() => { resetInMemoryAccountSettingsContextForTests(); process.exitCode = undefined; });
+  afterEach(() => { vi.restoreAllMocks(); resetInMemoryAccountSettingsContextForTests(); process.exitCode = undefined; });
 
   it('reads the durable catalog independently of the strict-mode policy', async () => {
     const result = await loadFreshMcpAccountSettingsContext(credentials, commandReadDeps());

@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
 import { listCompiledActionCliCommands } from '@/cli/actions/compiledCommands';
@@ -7,8 +8,7 @@ import { runCompiledActionCliCommand } from '@/cli/actions/executeCommand';
 import { resolveAdmittedActionCliCommand } from '@/cli/commandRegistry';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 
-const { request } = vi.hoisted(() => ({ request: vi.fn() }));
-vi.mock('axios', () => ({ default: { request } }));
+const request = vi.fn();
 
 const credentials = { token: 'token', encryption: null };
 const features = { status: 'ready' as const, features: FeaturesResponseSchema.parse({
@@ -43,8 +43,14 @@ async function invoke(argv: readonly string[]) {
 describe('happier discussions through the admitted root and real Action executor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(axios, 'request').mockImplementation(request);
     process.exitCode = 0;
     request.mockResolvedValue({ status: 200, data: { discussions: [], nextCursor: null } });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    request.mockReset();
+    process.exitCode = undefined;
   });
 
   it('lists a Home conversation without a Session operand through the canonical transport', async () => {
