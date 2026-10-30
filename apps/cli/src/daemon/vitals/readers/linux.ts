@@ -8,6 +8,7 @@ import type { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import { readLinuxBatteryFacts } from '@happier-dev/cli-common/process';
 
 import { createCounterRateReader } from './counterRates';
+import { readLinuxInotifyWatches } from './linuxInotify';
 import { NVIDIA_VITALS_ARGS, parseNvidiaVitalsGpu } from './extras/gpu';
 import type { MachineVitalsReader, MachineVitalsReaderInput } from './types';
 
@@ -237,27 +238,8 @@ export function createLinuxMachineVitalsReader(options: LinuxMachineVitalsReader
         if (overview) {
             const max = await text('/proc/sys/fs/inotify/max_user_watches');
             if (max !== null) {
-                let used = 0, complete = true;
-                const uid = process.getuid?.();
-                if (uid === undefined) complete = false;
-                let processes: string[] = [];
-                try { processes = await readdir(at('/proc')); } catch { complete = false; }
-                for (const pid of processes.filter((name) => /^\d+$/u.test(name))) {
-                    if (!complete) break;
-                    const status = await text(`/proc/${pid}/status`);
-                    if (!status || Number(/^Uid:\s+(\d+)/mu.exec(status)?.[1]) !== uid) continue;
-                    let descriptors: string[];
-                    try { descriptors = await readdir(at(`/proc/${pid}/fd`)); } catch { complete = false; break; }
-                    for (const fd of descriptors) {
-                        let target: string;
-                        try { target = await readlink(at(`/proc/${pid}/fd/${fd}`)); } catch { complete = false; break; }
-                        if (target !== 'anon_inode:inotify') continue;
-                        const info = await text(`/proc/${pid}/fdinfo/${fd}`);
-                        if (info === null) { complete = false; break; }
-                        for (const _watch of info.matchAll(/^inotify wd:/gmu)) used++;
-                    }
-                }
-                if (complete) result.inotify = { used, max: Number(max) };
+                const inotify = await readLinuxInotifyWatches(options.root, Number(max));
+                if (inotify) result.inotify = inotify;
             }
         }
         return Object.keys(result).length ? result : undefined;
