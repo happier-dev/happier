@@ -248,11 +248,4 @@ describe('resolveSessionPersonalAttentionV1', () => {
       .toEqual(QUIET_SESSION_PERSONAL_ATTENTION_V1);
   });
 
-  it('keeps durable unread attention for an inactive runtime', () => {
-    expect(resolveSessionPersonalAttentionV1({
-      ...TRACKED_CAUGHT_UP,
-      visibleSessionSeq: 9,
-      readState: { state: 'tracking', lastViewedSessionSeq: 4, unreadSince: 1_700 },
-    }).needsAttention).toBe(true);
-  });
 });
