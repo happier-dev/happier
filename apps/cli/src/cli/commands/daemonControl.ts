@@ -764,7 +764,22 @@ export async function handleDaemonControlCliCommand(context: CommandContext): Pr
       }
       process.exit(0);
     }
-    await runDoctorCommand('daemon');
+
+    const snapshot = await readDaemonStatusSnapshot();
+    if (snapshot.running) {
+      console.log(ok('Daemon running'));
+      console.log(`  ${kv('PID:', String(snapshot.pid ?? '—'))}`);
+      console.log(`  ${kv('CLI Version:', snapshot.startedWithCliVersion ?? '—')}`);
+      console.log(`  ${kv('Relay URL:', configuration.serverUrl)}`);
+      console.log(`  ${kv('Relay profile:', configuration.activeServerId)}`);
+      if (snapshot.httpPort) {
+        console.log(`  ${kv('HTTP Port:', String(snapshot.httpPort))}`);
+      }
+    } else {
+      console.log(neutral('Daemon not running'));
+      console.log(`  ${kv('Relay URL:', configuration.serverUrl)}`);
+      console.log(`  ${kv('Relay profile:', configuration.activeServerId)}`);
+    }
     process.exit(0);
   }
 
