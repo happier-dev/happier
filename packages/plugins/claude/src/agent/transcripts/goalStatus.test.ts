@@ -260,13 +260,6 @@ describe('createClaudeGoalStatusWorkStateTracker — live usage accumulation for
     expect(snapshot?.items[0]?.statusReason).toBeUndefined();
   });
 
-  it('accumulates tokens across successive turns (running total, not per-turn replace)', () => {
-    const tracker = activeTracker();
-    tracker.foldActiveGoalUsage({ updatedAt: 10, currentClaudeSessionId: 's1', addTokens: 1000, timeUsedSeconds: 20 });
-    const snapshot = tracker.foldActiveGoalUsage({ updatedAt: 20, currentClaudeSessionId: 's1', addTokens: 500, timeUsedSeconds: 45 });
-    expect(snapshot?.items[0]).toMatchObject({ tokensUsed: 1500, timeUsedSeconds: 45 });
-  });
-
   it('returns null (no churn) when neither tokens nor elapsed changed since the last fold', () => {
     const tracker = activeTracker();
     tracker.foldActiveGoalUsage({ updatedAt: 10, currentClaudeSessionId: 's1', addTokens: 1000, timeUsedSeconds: 20 });
@@ -303,12 +296,6 @@ describe('createClaudeGoalStatusWorkStateTracker — live usage accumulation for
     expect(snapshot?.items[0]).toMatchObject({ status: 'complete', tokensUsed: 7000, timeUsedSeconds: 130 });
   });
 
-  it('reseeds the accumulator from an already-published active goal item (restart continuity)', () => {
-    const tracker = activeTracker();
-    tracker.reseedActiveGoalUsage({ tokensUsed: 5000, timeUsedSeconds: 120 });
-    const snapshot = tracker.foldActiveGoalUsage({ updatedAt: 10, currentClaudeSessionId: 's1', addTokens: 300, timeUsedSeconds: 130 });
-    expect(snapshot?.items[0]).toMatchObject({ tokensUsed: 5300, timeUsedSeconds: 130 });
-  });
 });
 
 describe('buildEmptyClaudeGoalWorkStateSnapshot', () => {

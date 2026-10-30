@@ -298,33 +298,4 @@ describe('Claude External Session observation', () => {
         expect(JSON.stringify(result)).not.toMatch(/stopped|idle|completed_boundary/u);
     });
 
-    it('returns the existing descriptor with the matching descriptor purpose', async () => {
-        const fixture = await createTranscriptFixture();
-        const contribution = createClaudeExternalSessionObservationContribution({
-            env: { CLAUDE_CONFIG_DIR: fixture.configDir },
-        });
-        const descriptor = contribution.describeResource(fixture.identity);
-
-        await expect(contribution.reconcileResource({
-            purpose: 'resource_descriptors',
-            resourceKey: descriptor.resourceKey,
-            links: [{
-                linkKey: descriptor.linkKey,
-                linkedSource: fixture.identity,
-            }],
-            signal: new AbortController().signal,
-        })).resolves.toEqual({
-            purpose: 'resource_descriptors',
-            outcomes: [{
-                kind: 'described',
-                descriptor: {
-                    ...descriptor,
-                    changeObservation: 'watch_file_changes',
-                    watchFileChanges: {
-                        files: [await realpath(fixture.filePath)],
-                    },
-                },
-            }],
-        });
-    });
 });

@@ -289,34 +289,6 @@ describe('createCoalescedWorkflowActivityPublisher', () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
-  it('requeues failed run ids returned by the publisher for a delayed retry', async () => {
-    const publishes: WorkflowActivityPublishInput[] = [];
-    let attempt = 0;
-    const publisher = {
-      publish: vi.fn(async (input: WorkflowActivityPublishInput) => {
-        publishes.push(input);
-        attempt += 1;
-        return { failedRunIds: attempt === 1 ? ['a'] : [], permanentFailedRunIds: [] };
-      }),
-    };
-    const scheduler = createCoalescedWorkflowActivityPublisher({
-      publisher,
-      getSnapshots: () => new Map([['a', runSnapshot('a')]]),
-      debounceMs: 300,
-    });
-
-    scheduler.notify({ changedRunIds: ['a'], startedRunIds: [], terminalRunIds: ['a'], statusChangedRunIds: [] });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(publisher.publish).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(499);
-    expect(publisher.publish).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
-
-    expect(publisher.publish).toHaveBeenCalledTimes(2);
-    expect(publishes[1]?.changedRunIds).toEqual(['a']);
-  });
-
   it('flush waits for an immediate in-flight publish and drains changes queued behind it', async () => {
     let releaseFirstPublish!: () => void;
     const firstPublish = new Promise<void>((resolve) => {

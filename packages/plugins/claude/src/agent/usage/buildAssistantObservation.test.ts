@@ -84,18 +84,6 @@ describe('buildClaudeAssistantUsageObservation', () => {
         });
     });
 
-    it('leaves cost unavailable for a catalog model without exact pricing', () => {
-        const observation = buildClaudeAssistantUsageObservation({
-            modelId: 'claude-opus-5-custom-unknown',
-            usage: {
-                input_tokens: 1_000_000,
-                output_tokens: 1_000_000,
-            },
-        });
-
-        expect(observation?.cost).toBeNull();
-    });
-
     it.each([
         ['claude-opus-4-5-20251101', 30],
         ['claude-opus-4-5', 30],
@@ -120,10 +108,13 @@ describe('buildClaudeAssistantUsageObservation', () => {
         });
     });
 
-    it('prices all four counters through the shared Sonnet 5 snapshot', () => {
+    it.each([
+        SONNET_5_STANDARD_PRICING_START_MS - 1,
+        SONNET_5_STANDARD_PRICING_START_MS,
+    ])('prices all four counters through the current shared Sonnet 5 snapshot at %s', (observedAtMs) => {
         const observation = buildClaudeAssistantUsageObservation({
             modelId: 'claude-sonnet-5',
-            observedAtMs: SONNET_5_STANDARD_PRICING_START_MS - 1,
+            observedAtMs,
             usage: {
                 input_tokens: 1_000_000,
                 output_tokens: 1_000_000,
@@ -133,21 +124,6 @@ describe('buildClaudeAssistantUsageObservation', () => {
         });
 
         expect(observation?.cost?.estimatedUsd).toBe(14.7);
-    });
-
-    it('uses the current shared snapshot instead of a second date-based tariff table', () => {
-        const observation = buildClaudeAssistantUsageObservation({
-            modelId: 'claude-sonnet-5',
-            observedAtMs: SONNET_5_STANDARD_PRICING_START_MS,
-            usage: {
-                input_tokens: 1_000_000,
-                output_tokens: 1_000_000,
-                cache_creation_input_tokens: 1_000_000,
-                cache_read_input_tokens: 1_000_000,
-            },
-        });
-
-        expect(observation?.cost?.estimatedUsd).toBeCloseTo(14.7);
     });
 
     it('uses the current snapshot without requiring a price-effective observation date', () => {
@@ -172,14 +148,15 @@ describe('buildClaudeAssistantUsageObservation', () => {
     });
 
     it.each([
-        'future-model-without-pricing',
-        'claude-opus-6',
-        'claude-sonnet-5-unknown-snapshot',
-    ])('does not infer pricing for unknown or unpriced native model %s', (modelId) => {
+        ['future-model-without-pricing', SONNET_5_STANDARD_PRICING_START_MS],
+        ['claude-opus-6', SONNET_5_STANDARD_PRICING_START_MS],
+        ['claude-sonnet-5-unknown-snapshot', SONNET_5_STANDARD_PRICING_START_MS],
+        ['claude-opus-5-custom-unknown', undefined],
+    ] as const)('does not infer pricing for unknown or unpriced native model %s', (modelId, observedAtMs) => {
         const observation = buildClaudeAssistantUsageObservation({
             modelId,
-            observedAtMs: SONNET_5_STANDARD_PRICING_START_MS,
-            usage: { input_tokens: 1_000_000 },
+            ...(observedAtMs === undefined ? {} : { observedAtMs }),
+            usage: { input_tokens: 1_000_000, output_tokens: 1_000_000 },
         });
 
         expect(observation?.cost).toBeNull();

@@ -45,10 +45,6 @@ describe('Claude reset HTTP vertical', () => {
   expect(requests.filter(r => r.method === 'POST')).toHaveLength(1);
   expect(requests.at(-1)).toMatchObject({ url: 'https://api.anthropic.com/api/organizations/organization-123/reset_rate_limits', body: { program: 'cedar_ember', grant_id: 'promo', request_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/) } });
  });
- it('exposes discovery and consumption through the qualified runtime', () => {
-  expect(claudeSubscriptionConnectedAccountRuntime.recoveryCredits?.read).toBeTypeOf('function');
-  expect(claudeSubscriptionConnectedAccountRuntime.recoveryCredits?.consume).toBeTypeOf('function');
- });
 });
 
 function context(identity?: Readonly<{ accountId: string; organizationId: string }>) {

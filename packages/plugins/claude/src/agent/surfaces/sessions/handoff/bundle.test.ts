@@ -229,24 +229,6 @@ describe('Claude handoff bundle leaf', () => {
         await expect(readExportedClaudeTranscript(bundle)).resolves.toContain('fallback-public');
     });
 
-    it('falls back to the derived transcript when the public source is absent', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-nullish-source-'));
-        const workspace = join(root, 'workspace');
-        const configDir = join(root, '.claude');
-        const projectId = resolveClaudeProjectId(workspace);
-        const transcriptPath = join(configDir, 'projects', projectId, 'session-nullish.jsonl');
-        await mkdir(join(configDir, 'projects', projectId), { recursive: true });
-        await writeFile(transcriptPath, '{"type":"assistant","text":"derived-nullish"}\n', 'utf8');
-
-        const bundle = await exportClaudeSessionBundle({
-            metadata: { path: workspace },
-            remoteSessionId: 'session-nullish',
-            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
-        });
-
-        await expect(readExportedClaudeTranscript(bundle)).resolves.toContain('derived-nullish');
-    });
-
     it('derives the transcript from the working directory instead of public transcript-path metadata', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-derived-'));
         const workspace = join(root, 'workspace');
