@@ -62,6 +62,9 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 20, bottom: 0, left: 0, right: 0 }),
 }));
 
+// Prepare the shared source graph during collection so test time measures the share flow.
+const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
+
 function createEmptyTurnDiffInput() {
     return {
         files: [],
@@ -122,7 +125,6 @@ describe('PublicShareViewerScreen (e2ee)', () => {
             .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
                 messages: [], hasMore: false, nextBeforeSeq: null,
             }) });
-        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
         const screen = await renderScreen(<PublicShareViewerScreen />);
         try {
             await flushHookEffects({ cycles: 1, turns: 2 });
@@ -201,7 +203,6 @@ describe('PublicShareViewerScreen (e2ee)', () => {
                 }),
             });
 
-        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
 
         const screen = await renderScreen(<PublicShareViewerScreen />);
         try {
@@ -317,7 +318,6 @@ describe('PublicShareViewerScreen (e2ee)', () => {
                 }),
             });
 
-        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
 
         const screen = await renderScreen(<PublicShareViewerScreen />);
         try {
@@ -415,7 +415,6 @@ describe('PublicShareViewerScreen (e2ee)', () => {
                 }),
             });
 
-        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
 
         const screen = await renderScreen(<PublicShareViewerScreen />);
         try {
