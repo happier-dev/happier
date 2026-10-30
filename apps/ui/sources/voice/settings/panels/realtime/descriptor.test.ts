@@ -9,19 +9,28 @@ import { VOICE_PROVIDER_CONVERSATION_RETENTION_MS } from '@/voice/persistence/vo
 import { createExternalVoiceProviderSettingsDescriptor } from '@happier-dev/protocol/voice/settings/externalProviderSettings';
 import { VoiceProviderSettingsSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 
-const owner = Object.freeze({
+const declaredOwner = createExternalVoiceProviderSettingsDescriptor(VoiceProviderSettingsSchema.parse({
   schemaVersion: 1,
-  defaultConfig: Object.freeze({ model: { kind: 'pinned', id: 'stable' }, nested: { value: 1 } }),
+  fields: [
+    { id: 'model', title: 'Model', schema: { type: 'object', properties: {
+      kind: { const: 'pinned' }, id: { type: 'string', minLength: 1 },
+    }, required: ['kind', 'id'], additionalProperties: false },
+    default: { kind: 'pinned', id: 'stable' }, presentation: { control: 'json' } },
+    { id: 'nested', title: 'Nested', schema: { type: 'object', properties: {
+      value: { type: 'number', minimum: 0, maximum: 10 },
+    }, required: ['value'], additionalProperties: false },
+    default: { value: 1 }, presentation: { control: 'json' } },
+  ],
+}));
+const owner = Object.freeze({
+  ...declaredOwner,
   parseConfig(value: unknown) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const candidate = value as Readonly<Record<string, unknown>>;
-    const nested = candidate.nested as Readonly<Record<string, unknown>> | undefined;
-    return typeof nested?.value === 'number' && nested.value >= 0 && nested.value <= 10
-      ? candidate
-      : null;
+    const parsed = declaredOwner.parseConfig(value);
+    return isConfigRecord(parsed) ? parsed : null;
   },
   parseStoredConfig(value: unknown) {
-    return this.parseConfig(value);
+    const parsed = declaredOwner.parseStoredConfig(value);
+    return isConfigRecord(parsed) ? parsed : null;
   },
 });
 
@@ -98,7 +107,7 @@ describe('realtime provider config projection', () => {
   });
   it('preserves newer and invalid envelopes inert instead of replacing them with defaults', () => {
     expect(resolveRealtimeProviderConfig(owner, { schemaVersion: 2, config: { nested: { value: 2 } } })).toEqual({ status: 'unsupported_version' });
-    expect(resolveRealtimeProviderConfig(owner, { schemaVersion: 1, config: { nested: { value: 99 } } })).toEqual({ status: 'invalid' });
+    expect(resolveRealtimeProviderConfig(owner, { schemaVersion: 1, config: { ...owner.defaultConfig, nested: { value: 99 } } })).toEqual({ status: 'invalid' });
   });
 
   it('uses defaults only for an unconfigured provider and immutably validates nested writes', () => {

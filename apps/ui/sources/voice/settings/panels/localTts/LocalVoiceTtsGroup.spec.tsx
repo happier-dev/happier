@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, 
 
 import { findAllHostTestInstances, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createVoiceSpeechOutputBoundary } from '@/dev/testkit/harness/voiceSpeechOutputBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { readLocalConversationVoiceSettings, voiceSettingsDefaults, voiceSettingsParse, writeLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { createVoiceSettingsAccountTestHarness } from '../voiceSettingsAccountTestHarness';
@@ -66,7 +67,10 @@ function neuralSampleFixture() {
 
 describe('LocalVoiceTtsGroup', () => {
   beforeEach(async () => {
-    account = await createVoiceSettingsAccountTestHarness(settingsParse({}));
+    account = await createVoiceSettingsAccountTestHarness(settingsParse({
+      experiments: true,
+      featureToggles: { voice: true, 'execution.runs': true, 'voice.agent': true, 'voice.daemonInference': true },
+    }), { features: createRootLayoutFeaturesResponse({ features: { voice: { enabled: true } } }) });
     speechBoundary.expoSpeechSpeak.mockReset();
     speechBoundary.expoSpeechStop.mockReset();
   });
@@ -185,6 +189,8 @@ describe('LocalVoiceTtsGroup', () => {
     await alerted.promise;
     expect(alert).toHaveBeenCalledTimes(1);
     const body = String(alert.mock.calls[0]?.[1]);
+    expect(body.trim().length).toBeGreaterThan(0);
+    expect(body).toBe(t('settingsVoice.local.daemonInference.states.machineUnreachable'));
     expect(body).not.toMatch(/_/);
     expect(body).not.toBe(t('settingsVoice.local.testTtsFailed'));
   });

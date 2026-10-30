@@ -244,7 +244,6 @@ describe('voice provider settings catalog', () => {
         source: 'connected' as const,
         selection: 'profile' as const,
         profileId: 'codex-account-a',
-        accessToken: 'must-not-be-persisted',
       },
     },
     {
@@ -253,7 +252,6 @@ describe('voice provider settings catalog', () => {
         source: 'connected' as const,
         selection: 'group' as const,
         groupId: 'codex-team-a',
-        accessToken: 'must-not-be-persisted',
       },
     },
   ])('rejects a bundled Codex $selection binding with a nested non-canonical secret field', ({
@@ -261,12 +259,23 @@ describe('voice provider settings catalog', () => {
   }) => {
     const catalog = createVoiceProviderSettingsCatalog(bundledCatalogInput);
     const owner = catalog.get(codexProviderId);
+    if (!owner) throw new Error('expected_codex_settings_owner');
+    const binding = {
+      v: 1 as const,
+      bindingsByServiceId: { [codexConnectedServiceKey]: selectedBinding },
+    };
 
-    expect(owner?.parseConfig({
+    expect(owner.parseConfig({ globalConnectedServices: binding })).toEqual({
+      globalConnectedServices: binding,
+    });
+    expect(owner.parseConfig({
       globalConnectedServices: {
-        v: 1,
+        ...binding,
         bindingsByServiceId: {
-          'openai-codex': selectedBinding,
+          [codexConnectedServiceKey]: {
+            ...selectedBinding,
+            accessToken: 'must-not-be-persisted',
+          },
         },
       },
     })).toBeNull();

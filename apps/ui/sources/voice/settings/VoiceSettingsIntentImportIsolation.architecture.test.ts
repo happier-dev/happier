@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import ts from 'typescript';
 
 import { describe, expect, it } from 'vitest';
 
@@ -7,20 +8,36 @@ const SOURCES_ROOT = join(process.cwd(), 'sources');
 
 const intents = ['dictation', 'conversations', 'privacy', 'advanced'] as const;
 
+function readImports(relativePath: string) {
+  const path = join(SOURCES_ROOT, relativePath);
+  const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  return source.statements.flatMap((statement) => {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) return [];
+    const clause = statement.importClause;
+    const bindings = clause?.namedBindings;
+    return [{
+      module: statement.moduleSpecifier.text,
+      names: [
+        ...(clause?.name ? [clause.name.text] : []),
+        ...(bindings && ts.isNamedImports(bindings)
+          ? bindings.elements.flatMap((binding) => [binding.propertyName?.text ?? binding.name.text, binding.name.text])
+          : bindings && ts.isNamespaceImport(bindings) ? [bindings.name.text] : []),
+      ],
+    }];
+  });
+}
+
 describe('Voice settings intent import isolation', () => {
   it.each(intents)('%s route imports only its intent-owned screen', (intent) => {
-    const route = readFileSync(
-      join(SOURCES_ROOT, `app/(app)/settings/voice/${intent}.tsx`),
-      'utf8',
-    );
+    const imports = readImports(`app/(app)/settings/voice/${intent}.tsx`);
+    const edges = imports.flatMap((edge) => [edge.module, ...edge.names]);
     const screenName = `Voice${intent[0]!.toUpperCase()}${intent.slice(1)}SettingsScreen`;
 
-    expect(route).toContain(`@/voice/settings/screens/${screenName}`);
-    expect(route).not.toContain('VoiceSettingsIntentDetailsScreen');
+    expect(imports.map((edge) => edge.module)).toContain(`@/voice/settings/screens/${screenName}`);
+    expect(edges.some((edge) => edge.includes('VoiceSettingsIntentDetailsScreen'))).toBe(false);
     for (const otherIntent of intents.filter((candidate) => candidate !== intent)) {
-      expect(route).not.toContain(
-        `Voice${otherIntent[0]!.toUpperCase()}${otherIntent.slice(1)}SettingsScreen`,
-      );
+      const otherScreen = `Voice${otherIntent[0]!.toUpperCase()}${otherIntent.slice(1)}SettingsScreen`;
+      expect(edges.some((edge) => edge.includes(otherScreen))).toBe(false);
     }
   });
 
@@ -34,17 +51,11 @@ describe('Voice settings intent import isolation', () => {
     ];
 
     for (const screenName of ['VoicePrivacySettingsScreen', 'VoiceDictationSettingsScreen']) {
-      const source = readFileSync(
-        join(SOURCES_ROOT, `voice/settings/screens/${screenName}.tsx`),
-        'utf8',
-      );
-      const imports = source
-        .split('\n')
-        .filter((line) => /^\s*import\b/.test(line))
-        .join('\n');
+      const imports = readImports(`voice/settings/screens/${screenName}.tsx`);
+      const edges = imports.flatMap((edge) => [edge.module, ...edge.names]);
 
       for (const token of forbiddenConversationImports) {
-        expect(imports, `${screenName} must not import ${token}`).not.toContain(token);
+        expect(edges.some((edge) => edge.includes(token)), `${screenName} must not import ${token}`).toBe(false);
       }
     }
   });

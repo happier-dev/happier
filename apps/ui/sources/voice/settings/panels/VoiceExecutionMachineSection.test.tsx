@@ -15,7 +15,8 @@ import { createVoiceProviderRegistry, type VoiceProviderRegistry } from '@/voice
 import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { createVoiceSettingsAccountTestHarness } from './voiceSettingsAccountTestHarness';
+import { createVoiceSettingsAccountTestHarness, withVoiceSettingsCredentialResource } from './voiceSettingsAccountTestHarness';
+import { refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { useVoiceExecutionMachinePresentation, type VoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
 
@@ -522,7 +523,6 @@ describe('VoiceExecutionMachineSection', () => {
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     const {
       applyAccountVoiceCredentialSourceSelection,
-      upsertAccountVoiceCredential,
     } = await import('@/voice/credentials/accountVoiceCredential');
     const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
     const provider = createDefaultVoiceProviderRegistry().get('happier.voice.openai/realtime-openai');
@@ -535,26 +535,20 @@ describe('VoiceExecutionMachineSection', () => {
     };
     const initial = settingsParse({ voice });
     const contribution = { pluginId: provider.pluginId, localId: provider.declaration.id };
-    const withSavedSecret = sourceKind === 'savedSecret'
-      ? upsertAccountVoiceCredential({
+    const selected = sourceKind === 'savedSecret'
+      ? { settings: await withVoiceSettingsCredentialResource(account, {
           settings: initial,
-          contribution,
-          credentialSlotId: provider.declaration.credentials!.slot.id,
-          value: 'sk-saved',
-          generateId: () => 'saved-openai-secret',
-          now: 1,
-          expectedSecretId: null,
-          expectedSecretUpdatedAt: null,
-        }).settings
-      : initial;
-    const selected = applyAccountVoiceCredentialSourceSelection({
-      settings: withSavedSecret,
-      connectedPurposes: account.purposes.value,
-      mutation: {
-        contribution,
-        credentialSlotId: provider.declaration.credentials!.slot.id,
-        selection: sourceKind === 'connectedAccount'
-          ? {
+          declaration: provider.declaration,
+          pluginId: provider.pluginId,
+          resourceId: 'saved-openai-secret',
+        }) }
+      : applyAccountVoiceCredentialSourceSelection({
+          settings: initial,
+          connectedPurposes: account.purposes.value,
+          mutation: {
+            contribution,
+            credentialSlotId: provider.declaration.credentials!.slot.id,
+            selection: {
               kind: 'connectedAccount',
               target: {
                 kind: 'account',
@@ -563,14 +557,14 @@ describe('VoiceExecutionMachineSection', () => {
                   accountId: 'codex-work',
                 },
               },
-            }
-          : { kind: 'savedSecret' },
-        expectedSettingsVersion: 1,
-      },
-      currentDeclaration: provider.declaration,
-    });
-    await account.replaceConnectedPurposes(selected.connectedPurposes);
+            },
+            expectedSettingsVersion: 1,
+          },
+          currentDeclaration: provider.declaration,
+        });
+    if ('connectedPurposes' in selected) await account.replaceConnectedPurposes(selected.connectedPurposes);
     storageBoundary.settings = selected.settings;
+    await refreshSavedSecretCatalog(account.scope);
     try {
       const VoiceExecutionMachineSection = await loadSection();
       const setVoice = vi.fn();

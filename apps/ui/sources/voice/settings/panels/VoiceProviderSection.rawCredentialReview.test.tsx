@@ -17,7 +17,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { ModalProvider } from '@/modal/ModalProvider';
 import { t } from '@/text';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { createVoiceSettingsAccountTestHarness } from './voiceSettingsAccountTestHarness';
+import { createVoiceSettingsAccountTestHarness, withVoiceSettingsCredentialResource } from './voiceSettingsAccountTestHarness';
 
 import { VoiceCredentialSourceField } from './realtime/VoiceCredentialSourceField';
 import { VoiceServiceGallery } from './VoiceServiceGallery';
@@ -300,8 +300,8 @@ describe('VoiceProviderSection raw credential review reachability', () => {
       resolveSavedSecret: ref => resolveSavedSecretReference(account.scope, account.settings.secrets, ref),
     })).toMatchObject({ status: 'review_required', reference: { secretId: retainedRef } });
     const gallery = screen.tree.findAllByType(VoiceServiceGallery)[0]!;
-    expect(gallery.props.tiles.find((tile: Readonly<{ id: string }>) => tile.id === changed.providerId)?.status.detail)
-      .toBe(t('settingsVoice.externalCredentials.reviewRequired'));
+    expect(gallery.props.tiles.find((tile: Readonly<{ id: string }>) => tile.id === changed.providerId)?.status)
+      .toMatchObject({ tone: 'needs_you', detail: expect.stringContaining(t('settingsVoice.externalCredentials.reviewRequired')) });
     expect(screen.getTextContent()).toContain(t('settingsVoice.externalCredentials.reviewRequired'));
     expect(account.resources).toHaveLength(1);
     expect(account.resources[0]!.entry).toMatchObject({ ref: retainedRef });
@@ -387,22 +387,14 @@ describe('VoiceProviderSection raw credential review reachability', () => {
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     const {
       applyAccountVoiceCredentialSourceSelection,
-      saveAndUseAccountVoiceCredential,
     } = await import('@/voice/credentials/accountVoiceCredential');
     const selected = selectedSource === 'savedSecret'
-      ? saveAndUseAccountVoiceCredential({
+      ? { settings: await withVoiceSettingsCredentialResource(account, {
           settings: settingsParse({}),
-          contribution: fixture.contribution,
-          credentialSlotId: fixture.declaration.credentials!.slot.id,
-          expectedSettingsVersion: 0,
-          currentDeclaration: fixture.declaration,
-          machineId: null,
-          value: 'fixture credential',
-          generateId: () => `${pluginId}-secret`,
-          now: 1,
-          expectedSecretId: null,
-          expectedSecretUpdatedAt: null,
-        })
+          declaration: fixture.declaration,
+          pluginId,
+          resourceId: `${pluginId}-secret`,
+        }) }
       : applyAccountVoiceCredentialSourceSelection({
           settings: settingsParse({}),
           connectedPurposes: account.purposes.value,

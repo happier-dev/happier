@@ -59,9 +59,13 @@ describe('VoiceAgentMemorySection', () => {
     const { VoiceAgentMemorySection } = await import('./VoiceAgentMemorySection');
     const voice = voiceWithAgent({ agentId: 'claude', agentSource: 'agent', transcript: { persistenceMode: 'persistent' } });
     let commits = 0;
+    vi.useFakeTimers();
     const screen = await renderScreen(<React.Profiler id="voice-memory" onRender={() => { commits += 1; }}>
       <VoiceAgentMemorySection voice={voice} setVoice={() => {}} />
     </React.Profiler>);
+    // Finish the real native control's deferred mount before measuring preference updates.
+    await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+    vi.useRealTimers();
     const initial = commits;
     for (let index = 0; index < 20; index += 1) {
       await act(async () => { storage.setState(state => ({ settings: {

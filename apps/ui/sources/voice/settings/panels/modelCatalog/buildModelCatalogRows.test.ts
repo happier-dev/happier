@@ -355,5 +355,24 @@ describe('buildModelCatalogRows', () => {
     for (const row of [...result.stt, ...result.tts]) {
       expect(row.displayName.length).toBeGreaterThan(0);
     }
+    const models = [
+      status('acme.speech/first-pack', {
+        pluginIdentity: { pluginId: 'acme.speech', packId: 'first-pack' }, model: 'Alpha',
+      }),
+      status('acme.speech/second-pack', {
+        pluginIdentity: { pluginId: 'acme.speech', packId: 'second-pack' }, model: 'Beta',
+      }),
+    ];
+    const names = (statuses: readonly DaemonVoiceInferenceModelStatus[]) => buildModelCatalogRows({
+      statuses, selectedSttPackId: null, selectedTtsPackId: null,
+    }).stt.filter(row => row.sourcePluginId === 'acme.speech')
+      .map(row => ({ packId: row.packId, displayName: row.displayName }));
+    const expected = [
+      { packId: 'acme.speech/first-pack', displayName: 'Alpha' },
+      { packId: 'acme.speech/second-pack', displayName: 'Beta' },
+    ];
+    expect(names(models)).toEqual(expected);
+    expect(names(models)).toEqual(expected);
+    expect(names(models.map(model => ({ ...model, updatedAtMs: 999 })))).toEqual(expected);
   });
 });

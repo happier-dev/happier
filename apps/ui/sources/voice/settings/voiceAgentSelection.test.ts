@@ -55,10 +55,11 @@ describe('atomic Voice Agent selection', () => {
     });
 
     it.each([
-        { authorized: false, confirmed: true, expected: 'needs_selection' },
-        { authorized: true, confirmed: false, expected: 'needs_selection' },
-        { authorized: true, confirmed: true, expected: 'configured' },
-    ] as const)('uses the incumbent model picker admission for BOTH imported Chat models: %o', ({ authorized, confirmed, expected }) => {
+        { authorized: false, chatConfirmed: true, commitConfirmed: true, expected: 'needs_selection' },
+        { authorized: true, chatConfirmed: false, commitConfirmed: true, expected: 'needs_selection' },
+        { authorized: true, chatConfirmed: true, commitConfirmed: false, expected: 'needs_selection' },
+        { authorized: true, chatConfirmed: true, commitConfirmed: true, expected: 'configured' },
+    ] as const)('uses the incumbent model picker admission for BOTH imported Chat models: %o', ({ authorized, chatConfirmed, commitConfirmed, expected }) => {
         const local = readLocalConversationVoiceSettings(voiceSettingsDefaults);
         const connectionId = ProviderConnectionIdSchema.parse('voice-openai-compatible-chat');
         const agentTargetKey = 'agent:happier.agent.opencode/opencode';
@@ -77,7 +78,8 @@ describe('atomic Voice Agent selection', () => {
                 sources: { manual: true, static: false, probe: false }, confidence: 'manual',
                 compatibility: { result: { status: 'experimental', selectedProtocol: 'openai-chat',
                     reasons: ['compatibility_evidence_missing'], confirmationScope: { kind: 'model', modelId } },
-                    compatibilityFingerprint: 'compatibility:v1:legacy-chat', confirmed: modelId === 'legacy-commit' ? confirmed : true },
+                    compatibilityFingerprint: `compatibility:v1:${modelId}`,
+                    confirmed: modelId === 'legacy-commit' ? commitConfirmed : chatConfirmed },
                 endpointHealth: 'available', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible',
             })),
         })] });

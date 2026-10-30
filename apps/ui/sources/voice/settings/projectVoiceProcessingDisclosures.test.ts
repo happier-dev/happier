@@ -13,7 +13,7 @@ import { projectVoiceProcessingDisclosures } from './projectVoiceProcessingDiscl
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { PLUGIN_MANIFEST as openaiManifest } from '../../../../../packages/plugins/openai/src/manifest';
 import { projectBundledVoiceManifestContributions } from '@/voice/registry/bundledVoiceManifestProjection';
-import { VoiceProviderSettingsPresentationFieldSchema, VoiceProviderSettingsSchema } from '../../../../../packages/protocol/src/plugins/contributions/voiceProviders';
+import { VoiceProviderContributionSchema, VoiceProviderSettingsPresentationFieldSchema, VoiceProviderSettingsSchema } from '../../../../../packages/protocol/src/plugins/contributions/voiceProviders';
 
 /**
  * Resolves a projected disclosure exactly the way the Privacy view does, so the
@@ -195,6 +195,26 @@ describe('projectVoiceProcessingDisclosures', () => {
   });
 
   it('carries the plugin-declared fallback prose so an unresolvable key never becomes the disclosure', () => {
+    const providerId = 'fixture.voice/transcription';
+    const privacyDisclosure = {
+      key: 'fixture.voice.transcription.privacy.unregistered',
+      fallback: 'Fixture transcription audio stays within the declared speech processing boundary.',
+    };
+    const declaration = VoiceProviderContributionSchema.parse({
+      id: 'transcription', title: 'Transcription fixture', kind: 'speech',
+      roles: ['dictation_stt'], platforms: ['web'],
+      settings: { schemaVersion: 2, fields: [{
+        id: 'model', title: 'Model', default: 'fixture-model',
+        schema: { type: 'string', minLength: 1, maxLength: 128 }, presentation: { control: 'text' },
+      }], privacyDisclosure },
+    });
+    const registry = createVoiceProviderRegistry({
+      bundledContributions: [{ pluginId: 'fixture.voice', providerId, declaration }],
+      bundledPresentations: [{ providerId, settingsSectionId: 'fixture-transcription',
+        createSettingsSpec: () => ({ titleKey: 'fixture.transcription', subtitleKey: '', detailKey: '',
+          iconName: 'mic', fields: [{ fieldId: 'model', titleKey: 'fixture.model', subtitleKey: '' }], test: null }),
+      }],
+    });
     const voice = voiceSettingsParse({
       ...voiceSettingsDefaults,
       dictation: {
@@ -202,13 +222,13 @@ describe('projectVoiceProcessingDisclosures', () => {
         sttBinding: 'explicit',
         stt: {
           ...voiceSettingsDefaults.dictation.stt,
-          provider: 'happier.voice.google/gemini-stt',
+          provider: providerId,
         },
       },
     });
 
-    const [projected] = projectVoiceProcessingDisclosures(voice)
-      .filter((entry) => entry.providerIds.includes('happier.voice.google/gemini-stt'));
+    const [projected] = projectVoiceProcessingDisclosures(voice, registry)
+      .filter((entry) => entry.providerIds.includes(providerId));
     const disclosure = projected?.disclosure;
 
     // Externally installed voice plugins register no translations with the host
@@ -216,10 +236,9 @@ describe('projectVoiceProcessingDisclosures', () => {
     // and a raw i18n key rendered as their privacy statement. The conversation role
     // already forwards the declaration verbatim; the speech roles must not collapse
     // it to the key.
-    expect(typeof disclosure).toBe('object');
-    const declared = disclosure as Readonly<{ key: string; fallback: string }>;
-    expect(declared.fallback).not.toBe(declared.key);
-    expect(declared.fallback).toMatch(/Google/u);
+    expect(tLoose(privacyDisclosure.key)).toBe(privacyDisclosure.key);
+    expect(disclosure).toEqual(privacyDisclosure);
+    expect(disclosureText(disclosure)).toBe(privacyDisclosure.fallback);
   });
 
   it('projects only the selected OpenAI-compatible Dictation STT role', () => {

@@ -108,15 +108,23 @@ describe('LocalNeuralTtsSettings (web)', () => {
         expect(tree.root.findAll((node) => node.props?.title === t('settingsVoice.local.kokoro.assetPack.title'))).toHaveLength(0);
     });
 
-    it('keeps only daemon-relevant voice controls on web after browser Kokoro deletion', async () => {
-        const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.web');
-
-        const { tree } = await renderScreen(React.createElement(LocalNeuralTtsSettings, {
-            cfgKokoro: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: 'af_heart', speed: 1, execution: 'auto' },
-            setKokoro: vi.fn(),
-            networkTimeoutMs: 15_000,
-            popoverBoundaryRef: null,
-        }));
+    it('keeps daemon-relevant controls and changes the selected voice without replacing pack, speed or execution', async () => {
+        const cfgKokoro = { model: 'kokoro' as const, assetId: 'acme.voice/tts-pack', voiceId: 'bright',
+            speed: 1.2, execution: 'auto' as const };
+        const setKokoro = vi.fn();
+        function DaemonSettings() {
+            const controller = useDaemonVoiceModelCatalogState({ refreshKey: 'tts-machine' });
+            return <DaemonVoiceModelCatalogProvider value={controller}>
+                <LocalNeuralTtsSettings cfgKokoro={cfgKokoro} setKokoro={setKokoro}
+                    networkTimeoutMs={15_000} popoverBoundaryRef={null} />
+            </DaemonVoiceModelCatalogProvider>;
+        }
+        const screen = await renderScreen(<DaemonSettings />);
+        const { tree } = screen;
+        const voiceMenu = () => tree.root.findAllByType(DropdownMenu).find(node =>
+            node.props.itemTrigger?.title === t('settingsVoice.local.kokoro.voice.titleWeb'))!;
+        await waitForTestEvent(screen.subscribe, () => voiceMenu().props.items.map((item: { id: string }) => item.id),
+            ids => ids.length === 2 && ids[0] === 'calm' && ids[1] === 'bright');
 
         const dropdowns = tree.root.findAllByType(DropdownMenu).filter((node) =>
             node.props.itemTrigger?.title !== t('settingsVoice.local.daemonInference.execution.title'));
@@ -124,6 +132,10 @@ describe('LocalNeuralTtsSettings (web)', () => {
         expect(dropdowns[0]?.props.itemTrigger?.title).toBe(t('settingsVoice.local.kokoro.voice.titleWeb'));
         expect(dropdowns[0]?.props.itemTrigger?.subtitle).toBe(t('settingsVoice.local.kokoro.voice.subtitleWeb'));
         expect(dropdowns[1]?.props.itemTrigger?.title).toBe(t('settingsVoice.local.kokoro.speed.title'));
+        expect(voiceMenu().props.selectedId).toBe('bright');
+        expect(setKokoro).not.toHaveBeenCalled();
+        await act(async () => { voiceMenu().props.onSelect('calm'); });
+        expect(setKokoro).toHaveBeenCalledWith({ ...cfgKokoro, voiceId: 'calm' });
     });
 
     it('renders the exact selected daemon pack catalog and fails closed for a retired stored voice', async () => {

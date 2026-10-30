@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
-import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
-import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
+import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 
 import {
     resolveStoredVoiceProviderId,
@@ -76,18 +76,23 @@ describe('resolveVoiceProviderId', () => {
     });
 
     it('uses typed Agent-session execution metadata instead of a provider-id special case', () => {
-        const builtInRegistry = createDefaultVoiceProviderRegistry();
-        const codexEntry = builtInRegistry.get('happier.agent.codex/realtime-codex');
-        if (!codexEntry) throw new Error('missing realtime Codex fixture');
         const providerId = 'fixture.voice/realtime-agent-session';
-        const fixtureEntry = Object.freeze({
-            ...codexEntry,
-            providerId,
+        const declaration = VoiceProviderContributionSchema.parse({
+            id: 'realtime-agent-session', title: 'Agent-session voice fixture',
+            kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web'],
+            capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' } },
+            execution: { kind: 'experimental_agent_session_realtime',
+                agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            settings: { schemaVersion: 2, fields: [], connectedServicesBinding: {
+                id: 'globalConnectedServices', title: 'Agent account',
+                agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, serviceIds: ['openai-codex'],
+            } },
+            client: { artifactId: 'voice', exportName: 'activate' },
         });
-        const registry: VoiceProviderRegistry = {
-            get: (candidateProviderId) => candidateProviderId === providerId ? fixtureEntry : null,
-            list: () => [fixtureEntry],
-        };
+        const registry = createVoiceProviderRegistry({
+            bundledContributions: [{ pluginId: 'fixture.voice', providerId, declaration }],
+            bundledPresentations: [{ providerId, settingsSectionId: 'fixture-agent-session' }],
+        });
         const settings = voiceSettingsParse({
             providerId,
             providers: {

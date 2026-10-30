@@ -1632,17 +1632,18 @@ describe('BundledSpeechSettings', () => {
     await act(async () => firstRequest.resolve([
       { id: 'stale-model', name: 'Stale model', metadata: {} },
     ]));
+    await flushHookEffects();
 
     const model = rendered.tree.root.findAllByType(DropdownMenu)
       .find((row) => row.props.searchPlaceholder === tLoose('settingsVoice.local.googleGeminiStt.model.searchPlaceholder'));
     expect(model?.props.items).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'machine-model' }),
     ]));
-    expect(model?.props.items).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'stale-model' }),
-      expect.objectContaining({ id: 'credential-model' }),
-      expect.objectContaining({ id: 'account-model' }),
-    ]));
+    for (const obsoleteId of ['stale-model', 'credential-model', 'account-model']) {
+      expect(model?.props.items).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: obsoleteId }),
+      ]));
+    }
   });
 
   it('keeps a failed Google catalog visible and retryable instead of presenting an empty list', async () => {
