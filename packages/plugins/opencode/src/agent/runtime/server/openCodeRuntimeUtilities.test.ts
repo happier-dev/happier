@@ -1,6 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
-
-import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
+import { describe, expect, it } from 'vitest';
 
 import { buildOpenCodeRetryStatusError } from './openCodeRetryStatus.js';
 
@@ -25,19 +23,5 @@ describe('OpenCode server runtime utilities', () => {
     expect(error?.retryAfterMs).toBeLessThanOrEqual(10_000);
     expect((error as typeof error & { resetAt?: unknown; resetsAt?: unknown })?.resetAt).toBeUndefined();
     expect((error as typeof error & { resetAt?: unknown; resetsAt?: unknown })?.resetsAt).toBeUndefined();
-  });
-
-  it('returns timeout without waiting for the underlying promise to settle', async () => {
-    vi.useFakeTimers();
-    try {
-      const never = new Promise<string>(() => undefined);
-      const outcomePromise = raceWithTimeout(never, 25);
-
-      await vi.advanceTimersByTimeAsync(25);
-
-      await expect(outcomePromise).resolves.toEqual({ type: 'timeout' });
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });

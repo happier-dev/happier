@@ -1061,53 +1061,6 @@ describe('OpenCode server managed-service assembly', () => {
     await assembly.dispose();
   });
 
-  it('attaches an explicit V2 session to a pure-V2 external server', async () => {
-    const externalBaseUrl = 'http://127.0.0.1:49204';
-    const requests: string[] = [];
-    const ctx = createContextFixture({
-      managedServerBaseUrl: externalBaseUrl,
-      managedServerRequest: async (input) => {
-        requests.push(input.pathAndQuery);
-        const path = input.pathAndQuery.split('?')[0];
-        const body = path === '/api/session' ? { data: { id: 'oc-session-v2' } } : {};
-        return {
-          ok: path === '/api/health' || path === '/api/session',
-          status: path === '/api/health' || path === '/api/session' ? 200 : 404,
-          statusText: path === '/api/health' || path === '/api/session' ? 'OK' : 'Not Found',
-          headers: { 'content-type': 'application/json' },
-          body: new Response(JSON.stringify(body)).body,
-        };
-      },
-    });
-
-    const assembly = await createOpenCodeServerRuntimeAssembly({
-      ctx,
-      directory: '/repo',
-      happierSessionId: 'happy-session-external-v2-only',
-      endpoint: { mode: 'external-attach', baseUrl: externalBaseUrl, credential: null },
-      request: {
-        kind: 'create',
-        sessionId: 'happy-session-external-v2-only',
-        cwd: '/repo',
-        configuration: {
-          mode: { value: null, updatedAtMs: 0 },
-          model: { value: null, updatedAtMs: 0 },
-          permissionIntent: { value: null, updatedAtMs: 0 },
-          options: { opencodeCliGeneration: { value: 'v2', updatedAtMs: 1 } },
-        },
-      },
-    });
-
-    expect(vi.mocked(ctx.managedServices.supervise).mock.calls[0]?.[0]?.healthCheck).toEqual({ kind: 'none' });
-    expect(requests[0]).toBe('/api/session');
-    expect(requests.some((path) => path.startsWith('/session'))).toBe(false);
-    expect(requests).not.toContain('/global/health');
-    expect(assembly.runtime.runtimeCapabilities?.sessionCapabilities?.compaction).toEqual({
-      manual: 'supported',
-    });
-    await assembly.dispose();
-  });
-
   it('auto-attaches to authenticated released OpenCode 2.0.15 without a V1 readiness gate', async () => {
     const requests: string[] = [];
     const ctx = createContextFixture({

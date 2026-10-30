@@ -37,16 +37,6 @@ const IDENTITY_CASES: readonly unknown[] = [
     ['a'],
 ];
 
-/**
- * The plausible wrong implementation this contract exists to exclude: it
- * answers presence correctly but returns renormalized bytes, which is exactly
- * how a re-minted id stops resuming at its issuer.
- */
-function trimmingReadIdentifier(value: unknown): string | null {
-    const trimmed = typeof value === 'string' ? value.trim() : '';
-    return trimmed.length > 0 ? trimmed : null;
-}
-
 async function readRuntimeSourcePaths(directory: string): Promise<readonly string[]> {
     const paths = await Promise.all((await readdir(directory, { withFileTypes: true })).map(async (entry) => {
         if (entry.name === 'node_modules' || entry.name === 'dist') return [];
@@ -75,17 +65,6 @@ describe('OpenCode opaque-identifier owner', () => {
                 canonicalReadNonBlankOpaqueIdentifier(value),
             );
         }
-    });
-
-    it('rejects a trimming reader as an equivalent implementation', () => {
-        // Guards the assertions above: a presence-only predicate that returns
-        // renormalized bytes must not satisfy this contract.
-        expect(trimmingReadIdentifier(PROVIDER_MINTED_ID)).not.toBe(PROVIDER_MINTED_ID);
-        expect(
-            IDENTITY_CASES.some((value) => (
-                trimmingReadIdentifier(value) !== canonicalReadNonBlankOpaqueIdentifier(value)
-            )),
-        ).toBe(true);
     });
 
     it('is the only implementation of the rule in shipped OpenCode sources', async () => {

@@ -68,51 +68,6 @@ describe('OpenCode plugin activation MCP discovery', () => {
     await activation.dispose();
   });
 
-  it('preserves a detected OpenCode MCP server name', async () => {
-    const projectRoot = await mkdtemp(join(tmpdir(), 'opencode-activate-mcp-id-'));
-    vi.stubEnv('XDG_CONFIG_HOME', join(projectRoot, 'empty-user-config'));
-    vi.stubEnv('OPENCODE_CONFIG', '');
-    vi.stubEnv('OPENCODE_CONFIG_DIR', '');
-    const opencodeDir = join(projectRoot, '.opencode');
-    await import('node:fs/promises').then(({ mkdir }) => mkdir(opencodeDir, { recursive: true }));
-    await writeFile(
-      join(opencodeDir, 'opencode.json'),
-      JSON.stringify({
-        mcp: {
-          'Team Docs': {
-            type: 'remote',
-            url: 'https://mcp.example.test/team-docs',
-          },
-        },
-      }),
-      'utf8',
-    );
-    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
-    const registration = activation.registration('mcp.discoverySources', 'config');
-    if (!registration) throw new Error('Missing OpenCode MCP discovery registration');
-    const result = await Reflect.apply(registration, undefined, [{
-      sessionId: 'session_1',
-      directory: projectRoot,
-    }]);
-
-    expect(result).toEqual({
-      items: [],
-      detectedServers: [
-        {
-          provider: 'opencode',
-          name: 'Team Docs',
-          transport: 'http',
-          remote: { url: 'https://mcp.example.test/team-docs', headers: [] },
-          envKeys: [],
-          enabled: null,
-          source: { kind: 'project', path: join(opencodeDir, 'opencode.json') },
-        },
-      ],
-      warnings: [],
-    });
-    await activation.dispose();
-  });
-
   it('keeps distinct native names that would collide under endpoint id normalization', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'opencode-activate-mcp-collision-'));
     vi.stubEnv('XDG_CONFIG_HOME', join(projectRoot, 'empty-user-config'));

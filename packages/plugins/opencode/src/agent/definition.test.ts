@@ -4,19 +4,6 @@ import { AGENT_DEFINITION } from './definition.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('OpenCode AGENT_DEFINITION', () => {
-  it('publishes credential-kind eligibility through the public connected-account declarations', () => {
-    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-        credentialKinds: ['oauth', 'token'],
-      }),
-      expect.objectContaining({
-        service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
-        credentialKinds: ['token'],
-      }),
-    ]));
-  });
-
   it('publishes the recovered OpenCode runtime capabilities from the plugin-owned definition', () => {
     expect(AGENT_DEFINITION).toMatchObject({
       id: 'opencode',

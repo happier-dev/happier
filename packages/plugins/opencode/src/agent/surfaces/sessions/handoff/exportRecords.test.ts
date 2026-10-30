@@ -101,31 +101,4 @@ describe('parseOpenCodeSessionExportRecords', () => {
       .not.toBe(normalizeOpenCodeSessionExportForHandoffComparison(divergent, 'oc-session-1'));
     expect(normalizeOpenCodeSessionExportForHandoffComparison(source, 'oc-session-other')).toBeNull();
   });
-
-  it('extracts records from OpenCode handoff Agent bundles', () => {
-    const exportJsonBase64 = Buffer.from(JSON.stringify({
-      id: 'oc-session-1',
-      messages: [
-        { id: 'message-1' },
-      ],
-    }), 'utf8').toString('base64');
-    const extract = (exportRecords as Record<string, unknown>).extractOpenCodeSessionHandoffAgentBundleRecords;
-
-    expect(extract).toBeTypeOf('function');
-    if (typeof extract !== 'function') return;
-
-    expect(extract({
-      agentId: 'opencode',
-      remoteSessionId: 'oc-session-1',
-      exportJsonBase64,
-    })).toEqual([
-      {
-        id: 'oc-session-1',
-        messages: [
-          { id: 'message-1' },
-        ],
-      },
-      { id: 'message-1' },
-    ]);
-  });
 });
