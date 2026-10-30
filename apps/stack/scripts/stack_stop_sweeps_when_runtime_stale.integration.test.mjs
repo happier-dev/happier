@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isAlive, setupStackStopSweepFixture, spawnOwnedSleep, waitForProcessAlive, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
-import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
 
 test('hstack stack stop sweeps infra when stack.runtime.json exists but ownerPid is stale', async (t) => {
   const fixture = await setupStackStopSweepFixture({
@@ -11,11 +11,9 @@ test('hstack stack stop sweeps infra when stack.runtime.json exists but ownerPid
     tmpPrefix: 'hstack-stack-stop-sweep-stale-',
   });
 
-  await writeFile(
-    join(fixture.baseDir, 'stack.runtime.json'),
-    JSON.stringify({ version: 1, stackName: fixture.stackName, ownerPid: 999999, processes: {} }),
-    'utf-8'
-  );
+  await recordStackRuntimeStart(join(fixture.baseDir, 'stack.runtime.json'), {
+    stackName: fixture.stackName, ownerPid: 999999, processes: {},
+  });
 
   const infra = fixture.trackChild(spawnOwnedSleep({
     env: {
