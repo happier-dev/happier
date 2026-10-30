@@ -355,26 +355,6 @@ describe('resolveVoiceToolResultHumanSummary', () => {
         expect(summary ?? '').not.toContain('Investigate the flaky auth test');
     });
 
-    it('suppresses the opened session summary title when shareSessionSummary is false', () => {
-        const summary = resolveVoiceToolResultHumanSummary({
-            toolName: 'openSession',
-            toolInput: {},
-            toolResult: {
-                ok: true,
-                sessionId: 'sess_123',
-                session: {
-                    id: 'sess_123',
-                    title: 'Secret roadmap planning',
-                    serverName: 'Server B',
-                },
-            },
-            shareFilePaths: true,
-            shareSessionSummary: false,
-        });
-
-        expect(summary ?? '').not.toContain('Secret roadmap planning');
-    });
-
     it.each([undefined, null, false, 'true', 1, {}, []])(
         'fails closed for disabled, omitted, or malformed shareSessionSummary=%p across every session-summary path',
         (shareSessionSummary) => {

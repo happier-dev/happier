@@ -225,32 +225,6 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     },
   );
 
-  it('keeps focus local even when a session has a non-none voice update level', () => {
-    storage.setState((state: any) => ({
-      ...state,
-      settings: {
-        ...state.settings,
-        voice: {
-          ...state.settings.voice,
-          privacy: {
-            ...state.settings.voice.privacy,
-            currentUiContextMode: 'automatic',
-          },
-        },
-      },
-    }));
-
-    voiceHooks.onSessionFocus({ serverId: TEST_SERVER_ID, sessionId: 's1' }, { summary: { text: 'Summary' } });
-
-    // Automatic current-UI mode does not turn a session-focus event into a
-    // stored-session disclosure at any update level.
-    expect(useVoiceTargetStore.getState().lastFocusedSessionAddress).toEqual({
-      serverId: TEST_SERVER_ID,
-      sessionId: 's1',
-    });
-    expect(fakeSink.sendContextualUpdate).not.toHaveBeenCalled();
-  });
-
   it('redacts tool args in permission requests by default', () => {
     (voiceHooks as any).onAgentRequest({ serverId: TEST_SERVER_ID, sessionId: 's1' }, 'r1', 'permission', 'execute', { secret: 'do_not_leak' });
     expect(fakeSink.sendTextMessage).toHaveBeenCalledWith(

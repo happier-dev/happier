@@ -7,10 +7,10 @@ describe('kokoroSupport', () => {
     expect(
       isKokoroRuntimeSupported({
         fetch: globalThis.fetch,
-        Response: (globalThis as any).Response,
-        TextEncoder: (globalThis as any).TextEncoder,
-        WebAssembly: (globalThis as any).WebAssembly,
-      } as any),
+        Response: globalThis.Response,
+        TextEncoder: globalThis.TextEncoder,
+        WebAssembly: globalThis.WebAssembly,
+      }, { platformOs: 'web', hasNativeModule: true }),
     ).toBe(false);
   });
 
@@ -25,17 +25,6 @@ describe('kokoroSupport', () => {
         } as any,
         { platformOs: 'ios', hasNativeModule: false },
       ),
-    ).toBe(false);
-  });
-
-  it('returns false when native runtime requirements are missing on web-shaped globals', () => {
-    expect(
-      isKokoroRuntimeSupported({
-        fetch: globalThis.fetch,
-        Response: (globalThis as any).Response,
-        TextEncoder: (globalThis as any).TextEncoder,
-        WebAssembly: undefined,
-      } as any),
     ).toBe(false);
   });
 

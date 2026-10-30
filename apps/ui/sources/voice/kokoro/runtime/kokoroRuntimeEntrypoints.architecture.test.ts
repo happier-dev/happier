@@ -1,16 +1,10 @@
-import { access, readFile } from 'node:fs/promises';
+import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 const uiRootPath = fileURLToPath(new URL('../../../../', import.meta.url));
-
-const requiredEntrypoints = [
-    'sources/voice/kokoro/runtime/synthesizeKokoroWav.ts',
-    'sources/voice/kokoro/runtime/synthesizeKokoroWav.native.ts',
-    'sources/voice/kokoro/runtime/synthesizeKokoroWav.web.ts',
-] as const;
 
 const retiredWebRuntimeArtifacts = [
     'sources/voice/kokoro/runtime/loadKokoroWebRuntime.web.ts',
@@ -20,10 +14,14 @@ const retiredWebRuntimeArtifacts = [
 
 describe('kokoro runtime entrypoints', () => {
     it('keeps explicit platform entrypoints for native and web', async () => {
-        for (const requiredPath of requiredEntrypoints) {
-            // fs.access(...) resolves to `undefined` when the file exists.
-            await expect(access(join(uiRootPath, requiredPath))).resolves.toBeUndefined();
+        const native = await import('./synthesizeKokoroWav.native');
+        const web = await import('./synthesizeKokoroWav.web');
+        for (const entrypoint of [native, web]) {
+            expect(entrypoint.synthesizeKokoroWav).toBeTypeOf('function');
+            expect(entrypoint.prepareKokoroTts).toBeTypeOf('function');
+            expect(entrypoint.streamKokoroWavSentences).toBeTypeOf('function');
         }
+        expect(native.prewarmKokoroRuntime).toBeTypeOf('function');
     });
 
     it('retire the removed web runtime owners/helpers (no browser Kokoro runtime)', async () => {
@@ -32,15 +30,19 @@ describe('kokoro runtime entrypoints', () => {
         }
     });
 
-    it('keeps the non-native fallback entrypoint fail-closed (no browser Kokoro runtime revival)', async () => {
-        const source = await readFile(
-            join(uiRootPath, 'sources/voice/kokoro/runtime/synthesizeKokoroWav.ts'),
-            'utf8',
-        );
-        expect(source).toContain('kokoro_web_runtime_removed');
-        expect(source).not.toContain('loadKokoroWebRuntime');
-        expect(source).not.toContain('encodeWavPcm16');
-        expect(source).not.toContain('prepareKokoroTtsInWorker');
-        expect(source).not.toContain('new Worker');
+    it('keeps fallback and explicit web entrypoints fail-closed', async () => {
+        const fallback = await import('./synthesizeKokoroWav');
+        const web = await import('./synthesizeKokoroWav.web');
+        const options = {
+            text: 'hello', assetSetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+            voiceId: 'af_heart', speed: 1, timeoutMs: 1,
+            signal: new AbortController().signal,
+        };
+        for (const entrypoint of [fallback, web]) {
+            await expect(entrypoint.synthesizeKokoroWav(options)).rejects.toThrow('kokoro_web_runtime_removed');
+            await expect(entrypoint.prepareKokoroTts(options)).rejects.toThrow('kokoro_web_runtime_removed');
+            await expect(entrypoint.streamKokoroWavSentences(options)[Symbol.asyncIterator]().next())
+                .rejects.toThrow('kokoro_web_runtime_removed');
+        }
     });
 });

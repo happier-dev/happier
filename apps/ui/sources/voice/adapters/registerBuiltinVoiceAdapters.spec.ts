@@ -180,12 +180,12 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
     const elevenLabsProviderId = 'happier.voice.elevenlabs/realtime-elevenlabs';
     const productionElevenLabs = assembly.adapters.find((adapter) => adapter.id === elevenLabsProviderId);
 
-    expect(new Set(generatedProviderIds)).toEqual(new Set([
+    expect(generatedProviderIds).toEqual([
       'happier.agent.codex/realtime-codex',
       elevenLabsProviderId,
       'happier.voice.openai/realtime-openai',
       'happier.voice.xai/realtime-grok',
-    ]));
+    ]);
     expect(ids).toEqual([
       ...generatedProviderIds,
       'local_direct',
@@ -240,31 +240,6 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
     const ids = assembly.adapters.map((adapter) => adapter.id);
 
     expect(ids).toEqual(['local_direct', 'local_conversation']);
-    await assembly.dispose();
-  });
-
-  it('uses the same OpenAI and Codex public runtimes in native assembly while retaining Local Voice', async () => {
-    expect(BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.map(
-      readBundledEntryProviderId,
-    )).toEqual([
-      'happier.agent.codex/realtime-codex',
-      'happier.voice.elevenlabs/realtime-elevenlabs',
-      'happier.voice.openai/realtime-openai',
-      'happier.voice.xai/realtime-grok',
-    ]);
-
-    const assembly = createBuiltinVoiceAdapterAssembly({
-      bundledEntries: BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES,
-    });
-
-    expect(assembly.adapters.map((adapter) => adapter.id)).toEqual([
-      'happier.agent.codex/realtime-codex',
-      'happier.voice.elevenlabs/realtime-elevenlabs',
-      'happier.voice.openai/realtime-openai',
-      'happier.voice.xai/realtime-grok',
-      'local_direct',
-      'local_conversation',
-    ]);
     await assembly.dispose();
   });
 

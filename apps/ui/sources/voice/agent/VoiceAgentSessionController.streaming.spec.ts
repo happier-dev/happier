@@ -807,6 +807,10 @@ describe('VoiceExecutionTransport (streaming)', () => {
 
     await controller.sendTurn('s1', 'hello');
     const payload = (daemonStreamStart.mock.calls[0]?.[0] as any)?.message ?? '';
+    expect(daemonStreamStart).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'hello',
+      displayMessage: 'hello',
+    }));
     expect(String(payload)).not.toContain('greeting');
   });
 
@@ -1844,6 +1848,11 @@ describe('VoiceExecutionTransport (streaming)', () => {
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
+    expect(daemonStart).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sys_voice',
+      resume: false,
+    }));
+    expect(daemonStart.mock.calls.at(-1)?.[0]).not.toHaveProperty('resumeHandle');
     expect(daemonStreamStart).toHaveBeenCalledWith(expect.not.objectContaining({ resume: true }));
   });
 

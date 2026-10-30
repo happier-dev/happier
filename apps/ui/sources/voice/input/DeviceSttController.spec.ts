@@ -85,16 +85,6 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
-async function observeSettledPromptly(promise: Promise<unknown>): Promise<boolean> {
-  return Promise.race([
-    promise.then(
-      () => true,
-      () => true,
-    ),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
-  ]);
-}
-
 function captureSynchronousError(callback: () => void): unknown | null {
   try {
     callback();
@@ -580,14 +570,11 @@ describe('createDeviceSttController', () => {
     await applying.promise;
     expect(applyAudioSession).toHaveBeenCalledTimes(1);
     const stopping = controller.stop();
-    const stoppedBeforeAcquire = await observeSettledPromptly(stopping);
+    await expect(stopping).resolves.toEqual({ finalText: '' });
+    await expect(starting).resolves.toBeUndefined();
+    expect(start).not.toHaveBeenCalled();
 
     deferredLease.resolve({ generation: 1, aecAvailable: false, aecActive: false, route: 'test' });
-    await starting;
-    await stopping;
-    await flushMicrotasks();
-
-    expect(stoppedBeforeAcquire).toBe(true);
     await restoring.promise;
     expect(restoreAudioSession).toHaveBeenCalledTimes(1);
     expect(start).not.toHaveBeenCalled();
@@ -1324,7 +1311,11 @@ describe('createDeviceSttController', () => {
   it('settles an abort during microphone permission before native acquisition begins', async () => {
     start.mockClear();
     const permission = createDeferred<{ granted: boolean; canAskAgain: boolean }>();
-    requestRecordingPermissions.mockReturnValueOnce(permission.promise);
+    const requestingPermission = createDeferred<void>();
+    requestRecordingPermissions.mockImplementationOnce(() => {
+      requestingPermission.resolve();
+      return permission.promise;
+    });
     const abortController = new AbortController();
     const { createDeviceSttController } = await import('./DeviceSttController');
     const controller = createDeviceSttController({
@@ -1336,14 +1327,18 @@ describe('createDeviceSttController', () => {
       sink: createSink(),
       signal: abortController.signal,
     });
-    await flushMicrotasks();
+    await requestingPermission.promise;
+    expect(requestRecordingPermissions).toHaveBeenCalledTimes(1);
     abortController.abort();
-    const settledBeforePermission = await observeSettledPromptly(starting);
+    await expect(starting).resolves.toBeUndefined();
+    await expect(controller.stop()).resolves.toMatchObject({
+      error: { kind: 'turn_aborted', reason: 'turn_aborted' },
+    });
+    expect(applyAudioSession).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
 
     permission.resolve({ granted: true, canAskAgain: true });
-    await starting;
-
-    expect(settledBeforePermission).toBe(true);
+    await permission.promise;
     expect(applyAudioSession).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
   });
@@ -1369,13 +1364,13 @@ describe('createDeviceSttController', () => {
     await applying.promise;
     expect(applyAudioSession).toHaveBeenCalledTimes(1);
     abortController.abort();
-    const settledBeforeAcquire = await observeSettledPromptly(starting);
+    await expect(starting).resolves.toBeUndefined();
+    await expect(controller.stop()).resolves.toMatchObject({
+      error: { kind: 'turn_aborted', reason: 'turn_aborted' },
+    });
+    expect(start).not.toHaveBeenCalled();
 
     lease.resolve({ generation: 1, aecAvailable: false, aecActive: false, route: 'test' });
-    await starting;
-    await flushMicrotasks();
-
-    expect(settledBeforeAcquire).toBe(true);
     await restoring.promise;
     expect(restoreAudioSession).toHaveBeenCalledTimes(1);
     expect(start).not.toHaveBeenCalled();
@@ -1386,7 +1381,14 @@ describe('createDeviceSttController', () => {
     start.mockClear();
     const micReady = createDeferred<void>();
     const acquiring = createDeferred<void>();
-    const micSession = createMicSession(async () => { acquiring.resolve(); await micReady.promise; return { getTracks: () => [], getAudioTracks: () => [] } as unknown as MediaStream; });
+    const released = createDeferred<void>();
+    const stopTrack = vi.fn(() => { released.resolve(); });
+    const micSession = createMicSession(async () => {
+      acquiring.resolve();
+      await micReady.promise;
+      // The physical browser track is the boundary; its lifecycle stays real.
+      return { getTracks: () => [{ stop: stopTrack }], getAudioTracks: () => [] } as unknown as MediaStream;
+    });
     const { createWebVadController } = await import('@/voice/runtime/input/WebVadController.web');
     const { MicVAD } = await import('@ricky0123/vad-web');
     vi.mocked(MicVAD.new).mockClear();
@@ -1406,12 +1408,20 @@ describe('createDeviceSttController', () => {
     await acquiring.promise;
     expect(micSession.ensureActive).toHaveBeenCalledTimes(1);
     abortController.abort();
-    const settledBeforeMic = await observeSettledPromptly(starting);
+    await expect(starting).resolves.toBeUndefined();
+    await expect(controller.stop()).resolves.toMatchObject({
+      error: { kind: 'turn_aborted', reason: 'turn_aborted' },
+    });
+    expect(MicVAD.new).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    // The caller owns the shared mic facade, including a late browser stream.
+    await micSession.teardown();
+    expect(stopTrack).not.toHaveBeenCalled();
 
     micReady.resolve();
-    await starting;
-
-    expect(settledBeforeMic).toBe(true);
+    await released.promise;
+    await micSession.teardown();
+    expect(stopTrack).toHaveBeenCalledTimes(1);
     expect(MicVAD.new).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
   });
@@ -1443,14 +1453,19 @@ describe('createDeviceSttController', () => {
     await initializingVad.promise;
     expect(MicVAD.new).toHaveBeenCalledTimes(1);
     abortController.abort();
-    const settledBeforeVad = await observeSettledPromptly(starting);
+    await expect(starting).resolves.toBeUndefined();
+    await expect(controller.stop()).resolves.toMatchObject({
+      error: { kind: 'turn_aborted', reason: 'turn_aborted' },
+    });
+    expect(start).not.toHaveBeenCalled();
 
-        // The browser SDK instance is the boundary; the host VAD lifecycle stays real.
+    const paused = createDeferred<void>();
+    const pauseVad = vi.fn(async () => { paused.resolve(); });
+    // The browser SDK instance is the boundary; the host VAD lifecycle stays real.
     // Only start/pause of the third-party SDK instance are consumed in this boundary case.
-    vadReady.resolve({ start: vi.fn(), pause: vi.fn() } as unknown as Awaited<ReturnType<typeof MicVAD.new>>);
-    await starting;
-
-    expect(settledBeforeVad).toBe(true);
+    vadReady.resolve({ start: vi.fn(), pause: pauseVad } as unknown as Awaited<ReturnType<typeof MicVAD.new>>);
+    await paused.promise;
+    expect(pauseVad).toHaveBeenCalledTimes(1);
     expect(start).not.toHaveBeenCalled();
   });
 

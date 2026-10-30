@@ -3,6 +3,7 @@ import { createDeferred, createMachineFixture, createSessionFixture } from '@/de
 import { createVoiceSpeechOutputBoundary } from '@/dev/testkit/harness/voiceSpeechOutputBoundary';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { DaemonVoiceInferenceModelsStatusResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
@@ -58,8 +59,12 @@ describe('local model Session voice consumption', () => {
     const speechRpc = machineRpc.getMockImplementation();
     machineRpc.mockImplementation(async request => request.method === 'daemon.voiceInference.models.status'
       ? answerStatus() : speechRpc?.(request));
+    // The Account has no persisted Sessions; preferences below are later local projections.
+    const sessionHttp = createSessionMetadataHttpBoundary(() => ({}));
     account = await serveAccountHomes({ homes: [{ key: 'voice', serverUrl: 'https://tts-preference.test', accountId: 'tts-account' }],
       route: async request => {
+        const sessionReply = sessionHttp.handle(request.url);
+        if (sessionReply) return sessionReply;
         const machineReply = speechBoundary.answerMachineHttpRequest(request.url, 'tts-machine', 'tts-account', request);
         if (machineReply) return machineReply;
         if (request.path === '/v1/features') return Response.json(serverFeatures);

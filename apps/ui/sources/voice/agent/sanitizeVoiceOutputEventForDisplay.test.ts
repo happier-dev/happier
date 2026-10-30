@@ -17,6 +17,7 @@ describe('sanitizeVoiceOutputEventForDisplay', () => {
       text: expect.not.stringContaining('super-secret-value'),
     });
     expect(status).toMatchObject({ text: expect.not.stringContaining('/Users/alice/private') });
+    expect(status).toMatchObject({ text: expect.stringContaining('Reading') });
     expect(sanitizeVoiceOutputEventForDisplay({
       v: 1,
       kind: 'speech_segment',

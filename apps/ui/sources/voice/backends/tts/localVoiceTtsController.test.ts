@@ -4,6 +4,7 @@ import { createMachineFixture } from '@/dev/testkit';
 import { createVoiceSpeechOutputBoundary } from '@/dev/testkit/harness/voiceSpeechOutputBoundary';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
@@ -52,6 +53,8 @@ afterAll(() => speechBoundary.disposeAudioSession());
 describe('localVoiceTtsController', () => {
     let featureResponse: () => Response;
     async function restoreAccount(state: 'enabled' | 'disabled' | 'unavailable' = 'enabled') {
+        // The Account has no persisted Sessions; later local projections are not its HTTP census.
+        const sessionHttp = createSessionMetadataHttpBoundary(() => ({}));
         featureResponse = state === 'unavailable'
             ? () => { throw new TypeError('Feature service network failure'); }
             : () => Response.json(state === 'disabled'
@@ -61,6 +64,8 @@ describe('localVoiceTtsController', () => {
         account = await serveAccountHomes({ homes: [{ key: 'voice',
             serverUrl: `https://tts-controller-${state}.test`, accountId: 'tts-account' }],
             route: async request => {
+                const sessionReply = sessionHttp.handle(request.url);
+                if (sessionReply) return sessionReply;
                 const machineReply = speechBoundary.answerMachineHttpRequest(request.url, 'tts-machine', 'tts-account', request);
                 if (machineReply) return machineReply;
                 if (request.path === '/v1/features') return featureResponse();

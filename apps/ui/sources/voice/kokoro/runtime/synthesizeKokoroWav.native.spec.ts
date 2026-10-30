@@ -424,7 +424,7 @@ describe('synthesizeKokoroWav (native)', () => {
         voices: [{ id: 'af_bella', title: 'Bella', sid: 2 }],
     }, { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } });
 
-    await synthesizeKokoroWav(
+    const bytes = await synthesizeKokoroWav(
       {
         text: 'hello',
         assetSetId: null,
@@ -447,6 +447,7 @@ describe('synthesizeKokoroWav (native)', () => {
     );
     expect(kokoroNativeModule.initialize).toHaveBeenCalledOnce();
     expect(kokoroNativeModule.synthesizeToWavFile).toHaveBeenCalledOnce();
+    expect(new Uint8Array(bytes)).toEqual(new Uint8Array([1, 2, 3, 4]));
   });
 
   it('preserves an explicit unknown experiment id for custom Kokoro development', async () => {
@@ -475,7 +476,7 @@ describe('synthesizeKokoroWav (native)', () => {
         voices: [{ id: 'af_bella', title: 'Bella', sid: 2 }],
     }, { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } });
 
-    await synthesizeKokoroWav(
+    const bytes = await synthesizeKokoroWav(
       {
         text: 'hello',
         assetSetId: 'kokoro-82m-v1.0-onnx-fp32-wasm',
@@ -494,6 +495,7 @@ describe('synthesizeKokoroWav (native)', () => {
     expect(kokoroNativeModule.initialize).toHaveBeenCalledWith(
       expect.objectContaining({ assetsDir: '/docs/happier/voice/modelPacks/kokoro-82m-v1.0-onnx-fp32-wasm' }),
     );
+    expect(new Uint8Array(bytes)).toEqual(new Uint8Array([1]));
   });
 
   it('cancels in-flight synthesis when aborted', async () => {

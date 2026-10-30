@@ -205,6 +205,11 @@ describe('Voice client raw credential adapter', () => {
 
     it('rejects environment access before RPC and drops a result after generation retirement', async () => {
         let current = true;
+        const success = {
+            ok: true,
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+            materialization: { kind: 'httpHeaders', headers: { authorization: 'Bearer exact-account' } },
+        };
         const pending = createDeferred<unknown>();
         const invoked = createDeferred<void>();
         const invoke = vi.fn(async () => {
@@ -228,17 +233,29 @@ describe('Voice client raw credential adapter', () => {
         await invoked.promise;
         expect(invoke).toHaveBeenCalledOnce();
         current = false;
-        pending.resolve({
-            ok: true,
-            materialization: { kind: 'httpHeaders', headers: { authorization: 'stale' } },
-        });
+        pending.resolve(success);
         await expect(operation).rejects.toMatchObject({
             code: 'plugin_voice_credential_access_unavailable',
         });
+
+        const fresh = createRawAccess(async () => success, {
+            identity,
+            phase: 'prepare',
+            signal: new AbortController().signal,
+            isCurrent: () => true,
+            isInvocationCurrent: () => true,
+        });
+        await expect(fresh.materialize(request)).resolves.toEqual(success.materialization);
+        expect(invoke).toHaveBeenCalledOnce();
     });
 
     it('does not retain raw access after its host invocation settles or is aborted', async () => {
         const lifetime = new AbortController();
+        const success = {
+            ok: true,
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+            materialization: { kind: 'httpHeaders', headers: { authorization: 'Bearer exact-account' } },
+        };
         const pending = createDeferred<unknown>();
         const invoked = createDeferred<void>();
         const invoke = vi.fn(async () => {
@@ -259,10 +276,7 @@ describe('Voice client raw credential adapter', () => {
         await invoked.promise;
         expect(invoke).toHaveBeenCalledOnce();
         lifetime.abort();
-        pending.resolve({
-            ok: true,
-            materialization: { kind: 'httpHeaders', headers: { authorization: 'stale' } },
-        });
+        pending.resolve(success);
 
         await expect(inFlight).rejects.toMatchObject({
             code: 'plugin_voice_credential_access_unavailable',
@@ -273,6 +287,16 @@ describe('Voice client raw credential adapter', () => {
         expect(invoke).toHaveBeenCalledOnce();
         expect(Object.keys(raw)).toEqual(['materialize']);
         expect(Reflect.get(raw, 'inspectAuthorization')).toBeUndefined();
+
+        const fresh = createRawAccess(async () => success, {
+            identity,
+            phase: 'connection',
+            signal: new AbortController().signal,
+            isCurrent: () => true,
+            isInvocationCurrent: () => true,
+        });
+        await expect(fresh.materialize(request)).resolves.toEqual(success.materialization);
+        expect(invoke).toHaveBeenCalledOnce();
     });
 
     it('does not follow a changed credential source during one live host invocation', async () => {
