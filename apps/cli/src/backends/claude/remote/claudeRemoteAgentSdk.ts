@@ -59,7 +59,6 @@ import {
     readClaudeSessionHookProviderTaskActivity,
 } from '@/backends/claude/providerActivity/createClaudeProviderActivityLedger';
 import type { createClaudeProviderRuntimeActivityAdapter } from '@/backends/claude/providerActivity/createClaudeProviderRuntimeActivityAdapter';
-import { hasClaudeQueuedUserTurns } from './resultTurnBoundary';
 import {
     handleClaudeRuntimeActivityLoss,
     createClaudeRuntimeActivityEvidence,
@@ -2312,9 +2311,10 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                 const didRequestThisResult = awaitingRequestedTurnInterruptResult;
                 awaitingRequestedTurnInterruptResult = false;
                 const failure = readAgentSdkResultFailure(message);
-                const hasQueuedUserTurns = hasClaudeQueuedUserTurns(message);
-                if (failure && !hasQueuedUserTurns) {
-                    if (didRequestThisResult && message.subtype === 'error_during_execution') {
+                const retainForeground = promptSettlements.shouldRetainForegroundForResult(message);
+                const isRequestedExecutionInterrupt = didRequestThisResult && message.subtype === 'error_during_execution';
+                if (failure && !retainForeground) {
+                    if (isRequestedExecutionInterrupt) {
                         if (!didFinalizeTurn) {
                             await releaseCurrentTurnForResult();
                         }
@@ -2323,7 +2323,7 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                     await reconcileRuntimeActivityForResult();
                     throw new Error(failure);
                 }
-                if (failure) opts.onCompletionEvent?.(failure);
+                if (failure && !isRequestedExecutionInterrupt) opts.onCompletionEvent?.(failure);
 
                 const resultText = extractResultText(message);
                 if (!streamedTranscriptWriter && !didPublishAssistantTextThisTurn && resultText) {
@@ -2338,12 +2338,12 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                     flushBufferedStreamEventAssistantMessage(message);
                 }
 
-                if (hasQueuedUserTurns) {
-                    // A resumed notification or failed earlier command can finish before the
-                    // submitted user send. Preserve its output without releasing foreground custody.
+                if (retainForeground) {
+                    // Preserve output from earlier or partially answered work until the submitted
+                    // prompts have outcomes. Session backlog alone does not identify those prompts.
                     lastTurnFlushSummary = await flushStreamedTranscriptWriter('turn-end');
                     maybeEmitResultAssistantFallback(message, resultText);
-                    resetForegroundTurn();
+                    if (!didReleaseTurnForResult && !didFinalizeTurn) resetForegroundTurn();
                     if (isCompactCommand) {
                         emitCompactionCompleted();
                         isCompactCommand = false;
