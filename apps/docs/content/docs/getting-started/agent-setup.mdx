@@ -1,0 +1,357 @@
+---
+title: Set up with your coding agent
+description: Paste one line into Claude Code, Codex or another coding agent and let it install, connect and check Happier with you, one confirmed step at a time.
+---
+
+If you already use a coding agent, it can set Happier up for you. It asks what
+it needs to know, runs the commands, shows you what it found, and stops for you
+at the steps only you can do: approving the sign-in and signing in to your
+agent's own account.
+
+## What you need first
+
+- **A coding agent that can run shell commands**, such as Claude Code or
+  Codex, running on the computer that should run your sessions. If your
+  sessions should run on a server or dev box, start the agent there, or see
+  [the remote option](#another-computer-over-ssh) below.
+- **A Happier account**, or a few minutes to create one in the
+  [app or web client](/getting-started/get-the-apps). The terminal cannot create
+  an account; it asks a device where you are already signed in to approve it.
+
+## Paste this into your agent
+
+```text
+Set up Happier on this computer by following https://docs.happier.dev/getting-started/agent-setup.mdx
+Fetch that file raw (for example with curl) and follow it step by step with me.
+```
+
+The link serves this page as plain Markdown. Asking for it raw matters: some
+agent fetch tools summarize a page and drop the exact flags.
+
+## What your agent will and will not do
+
+It will ask a few questions first: where sessions should run, whether you
+already have an account, which relay you use, which coding agents you want, and
+whether this computer should stay reachable with no terminal open. It asks
+before each change and checks the result.
+
+It will not ask you to paste passwords, API keys, recovery keys or tokens into
+the chat. Sign-in approval happens on your own device. Your agent's own login
+(Claude, Codex and so on) happens in that agent's sign-in flow.
+
+If anything goes wrong, it reads the same diagnostics you would. Those are
+described in [Check your setup](/getting-started/check-your-setup).
+
+---
+
+## Instructions for the coding agent
+
+You are helping a person set up Happier on the computer you are running on.
+Happier connects their phone, browser and other devices to coding agents that
+run on their own computers. These instructions are for the stable 0.2 release.
+
+Every link below that starts with `/` is a page on `https://docs.happier.dev`.
+Add `.mdx` to fetch its Markdown, for example
+`https://docs.happier.dev/getting-started/check-your-setup.mdx`. Read a page
+when a step points you to it.
+
+Work one step at a time. Before each step, say what you will do and why. After
+it, say what you observed. Wait for the person's answer whenever a step below
+says to ask.
+
+### Rules
+
+- **Secrets stay out of chat.** Never ask for, accept, echo or store passwords,
+  API keys, recovery keys, tokens or one-time codes. If the person pastes one,
+  tell them not to, and do not repeat it. Credentials are entered in Happier's
+  own prompts or the agent vendor's sign-in.
+- **The sign-in link belongs to the person.** `happier auth login` prints a
+  one-time approval link. Show it only to the person, and never write it to a
+  file, issue, log or message.
+- **Consent before change.** Inspecting is always fine. Ask before installing,
+  updating, changing relays, installing automatic startup, or anything that
+  stops or restarts a process.
+- **Preserve what exists.** Do not delete Happier state, reset credentials,
+  uninstall services or kill processes to make a check pass. Never run
+  `happier auth login --force`, `happier auth logout`, `happier doctor clean`
+  or the installer's `--reset`, `--uninstall` or `--rollback` unless the person
+  asks for that exact thing after you explain what it removes.
+- **Ask before repairing.** Run `happier doctor repair --yes` only after you
+  have shown the person the report and they agreed to every repair in it.
+- **Use the installer.** Do not install Happier with `npm install -g` unless
+  the person asks for the npm package. The installer needs no Node.js.
+- **Read before you guess.** If a command or flag below does not exist on the
+  installed version, run `happier <command> --help` and read the
+  [docs](https://docs.happier.dev/llms.txt). Do not invent flags.
+- **An unreachable relay is not a reason to replace credentials.** Report it,
+  then retry or ask.
+
+### Step 1: Look before changing anything
+
+Run these and summarize the results. They are read-only.
+
+macOS and Linux:
+
+```bash
+uname -a
+command -v happier hprev hdev
+happier --version
+happier status
+happier service list
+```
+
+Windows (PowerShell):
+
+```powershell
+[System.Environment]::OSVersion.VersionString
+Get-Command happier, hprev, hdev -ErrorAction SilentlyContinue
+happier --version
+happier status
+happier service list
+```
+
+`happier`, `hprev` and `hdev` are the stable, preview and dev release channels.
+They install side by side. A missing command just means that channel is not
+installed.
+
+If Happier is already installed, `happier status` tells you whether this
+computer is signed in, which relay it uses, and whether automatic startup is
+installed and healthy. If it already reports a signed-in, registered computer
+with healthy startup, setup is done. Skip to [Step 7](#step-7-check-the-coding-agent),
+then [Step 8](#step-8-prove-it-works).
+
+Also check which coding agents are already installed here, for example with
+`command -v claude codex opencode gemini` (macOS and Linux) or
+`Get-Command claude, codex -ErrorAction SilentlyContinue` (Windows).
+
+### Step 2: Ask the setup questions
+
+Ask only the questions whose answers you do not already have. Skip a question
+when Step 1 already answered it, and say what you found instead. Number them so
+the person can answer in one message.
+
+1. **Where should coding sessions run?** This computer, or another computer
+   such as a server or dev box? Happier runs the agent on that computer; it
+   never runs it in the cloud. If this is a laptop, mention that sessions stop
+   while it sleeps.
+2. **Do you already have a Happier account, and where are you signed in?**
+   Phone app, desktop app, or [web client](https://cloud.happier.dev)? The
+   sign-in step needs one of these. If they have no account, ask them to create
+   one in the app or web client now. You cannot create it from the terminal.
+3. **Which relay does your account live on?** The relay hosts the account and
+   syncs encrypted session state between devices.
+   - **Happier Cloud** (the usual choice);
+   - **a relay you already run**, by its URL; or
+   - **a new relay on this computer**.
+
+   An account exists only on the relay where it was created. If they have an
+   account, use the relay they created it on. If they are unsure, it is Happier
+   Cloud unless they set up their own.
+4. **Only if they chose a new relay on this computer: which devices must reach
+   it?** A relay on `localhost` is reachable only from this computer. For a
+   phone, they need Tailscale or a reachable LAN address. Read
+   [Onboarding, option B](/getting-started/onboarding)
+   before continuing, and follow its reachability guidance.
+5. **Should this computer stay reachable with no terminal open?** That is
+   automatic startup, the background service. Recommend yes for a desktop,
+   server or dev box.
+6. **Which coding agents do you want to use here?** List the ones Step 1 found.
+   Offer to install the ones they want that are missing.
+   [Agent capabilities](/agents/capabilities) lists every supported agent.
+7. **Only if Step 1 found an existing installation or service:** keep it as it
+   is, update it, or repair it? Explain what `happier status` reported first.
+   If more than one channel or service exists, ask whether that is intentional
+   before touching any of them.
+8. **Only if they mentioned preview or dev builds:** which channel? Default to
+   stable.
+
+Restate the plan in two or three lines and get a yes before Step 3.
+
+If the answer to question 1 is another computer, go to
+[Another computer over SSH](#another-computer-over-ssh).
+
+### Step 3: Install the CLI
+
+Skip this step if Step 1 found the right channel already installed.
+
+macOS and Linux:
+
+```bash
+curl -fsSL https://happier.dev/install | bash -s -- --yes
+```
+
+Windows (PowerShell):
+
+```powershell
+$env:HAPPIER_NONINTERACTIVE = '1'; iwr https://happier.dev/install.ps1 -useb | iex
+```
+
+`--yes` (and `HAPPIER_NONINTERACTIVE=1`) means the installer never prompts.
+That suits your shell, which has no terminal for it to prompt in. Automatic
+startup is left to Step 6. For preview or dev, add `--channel preview` or
+`--channel dev` on macOS and Linux, or set `$env:HAPPIER_CHANNEL` on Windows.
+Then use `hprev` or `hdev` in place of `happier` in every later command.
+
+The installer adds `~/.local/bin` to the shell profile, but your current shell
+has already read it. If `happier` is still not found, open a new shell or call
+it by the full path the installer printed.
+
+### Step 4: Point this computer at the relay
+
+Use the person's answer to question 3:
+
+```bash
+happier setup --cloud --yes
+happier setup --relay https://relay.example.com --yes
+happier setup --this-computer --yes
+```
+
+Run only the one that matches. `--yes` runs every step that needs no answer.
+It stops at the sign-in, prints the command that finishes it, and **exits with
+a non-zero status on purpose**: setup is unfinished until a person approves the
+sign-in. That exit status is expected here, not a failure. Read the output; a
+real failure says that setup stopped, or names a relay that did not answer.
+
+Without `--yes`, `happier setup` in a shell with no terminal changes nothing
+and only explains what it needs.
+
+### Step 5: Sign in
+
+Tell the person you are about to show a one-time approval link. Then run:
+
+```bash
+happier auth login --no-open --method web --wait-timeout 600
+```
+
+It prints a link and waits up to ten minutes for approval. Show the person the
+link and ask them to open it in a browser where they are signed in to Happier,
+and approve. Do not open it yourself. If your shell tool has a shorter timeout
+than ten minutes, run the command in the background and keep reading its
+output.
+
+When it is approved, the command signs this computer in and registers it as one
+of the person's machines. If the wait runs out, that request is gone: run the
+same command again for a new link. If `happier status` later says the computer
+is signed in but not registered, run `happier auth login` again. It repairs the
+registration without a new approval.
+
+### Step 6: Automatic startup
+
+If the person wanted this computer to stay reachable (question 5):
+
+```bash
+happier service install
+happier service status
+```
+
+`service` manages the operating system's startup registration. `daemon` is the
+process running right now. Tell them apart when you report.
+
+### Step 7: Check the coding agent
+
+Happier drives the person's coding agent; it does not include one. For each
+agent they chose that is missing, preview the install, show the person what it
+will run, then install:
+
+```bash
+happier install provider codex --dry-run
+happier install provider codex
+```
+
+Replace `codex` with the agent's id: the word after `happier` in the
+**Start it with** column of [Agent capabilities](/agents/capabilities).
+
+Installing an agent does not sign it in. Each agent has its own login, and the
+person completes it in that agent's own flow. Do not handle its credentials.
+Then confirm the agent runs by itself, for example `claude --version` or
+`codex --version`.
+
+### Step 8: Prove it works
+
+Run `happier status` again and compare it with Step 1. Then ask the person to
+open the app, choose **New session**, pick this computer and a project, pick an
+agent, and send a short message.
+
+Setup is done when all of these are true. Report each one, and say plainly
+which you could not confirm:
+
+- [ ] `happier status` shows the intended relay, and this computer is signed in
+      and registered.
+- [ ] Automatic startup is installed and running, or the person chose to skip it.
+- [ ] Any duplicate channel or service Step 1 found is explained, and was not
+      silently removed.
+- [ ] At least one coding agent is installed and signed in on this computer.
+- [ ] A test session appears in the app, gets a reply, and still works after
+      the person navigates away and back.
+
+### Step 9: Show what it can do
+
+Ask what they care about most, then suggest one or two of these. Read the page
+first and check the version requirement it states against `happier --version`.
+
+- **Answer from your phone.** Install the
+  [phone app](/getting-started/get-the-apps), then
+  approve tool use from
+  [Inbox and approvals](/sessions/inbox-and-approvals).
+- **Switch agents mid-conversation.** Move a running session from Claude Code
+  to Codex or back with
+  [Continue with another Agent](/sessions/continue-with-another-agent).
+- **Decide what the agent may do alone** with
+  [permissions](/sessions/permissions).
+- **Talk to your sessions** with [voice](/voice).
+- **Move a live session to another computer** with
+  [session handoff](/sessions/session-handoff).
+- **Drive Happier from another agent or editor** with the
+  [Happier MCP server](/extending/happier-as-mcp-server).
+
+### Another computer over SSH
+
+If sessions should run on a computer the person reaches by SSH, there are two
+ways:
+
+- **Run these instructions on that computer.** Start a coding agent there and
+  give it the same link. This is the simplest path.
+- **Bootstrap it from this computer.** This computer must already be signed in
+  (Steps 3 to 5). Then the person runs this in their own terminal:
+
+  ```bash
+  happier machine setup --ssh user@host
+  ```
+
+  It installs the CLI and the background service on the remote host and
+  registers it, asking the person to trust the host key along the way. Do not
+  run it for them with `--yes`: that accepts the host-key prompt without
+  anyone checking it.
+
+### When something goes wrong
+
+1. Write down the exact error and the command that produced it.
+2. Run `happier status`, then `happier doctor repair --report-only`. Both only
+   read. Explain each finding in plain words.
+3. Propose the specific repair, get a yes, then run `happier doctor repair` and
+   accept only the steps you agreed. If it needs a prompt your shell cannot
+   answer, ask the person to run it in their own terminal.
+4. For a computer that keeps dropping offline, read `happier service logs`.
+5. After any repair, rerun the Step 8 checks. A running process is not proof
+   that a session works.
+
+[Check your setup](/getting-started/check-your-setup)
+explains every finding and repair.
+
+If it stays broken, offer a bug report. It uploads diagnostics, so explain that
+and get a yes before submitting:
+
+```bash
+happier bug-report --title "<short title>" --summary "<what happened>"
+```
+
+To keep everything local instead, `--export <path>` writes a redacted
+diagnostics bundle without submitting it. See
+[Bug reports](/extras/bug-reports).
+
+## Related
+
+- [Start here](/getting-started) — the same setup done by hand.
+- [Check your setup](/getting-started/check-your-setup) — what `happier status` reports and how to fix it.
+- [Onboarding](/getting-started/onboarding) — choosing hosted or self-hosted, from the app.
+- [Coding agents](/agents) — setup and limits for each agent.
