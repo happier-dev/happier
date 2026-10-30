@@ -39,6 +39,7 @@ import {
   quiesceInstalledCliWindowsPayloadOwners,
   resolvePayloadOwnerStopTimeoutMs,
 } from '@/cli/runtime/update/quiesceInstalledCliWindowsPayloadOwners';
+import { quiesceInstalledCliBeforeUpgrade } from '@/cli/runtime/update/quiesceInstalledCliBeforeUpgrade';
 import { planServiceDaemonsRestartAfterUpdate } from '@/cli/runtime/update/restartServiceDaemonAfterUpdate';
 import { evaluateCurrentDaemonOwner } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
 import { resolveCliVersionFromBinary } from '@/daemon/service/resolveCliVersionFromBinary';
@@ -331,7 +332,7 @@ async function cmdUpdate(argv: string[], rawArgv: readonly string[] = process.ar
     }),
     beforeActivate: process.platform === 'win32'
       ? async () => await quiesceInstalledCliWindowsPayloadOwners({ channel: effective.channel, processEnv })
-      : undefined,
+      : async () => await quiesceInstalledCliBeforeUpgrade({ channel: effective.channel, processEnv }),
     restartServiceDaemon: restartPlan.restart,
   }));
   if (result.outcome !== 'succeeded') {
@@ -448,10 +449,20 @@ async function cmdInternalInstallPayload(argv: string[], rawArgv: readonly strin
     ? await planServiceDaemonsRestartAfterUpdate({ channel, processEnv: process.env })
     : null;
   if (componentId === 'happier-cli') {
-    await quiesceInstalledCliWindowsPayloadOwners({
-      channel,
-      processEnv: process.env,
-    });
+    if (process.platform === 'win32') {
+      await quiesceInstalledCliWindowsPayloadOwners({
+        channel,
+        processEnv: process.env,
+      });
+    } else {
+      // On Linux/macOS, gracefully stop the daemon before replacing the binary.
+      // This prevents "text file busy" errors and stale processes. The service/autostart
+      // will restart it after upgrade if configured.
+      await quiesceInstalledCliBeforeUpgrade({
+        channel,
+        processEnv: process.env,
+      });
+    }
   }
 
   const promotion = await installVersionedPayload({
