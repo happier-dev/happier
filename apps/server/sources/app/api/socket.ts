@@ -7,7 +7,7 @@ import { buildMachineActivityEphemeral, buildSessionActivityEphemeral, buildUpda
 import { CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT } from "@/app/events/socketRoomEmitter";
 import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetadataFromSocketAuth } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
 import { Server, Socket } from "socket.io";
-import { log } from "@/utils/logging/log";
+import { log, warn } from "@/utils/logging/log";
 import { auth } from "@/app/auth/auth";
 import { narrowCredentialAuthority } from "@/app/auth/effectiveCredentialAuthority";
 import { admitApiTokenSessionOperation, isRestrictedAuthTokenKind } from "@/app/api/utils/apiTokenRouteAdmission";
