@@ -20,6 +20,8 @@ test('monorepo port rejects when target repo is dirty', async (t) => {
 
   // Make target dirty.
   await writeFile(join(target, 'apps', 'cli', 'uncommitted.txt'), 'dirty\n', 'utf-8');
+  const targetHeadBefore = await runCapture('git', ['rev-parse', 'HEAD'], { cwd: target, env });
+  const targetStatusBefore = await runCapture('git', ['status', '--porcelain'], { cwd: target, env });
 
   await assert.rejects(async () => {
     await runCapture(
@@ -36,7 +38,12 @@ test('monorepo port rejects when target repo is dirty', async (t) => {
       ],
       { cwd: process.cwd(), env }
     );
-  });
+  }, /target repo is not clean/);
+  assert.equal(await runCapture('git', ['rev-parse', 'HEAD'], { cwd: target, env }), targetHeadBefore);
+  assert.equal((await runCapture('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: target, env })).trim(), 'main');
+  assert.equal(await runCapture('git', ['status', '--porcelain'], { cwd: target, env }), targetStatusBefore);
+  assert.equal(await readFile(join(target, 'apps', 'cli', 'hello.txt'), 'utf-8'), 'v1\n');
+  assert.equal(await readFile(join(target, 'apps', 'cli', 'uncommitted.txt'), 'utf-8'), 'dirty\n');
 });
 
 test('monorepo port rejects invalid target repo layout', async (t) => {
@@ -51,6 +58,7 @@ test('monorepo port rejects invalid target repo layout', async (t) => {
   await writeFile(join(target, 'README.md'), 'not a monorepo\n', 'utf-8');
   await run('git', ['add', '.'], { cwd: target, env });
   await run('git', ['commit', '-q', '-m', 'chore: init'], { cwd: target, env });
+  const targetHeadBefore = await runCapture('git', ['rev-parse', 'HEAD'], { cwd: target, env });
 
   const base = await initSplitRepoStub({ dir: sourceCli, env, name: 'cli', seed: { 'hello.txt': 'v1\n' } });
 
@@ -68,7 +76,11 @@ test('monorepo port rejects invalid target repo layout', async (t) => {
       ],
       { cwd: process.cwd(), env }
     );
-  });
+  }, /target does not look like a Happier monorepo root/);
+  assert.equal(await runCapture('git', ['rev-parse', 'HEAD'], { cwd: target, env }), targetHeadBefore);
+  assert.equal((await runCapture('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: target, env })).trim(), 'main');
+  assert.equal(await runCapture('git', ['status', '--porcelain'], { cwd: target, env }), '');
+  assert.equal(await readFile(join(target, 'README.md'), 'utf-8'), 'not a monorepo\n');
 });
 
 test('monorepo port validates incompatible flags with --onto-current', async (t) => {
@@ -79,6 +91,7 @@ test('monorepo port validates incompatible flags with --onto-current', async (t)
 
   await initMonorepoStub({ dir: target, env, seed: { 'apps/cli/hello.txt': 'v1\n' } });
   const base = await initSplitRepoStub({ dir: sourceCli, env, name: 'cli', seed: { 'hello.txt': 'v1\n' } });
+  const targetHeadBefore = await runCapture('git', ['rev-parse', 'HEAD'], { cwd: target, env });
 
   await assert.rejects(async () => {
     await runCapture(
@@ -94,7 +107,10 @@ test('monorepo port validates incompatible flags with --onto-current', async (t)
       ],
       { cwd: process.cwd(), env }
     );
-  });
+  }, /--onto-current cannot be combined with --branch/);
+  assert.equal(await runCapture('git', ['rev-parse', 'HEAD'], { cwd: target, env }), targetHeadBefore);
+  assert.equal((await runCapture('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: target, env })).trim(), 'main');
+  assert.equal(await runCapture('git', ['status', '--porcelain'], { cwd: target, env }), '');
 
   await assert.rejects(async () => {
     await runCapture(
@@ -110,7 +126,11 @@ test('monorepo port validates incompatible flags with --onto-current', async (t)
       ],
       { cwd: process.cwd(), env }
     );
-  });
+  }, /--onto-current cannot be combined with --base/);
+  assert.equal(await runCapture('git', ['rev-parse', 'HEAD'], { cwd: target, env }), targetHeadBefore);
+  assert.equal((await runCapture('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: target, env })).trim(), 'main');
+  assert.equal(await runCapture('git', ['status', '--porcelain'], { cwd: target, env }), '');
+  assert.equal(await readFile(join(target, 'apps', 'cli', 'hello.txt'), 'utf-8'), 'v1\n');
 });
 
 test('monorepo port succeeds with an empty commit range (no patches)', async (t) => {
@@ -372,6 +392,8 @@ test('monorepo port rejects when --branch already exists in the target repo', as
   await initMonorepoStub({ dir: target, env, seed: { 'apps/cli/hello.txt': 'v1\n' } });
   await run('git', ['checkout', '-q', '-b', 'port/existing'], { cwd: target, env });
   await run('git', ['checkout', '-q', 'main'], { cwd: target, env });
+  const targetHeadBefore = await runCapture('git', ['rev-parse', 'HEAD'], { cwd: target, env });
+  const existingBranchBefore = await runCapture('git', ['rev-parse', 'port/existing'], { cwd: target, env });
 
   const base = await initSplitRepoStub({ dir: sourceCli, env, name: 'cli', seed: { 'hello.txt': 'v1\n' } });
 
@@ -389,7 +411,12 @@ test('monorepo port rejects when --branch already exists in the target repo', as
       ],
       { cwd: process.cwd(), env }
     );
-  });
+  }, /target branch already exists/);
+  assert.equal(await runCapture('git', ['rev-parse', 'HEAD'], { cwd: target, env }), targetHeadBefore);
+  assert.equal((await runCapture('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: target, env })).trim(), 'main');
+  assert.equal(await runCapture('git', ['rev-parse', 'port/existing'], { cwd: target, env }), existingBranchBefore);
+  assert.equal(await runCapture('git', ['status', '--porcelain'], { cwd: target, env }), '');
+  assert.equal(await readFile(join(target, 'apps', 'cli', 'hello.txt'), 'utf-8'), 'v1\n');
 });
 
 test('monorepo port can port from a non-HEAD ref (--from-happy-cli-ref) without changing the source repo checkout', async (t) => {
@@ -416,6 +443,7 @@ test('monorepo port can port from a non-HEAD ref (--from-happy-cli-ref) without 
   await run('git', ['checkout', '-q', 'main'], { cwd: sourceCli, env });
   const headBranch = (await runCapture('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: sourceCli, env })).trim();
   assert.equal(headBranch, 'main');
+  const sourceHeadBefore = await runCapture('git', ['rev-parse', 'HEAD'], { cwd: sourceCli, env });
 
   const out = await runCapture(
     process.execPath,
@@ -435,6 +463,10 @@ test('monorepo port can port from a non-HEAD ref (--from-happy-cli-ref) without 
   const parsed = JSON.parse(out.trim());
   assert.equal(parsed.ok, true);
   assert.equal((await readFile(join(target, 'apps', 'cli', 'hello.txt'), 'utf-8')).toString(), 'v2\n');
+  assert.equal(await runCapture('git', ['rev-parse', 'HEAD'], { cwd: sourceCli, env }), sourceHeadBefore);
+  assert.equal((await runCapture('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: sourceCli, env })).trim(), headBranch);
+  assert.equal(await runCapture('git', ['status', '--porcelain'], { cwd: sourceCli, env }), '');
+  assert.equal(await readFile(join(sourceCli, 'hello.txt'), 'utf-8'), 'v1\n');
 });
 
 test('monorepo port preflight reports conflicts without modifying the target repo', async (t) => {
@@ -483,4 +515,8 @@ test('monorepo port preflight reports conflicts without modifying the target rep
   // Target should remain untouched (preflight runs in a temporary detached worktree).
   const targetHeadAfter = (await runCapture('git', ['rev-parse', 'HEAD'], { cwd: target, env })).trim();
   assert.equal(targetHeadAfter, targetHeadBefore);
+  assert.equal((await runCapture('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: target, env })).trim(), 'main');
+  assert.equal(await runCapture('git', ['status', '--porcelain'], { cwd: target, env }), '');
+  assert.equal(await runCapture('git', ['diff', '--cached'], { cwd: target, env }), '');
+  assert.equal(await readFile(join(target, 'apps', 'cli', 'hello.txt'), 'utf-8'), 'value=target\n');
 });

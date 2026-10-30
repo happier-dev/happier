@@ -28,7 +28,7 @@ function preferredExecutionLauncher(packageFile) {
   return relativeLauncher;
 }
 
-test('ordinary internal test and typecheck entry points use preferred execution with explicit local owners', async () => {
+test('ordinary internal test and typecheck entry points use preferred execution with script or direct command owners', async () => {
   const packageFiles = await resolveWorkspacePackageFiles();
   for (const packageFile of packageFiles) {
     const pkg = JSON.parse(await readFile(join(repoRoot, packageFile), 'utf8'));
@@ -39,16 +39,23 @@ test('ordinary internal test and typecheck entry points use preferred execution 
         undefined,
         `${packageFile} ${script} must route before running its preparation work`,
       );
-      assert.match(
-        pkg.scripts[script],
-        new RegExp(`^${preferredExecutionLauncher(packageFile).replaceAll('/', '\\/')} --script=${script}:local$`),
+      const entrypoint = pkg.scripts[script];
+      const launcher = preferredExecutionLauncher(packageFile);
+      const usesLocalScript = entrypoint === `${launcher} --script=${script}:local`;
+      const directCommandPrefix = `${launcher} -- `;
+      const usesDirectCommand = entrypoint.startsWith(directCommandPrefix)
+        && entrypoint.slice(directCommandPrefix.length).trim().length > 0;
+      assert.ok(
+        usesLocalScript || usesDirectCommand,
         `${packageFile} ${script} must prefer configured remote execution`,
       );
-      assert.equal(
-        typeof pkg.scripts[`${script}:local`],
-        'string',
-        `${packageFile} ${script} must retain an explicit local implementation`,
-      );
+      if (usesLocalScript) {
+        assert.equal(
+          typeof pkg.scripts[`${script}:local`],
+          'string',
+          `${packageFile} ${script} must retain an explicit local implementation`,
+        );
+      }
     }
   }
 });

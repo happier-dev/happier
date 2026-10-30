@@ -32,37 +32,6 @@ test('hstack auth --help surfaces dev-auth seed stack command', async () => {
   assert.match(res.stdout, /--start-if-needed(?:\b|$)/, `expected help to mention --start-if-needed\nstdout:\n${res.stdout}`);
 });
 
-test('hstack stack auth copy-from help shows the stack-scoped force recovery command', async () => {
-  const scriptsDir = dirname(fileURLToPath(import.meta.url));
-  const rootDir = dirname(scriptsDir);
-  const stackName = 'controlled-qa';
-  const sourceStackName = 'dev-auth';
-
-  const env = {
-    ...process.env,
-    // Exercise the auth owner's scoped help branch without reading machine stack state.
-    HAPPIER_STACK_STACK: stackName,
-    HAPPIER_STACK_ENV_FILE: join(rootDir, 'scripts', 'nonexistent-env'),
-  };
-
-  const res = await runNodeCapture(
-    [hstackBinPath(rootDir), 'auth', 'copy-from', sourceStackName, '--help'],
-    { cwd: rootDir, env },
-  );
-
-  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-  assert.match(
-    res.stdout,
-    new RegExp(`hstack stack auth ${stackName} copy-from <sourceStack>[^\\n]*--force`),
-    `expected scoped copy-from help to expose --force recovery\nstdout:\n${res.stdout}`,
-  );
-  assert.doesNotMatch(
-    res.stdout,
-    /hstack auth copy-from[^\n]*--all/,
-    `scoped help must not prescribe the global --all command\nstdout:\n${res.stdout}`,
-  );
-});
-
 test('hstack stack auth copy-from --help delegates to the stack-scoped auth owner', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);

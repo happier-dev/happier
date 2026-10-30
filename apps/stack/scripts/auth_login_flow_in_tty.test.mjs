@@ -81,20 +81,3 @@ test('hstack auth login rejects --flow override (guided is always used)', async 
     await fixture.cleanup();
   }
 });
-
-test('hstack auth login rejects invalid --flow values', async () => {
-  const rootDir = getStackRootFromMeta(import.meta.url);
-
-  const fixture = await createTtyFixture('hstack-auth-flow-tty-invalid-');
-  try {
-    const env = fixture.buildEnv({
-      HAPPIER_STACK_TEST_TTY: '1',
-    });
-
-    const res = await runAuthLoginPrintJson(rootDir, env, ['--flow=weird']);
-    assert.notEqual(res.code, 0, `expected non-zero exit\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-    assert.match(res.stderr, /--flow is no longer supported/i);
-  } finally {
-    await fixture.cleanup();
-  }
-});

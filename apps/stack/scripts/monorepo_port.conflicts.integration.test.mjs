@@ -220,6 +220,7 @@ test('monorepo port guide refuses to run in non-tty mode', async (t) => {
   await writeFile(join(target, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
   await run('git', ['add', '.'], { cwd: target, env: gitEnv() });
   await run('git', ['commit', '-q', '-m', 'chore: init monorepo'], { cwd: target, env: gitEnv() });
+  const targetHeadBefore = await runCapture('git', ['rev-parse', 'HEAD'], { cwd: target, env: gitEnv() });
 
   await assert.rejects(
     async () =>
@@ -227,8 +228,12 @@ test('monorepo port guide refuses to run in non-tty mode', async (t) => {
         process.execPath,
         [join(process.cwd(), 'scripts', 'monorepo.mjs'), 'port', 'guide', `--target=${target}`],
         { cwd: process.cwd(), env: gitEnv() }
-      )
+      ),
+    /port guide requires a TTY/
   );
+  assert.equal(await runCapture('git', ['rev-parse', 'HEAD'], { cwd: target, env: gitEnv() }), targetHeadBefore);
+  assert.equal((await runCapture('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: target, env: gitEnv() })).trim(), 'main');
+  assert.equal(await runCapture('git', ['status', '--porcelain'], { cwd: target, env: gitEnv() }), '');
 });
 
 test('monorepo port guide can wait for conflict resolution and finish the port', async (t) => {

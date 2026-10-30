@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -8,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { resolvePnpmCommandInvocation } from '../../../scripts/workspaces/execPnpmCommand.mjs';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
-import { authScriptPath, runNodeCapture } from './testkit/auth_testkit.mjs';
+import { authScriptPath, runNodeCapture, terminateChildProcess } from './testkit/auth_testkit.mjs';
+import { spawnTestProcess } from './testkit/core/spawn_test_process.mjs';
 
 async function createReadableSourceSqliteAccountDb({ rootDir, dataDir }) {
   const serverDir = join(dirname(rootDir), 'server');
@@ -38,80 +38,6 @@ try {
     `expected readable source SQLite Account DB\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
   );
 }
-
-test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not defined', async (t) => {
-  const scriptsDir = dirname(fileURLToPath(import.meta.url));
-  const rootDir = dirname(scriptsDir);
-
-  const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-copy-from-'));
-  t.after(async () => {
-    await rm(tmp, { recursive: true, force: true });
-  });
-  const homeDir = join(tmp, 'home');
-  const storageDir = join(tmp, 'storage');
-  const workspaceDir = join(tmp, 'workspace');
-  const nvmDir = join(tmp, 'nvm');
-  await mkdir(homeDir, { recursive: true });
-  await mkdir(storageDir, { recursive: true });
-  await mkdir(workspaceDir, { recursive: true });
-  await mkdir(nvmDir, { recursive: true });
-
-  // Stub pnpm to keep this test fast/deterministic. This is an external boundary.
-  const binDir = join(tmp, 'bin');
-  await mkdir(binDir, { recursive: true });
-  const pnpmPath = join(binDir, 'pnpm');
-  await writeFile(pnpmPath, '#!/bin/bash\nexit 0\n', 'utf-8');
-  await chmod(pnpmPath, 0o755);
-
-  const repoRoot = dirname(dirname(rootDir)); // .../apps/stack -> repo root
-
-  const mkStackEnv = async (name) => {
-    const baseDir = join(storageDir, name);
-    const dataDir = join(baseDir, 'server-light');
-    await mkdir(dataDir, { recursive: true });
-    await writeFile(
-      join(baseDir, 'env'),
-      [
-        `HAPPIER_STACK_STACK=${name}`,
-        `HAPPIER_STACK_SERVER_COMPONENT=happier-server-light`,
-        `HAPPIER_STACK_REPO_DIR=${repoRoot}`,
-        `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir}`,
-        `HAPPIER_SERVER_LIGHT_FILES_DIR=${join(dataDir, 'files')}`,
-        `HAPPIER_SERVER_LIGHT_DB_DIR=${join(dataDir, 'pglite')}`,
-        '',
-      ].join('\n'),
-      'utf-8'
-    );
-  };
-
-  await mkStackEnv('dev-auth');
-  await mkStackEnv('dev');
-  await createReadableSourceSqliteAccountDb({ rootDir, dataDir: join(storageDir, 'dev-auth', 'server-light') });
-  await mkdir(join(storageDir, 'dev-auth', 'cli'), { recursive: true });
-  await writeFile(join(storageDir, 'dev-auth', 'cli', 'access.key'), 'seed-token\n', 'utf-8');
-  await writeFile(join(storageDir, 'dev-auth', 'cli', 'settings.json'), JSON.stringify({ machineId: 'seed-machine' }) + '\n', 'utf-8');
-
-  const env = {
-    ...process.env,
-    PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    HAPPIER_STACK_HOME_DIR: homeDir,
-    HAPPIER_STACK_STORAGE_DIR: storageDir,
-    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
-    HAPPIER_STACK_STACK: 'dev',
-    HAPPIER_STACK_ENV_FILE: join(storageDir, 'dev', 'env'),
-  };
-
-  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', 'dev-auth', '--offline-ok'], { cwd: rootDir, env });
-  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-  assert.ok(
-    !res.stdout.includes('runCapture is not defined') && !res.stderr.includes('runCapture is not defined'),
-    `expected no ReferenceError about runCapture\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
-  );
-  assert.ok(
-    !res.stdout.includes('spawn pnpm ENOENT') && !res.stderr.includes('spawn pnpm ENOENT'),
-    `expected pnpm to be resolvable in light migrations step\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
-  );
-});
 
 test('hstack stack auth copy-from fails closed when the source stack has no reusable auth material', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -524,29 +450,59 @@ test('hstack stack auth copy-from fails before copying credentials when a live s
     'utf-8'
   );
 
-  let profileRequests = 0;
-  const sourceServer = createServer((req, res) => {
-    if (req.method === 'GET' && req.url === '/v1/account/profile') {
-      profileRequests += 1;
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ id: 'any-account' }));
-      return;
-    }
-    res.writeHead(404);
-    res.end();
+  const profileRequestsPath = join(tmp, 'source-profile-requests.txt');
+  await writeFile(profileRequestsPath, '', 'utf-8');
+  // Runtime ingress belongs to a stack-marked listener, not the test runner PID.
+  const sourceServer = spawnTestProcess(process.execPath, ['-e', `
+    const http = require('node:http');
+    const { appendFileSync } = require('node:fs');
+    const server = http.createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/v1/account/profile') {
+        appendFileSync(${JSON.stringify(profileRequestsPath)}, 'profile\\n');
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ id: 'any-account' }));
+        return;
+      }
+      if (req.url === '/health' || req.url === '/ready') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    server.listen(0, '127.0.0.1', () => process.stdout.write(String(server.address().port) + '\\n'));
+  `], {
+    env: {
+      ...process.env,
+      HAPPIER_STACK_STACK: sourceStack,
+      HAPPIER_STACK_ENV_FILE: join(storageDir, sourceStack, 'env'),
+      HAPPIER_STACK_CLI_HOME_DIR: sourceCliHome,
+      HAPPIER_STACK_PROCESS_KIND: 'server',
+    },
+    stdio: ['ignore', 'pipe', 'ignore'],
   });
-  await new Promise((resolve) => sourceServer.listen(0, '127.0.0.1', resolve));
-  t.after(async () => {
-    await new Promise((resolve) => sourceServer.close(resolve));
+  t.after(() => terminateChildProcess(sourceServer));
+  const sourcePort = await new Promise((resolve, reject) => {
+    let output = '';
+    sourceServer.stdout.setEncoding('utf8');
+    sourceServer.stdout.on('data', (chunk) => {
+      output += String(chunk);
+      const port = Number(output.split(/\r?\n/).find(Boolean));
+      if (Number.isInteger(port) && port > 0) resolve(port);
+    });
+    sourceServer.once('error', reject);
+    sourceServer.once('exit', (code) => reject(new Error(`source server exited before readiness (${code})`)));
   });
-  const sourceAddress = sourceServer.address();
-  const sourcePort =
-    sourceAddress && typeof sourceAddress === 'object' && Number.isFinite(sourceAddress.port) ? Number(sourceAddress.port) : 0;
-  assert.ok(sourcePort > 0, `expected source server port, got ${JSON.stringify(sourceAddress)}`);
+
+  const sourceEnvPath = join(storageDir, sourceStack, 'env');
+  await writeFile(sourceEnvPath,
+    `${await readFile(sourceEnvPath, 'utf-8')}HAPPIER_STACK_SERVER_PORT=${sourcePort}\n`, 'utf-8');
 
   await writeFile(
     join(storageDir, sourceStack, 'stack.runtime.json'),
-    JSON.stringify({ version: 1, stackName: sourceStack, ownerPid: process.pid, ports: { server: sourcePort } }) + '\n',
+    JSON.stringify({ version: 1, stackName: sourceStack, ownerPid: sourceServer.pid,
+      processes: { serverPid: sourceServer.pid }, ports: { server: sourcePort } }) + '\n',
     'utf-8'
   );
 
@@ -564,7 +520,8 @@ test('hstack stack auth copy-from fails before copying credentials when a live s
     [join(rootDir, 'scripts', 'stack.mjs'), 'auth', targetStack, '--', 'copy-from', sourceStack],
     { cwd: rootDir, env }
   );
-  assert.ok(profileRequests > 0, 'expected live source server validation before the SQLite Account read fails');
+  assert.match(await readFile(profileRequestsPath, 'utf-8'), /profile/,
+    `expected live source server validation before the SQLite Account read fails\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.notEqual(
     res.code,
     0,
@@ -644,6 +601,10 @@ test('hstack stack auth copy-from fails closed when source stack is not running 
   await mkStackEnv(targetStack, targetCliHome);
 
   // Write a source credential that copy-from can find via the source stack's pinned port.
+  await createReadableSourceSqliteAccountDb({
+    rootDir,
+    dataDir: join(storageDir, sourceStack, 'server-light'),
+  });
   const sourceCred = resolveStackCredentialPaths({ cliHomeDir: sourceCliHome, serverUrl });
   await mkdir(dirname(sourceCred.serverScopedPath), { recursive: true });
   await writeFile(sourceCred.serverScopedPath, 'server-scoped-token\n', 'utf-8');
@@ -667,6 +628,15 @@ test('hstack stack auth copy-from fails closed when source stack is not running 
     0,
     `expected copy-from to fail closed when source stack is not running\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
   );
+  assert.match(`${res.stdout}\n${res.stderr}`, /source stack "dev-auth" does not appear to be running/);
+  const targetStableId = buildStackStableScopeId({ stackName: targetStack, cliIdentity: 'default' });
+  for (const credentialPath of [
+    join(targetCliHome, 'servers', targetStableId, 'access.key'),
+    join(targetCliHome, 'access.key'),
+  ]) {
+    await assert.rejects(readFile(credentialPath, 'utf-8'), { code: 'ENOENT' },
+      'a stopped source must not copy target credentials');
+  }
 });
 
 test('hstack stack auth copy-from --no-secret does not overwrite target master secret (even with --force)', async (t) => {

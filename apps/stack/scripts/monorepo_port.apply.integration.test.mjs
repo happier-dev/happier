@@ -290,7 +290,11 @@ test('monorepo port --continue-on-failure completes even when some patches do no
   await run('git', ['add', '.'], { cwd: sourceCli, env: gitEnv() });
   await run('git', ['commit', '-q', '-m', 'feat: update hello'], { cwd: sourceCli, env: gitEnv() });
 
-  // Run port command: patch should fail to apply, but command succeeds.
+  await writeFile(join(sourceCli, 'extra.txt'), 'later patch\n', 'utf-8');
+  await run('git', ['add', 'extra.txt'], { cwd: sourceCli, env: gitEnv() });
+  await run('git', ['commit', '-q', '-m', 'feat: add independent later file'], { cwd: sourceCli, env: gitEnv() });
+
+  // The first patch fails, but the independent later patch must still apply.
   const out = await runCapture(
     process.execPath,
     [
@@ -309,6 +313,9 @@ test('monorepo port --continue-on-failure completes even when some patches do no
   const parsed = JSON.parse(out.trim());
   assert.equal(parsed.ok, false);
   assert.equal(parsed.results[0].failedPatches, 1);
+  assert.equal(parsed.results[0].appliedPatches, 1);
+  assert.equal(await readFile(join(target, 'apps', 'cli', 'hello.txt'), 'utf-8'), 'v3\n');
+  assert.equal(await readFile(join(target, 'apps', 'cli', 'extra.txt'), 'utf-8'), 'later patch\n');
 });
 
 test('monorepo port auto-skips identical "new file" patches when the file already exists in the target', async (t) => {

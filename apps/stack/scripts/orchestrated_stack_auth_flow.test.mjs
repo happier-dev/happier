@@ -111,7 +111,7 @@ test('resolveRunnerLogPathFromRuntime returns empty string when runtime owner pi
           version: 1,
           stackName,
           ownerPid: 999_999_999,
-          logs: {},
+          logs: { runner: join(tmp, 'stale-runner.log') },
         },
         null,
         2
