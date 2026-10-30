@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { syncBuiltinESMExports } from 'node:module';
 import fs from 'node:fs';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+
+import { readProcessHostIdentitySync, readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
 
 import { buildIntoTempThenReplace } from './atomic_dir_swap.mjs';
 
@@ -15,6 +19,104 @@ async function withTempRoot(t) {
   });
   return root;
 }
+
+async function startPausedWriter(t, outDir) {
+  const writer = spawn(process.execPath, ['--input-type=module', '-e', `
+    import { buildIntoTempThenReplace } from ${JSON.stringify(new URL('./atomic_dir_swap.mjs', import.meta.url).href)};
+    import { writeFile } from 'node:fs/promises';
+    import { join } from 'node:path';
+    await buildIntoTempThenReplace(process.argv[1], async (staged) => {
+      process.send(staged);
+      await new Promise(resolve => process.on('message', resolve));
+      await writeFile(join(staged, 'marker.txt'), 'child');
+    });
+    process.disconnect();
+  `, outDir], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  t.after(async () => {
+    if (writer.exitCode !== null || writer.signalCode !== null) return;
+    const exited = once(writer, 'exit');
+    writer.kill('SIGKILL');
+    await exited;
+  });
+  const [staged] = await once(writer, 'message');
+  return { writer, staged };
+}
+
+test('the next build reclaims staging left by a killed writer', async (t) => {
+  const root = await withTempRoot(t);
+  const outDir = join(root, 'dist');
+  const { writer, staged: abandoned } = await startPausedWriter(t, outDir);
+  const exited = once(writer, 'exit');
+  writer.kill('SIGKILL');
+  await exited;
+  // Pre-fix writers have no birth record; a dead PID still proves abandonment.
+  const legacy = join(root, `.tmp.1.${writer.pid}.abc`);
+  await mkdir(legacy);
+
+  await buildIntoTempThenReplace(outDir, async staged => {
+    await writeFile(join(staged, 'marker.txt'), 'published');
+  });
+
+  await assert.rejects(stat(abandoned), { code: 'ENOENT' });
+  await assert.rejects(stat(`${abandoned}.owner.json`), { code: 'ENOENT' });
+  await assert.rejects(stat(legacy), { code: 'ENOENT' });
+  assert.equal(await readFile(join(outDir, 'marker.txt'), 'utf8'), 'published');
+});
+
+test('a concurrent build preserves the live writer and unrelated siblings', async (t) => {
+  const root = await withTempRoot(t);
+  const legacyLive = join(root, `.tmp.1.${process.pid}.abc`);
+  const unrelated = join(root, '.tmp.unrecognized');
+  const symlinkPath = join(root, '.tmp.1.2147483647.abc');
+  await mkdir(legacyLive);
+  await mkdir(unrelated);
+  if (process.platform !== 'win32') await symlink(unrelated, symlinkPath, 'dir');
+  const { writer, staged: concurrent } = await startPausedWriter(t, join(root, 'child'));
+
+  await buildIntoTempThenReplace(join(root, 'first'), async first => {
+    await buildIntoTempThenReplace(join(root, 'second'), async staged => {
+      await writeFile(join(staged, 'marker.txt'), 'second');
+    });
+    assert.equal((await stat(first)).isDirectory(), true);
+    await writeFile(join(first, 'marker.txt'), 'first');
+  });
+
+  assert.equal((await stat(legacyLive)).isDirectory(), true);
+  assert.equal((await stat(unrelated)).isDirectory(), true);
+  assert.equal((await stat(concurrent)).isDirectory(), true);
+  if (process.platform !== 'win32') assert.equal((await lstat(symlinkPath)).isSymbolicLink(), true);
+  assert.equal(await readFile(join(root, 'first', 'marker.txt'), 'utf8'), 'first');
+  assert.equal(await readFile(join(root, 'second', 'marker.txt'), 'utf8'), 'second');
+  const exited = once(writer, 'exit');
+  writer.send('finish');
+  const [exitCode] = await exited;
+  assert.equal(exitCode, 0);
+  assert.equal(await readFile(join(root, 'child', 'marker.txt'), 'utf8'), 'child');
+});
+
+test('a reused PID is reclaimable only with a local mismatching birth witness', async (t) => {
+  const root = await withTempRoot(t);
+  const host = readProcessHostIdentitySync();
+  const fingerprint = readProcessInstanceFingerprintSync(process.pid);
+  if (!host || !fingerprint) return t.skip('process identity unavailable');
+  const reused = join(root, `.tmp.1.${process.pid}.abc`);
+  const foreign = join(root, `.tmp.2.${process.pid}.abc`);
+  const unknown = join(root, `.tmp.3.${process.pid}.abc`);
+  for (const directory of [reused, foreign, unknown]) await mkdir(directory);
+  const owner = { v: 1, pid: process.pid, processInstanceFingerprint: `${fingerprint}:previous`, host };
+  await writeFile(`${reused}.owner.json`, JSON.stringify(owner));
+  await writeFile(`${foreign}.owner.json`, JSON.stringify({ ...owner, host: { ...host, machineId: 'another-host' } }));
+  await writeFile(`${unknown}.owner.json`, '{}');
+
+  await buildIntoTempThenReplace(join(root, 'dist'), async staged => {
+    await writeFile(join(staged, 'marker.txt'), 'published');
+  });
+
+  await assert.rejects(stat(reused), { code: 'ENOENT' });
+  assert.equal((await stat(foreign)).isDirectory(), true);
+  assert.equal((await stat(unknown)).isDirectory(), true);
+  assert.deepEqual(await readdir(join(root, 'dist')), ['marker.txt']);
+});
 
 test('buildIntoTempThenReplace preserves existing dir when build fails', async (t) => {
   const root = await withTempRoot(t);

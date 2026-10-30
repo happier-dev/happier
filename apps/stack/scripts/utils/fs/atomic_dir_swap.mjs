@@ -1,8 +1,11 @@
-import { mkdir, rename, rm } from 'node:fs/promises';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 
 import { publishStagedDirectoryMountedSync } from '@happier-dev/cli-common/workspaceRuntimeDependencies';
+import { readProcessHostIdentitySync, readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
+
+import { reclaimAbandonedBuildStaging } from './abandoned_build_staging.mjs';
 
 const WINDOWS_TRANSIENT_RENAME_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
 
@@ -50,40 +53,44 @@ export async function buildIntoTempThenReplace(
   if (typeof buildFn !== 'function') throw new Error('[fs] buildIntoTempThenReplace: buildFn must be a function');
 
   const parent = dirname(outDir);
+  await mkdir(parent, { recursive: true });
+  const host = readProcessHostIdentitySync();
+  // A killed build cannot run finally; its next sibling build owns reclamation.
+  await reclaimAbandonedBuildStaging(parent, host);
   const tmpDir = join(parent, `.tmp.${Date.now()}.${process.pid}.${rand()}`);
+  const ownerFile = `${tmpDir}.owner.json`;
 
-  await rm(tmpDir, { recursive: true, force: true });
-  await mkdir(tmpDir, { recursive: true });
-
-  let ok = false;
+  // Publish identity before the directory becomes visible to concurrent builds.
+  await writeFile(ownerFile, JSON.stringify({
+    v: 1,
+    pid: process.pid,
+    host,
+    processInstanceFingerprint: readProcessInstanceFingerprintSync(process.pid),
+  }), { flag: 'wx' });
   try {
-    await buildFn(tmpDir);
-    ok = true;
-  } finally {
-    if (!ok) {
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-    }
+    await mkdir(tmpDir);
+  } catch (error) {
+    await rm(ownerFile, { force: true }).catch(() => {});
+    throw error;
   }
 
-  // Swap only after a successful build.
-  const backupDir = join(parent, `.backup.${Date.now()}.${process.pid}.${rand()}`);
-  if (preserveDestinationPath) {
-    try {
+  try {
+    await buildFn(tmpDir);
+
+    // Swap only after a successful build.
+    const backupDir = join(parent, `.backup.${Date.now()}.${process.pid}.${rand()}`);
+    if (preserveDestinationPath) {
       publishStagedDirectoryMountedSync({
         stagedDir: tmpDir,
         liveDir: outDir,
         rollbackDir: backupDir,
         pruneStale,
       });
-    } finally {
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
       // The mounted publisher owns rollback cleanup, including retained
       // recovery backups when restoration fails.
+      return;
     }
-    return;
-  }
 
-  try {
     let hadExisting = false;
     try {
       await renameForPublication(outDir, backupDir, { platform, renameImpl, waitImpl });
@@ -110,5 +117,6 @@ export async function buildIntoTempThenReplace(
     }
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    await rm(ownerFile, { force: true }).catch(() => {});
   }
 }
