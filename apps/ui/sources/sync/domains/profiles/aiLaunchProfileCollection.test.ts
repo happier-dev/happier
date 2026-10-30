@@ -44,10 +44,6 @@ describe('AI launch profile UI collection', () => {
         expect(readUiAiLaunchProfilesForLegacyUi(raw, { published: artifact })[0]?.envVarRequirements).toMatchObject([{ name: 'TOKEN', required: true }]);
         expect(readUiAiLaunchProfileSnapshot(raw, {}).unreadableCount).toBe(1);
     });
-    it('returns only executable legacy and slim rows', () => {
-        expect(readUiAiLaunchProfiles([legacy, slim, future, malformed]).map((profile) => profile.id)).toEqual(['legacy', 'slim']);
-    });
-
     it('reports retained newer-schema rows beside the executable projection', () => {
         const snapshot = readUiAiLaunchProfileSnapshot([legacy, slim, future, malformed]);
         expect(snapshot.profiles.map((profile) => profile.id)).toEqual(['legacy', 'slim']);

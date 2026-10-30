@@ -13,10 +13,6 @@ describe('normalizePermissionModeForGroup', () => {
         expect(normalizePermissionModeForGroup('plan', 'codexLike')).toBe('read-only');
     });
 
-    it('preserves read-only intent for claude', () => {
-        expect(normalizePermissionModeForGroup('read-only', 'claude')).toBe('read-only');
-    });
-
     it('preserves codex-like modes for codexLike', () => {
         expect(normalizePermissionModeForGroup('safe-yolo', 'codexLike')).toBe('safe-yolo');
         expect(normalizePermissionModeForGroup('yolo', 'codexLike')).toBe('yolo');

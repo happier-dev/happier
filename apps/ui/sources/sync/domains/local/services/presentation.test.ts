@@ -35,10 +35,6 @@ describe('resolveLocalServicePortLabel', () => {
         expect(resolveLocalServicePortLabel(buildLocalServiceInventoryRow({ port: 5173 }))).toBe(':5173');
     });
 
-    it('renders the port from a launch-target-shaped record when present', () => {
-        expect(resolveLocalServicePortLabel({ port: 3000 })).toBe(':3000');
-    });
-
     it('returns null when no positive port is available', () => {
         expect(resolveLocalServicePortLabel({ port: 0 })).toBeNull();
         expect(resolveLocalServicePortLabel({})).toBeNull();

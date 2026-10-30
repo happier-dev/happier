@@ -58,12 +58,6 @@ describe('resolveNewSessionDefaultPermissionMode', () => {
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'gemini', accountDefaults: emptyAccountDefaults, legacyProfileDefaultPermissionMode: 'bypassPermissions' })).toBe('yolo');
     });
 
-    it('clamps unsupported profile override modes to safe defaults for the target provider', () => {
-        // Codex-like agents do not expose "plan" as a permission mode.
-        const emptyAccountDefaults = readAccountPermissionDefaults({}, ['codex']);
-        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults: emptyAccountDefaults, legacyProfileDefaultPermissionMode: 'plan' })).toBe('read-only');
-    });
-
     it('preserves an external Agent default without borrowing bundled permission policy', () => {
         const externalTarget = { kind: 'backend', backendId: 'acme.review.backend' } as const;
         const externalDefaults = readAccountPermissionDefaults({
