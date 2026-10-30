@@ -14,7 +14,8 @@ import { readDaemonProcessesForDoctor } from '@/daemon/doctor'
 import { readDaemonState } from '@/persistence'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve as pathResolve } from 'node:path'
+import { homedir } from 'node:os'
 import packageJson from '../../package.json'
 import { buildDoctorSnapshot, type DoctorSnapshot } from '@/ui/doctorSnapshot'
 import { redactCliApiTokenArgv } from '@/auth/cliApiToken'
@@ -156,6 +157,22 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             console.log(`CLI Exists: ${runtimeDiagnostics.cliEntrypointExists ? chalk.green('✓ Yes') : chalk.red('❌ No')}`);
         }
         console.log('');
+
+        // Check for legacy ~/.happier/bin in PATH
+        const pathEnv = process.env.PATH || '';
+        const legacyBinInPath = pathEnv.split(':').some(p => {
+            const resolved = pathResolve(p);
+            const happierBin = pathResolve(join(homedir(), '.happier', 'bin'));
+            return resolved === happierBin;
+        });
+
+        if (legacyBinInPath) {
+            console.log(chalk.yellow(`⚠️  Legacy ~/.happier/bin found in PATH`));
+            console.log(chalk.yellow(`  Modern installations use ~/.local/bin instead.`));
+            console.log(chalk.yellow(`  Remove ~/.happier/bin from your shell PATH configuration.`));
+            console.log(chalk.yellow(`  Ensure ~/.local/bin is in your PATH instead.`));
+            console.log('');
+        }
 
         // Configuration
         console.log(chalk.bold('⚙️  Configuration'));
