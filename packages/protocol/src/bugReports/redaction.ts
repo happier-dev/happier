@@ -434,8 +434,17 @@ export function redactBugReportSensitiveText(input: string): string {
       `authorization: ${match[1] !== undefined || BEARER_SCHEME_PATTERN.test(value) ? 'bearer ' : ''}${REDACTED}`,
   );
 
-  const withCookies = redactValuesAfterKey(
+  // Providers may quote the authorization scheme without the HTTP header name.
+  // Reuse the credential word scanner so quoted and wrapped values stay whole.
+  const withBearerCredentials = redactValuesAfterKey(
     withAuthorization,
+    /\bbearer[ \t]+/gi,
+    scanShellWordEnd,
+    () => `bearer ${REDACTED}`,
+  );
+
+  const withCookies = redactValuesAfterKey(
+    withBearerCredentials,
     COOKIE_HEADER_PATTERN,
     scanHeaderValueEnd,
     (match) => `${match[1].toLowerCase()}: ${REDACTED}`,
