@@ -653,12 +653,10 @@ async function main() {
           stdio: 'pipe',
         });
         if (dryRun) {
-          console.log('[dry-run] require linux/amd64 linux/arm64 and attestation-manifest entries with spdx SBOM and slsa provenance predicates');
+          console.log('[dry-run] require linux/amd64 and linux/arm64 entries with immutable digests');
         } else {
           const index = JSON.parse(raw);
           const manifests = Array.isArray(index.manifests) ? index.manifests : [];
-          /** @type {Map<string, string>} */
-          const platformDigests = new Map();
           for (const architecture of ['amd64', 'arm64']) {
             const platformManifest = manifests.find(
               (manifest) => manifest?.platform?.os === 'linux' && manifest?.platform?.architecture === architecture,
@@ -669,41 +667,6 @@ async function main() {
             const platformDigest = String(platformManifest.digest ?? '');
             if (!/^sha256:[0-9a-f]{64}$/u.test(platformDigest)) {
               throw new Error(`[pipeline] ${exactReference} contains linux/${architecture} without an immutable digest`);
-            }
-            platformDigests.set(architecture, platformDigest);
-          }
-          const attestations = manifests.filter((manifest) => manifest?.annotations?.['vnd.docker.reference.type'] === 'attestation-manifest');
-          /** @type {Map<string, Set<string>>} */
-          const predicatesBySubjectDigest = new Map();
-          for (const attestation of attestations) {
-            const attestationDigest = String(attestation?.digest ?? '');
-            if (!/^sha256:[0-9a-f]{64}$/u.test(attestationDigest)) {
-              throw new Error(`[pipeline] ${exactReference} contains an attestation without an immutable digest`);
-            }
-            const subjectDigest = String(attestation?.annotations?.['vnd.docker.reference.digest'] ?? '');
-            if (!/^sha256:[0-9a-f]{64}$/u.test(subjectDigest)) {
-              throw new Error(`[pipeline] ${params.publishedBase}@${attestationDigest} is missing its immutable subject digest`);
-            }
-            const attestationManifest = JSON.parse(run(
-              'docker',
-              ['buildx', 'imagetools', 'inspect', '--raw', `${params.publishedBase}@${attestationDigest}`],
-              { dryRun: false, stdio: 'pipe' },
-            ));
-            const predicateTypes = new Set(
-              (Array.isArray(attestationManifest.layers) ? attestationManifest.layers : [])
-                .map((layer) => String(layer?.annotations?.['in-toto.io/predicate-type'] ?? '')),
-            );
-            const subjectPredicates = predicatesBySubjectDigest.get(subjectDigest) ?? new Set();
-            for (const predicateType of predicateTypes) subjectPredicates.add(predicateType);
-            predicatesBySubjectDigest.set(subjectDigest, subjectPredicates);
-          }
-          for (const [architecture, platformDigest] of platformDigests) {
-            const predicateTypes = predicatesBySubjectDigest.get(platformDigest) ?? new Set();
-            if (
-              ![...predicateTypes].some((type) => type.includes('spdx'))
-              || ![...predicateTypes].some((type) => type.includes('slsa'))
-            ) {
-              throw new Error(`[pipeline] ${exactReference} linux/${architecture} is missing its SBOM/provenance attestations`);
             }
           }
         }

@@ -389,8 +389,9 @@ producing it, rather than depending on what a build image happens to contain.
   cannot be published without it.
 - **Relay image evidence.** The existing Docker publisher requests BuildKit
   SBOM and provenance attestations, captures the immutable pushed digest, then
-  inspects that exact index for Linux AMD64, Linux ARM64, and per-platform
-  attestation manifests. This is image-content evidence; it is distinct from
+  inspects that exact index for Linux AMD64 and Linux ARM64 with immutable
+  platform digests. Predicate annotations are not a release acceptance gate.
+  This is image-content evidence; it is distinct from
   the Cargo-graph CycloneDX files packaged with native and browser carriers.
 - **Performance evidence.** The reusable test workflow exposes
   `run_workspace_sync_performance` for an explicit manual or release evidence

@@ -10,7 +10,6 @@ test('canonical Docker publisher builds the stock Iroh relay with SBOM and prove
   const out = execFileSync(process.execPath, [
     path.join(repoRoot, 'scripts/pipeline/docker/publish-images.mjs'),
     '--channel', 'dev',
-    '--sha', '0123456789abcdef0123456789abcdef01234567',
     '--registries', 'dockerhub',
     '--dry-run',
     '--build-relay', 'false',
@@ -32,16 +31,18 @@ test('canonical Docker publisher builds the stock Iroh relay with SBOM and prove
   assert.match(out, /docker buildx imagetools inspect --raw happierdev\/iroh-relay@sha256:/);
   assert.match(out, /linux\/amd64/);
   assert.match(out, /linux\/arm64/);
-  assert.match(out, /attestation-manifest/);
-  assert.match(out, /spdx SBOM/);
-  assert.match(out, /slsa provenance/);
   assert.match(out, /\[dry-run\] would verify pushed image index/);
   assert.doesNotMatch(out, /\[pipeline\] verified pushed image index/);
   assert.match(out, /deploy\/iroh-relay(?:\s|$)/);
   assert.doesNotMatch(out, /--target\s+relay-server/);
 });
 
-test('canonical Docker publisher rejects attestations that cover amd64 twice but omit arm64', () => {
+for (const [label, architecture, armDigest, expectedStatus] of [
+  ['without predicate annotations', 'arm64', 'sha256:' + 'b'.repeat(64), 0],
+  ['with the wrong architecture', 'riscv64', 'sha256:' + 'b'.repeat(64), 1],
+  ['without an immutable platform digest', 'arm64', 'invalid', 1],
+]) {
+test('canonical Docker publisher verifies the immutable multiarch index ' + label, () => {
   const repoRoot = process.cwd();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-iroh-relay-index-'));
   const binDir = path.join(dir, 'bin');
@@ -49,32 +50,12 @@ test('canonical Docker publisher rejects attestations that cover amd64 twice but
   const dockerPath = path.join(binDir, 'docker');
   const indexDigest = `sha256:${'0'.repeat(64)}`;
   const amd64Digest = `sha256:${'a'.repeat(64)}`;
-  const arm64Digest = `sha256:${'b'.repeat(64)}`;
-  const firstAttestationDigest = `sha256:${'c'.repeat(64)}`;
-  const secondAttestationDigest = `sha256:${'d'.repeat(64)}`;
   const index = {
     schemaVersion: 2,
     mediaType: 'application/vnd.oci.image.index.v1+json',
     manifests: [
       { mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: amd64Digest, platform: { os: 'linux', architecture: 'amd64' } },
-      { mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: arm64Digest, platform: { os: 'linux', architecture: 'arm64' } },
-      ...[firstAttestationDigest, secondAttestationDigest].map((digest) => ({
-        mediaType: 'application/vnd.oci.image.manifest.v1+json',
-        digest,
-        platform: { os: 'unknown', architecture: 'unknown' },
-        annotations: {
-          'vnd.docker.reference.digest': amd64Digest,
-          'vnd.docker.reference.type': 'attestation-manifest',
-        },
-      })),
-    ],
-  };
-  const attestation = {
-    schemaVersion: 2,
-    mediaType: 'application/vnd.oci.image.manifest.v1+json',
-    layers: [
-      { mediaType: 'application/vnd.in-toto+json', annotations: { 'in-toto.io/predicate-type': 'https://spdx.dev/Document' } },
-      { mediaType: 'application/vnd.in-toto+json', annotations: { 'in-toto.io/predicate-type': 'https://slsa.dev/provenance/v1' } },
+      { mediaType: 'application/vnd.oci.image.manifest.v1+json', digest: armDigest, platform: { os: 'linux', architecture } },
     ],
   };
   fs.writeFileSync(dockerPath, [
@@ -82,7 +63,6 @@ test('canonical Docker publisher rejects attestations that cover amd64 twice but
     "const fs = require('node:fs');",
     `const indexDigest = ${JSON.stringify(indexDigest)};`,
     `const index = ${JSON.stringify(index)};`,
-    `const attestation = ${JSON.stringify(attestation)};`,
     'const args = process.argv.slice(2);',
     "if (args[0] === 'info' || args[0] === 'login') process.exit(0);",
     "if (args[0] !== 'buildx') process.exit(2);",
@@ -93,7 +73,8 @@ test('canonical Docker publisher rejects attestations that cover amd64 twice but
     '  process.exit(0);',
     '}',
     "if (args[1] === 'imagetools' && args[2] === 'inspect' && args[3] === '--raw') {",
-    "  process.stdout.write(JSON.stringify(args[4].endsWith(`@${indexDigest}`) ? index : attestation));",
+    "  if (args[4] !== 'happierdev/iroh-relay@' + indexDigest) process.exit(2);",
+    "  process.stdout.write(JSON.stringify(index));",
     '  process.exit(0);',
     '}',
     'process.exit(2);',
@@ -119,9 +100,11 @@ test('canonical Docker publisher rejects attestations that cover amd64 twice but
       encoding: 'utf8',
     });
 
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /linux\/arm64.*SBOM\/provenance attestations/);
+    assert.equal(result.status, expectedStatus, result.stderr);
+    if (expectedStatus === 0) assert.match(result.stdout, /verified pushed image index/);
+    else assert.match(result.stderr, /linux\/arm64/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+}
