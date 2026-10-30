@@ -351,7 +351,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
     const prompt = this.nativePrompt;
     if (prompt) {
       if (isAskUserQuestionToolName(prompt.toolName) && state.nativeQuestionPresentation) {
-        const normalized = readObject(normalizeClaudeAskUserQuestionInputForPublication(prompt.toolName, prompt.toolInput));
+        const normalized = readObject(normalizeClaudeAskUserQuestionInputForPublication(prompt.toolName, prompt.toolInput, { native: true }));
         // The canonical publication normalizer validates the external provider question schema.
         const questions = Array.isArray(normalized?.questions) ? normalized.questions as readonly StructuredQuestionLike[] : [];
         if (prompt.toolUseId && matchesClaudeNativeQuestionScreen(state.nativeQuestionPresentation, questions)) {

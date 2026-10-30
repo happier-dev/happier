@@ -18,6 +18,17 @@ describe('normalizeClaudeAskUserQuestionInputForPublication', () => {
         expect((input.questions[1] as any).freeform).toBeUndefined();
     });
 
+    it('publishes only native preview choices while preserving ordinary, multi-select and hook-bridge freeform', () => {
+        const preview = { question: 'Pick a layout', options: [{ label: 'Amber', preview: 'Amber layout' }, { label: 'Blue' }] };
+        const input = { questions: [preview, { ...preview, question: 'Pick several layouts', multiSelect: true }, { question: 'Ordinary', options: [{ label: 'Amber', preview: ' ' }, { label: 'Blue', preview: null }] }, { ...preview, question: 'Previously normalized', freeform: {} }] };
+        expect(normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', input, { native: true })).toMatchObject({
+            questions: [{ freeform: false }, { freeform: {} }, { freeform: {} }, { freeform: false }],
+        });
+        expect(normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', input)).toMatchObject({
+            questions: [{ freeform: {} }, { freeform: {} }, { freeform: {} }, { freeform: {} }],
+        });
+    });
+
     it('preserves existing freeform field when present', () => {
         const input = {
             questions: [

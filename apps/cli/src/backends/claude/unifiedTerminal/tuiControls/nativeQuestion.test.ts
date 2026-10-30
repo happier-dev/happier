@@ -36,6 +36,66 @@ const focus = (screen: string, from: string, to: string) => screen.replace(`❯ 
 const controls = { isCurrent: () => true, wait: async () => undefined, settleMs: 0, verifyPollIntervalMs: 1, verifyPollTimeoutMs: 2 };
 
 describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
+  it('recognizes and answers preview choices without treating the last choice or side panel as freeform input', async () => {
+    const screen = [
+      '────────────────────────────────────────────────────────────────────────────────',
+      ' ☐ Preview', '', 'Which synthetic layout?', '',
+      '❯ 1. Amber      ┌────────────────────────────────────────────────────────────┐',
+      '  2. Blue       │ Synthetic preview content                                 │',
+      '                └────────────────────────────────────────────────────────────┘',
+      '', '                Notes: press n to add notes', '',
+      '────────────────────────────────────────────────────────────────────────────────',
+      '  Chat about this', '',
+      'Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel',
+    ].join('\n');
+    const input = [{ question: 'Which synthetic layout?', header: 'Preview', multiSelect: false,
+      options: [{ label: 'Amber', preview: 'Synthetic preview content' }, { label: 'Blue' }],
+    }];
+    const parsed = parseClaudeNativeQuestionScreen(screen);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.options.map((option) => option.label)).toEqual(['Amber', 'Blue']);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input)).toBe(true);
+    const blue = focus(screen, '1. Amber', '2. Blue');
+    const port = createFakeControlPort({ captures: [screen, blue, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input,
+      answers: { 'Which synthetic layout?': ['Blue'] },
+    })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentKeys).toEqual(['ArrowDown', 'Enter']);
+    expect(port.sentLiteral).toEqual([]);
+  });
+
+  it('matches live preview labels including wraps and protects notes or chat focus before sending keys', async () => {
+    const capture = (name: string) => readFileSync(new URL(`./__fixtures__/claude-2.1.310-question-preview-${name}.txt`, import.meta.url), 'utf8');
+    const input: { questions: StructuredQuestionLike[] } = JSON.parse(readFileSync(new URL('./__fixtures__/claude-2.1.310-question-preview-input.json', import.meta.url), 'utf8'));
+    const screen = capture('single.initial');
+    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(screen)!, input.questions)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(screen)!, [{ ...input.questions[0]!, options: ['Compact fixture (Recommended)', 'Keep fixture rows', 'Record only'] }])).toBe(false);
+    const answers = { [String(input.questions[0]!.question)]: ['Record only'] };
+    const notesScreens = ['notes.empty', 'notes.escaped', 'notes.continued'].map(capture);
+    for (const notesScreen of notesScreens) {
+      const port = createFakeControlPort({ captures: [notesScreen] });
+      await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input.questions, answers })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });
+      expect(port.sentKeys).toEqual([]);
+      expect(port.sentLiteral).toEqual([]);
+      const laterPage = notesScreen.replace(' ☐ Preview probe', '← ☐ Header Color ☐ Preview probe ✔ Submit →');
+      const laterPort = createFakeControlPort({ captures: [laterPage] });
+      await expect(answerClaudeNativeQuestion({ ...controls, port: laterPort, questions: [...questions, ...input.questions],
+        answers: { ...answers, 'Which probe color?': ['Amber'] },
+      })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });
+      expect(laterPort.sentKeys).toEqual([]);
+    }
+    const changedNotes = focus(screen, '1. Compact fixture', '2. Keep fixture rows').replace('Notes: press n to add notes', 'Notes: A terminal note');
+    const changedPort = createFakeControlPort({ captures: [screen, changedNotes] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: changedPort, questions: input.questions, answers })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });
+    expect(changedPort.sentKeys).toEqual(['ArrowDown']);
+    const freeformPort = createFakeControlPort({ captures: [screen] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: freeformPort, questions: input.questions,
+      answers: { [String(input.questions[0]!.question)]: ['An arbitrary freeform answer'] },
+    })).resolves.toEqual({ status: 'failed', reason: 'invalid_question_answers' });
+    expect(freeformPort.sentKeys).toEqual([]);
+    expect(parseClaudeNativeQuestionScreen(capture('chat.focus'))).toBeNull();
+  });
+
   it('matches the live 80x24 question with offscreen tabs to its unique complete hook-owned question and choices', () => {
     const screen = readFileSync(new URL('./__fixtures__/claude-2.1.310-question-clipped.txt', import.meta.url), 'utf8');
     const input: { questions: StructuredQuestionLike[] } = JSON.parse(readFileSync(new URL('./__fixtures__/claude-2.1.310-question-clipped-input.json', import.meta.url), 'utf8'));

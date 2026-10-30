@@ -1,6 +1,8 @@
 import stringWidth from 'string-width';
 import { normalizeStructuredQuestionDescriptors, type StructuredQuestionLike } from '@happier-dev/protocol';
 
+import { isClaudeNativePreviewQuestion } from '../../utils/normalizeClaudeAskUserQuestionInput';
+
 import { readClaudeNativeDialogScreenLines } from './nativeScreenCapture';
 
 export type ClaudeNativeQuestionPresentation = Readonly<{
@@ -10,6 +12,9 @@ export type ClaudeNativeQuestionPresentation = Readonly<{
   question: string | null;
   multiSelect: boolean;
   nextFocused: boolean;
+  /** Preview choices have annotations instead of an inline freeform answer. */
+  freeformIndex: number | null;
+  notesDraft: boolean;
   options: readonly Readonly<{ label: string; focused: boolean; checked: boolean | null; continuationLines?: readonly string[] }>[];
   reviewAnswers: readonly Readonly<{ question: string; answer: string }>[];
 }>;
@@ -18,7 +23,7 @@ const FOCUS = '[>›❯]';
 const ROW = new RegExp(`^\\s*(${FOCUS})?\\s*(\\d+)\\.(?:\\s+(.+?))?\\s*$`, 'u');
 const RULE = /^[\s─━]+$/u;
 const HEADER = /^\s*(?:←\s+)?[☐☒]\s+.+?\s*$/u;
-const HINT = /^Enter to select · (?:↑\/↓ to navigate|Tab\/Arrow keys to navigate)(?: · ctrl\+g to edit in .+)? · Esc to cancel$/u;
+const HINT = /^Enter to select · (?:↑\/↓ to navigate|Tab\/Arrow keys to navigate)(?: · n to add notes)?(?: · Tab to switch questions)?(?: · ctrl\+g to edit in .+)? · Esc to cancel$/u;
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
@@ -88,6 +93,22 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
     review ? new RegExp(`^\\s*${FOCUS}?\\s*1\\. Submit answers$`, 'u').test(line) : ROW.test(line)
   ));
   if (first < 0) return null;
+  // A preview is a second column inside the native dialog, not part of an option.
+  // Restrict clipping to the choices: the question and footer still span the dialog.
+  const box = / {2,}┌─+┐\s*$/u.exec(body[first]!);
+  const previewColumn = !review && box ? stringWidth(body[first]!.slice(0, box.index + box[0].indexOf('┌'))) : null;
+  let notesDraft = false;
+  if (previewColumn !== null) {
+    const end = body.findIndex((line, index) => index > first && RULE.test(line) && line.trim().length > 0);
+    if (end < 0) return null;
+    const rightColumn = body.slice(first, end).map((line) => line.slice(clipDialogLine(line, previewColumn).length).trim());
+    const notesStart = rightColumn.findIndex((line) => line.startsWith('Notes: '));
+    if (notesStart < 0) return null;
+    // Notes can wrap or contain explicit newlines, even after placeholder-shaped text.
+    notesDraft = rightColumn.slice(notesStart).filter(Boolean).join('\n') !== 'Notes: press n to add notes';
+    for (let index = first; index < end; index += 1) body[index] = clipDialogLine(body[index]!, previewColumn).trimEnd();
+  }
+
   const heading = body.slice(0, first).map((line) => line.replace(/^( ?)│/u, '$1 ')).filter((line) => line.trim().length > 0);
   const options: { label: string; focused: boolean; checked: boolean | null; continuationLines: string[] }[] = [];
   let labelColumn = 0;
@@ -125,6 +146,7 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
         checked = true;
         label = label.slice(0, -2);
       }
+      if (previewColumn !== null) labelColumn -= 1;
       options.push({ label, focused: Boolean(match[1]), checked, continuationLines: [] });
     } else if (new RegExp(`^\\s*(${FOCUS})?\\s+Next$`, 'u').test(line)) {
       nextFocused = new RegExp(`^\\s*${FOCUS}`, 'u').test(line);
@@ -168,13 +190,15 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
   } else {
     if (heading.length === 0 || options.length === 0) return null;
     const footer = body.slice(optionsEnd).filter((line) => line.trim().length > 0);
-    if (footer.length < 3 || !RULE.test(footer[0]!) || !/^\s*\d+\. Chat about this$/u.test(footer[1]!) || !HINT.test(footer.slice(2).map((line) => line.trim()).join(' '))) return null;
+    if (footer.length < 3 || !RULE.test(footer[0]!) || !(previewColumn !== null ? /^\s+Chat about this$/u : /^\s*\d+\. Chat about this$/u).test(footer[1]!) || !HINT.test(footer.slice(2).map((line) => line.trim()).join(' '))) return null;
     if (multiSelect && options.some((option) => option.checked === null)) return null;
-    const freeform = options.at(-1)!;
-    const continuation = freeform.continuationLines;
-    if (continuation.length > 0) freeform.label = [freeform.label, ...continuation].join('\n');
+    if (previewColumn === null) {
+      const freeform = options.at(-1)!;
+      const continuation = freeform.continuationLines;
+      if (continuation.length > 0) freeform.label = [freeform.label, ...continuation].join('\n');
+    }
   }
-  return { kind: review ? 'review' : 'question', tabs, question: review ? null : heading.map((line) => line.trim()).join('\n'), multiSelect, nextFocused, options, reviewAnswers };
+  return { kind: review ? 'review' : 'question', tabs, question: review ? null : heading.map((line) => line.trim()).join('\n'), multiSelect, nextFocused, freeformIndex: review || previewColumn !== null ? null : options.length - 1, notesDraft, options, reviewAnswers };
 }
 
 /** Correlates a native presentation with hook-owned questions, independent of selection progress. */
@@ -201,7 +225,10 @@ export function matchesClaudeNativeQuestionScreen(
   const matches = result.questions.filter((question) => matchesClaudeNativeQuestionText(presentation.question ?? '', question.question ?? ''));
   if (matches.length !== 1) return false;
   const question = matches[0]!;
+  const rawQuestion = questions[result.questions.indexOf(question)]!;
+  const hasFreeformRow = !isClaudeNativePreviewQuestion(rawQuestion);
   return question.multiSelect === presentation.multiSelect
-    && presentation.options.length === question.options.length + 1
+    && (presentation.freeformIndex !== null) === hasFreeformRow
+    && presentation.options.length === question.options.length + Number(hasFreeformRow)
     && question.options.every((option, index) => matchesOptionLabel(presentation.options[index]!, option.label));
 }
