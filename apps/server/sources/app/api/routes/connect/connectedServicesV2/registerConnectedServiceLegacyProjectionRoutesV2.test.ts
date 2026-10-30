@@ -50,7 +50,7 @@ async function retainCredential(authenticationModeId: string, profileId: string)
         content: { t: "encrypted", c: "ciphertext" },
         metadata: { scopes: [] },
         ...(authenticationModeId === "legacy-oauth-unsupported" ? {
-            legacyIdentity: { serviceId: "gemini", profileId, credentialKind: kind },
+            legacyIdentity: { serviceId: "gemini", profileId },
         } : {}),
     });
     if (result.status !== "written") throw new Error("Expected qualified credential create");
