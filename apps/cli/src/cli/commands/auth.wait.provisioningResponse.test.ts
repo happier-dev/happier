@@ -18,9 +18,26 @@ import {
   ensureProtectedLocalStateDirectory,
   writeProtectedLocalStateFileAtomic,
 } from '@/utils/fs/protectedLocalState';
-// Compile the real command graph during collection, outside finite hooks/tests.
-// Each test still reimports after resetting modules for its own Home state.
-import './auth/wait';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { readSettings, writeCredentialsTokenOnly } from '@/persistence';
+import { handleAuthWait } from './auth/wait';
+import { handleAuthCliCommand } from './auth';
+
+// Hoisted passthrough: one test substitutes the features snapshot without
+// resetting the module graph that the other tests' static imports share.
+const featuresSnapshot = vi.hoisted(() => ({ next: null as null | (() => Promise<unknown>) }));
+vi.mock('@/features/serverFeaturesClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/features/serverFeaturesClient')>();
+  return {
+    ...actual,
+    fetchServerFeaturesSnapshot: (...args: Parameters<typeof actual.fetchServerFeaturesSnapshot>) => {
+      const substitute = featuresSnapshot.next;
+      return substitute
+        ? substitute() as ReturnType<typeof actual.fetchServerFeaturesSnapshot>
+        : actual.fetchServerFeaturesSnapshot(...args);
+    },
+  };
+});
 
 function deterministicRandomBytes(length: number): Uint8Array {
   return new Uint8Array(length).fill(length);
@@ -48,7 +65,7 @@ describe('auth wait provisioning response', () => {
 
   afterEach(async () => {
     envScope.restore();
-    vi.resetModules();
+    reloadConfiguration();
     vi.unstubAllGlobals();
     await removeTempDir(localHomeDir);
   });
@@ -69,9 +86,7 @@ describe('auth wait provisioning response', () => {
       HAPPIER_WEBAPP_URL: 'http://webapp.test',
       HAPPIER_AUTH_POLL_INTERVAL_MS: '10',
     });
-    const configMod = await import('@/configuration');
-    configMod.reloadConfiguration();
-    const { configuration } = configMod;
+    reloadConfiguration();
     const publicKeyB64 = Buffer.from(params.keypair.publicKey).toString('base64');
     const statePath = join(
       configuration.activeServerDir,
@@ -122,8 +137,6 @@ describe('auth wait provisioning response', () => {
       expiresAtMs: Date.now() + 3_600_000,
       omitPairingRequirement: true,
     });
-    vi.resetModules();
-    const { handleAuthWait } = await import('./auth/wait');
     const getSpy = vi.spyOn(axios, 'get').mockRejectedValue(
       new Error('network boundary must not be reached for unbound pending state'),
     );
@@ -146,8 +159,6 @@ describe('auth wait provisioning response', () => {
       expiresAtMs: Date.now() + 3_600_000,
       pairingRequirement: 'compatible',
     });
-    vi.resetModules();
-    const { handleAuthWait } = await import('./auth/wait');
     const getSpy = vi.spyOn(axios, 'get').mockRejectedValue(
       new Error('network boundary must not be reached for non-v3 pending state'),
     );
@@ -184,85 +195,6 @@ describe('auth wait provisioning response', () => {
     });
     return app;
   }
-
-  it('persists a v3 token-only claim without synthesizing secret material', async () => {
-    const keypair = tweetnacl.box.keyPair();
-    const pairingSecret = new Uint8Array(32).fill(11);
-    const createdAtMs = Date.now() - 60_000;
-    const expiresAtMs = Date.now() + 3_600_000;
-    const statePath = await prepareState({ keypair, pairingSecret, createdAtMs, expiresAtMs });
-
-    const sealed = sealTerminalProvisioningV3TokenOnlyPayload({
-      terminalEphemeralPublicKey: keypair.publicKey,
-      pairingSecret,
-      createdAtMs,
-      expiresAtMs,
-      randomBytes: deterministicRandomBytes,
-    });
-    const app = authServerApp({ responseB64: Buffer.from(sealed).toString('base64') });
-    await app.ready();
-    const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'https://happier-auth.test' });
-
-    try {
-      vi.doMock('@/features/serverFeaturesClient', () => ({
-        fetchServerFeaturesSnapshot: async () => ({
-          status: 'ready',
-          features: {
-            capabilities: {
-              accountStoredContentCompatibility: {
-                v: 1,
-                minimumProtocolVersion: 2,
-                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-                declarationTransport: 'http-header-and-socket-auth-v1',
-              },
-            },
-          },
-        }),
-      }));
-      vi.resetModules();
-      const { handleAuthWait } = await import('./auth/wait');
-      const configMod = await import('@/configuration');
-      configMod.reloadConfiguration();
-      const { configuration } = configMod;
-      const stdout = captureStdoutJsonOutput();
-      await handleAuthWait([
-        '--public-key',
-        Buffer.from(keypair.publicKey).toString('base64'),
-        '--json',
-      ]);
-      const envelope = stdout.json<{
-        success: boolean;
-        encryptionType: string;
-        pairingAuthentication: string;
-        machineId: string;
-      }>();
-
-      expect(envelope).toEqual(expect.objectContaining({
-        success: true,
-        encryptionType: 'tokenOnly',
-        pairingAuthentication: 'v3',
-      }));
-      expect(envelope).not.toHaveProperty('token');
-      for (const secret of ['token-from-claim', Buffer.from(keypair.secretKey).toString('base64'),
-        Buffer.from(pairingSecret).toString('base64url'), Buffer.from(sealed).toString('base64')]) {
-        expect(JSON.stringify(envelope)).not.toContain(secret);
-      }
-      expect(typeof envelope.machineId).toBe('string');
-      expect(envelope.machineId.length > 0).toBe(true);
-
-      // Token-only persistence must not synthesize secret material.
-      const accessKey = JSON.parse(
-        await readFile(join(configuration.activeServerDir, 'access.key'), 'utf8'),
-      ) as Record<string, unknown>;
-      expect(accessKey).toEqual({ token: 'token-from-claim' });
-
-      await expect(rm(statePath)).rejects.toMatchObject({ code: 'ENOENT' });
-    } finally {
-      vi.doUnmock('@/features/serverFeaturesClient');
-      restoreAxios();
-      await app.close().catch(() => {});
-    }
-  }, 20_000);
 
   it('keeps ordinary credentials when registration retries exhaust the pairing lifetime', async () => {
     const keypair = tweetnacl.box.keyPair();
@@ -302,23 +234,19 @@ describe('auth wait provisioning response', () => {
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
 
     try {
-      vi.doMock('@/features/serverFeaturesClient', () => ({
-        fetchServerFeaturesSnapshot: async () => ({
-          status: 'ready',
-          features: {
-            capabilities: {
-              accountStoredContentCompatibility: {
-                v: 1,
-                minimumProtocolVersion: 2,
-                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-                declarationTransport: 'http-header-and-socket-auth-v1',
-              },
+      featuresSnapshot.next = async () => ({
+        status: 'ready',
+        features: {
+          capabilities: {
+            accountStoredContentCompatibility: {
+              v: 1,
+              minimumProtocolVersion: 2,
+              currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+              declarationTransport: 'http-header-and-socket-auth-v1',
             },
           },
-        }),
-      }));
-      vi.resetModules();
-      const { handleAuthWait } = await import('./auth/wait');
+        },
+      });
       completion = handleAuthWait(['--public-key', Buffer.from(keypair.publicKey).toString('base64'), '--json'], controller.signal);
       await expect(
         completion,
@@ -328,13 +256,10 @@ describe('auth wait provisioning response', () => {
       });
       expect(registrationAttempts).toBe(2);
 
-      const configMod = await import('@/configuration');
-      configMod.reloadConfiguration();
-      await expect(readFile(join(configMod.configuration.activeServerDir, 'access.key'), 'utf8'))
+      await expect(readFile(join(configuration.activeServerDir, 'access.key'), 'utf8'))
         .resolves.toBe(JSON.stringify({ token: 'token-from-claim' }, null, 2));
       await expect(rm(statePath)).rejects.toMatchObject({ code: 'ENOENT' });
 
-      const { readSettings } = await import('@/persistence');
       const settings = await readSettings();
       expect(settings.machineId).toBeTruthy();
       expect(settings.machineIdConfirmedByServer).not.toBe(true);
@@ -342,7 +267,7 @@ describe('auth wait provisioning response', () => {
       controller.abort();
       await completion?.catch(() => {});
       clock.mockRestore();
-      vi.doUnmock('@/features/serverFeaturesClient');
+      featuresSnapshot.next = null;
       restoreAxios();
       await app.close().catch(() => {});
     }
@@ -354,7 +279,6 @@ describe('auth wait provisioning response', () => {
     const createdAtMs = Date.now() - 60_000;
     const expiresAtMs = Date.now() + 3_600_000;
     const statePath = await prepareState({ keypair, pairingSecret, createdAtMs, expiresAtMs });
-    const { writeCredentialsTokenOnly } = await import('@/persistence');
     await writeCredentialsTokenOnly({ token: 'existing-token' });
     const sealed = sealTerminalProvisioningV3TokenOnlyPayload({
       terminalEphemeralPublicKey: keypair.publicKey,
@@ -370,16 +294,12 @@ describe('auth wait provisioning response', () => {
     await app.ready();
     const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'https://happier-auth.test' });
     try {
-      vi.resetModules();
-      const { handleAuthWait } = await import('./auth/wait');
       await expect(
         handleAuthWait(['--public-key', Buffer.from(keypair.publicKey).toString('base64'), '--json']),
       ).rejects.toMatchObject({ code: 'AUTH_RESPONSE_HOME_MISMATCH' });
       await expect(readFile(statePath, 'utf8')).resolves.toContain(serverIdentityId);
 
-      const configMod = await import('@/configuration');
-      configMod.reloadConfiguration();
-      await expect(readFile(join(configMod.configuration.activeServerDir, 'access.key'), 'utf8'))
+      await expect(readFile(join(configuration.activeServerDir, 'access.key'), 'utf8'))
         .resolves.toBe(JSON.stringify({ token: 'existing-token' }, null, 2));
     } finally {
       restoreAxios();
@@ -398,8 +318,6 @@ describe('auth wait provisioning response', () => {
     await app.ready();
     const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'https://happier-auth.test' });
     try {
-      vi.resetModules();
-      const { handleAuthWait } = await import('./auth/wait');
       await expect(
         handleAuthWait(['--public-key', Buffer.from(keypair.publicKey).toString('base64'), '--json']),
       ).rejects.toMatchObject({ code: 'AUTH_RESPONSE_INVALID' });
@@ -422,8 +340,6 @@ describe('auth wait provisioning response', () => {
     );
 
     try {
-      vi.resetModules();
-      const { handleAuthWait } = await import('./auth/wait');
       await expect(
         handleAuthWait(['--public-key', Buffer.from(keypair.publicKey).toString('base64'), '--json']),
       ).rejects.toMatchObject({ code: 'AUTH_WAIT_INVALID_STATE' });
@@ -469,8 +385,6 @@ describe('auth wait provisioning response', () => {
 
     try {
       envScope.patch({ DEBUG: '1' });
-      vi.resetModules();
-      const { handleAuthCliCommand } = await import('./auth');
       await expect(
         handleAuthCliCommand({
           args: ['auth', 'wait', '--public-key', publicKeyB64, '--json'],

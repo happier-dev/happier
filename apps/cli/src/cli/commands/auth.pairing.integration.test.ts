@@ -10,11 +10,16 @@ import {
 } from '@happier-dev/protocol';
 import tweetnacl from 'tweetnacl';
 
+import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { captureConsoleLogAndMuteStdout, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { setStdioTtyForTest } from '@/testkit/process/stdio';
+import { handleAuthRequest } from './auth/request';
+import { writeCredentialsDataKey, readCredentials, readStoredCredentials, writeCredentialsTokenOnly, readSettings } from '@/persistence';
+import { approveTerminalAuthRequest } from '@/auth/terminalAuthApproval';
+import { handleAuthWait } from './auth/wait';
 
 type RequestRow = {
   claimSecretHash: string;
@@ -98,7 +103,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     restoreTty?.();
     restoreTty = null;
     envScope.restore();
-    vi.resetModules();
+    reloadConfiguration();
     vi.unstubAllGlobals();
     await removeTempDir(remoteHomeDir);
     await removeTempDir(localHomeDir);
@@ -118,8 +123,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_PUBLIC_SERVER_URL: 'https://happier-auth.test',
         HAPPIER_WEBAPP_URL: 'http://webapp.test',
       });
-      vi.resetModules();
-      const { handleAuthRequest } = await import('./auth/request');
+      reloadConfiguration();
       const output = captureConsoleLogAndMuteStdout();
       try {
         await handleAuthRequest(['--json']);
@@ -170,14 +174,13 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_PUBLIC_SERVER_URL: 'https://happier-auth.test',
         HAPPIER_WEBAPP_URL: 'http://webapp.test',
       });
-      vi.resetModules();
+      reloadConfiguration();
       vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
         expect(String(input)).toContain('/v1/features');
         events.push('features');
         return createFeaturesResponse();
       }));
 
-      const { handleAuthRequest } = await import('./auth/request');
       const output = captureConsoleLogAndMuteStdout();
       try {
         await handleAuthRequest(['--json']);
@@ -229,10 +232,9 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_PUBLIC_SERVER_URL: 'https://happier-auth.test',
         HAPPIER_WEBAPP_URL: 'http://webapp.test',
       });
-      vi.resetModules();
+      reloadConfiguration();
       vi.stubGlobal('fetch', vi.fn(async () => createFeaturesResponse()));
 
-      const { handleAuthRequest } = await import('./auth/request');
       const output = captureConsoleLogAndMuteStdout();
       try {
         await handleAuthRequest(['--json', '--remote-pairing-context']);
@@ -332,14 +334,13 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
         HAPPIER_VARIANT: 'dev',
       });
-      vi.resetModules();
+      reloadConfiguration();
       const remoteWarns: string[] = [];
       const remoteWarnSpy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
         remoteWarns.push(args.map((arg) => String(arg)).join(' '));
       });
       const remoteOutput = captureStdoutJsonOutput();
 
-      const { handleAuthRequest } = await import('./auth/request');
       let requestJson: any;
       try {
         await handleAuthRequest(['--json']);
@@ -360,9 +361,8 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_WEBAPP_URL: 'http://webapp.test',
         HAPPIER_VARIANT: 'stable',
       });
-      vi.resetModules();
+      reloadConfiguration();
       const machineKey = new Uint8Array(32).fill(7);
-      const { writeCredentialsDataKey } = await import('@/persistence');
       await writeCredentialsDataKey({
         publicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey,
         machineKey,
@@ -372,8 +372,6 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
       // 2) Local: approve using existing local credentials (token never leaves local machine).
       // The approval carries the remote request's v3 pairing context exactly as
       // `auth pair-remote` does, so the response is bound to the pairing secret.
-      vi.resetModules();
-      const { approveTerminalAuthRequest } = await import('@/auth/terminalAuthApproval');
       await approveTerminalAuthRequest({
         publicKey: requestJson.publicKey,
         pairing: requestJson.pairing,
@@ -389,8 +387,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
         HAPPIER_VARIANT: 'stable',
       });
-      vi.resetModules();
-      const { handleAuthWait } = await import('./auth/wait');
+      reloadConfiguration();
       const waitOut = captureConsoleLogAndMuteStdout();
       try {
         await handleAuthWait(['--public-key', requestJson.publicKey, '--json']);
@@ -405,7 +402,6 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         waitOut.restore();
       }
 
-      const { readCredentials } = await import('@/persistence');
       const creds = await readCredentials();
       expect(creds?.token).toBe('issued-token');
       expect(creds?.encryption.type).toBe('dataKey');
@@ -450,12 +446,12 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
         HAPPIER_VARIANT: 'stable',
       });
-      vi.resetModules();
+      reloadConfiguration();
 
-      const { handleAuthRequest } = await import('./auth/request');
       const requestOut = captureConsoleLogAndMuteStdout();
       let requestJson: {
         publicKey: string;
+        stateFile: string;
         pairing: {
           secretB64Url: string;
           createdAtMs: number;
@@ -477,23 +473,27 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         expiresAtMs: requestJson.pairing.expiresAtMs,
         randomBytes: (length) => new Uint8Array(length).fill(17),
       })).toString('base64');
+      const pendingState = JSON.parse(await readFile(requestJson.stateFile, 'utf8')) as { secretKey: string };
 
-      vi.resetModules();
-      const { handleAuthWait } = await import('./auth/wait');
       const waitOut = captureConsoleLogAndMuteStdout();
       try {
         await handleAuthWait(['--public-key', requestJson.publicKey, '--json']);
-        expect(JSON.parse(waitOut.logs[0] ?? '')).toMatchObject({
+        const envelope = JSON.parse(waitOut.logs[0] ?? '');
+        expect(envelope).toMatchObject({
           success: true,
           encryptionType: 'tokenOnly',
           pairingAuthentication: 'v3',
         });
-        expect(waitOut.logs.join('\n')).not.toContain('plain-issued-token');
+        expect(envelope).not.toHaveProperty('token');
+        // Token-only provisioning must not synthesize or echo secret material.
+        for (const secret of ['plain-issued-token', pendingState.secretKey, requestJson.pairing.secretB64Url, response]) {
+          expect(waitOut.logs.join('\n')).not.toContain(secret);
+        }
       } finally {
         waitOut.restore();
       }
+      await expect(readFile(requestJson.stateFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
 
-      const { readStoredCredentials, readCredentials } = await import('@/persistence');
       await expect(readStoredCredentials()).resolves.toEqual({
         token: 'plain-issued-token',
         encryption: null,
@@ -555,8 +555,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         HAPPIER_VARIANT: 'stable',
       });
 
-      vi.resetModules();
-      const { handleAuthRequest } = await import('./auth/request');
+      reloadConfiguration();
       const requestOut = captureConsoleLogAndMuteStdout();
       let requestJson: {
         publicKey: string;
@@ -569,8 +568,6 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         requestOut.restore();
       }
 
-      vi.resetModules();
-      const { writeCredentialsTokenOnly, readSettings } = await import('@/persistence');
       const tokenPayload = Buffer.from(JSON.stringify({ sub: 'acct_local' })).toString('base64url');
       await writeCredentialsTokenOnly({ token: `header.${tokenPayload}.sig` });
 
@@ -584,8 +581,6 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         randomBytes: (length) => new Uint8Array(length).fill(19),
       })).toString('base64');
 
-      vi.resetModules();
-      const { handleAuthWait } = await import('./auth/wait');
       const waitOut = captureConsoleLogAndMuteStdout();
       try {
         await handleAuthWait(['--public-key', requestJson.publicKey, '--json']);
@@ -607,7 +602,6 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
 
       const settings = await readSettings();
       expect(settings.machineId).toMatch(/^[-a-z0-9]+$/i);
-      const { readStoredCredentials } = await import('@/persistence');
       await expect(readStoredCredentials()).resolves.toEqual({
         token: 'fresh-approved-token',
         encryption: {
