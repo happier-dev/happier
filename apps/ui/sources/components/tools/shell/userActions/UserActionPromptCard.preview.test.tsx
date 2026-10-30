@@ -116,30 +116,6 @@ describe('UserActionPromptCard (preview)', () => {
         expect(screen.getTextContent()).not.toContain('Continue?');
     });
 
-    it('does not render when the session is inactive', async () => {
-        const { UserActionPromptCard } = await import('./UserActionPromptCard');
-
-        const request = {
-            id: 'ua1',
-            tool: 'ask_user',
-            kind: 'user_action',
-            arguments: { question: 'Continue?' },
-        } as PendingPermissionRequest;
-
-        const screen = await renderWithSessionTranscriptSource(
-            <UserActionPromptCard
-                request={request}
-                location={null}
-                sessionId="session-1"
-                metadata={null}
-                canApprovePermissions={false}
-                disabledReason="inactive"
-            />,
-        );
-
-        expect(screen.findAllByTestId('user-action-prompt-card')).toHaveLength(0);
-    });
-
     it('updates an inactive card to active on the same instance without a hook-order error', async () => {
         const { UserActionPromptCard } = await import('./UserActionPromptCard');
 

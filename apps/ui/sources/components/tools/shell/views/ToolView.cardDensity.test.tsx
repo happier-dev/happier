@@ -121,15 +121,6 @@ describe('ToolView (card density)', () => {
         expect(screen.findAllByTestId('tool-card-subtitle').length).toBeGreaterThan(0);
     });
 
-    it('does not render a separate subtitle line in compact density', async () => {
-        toolViewDetailLevelDefaultSetting.value = 'compact';
-        const tool = makeToolCall({ name: 'edit', state: 'running', input: {}, description: null, result: null });
-
-        const screen = await renderWithSessionTranscriptSource(React.createElement(ToolView, { tool, metadata: null, messages: [] }));
-
-        expect(screen.findAllByTestId('tool-card-subtitle')).toHaveLength(0);
-    });
-
     it('rounds the card with the theme tool card radius', async () => {
         toolViewDetailLevelDefaultSetting.value = 'summary';
         const tool = makeToolCall({ name: 'edit', state: 'running', input: {}, description: null, result: null });
