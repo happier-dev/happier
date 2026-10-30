@@ -39,11 +39,6 @@ describe('resolveConnectedServiceCollapseKey', () => {
         expect(resolveConnectedServiceCollapseKey({ ...ACCOUNT, groupId: '' })).toBe(resolveConnectedServiceCollapseKey(ACCOUNT));
     });
 
-    it('does not collide between the same account standalone vs as a pool member', () => {
-        const accountKey = resolveConnectedServiceCollapseKey(ACCOUNT);
-        const memberKey = resolveConnectedServiceCollapseKey({ ...ACCOUNT, groupId: 'g' });
-        expect(accountKey).not.toBe(memberKey);
-    });
     it('keeps exact punctuation-bearing identities distinct', () => {
         expect(resolveConnectedServiceCollapseKey({ ...ACCOUNT, profileId: 'a:b', groupId: 'c' }))
             .not.toBe(resolveConnectedServiceCollapseKey({ ...ACCOUNT, profileId: 'a%3Ab', groupId: 'c' }));

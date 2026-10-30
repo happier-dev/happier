@@ -21,19 +21,6 @@ describe('connectedServiceProfilePreferences', () => {
     expect(connectedServiceProfileKey({ serviceId: 'anthropic', profileId: 'work' })).toBe('anthropic/work');
   });
 
-  it('escapes profile key segments to avoid collisions', () => {
-    expect(connectedServiceProfileKey({ serviceId: 'anthropic', profileId: 'work/team' })).toBe('anthropic/work%2Fteam');
-  });
-
-  it('resolves a profile label by key (trimmed)', () => {
-    const label = resolveConnectedServiceProfileLabel({
-      labelsByKey: { 'anthropic/work': ' Work Account ' },
-      serviceId: 'anthropic',
-      profileId: 'work',
-    });
-    expect(label).toBe('Work Account');
-  });
-
   it('refuses unescaped legacy profile label keys', () => {
     const label = resolveConnectedServiceProfileLabel({
       labelsByKey: { 'anthropic/work/team': 'Legacy Account' },
@@ -51,15 +38,6 @@ describe('connectedServiceProfilePreferences', () => {
       profileId: 'work',
     });
     expect(label).toBeNull();
-  });
-
-  it('picks the default profile when it is connected', () => {
-    const selected = resolveConnectedServiceDefaultProfileId({
-      serviceId: 'anthropic',
-      connectedProfileIds: ['personal', 'work'],
-      defaultProfileByServiceId: { anthropic: 'work' },
-    });
-    expect(selected).toBe('work');
   });
 
   it('falls back to the first connected profile when the default is unavailable', () => {

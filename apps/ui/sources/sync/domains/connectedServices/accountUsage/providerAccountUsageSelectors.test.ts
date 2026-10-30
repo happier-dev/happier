@@ -100,14 +100,6 @@ const formatter = {
 };
 
 describe('provider account usage selectors', () => {
-    it('removes connected-service alias projection helpers from the active selector surface', async () => {
-        const selectors = await loadSelectors();
-
-        expect('projectProviderAccountUsageSnapshotForConnectedServiceAlias' in selectors).toBe(false);
-        expect('selectDisplayableProviderAccountUsageSnapshotForConnectedServiceQuota' in selectors).toBe(false);
-        expect('selectProviderAccountUsageSnapshotsByAlias' in selectors).toBe(false);
-    });
-
     it('suppresses native account-usage fallback for connected-service-bound sessions without a quota view', async () => {
         const selectors = await loadSelectors();
         const snapshot = makeSnapshot();

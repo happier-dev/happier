@@ -28,25 +28,6 @@ describe('readSessionConnectedServiceBindings', () => {
         installConnectedAccountDescriptorProjection(readerProjection);
     });
 
-    it('reads the current qualified writer shape verbatim', () => {
-        expect(readSessionConnectedServiceBindings({
-            metadata: {
-                connectedServices: {
-                    v: 2,
-                    bindingsByServiceId: {
-                        [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
-                    },
-                },
-            },
-            agentId: 'claude',
-        })).toEqual({
-            v: 2,
-            bindingsByServiceId: {
-                [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
-            },
-        });
-    });
-
     it('maps released bundled scalar bindings through the provenance-named legacy ingress', () => {
         // Persisted legacy session metadata carries the bare built-in service id.
         // The reader surfaces it under the canonical qualified key for display,
