@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { installVersionedPayload } from '../../firstPartyRuntime/index.js';
-import { resolveCliUpdateCachePath, writeUpdateCache } from '../../update/index.js';
+import { CLI_UPDATE_CHECK_INTERVAL_MS, resolveCliUpdateCachePath, writeUpdateCache } from '../../update/index.js';
 import { readLocalCliUpdateFact } from './cliUpdateFact.js';
 
 async function installManagedCli(homeDir: string, versionId: string): Promise<void> {
@@ -51,17 +51,29 @@ describe('readLocalCliUpdateFact', () => {
     }
   });
 
-  it('starts the existing background check when the cache is stale and still answers from the last result', async () => {
+  it.each(['missing', 'stale'] as const)('starts the background check with a %s cache and preserves any last result', async (cacheState) => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-update-fact-stale-'));
     const env: NodeJS.ProcessEnv = { HAPPIER_HOME_DIR: homeDir, HAPPIER_STACK_REPO_DIR: homeDir, PATH: process.env.PATH };
     try {
       await installManagedCli(homeDir, '0.3.1');
+      const nowMs = 1_800_000_000_000;
+      if (cacheState === 'stale') {
+        writeUpdateCache(resolveCliUpdateCachePath({ happierHomeDir: homeDir, channelLabel: 'stable' }), {
+          checkedAt: nowMs - CLI_UPDATE_CHECK_INTERVAL_MS - 1,
+          latest: '0.3.2',
+          current: '0.3.0',
+          runtimeVersion: null,
+          invokerVersion: null,
+          updateAvailable: false,
+          notifiedAt: null,
+        });
+      }
       const refresh = vi.fn();
 
-      expect(readLocalCliUpdateFact({ processEnv: env, nowMs: 1_800_000_000_000, refresh })).toEqual({
+      expect(readLocalCliUpdateFact({ processEnv: env, nowMs, refresh })).toEqual({
         currentVersion: '0.3.1',
-        latestVersion: null,
-        updateAvailable: false,
+        latestVersion: cacheState === 'stale' ? '0.3.2' : null,
+        updateAvailable: cacheState === 'stale',
         managed: true,
       });
       expect(refresh).toHaveBeenCalledWith(expect.objectContaining({ ring: 'stable', happierHomeDir: homeDir }));

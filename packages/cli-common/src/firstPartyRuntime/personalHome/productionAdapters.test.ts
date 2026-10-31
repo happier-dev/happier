@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveRelayRuntimeDefaults } from '../relayRuntime.js';
 import { readSqliteMigrationCatalog } from '../sqliteMigrationCatalog.js';
@@ -62,6 +62,8 @@ async function seedPersonalHome(params: Readonly<{ homeDir: string; homeServerId
 }
 
 describe('Personal Home production adapters', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it.skipIf(process.platform === 'win32')('consumes an exact stopped-server descriptor and never synthesizes one from unavailable endpoint facts', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-home-descriptor-command-'));
     try {
@@ -696,6 +698,7 @@ describe('Personal Home production adapters', () => {
     ].join('\n');
     await writeFile(join(defaults.configDir, 'server.env'), originalEnv);
 
+    vi.stubEnv('HAPPIER_SERVER_LIGHT_DATA_DIR', join(homeDir, 'ambient-data'));
     const layout = await resolveCanonicalPersonalHomeRuntimeLayout({ homeDir, platform: 'linux', mode: 'user' });
     expect(layout.dataDir).toBe(persistedDataDir);
     const applied = await applyPersonalHomeSanitizedConfiguration(layout, normalizePersonalHomeRestorableConfigurationV1({

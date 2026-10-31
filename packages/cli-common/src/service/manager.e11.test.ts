@@ -25,6 +25,7 @@ describe('E11 canonical service lifecycle', () => {
     });
 
     expect(stack.contents).toContain('Restart=on-failure');
+    expect(stack.contents).not.toContain('Restart=always');
     expect(ordinary.contents).toContain('Restart=always');
   });
 
