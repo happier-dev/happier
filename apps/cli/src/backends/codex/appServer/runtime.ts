@@ -1657,7 +1657,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         if (permissionSupport === 'legacy') {
             return buildCurrentLegacyPermissionParams(target);
         }
-        return buildCodexAppServerPermissionsParams({ permissionMode, directory: params.directory, managedScalarFallback });
+        return buildCodexAppServerPermissionsParams({ permissionMode, directory: params.directory, target, managedScalarFallback });
     };
 
     const requestWithManagedPermissionFallback = (

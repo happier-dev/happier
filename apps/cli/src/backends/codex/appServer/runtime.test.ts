@@ -131,7 +131,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
     rejectSteerAsNoActiveTurn?: boolean;
     rejectPermissionsProfile?: boolean;
     managedAllowedApprovalPolicies?: readonly string[];
-    ambiguousManagedApprovalRejection?: boolean | 'map-expected-string';
+    ambiguousManagedApprovalRejection?: boolean;
     rejectGoalMethods?: boolean;
     rejectGoalMethodsAsInvalidRequest?: boolean;
     nativeGoal?: Record<string, unknown>;
@@ -192,7 +192,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         `let nativeGoal = ${JSON.stringify(params.nativeGoal ?? null)};`,
         'const resumedThreadIds = new Set();',
         `const managedAllowedApprovalPolicies = ${JSON.stringify(params.managedAllowedApprovalPolicies ?? null)};`,
-        `const ambiguousManagedApprovalRejection = ${JSON.stringify(params.ambiguousManagedApprovalRejection ?? false)};`,
+        `const ambiguousManagedApprovalRejection = ${JSON.stringify(params.ambiguousManagedApprovalRejection === true)};`,
         'const managedApprovalPolicyError = (policy) => {',
         '    if (!managedAllowedApprovalPolicies || policy == null) return null;',
         '    const granular = typeof policy === "object" && policy.granular != null;',
@@ -202,7 +202,6 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '    const allowed = managedAllowedApprovalPolicies.map((item) => item === "untrusted" ? "UnlessTrusted" : item === "on-request" ? "OnRequest" : item === "never" ? "Never" : "Granular");',
         '    const tick = String.fromCharCode(96);',
         '    const message = "invalid value for " + tick + "approval_policy" + tick + ": " + tick + candidate + tick + " is not in the allowed set [" + allowed.join(", ") + "] (set by system requirements)";',
-        '    if (ambiguousManagedApprovalRejection === "map-expected-string") return { code: -32600, message: "Invalid request: invalid type: map, expected a string" };',
         '    return { code: -32602, message: ambiguousManagedApprovalRejection ? "invalid approval policy" : message };',
         '};',
         'for await (const line of rl) {',
@@ -1749,7 +1748,7 @@ describe('createCodexAppServerRuntime', () => {
             rejectSteerAsNoActiveTurn?: boolean;
             rejectPermissionsProfile?: boolean;
             managedAllowedApprovalPolicies?: readonly string[];
-            ambiguousManagedApprovalRejection?: boolean | 'map-expected-string';
+            ambiguousManagedApprovalRejection?: boolean;
             rejectGoalMethods?: boolean;
             rejectGoalMethodsAsInvalidRequest?: boolean;
             nativeGoal?: Record<string, unknown>;
@@ -2191,7 +2190,7 @@ describe('createCodexAppServerRuntime', () => {
                     method: 'thread/start',
                     params: expect.objectContaining({
                         cwd: root,
-                        permissions: ':workspace',
+                        sandbox: 'workspace-write',
                         experimentalRawEvents: true,
                         persistExtendedHistory: true,
                     }),
@@ -2202,35 +2201,31 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
-    it('starts safe-yolo app-server threads with auto-reviewer approvals instead of disabling approvals', async () => {
+    it('preserves workspace network access and Auto review when native profiles have narrower permissions', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-safe-yolo-start-');
-
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
-            session: { updateMetadata: vi.fn() } as any,
+            session: createApiSessionClientFixture(),
             permissionMode: 'safe-yolo',
         });
 
         await runtime.startOrLoad({});
-
-        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-        expect(requestLog).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({
-                    method: 'thread/start',
-                    params: expect.objectContaining({
-                        permissions: ':workspace',
-                    }),
-                }),
-            ]),
-        );
-        const startRequest = requestLog.find((entry: { method: string }) => entry.method === 'thread/start') as { params?: Record<string, unknown> } | undefined;
-        expect(startRequest?.params).not.toHaveProperty('sandbox');
-        expect(startRequest?.params).toMatchObject({
+        await runtime.sendPrompt('workspace-network');
+        const requests = await readRequestLog(requestLogPath);
+        const start = requests.find((entry) => entry.method === 'thread/start');
+        expect(start?.params).toMatchObject({
+            sandbox: 'workspace-write',
             approvalPolicy: { granular: expect.objectContaining({ sandbox_approval: true }) },
             approvalsReviewer: 'auto_review',
         });
+        expect(start?.params).not.toHaveProperty('permissions');
+        const turn = requests.find((entry) => entry.method === 'turn/start');
+        expect(turn?.params).toMatchObject({
+            sandboxPolicy: { type: 'workspaceWrite', writableRoots: [root], networkAccess: true },
+            approvalsReviewer: 'auto_review',
+        });
+        expect(turn?.params).not.toHaveProperty('permissions');
     });
 
     it('falls back to legacy app-server permission fields after older Codex rejects permission profiles', async () => {
@@ -2272,12 +2267,14 @@ describe('createCodexAppServerRuntime', () => {
         expect(turnStart?.params).not.toHaveProperty('permissions');
     });
 
-    it.each(['start', 'resume', 'turn'] as const)('retains native permissions through the managed scalar fallback at %s', async (entryPoint) => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-managed-native-', {
+    it.each(['start', 'resume', 'turn'] as const)('keeps workspace policy through the managed scalar fallback at %s without disabling native profiles', async (entryPoint) => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-managed-workspace-', {
             rejectPermissionsProfileAsStringShape: true,
             managedAllowedApprovalPolicies: ['untrusted', 'on-request', 'never'],
         });
-        let permissionMode: PermissionMode = entryPoint === 'turn' ? 'default' : 'safe-yolo';
+        const autoMode = normalizePermissionModeForAgentStart({ agentId: 'codex', value: 'acceptEdits' });
+        expect(autoMode).toBe('safe-yolo');
+        let permissionMode: PermissionMode = entryPoint === 'turn' ? 'default' : autoMode!;
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
@@ -2285,102 +2282,32 @@ describe('createCodexAppServerRuntime', () => {
             getPermissionMode: () => permissionMode,
         });
 
-        await runtime.startOrLoad(entryPoint === 'resume' ? { resumeId: 'thread-managed-native' } : {});
-        permissionMode = 'safe-yolo';
-        await runtime.sendPrompt('managed-native');
+        await runtime.startOrLoad(entryPoint === 'resume' ? { resumeId: 'thread-managed-workspace' } : {});
+        permissionMode = autoMode!;
+        await runtime.sendPrompt('managed-workspace');
 
         const requests = await readRequestLog(requestLogPath);
         const method = entryPoint === 'turn' ? 'turn/start' : entryPoint === 'resume' ? 'thread/resume' : 'thread/start';
         const attempts = requests.filter((entry) => entry.method === method);
         expect(attempts).toHaveLength(2);
         expect(attempts[0]?.params).toMatchObject({
-            permissions: ':workspace',
             approvalPolicy: { granular: expect.any(Object) },
             approvalsReviewer: 'auto_review',
         });
-        expect(attempts[1]?.params).toMatchObject({ permissions: ':workspace', approvalPolicy: 'on-request', approvalsReviewer: 'user' });
-        for (const entry of requests.filter((entry) => entry.method === 'turn/start')) {
-            expect(entry.params).toMatchObject({ permissions: ':workspace' });
-            expect(entry.params).not.toHaveProperty('sandboxPolicy');
-        }
+        expect(attempts[1]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user' });
+        for (const entry of attempts) expect(entry.params).not.toHaveProperty('permissions');
         const turns = requests.filter((entry) => entry.method === 'turn/start');
-        expect(turns.at(-1)?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user' });
-    });
-
-    it('uses one managed scalar fallback after canonical Auto reaches a rejected legacy granular policy', async () => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-managed-auto-', {
-            rejectPermissionsProfile: true,
-            managedAllowedApprovalPolicies: ['untrusted', 'on-request', 'never'],
-        });
-        const permissionMode = normalizePermissionModeForAgentStart({ agentId: 'codex', value: 'acceptEdits' });
-        expect(permissionMode).toBe('safe-yolo');
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            onThinkingChange: vi.fn(),
-            session: { updateMetadata: vi.fn() } as any,
-            permissionMode: permissionMode!,
+        expect(turns.at(-1)?.params).toMatchObject({
+            approvalPolicy: 'on-request',
+            approvalsReviewer: 'user',
+            sandboxPolicy: { type: 'workspaceWrite', writableRoots: [root], networkAccess: true },
         });
 
-        await runtime.startOrLoad({});
-        await runtime.sendPrompt('managed-auto');
-
-        const requests = await readRequestLog(requestLogPath);
-        const starts = requests.filter((entry) => entry.method === 'thread/start');
-        expect(starts).toHaveLength(3);
-        expect(starts[0]?.params).toMatchObject({ permissions: ':workspace' });
-        expect(starts[1]?.params).toMatchObject({ approvalPolicy: { granular: expect.any(Object) }, approvalsReviewer: 'auto_review' });
-        expect(starts[2]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write' });
-        const turns = requests.filter((entry) => entry.method === 'turn/start');
-        expect(turns).toHaveLength(1);
-        expect(turns[0]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandboxPolicy: { type: 'workspaceWrite' } });
-    });
-
-    it('uses the managed scalar fallback on thread resume before starting a turn', async () => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-managed-resume-', {
-            rejectPermissionsProfile: true,
-            managedAllowedApprovalPolicies: ['untrusted', 'on-request', 'never'],
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            onThinkingChange: vi.fn(),
-            session: { updateMetadata: vi.fn() } as any,
-            permissionMode: 'safe-yolo',
-        });
-
-        await runtime.startOrLoad({ resumeId: 'thread-managed-resume' });
-        await runtime.sendPrompt('managed-resume');
-
-        const requests = await readRequestLog(requestLogPath);
-        const resumes = requests.filter((entry) => entry.method === 'thread/resume');
-        expect(resumes).toHaveLength(3);
-        expect(resumes[2]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write' });
-        const turns = requests.filter((entry) => entry.method === 'turn/start');
-        expect(turns).toHaveLength(1);
-        expect(turns[0]?.params).toMatchObject({ approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite' } });
-    });
-
-    it('uses the same managed fallback when Auto first reaches a turn after thread start', async () => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-managed-turn-', {
-            rejectPermissionsProfile: true,
-            managedAllowedApprovalPolicies: ['untrusted', 'on-request', 'never'],
-        });
-        let permissionMode: PermissionMode = 'default';
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            onThinkingChange: vi.fn(),
-            session: { updateMetadata: vi.fn() } as any,
-            getPermissionMode: () => permissionMode,
-        });
-
-        await runtime.startOrLoad({});
-        permissionMode = 'safe-yolo';
-        await runtime.sendPrompt('managed-turn');
-
-        const turns = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'turn/start');
-        expect(turns).toHaveLength(3);
-        expect(turns[0]?.params).toMatchObject({ permissions: ':workspace' });
-        expect(turns[1]?.params).toMatchObject({ approvalPolicy: { granular: expect.any(Object) }, approvalsReviewer: 'auto_review' });
-        expect(turns[2]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandboxPolicy: { type: 'workspaceWrite' } });
+        permissionMode = 'read-only';
+        await runtime.sendPrompt('read-only-after-workspace');
+        const readOnlyTurn = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'turn/start').at(-1);
+        expect(readOnlyTurn?.params).toMatchObject({ permissions: ':read-only', approvalPolicy: 'never' });
+        expect(readOnlyTurn?.params).not.toHaveProperty('sandboxPolicy');
     });
 
     it('preserves structured input when a managed scalar policy retry is rejected', async () => {
@@ -2410,8 +2337,8 @@ describe('createCodexAppServerRuntime', () => {
         })).rejects.toThrow(/structured turn input unsupported/);
 
         const turns = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'turn/start');
-        expect(turns).toHaveLength(3);
-        expect(turns[2]?.params).toMatchObject({
+        expect(turns).toHaveLength(2);
+        expect(turns[1]?.params).toMatchObject({
             approvalPolicy: 'on-request',
             approvalsReviewer: 'user',
             input: [
@@ -2435,8 +2362,8 @@ describe('createCodexAppServerRuntime', () => {
 
         await expect(runtime.startOrLoad({})).rejects.toThrow(/approval_policy/);
         const starts = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'thread/start');
-        expect(starts).toHaveLength(2);
-        expect(starts[1]?.params).toMatchObject({ approvalPolicy: { granular: expect.any(Object) } });
+        expect(starts).toHaveLength(1);
+        expect(starts[0]?.params).toMatchObject({ approvalPolicy: { granular: expect.any(Object) } });
     });
 
     it('does not downgrade an ambiguous legacy approval rejection', async () => {
@@ -2454,26 +2381,7 @@ describe('createCodexAppServerRuntime', () => {
 
         await expect(runtime.startOrLoad({})).rejects.toThrow(/invalid approval policy/);
         const starts = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'thread/start');
-        expect(starts).toHaveLength(2);
-    });
-
-    it('does not remove native permissions after a map/string error from another request field', async () => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-native-unrelated-shape-', {
-            rejectPermissionsProfileAsStringShape: true,
-            managedAllowedApprovalPolicies: ['untrusted', 'on-request', 'never'],
-            ambiguousManagedApprovalRejection: 'map-expected-string',
-        });
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            onThinkingChange: vi.fn(),
-            session: createApiSessionClientFixture(),
-            permissionMode: 'safe-yolo',
-        });
-
-        await expect(runtime.startOrLoad({})).rejects.toThrow(/invalid type: map, expected a string/);
-        const starts = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'thread/start');
         expect(starts).toHaveLength(1);
-        expect(starts[0]?.params).toMatchObject({ permissions: ':workspace' });
     });
 
     it('keeps native read-only permissions when Codex 0.166 expects a string profile id', async () => {
