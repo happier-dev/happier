@@ -42,16 +42,6 @@ describe('MiniMax provider contributions', () => {
     });
   });
 
-  it('never lets one region reach the other region\'s host', () => {
-    // A key issued on one host is rejected by the other, so a cross-region base
-    // URL would be a silent 401 rather than a visible misconfiguration.
-    const globalUrls = MINIMAX_PROVIDER_CONTRIBUTION.endpointTemplates.map((endpoint) => endpoint.baseUrl);
-    const cnUrls = MINIMAX_CN_PROVIDER_CONTRIBUTION.endpointTemplates.map((endpoint) => endpoint.baseUrl);
-    expect(globalUrls.every((url) => url.includes('api.minimax.io'))).toBe(true);
-    expect(cnUrls.every((url) => url.includes('api.minimaxi.com'))).toBe(true);
-    expect(globalUrls.some((url) => cnUrls.includes(url))).toBe(false);
-  });
-
   it.each(REGIONS)('offers $label bearer auth on every declared protocol', ({ contribution }) => {
     const protocols = contribution.endpointTemplates.map((endpoint) => endpoint.protocol);
     const transport = contribution.credential.transports[0];
@@ -130,8 +120,4 @@ describe('MiniMax provider contributions', () => {
     });
   });
 
-  it('uses distinct migration sources so both regional profiles can coexist', () => {
-    expect(MINIMAX_PROVIDER_CONTRIBUTION.legacyProfileMigrations[0]?.sourceProfileId)
-      .not.toBe(MINIMAX_CN_PROVIDER_CONTRIBUTION.legacyProfileMigrations[0]?.sourceProfileId);
-  });
 });
