@@ -27,7 +27,7 @@ describe('resolveCodexMcpPolicyForPermissionMode', () => {
 describe('resolveCodexAppServerPolicyForPermissionMode', () => {
   it.each([
     ['default', { approvalPolicy: { granular: { mcp_elicitations: true, request_permissions: true, rules: true, sandbox_approval: true, skill_approval: false } }, approvalsReviewer: 'user', sandbox: 'workspace-write', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['__DIR__'], readOnlyAccess: { type: 'fullAccess' }, networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false } }],
-    ['read-only', { approvalPolicy: 'never', sandbox: 'read-only', sandboxPolicy: { type: 'readOnly', access: { type: 'fullAccess' }, networkAccess: true } }],
+    ['read-only', { approvalPolicy: 'never', sandbox: 'read-only', sandboxPolicy: { type: 'readOnly', access: { type: 'fullAccess' }, networkAccess: false } }],
     ['safe-yolo', { approvalPolicy: { granular: { mcp_elicitations: true, request_permissions: true, rules: true, sandbox_approval: true, skill_approval: false } }, approvalsReviewer: 'auto_review', sandbox: 'workspace-write', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['__DIR__'], readOnlyAccess: { type: 'fullAccess' }, networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false } }],
     ['yolo', { approvalPolicy: 'never', sandbox: 'danger-full-access', sandboxPolicy: { type: 'dangerFullAccess' } }],
     ['bypassPermissions', { approvalPolicy: 'never', sandbox: 'danger-full-access', sandboxPolicy: { type: 'dangerFullAccess' } }],

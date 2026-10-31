@@ -108,7 +108,6 @@ import {
 } from './rollbackMetadata';
 import {
     isCodexAppServerInvalidRequestForMethodError,
-    isCodexAppServerInvalidRequestMapExpectedStringError,
     isCodexAppServerInvalidParamsForFieldError,
     isCodexAppServerInvalidParamsError,
     isCodexAppServerDefinitiveMethodNotFoundError,
@@ -355,7 +354,7 @@ type PendingRawAssistantFinal = Readonly<{
 
 const CODEX_TRANSCRIPT_INITIAL_CHECKPOINT_DELAY_MS = 0;
 
-type CodexAppServerPermissionSupport = 'unknown' | 'supported' | 'legacy' | 'legacy-managed-scalar';
+type CodexAppServerPermissionSupport = 'unknown' | 'supported' | 'legacy';
 
 type CodexAppServerPromptOptions = Readonly<{
     metadata?: unknown;
@@ -1208,6 +1207,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     let hasServiceTierOverride = false;
     let pendingTurnStartSeqInclusive: number | null = null;
     let permissionSupport: CodexAppServerPermissionSupport = 'unknown';
+    let managedScalarFallback = false;
     let lastRateLimitSnapshot: unknown = null;
     let onPromptAcceptedByProvider: CodexAppServerPromptAcceptedCallback | null = null;
     let onUndeliverablePrompts: CodexAppServerUndeliverablePromptsCallback | null = null;
@@ -1646,17 +1646,17 @@ export function createCodexAppServerRuntime(params: Readonly<{
             permissionMode,
             directory: params.directory,
             target,
-            managedScalarFallback: permissionSupport === 'legacy-managed-scalar',
+            managedScalarFallback,
         });
     };
 
     const buildCurrentPermissionParams = (target: 'thread' | 'turn'): Record<string, unknown> => {
         const permissionMode = getCurrentPermissionMode();
         if (permissionMode === 'default') return {};
-        if (permissionSupport === 'legacy' || permissionSupport === 'legacy-managed-scalar') {
+        if (permissionSupport === 'legacy') {
             return buildCurrentLegacyPermissionParams(target);
         }
-        return buildCodexAppServerPermissionsParams({ permissionMode });
+        return buildCodexAppServerPermissionsParams({ permissionMode, directory: params.directory, managedScalarFallback });
     };
 
     const requestWithManagedPermissionFallback = (
@@ -1667,8 +1667,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         options?: CodexAppServerRequestOptions,
     ): Promise<unknown> => {
         const approvalPolicy = requestParams.approvalPolicy;
-        if (permissionSupport !== 'legacy'
-            || normalizePermissionModeToIntent(getCurrentPermissionMode()) !== 'safe-yolo'
+        if (normalizePermissionModeToIntent(getCurrentPermissionMode()) !== 'safe-yolo'
             || !approvalPolicy || typeof approvalPolicy !== 'object' || Array.isArray(approvalPolicy)
             || !Object.prototype.hasOwnProperty.call(approvalPolicy, 'granular')
             || requestParams.approvalsReviewer !== 'auto_review') {
@@ -1676,11 +1675,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }
         return client.request(method, requestParams, options).catch(async (error: unknown) => {
             if (!isCodexAppServerManagedGranularApprovalRejection(error, method)) throw error;
-            permissionSupport = 'legacy-managed-scalar';
+            managedScalarFallback = true;
             logger.warn('[codex-app-server] Managed policy rejected Auto granular approvals; using on-request with user review for this session');
             return await client.request(method, {
                 ...requestParams,
-                ...buildCurrentLegacyPermissionParams(target),
+                ...buildCurrentPermissionParams(target),
             }, options);
         });
     };
@@ -1688,8 +1687,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     const shouldRetryWithoutPermissionProfile = (error: unknown, requestParams: Record<string, unknown>): boolean => {
         return Object.prototype.hasOwnProperty.call(requestParams, 'permissions')
             && (isCodexAppServerMethodNotFoundError(error)
-                || isCodexAppServerInvalidParamsForFieldError(error, 'permissions')
-                || isCodexAppServerInvalidRequestMapExpectedStringError(error));
+                || isCodexAppServerInvalidParamsForFieldError(error, 'permissions'));
     };
 
     const setThinking = (nextThinking: boolean): void => {
@@ -4838,6 +4836,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             currentReasoningEffort = null;
             currentServiceTier = null;
             permissionSupport = 'unknown';
+            managedScalarFallback = false;
             nextClientConnectedServiceIdentity = latestConnectedServiceRuntimeIdentity ?? nextClientConnectedServiceIdentity;
             latestConnectedServiceRuntimeIdentity = null;
             await disposeClient();

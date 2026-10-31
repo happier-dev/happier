@@ -3,7 +3,7 @@ import Fastify from 'fastify';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
-import { ActionsSettingsV1Schema, SessionGoalSetRequestV1Schema, SessionWorkStateGetResponseV1Schema } from '@happier-dev/protocol';
+import { AccountSettingsSchema, ActionsSettingsV1Schema, SessionGoalSetRequestV1Schema, SessionWorkStateGetResponseV1Schema } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
@@ -482,6 +482,63 @@ describe('createActionToolExecutorBridge', () => {
     });
     expect(calls).toEqual([]);
   });
+
+  it.each(['plan', 'delegate'] as const)(
+    'starts a %s run through MCP when its intent action is discoverable-only',
+    async (intent) => {
+      const requests: unknown[] = [];
+      const { mcp, toolNames } = createHappierMcpServer({
+        sessionId: 'sess-current',
+        getPermissionMode: () => 'default',
+        rpcHandlerManager: {
+          registerHandler: () => {},
+          invokeLocal: async (method, request) => {
+            expect(method).toBe('execution.run.start');
+            requests.push(request);
+            return { ok: true, data: { runId: 'run-started', callId: 'call-started', sidechainId: 'side-started' } };
+          },
+        },
+        sendClaudeSessionMessage: () => {},
+        updateMetadata: () => {},
+      }, {
+        accountSettings: AccountSettingsSchema.parse({
+          actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1,
+            actions: { 'execution.run.start': { toolExposureModes: { session_agent: 'direct' } } },
+          }),
+        }),
+      });
+      expect(toolNames).toContain('execution_run_start');
+      expect(toolNames).not.toContain(`subagents_${intent}_start`);
+      const client = new Client({ name: 'execution-start-regression', version: '1.0.0' });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      cleanups.push(async () => { await client.close(); await mcp.close(); });
+      await mcp.connect(serverTransport);
+      await client.connect(clientTransport);
+
+      const reply = await client.callTool({
+        name: 'execution_run_start',
+        arguments: {
+          intent,
+          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          instructions: 'Analyze this task.',
+          permissionMode: 'read_only',
+          retentionPolicy: 'ephemeral',
+          runClass: 'bounded',
+          ioMode: 'request_response',
+        },
+      });
+      expect(reply.isError, JSON.stringify(reply.content)).toBe(false);
+      expect(reply.content).toEqual([{ type: 'text', text: expect.stringContaining('run-started') }]);
+      expect(requests).toEqual([expect.objectContaining({
+        intent,
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        instructions: 'Analyze this task.',
+        permissionMode: 'read_only',
+        launchOrigin: { kind: 'session', sessionId: 'sess-current' },
+      })]);
+    },
+  );
 
   it('passes through approval_request_created results for execution.run.* actions', async () => {
     const bridge = createActionToolExecutorBridge({

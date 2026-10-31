@@ -131,6 +131,6 @@ export function resolveCodexAppServerPolicyForPermissionMode(
           }
         : policy.sandbox === 'danger-full-access'
           ? { type: 'dangerFullAccess' }
-          : { type: 'readOnly', access: { type: 'fullAccess' }, networkAccess: true },
+          : { type: 'readOnly', access: { type: 'fullAccess' }, networkAccess: false },
   };
 }

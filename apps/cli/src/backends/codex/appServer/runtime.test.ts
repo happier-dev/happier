@@ -126,7 +126,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
     rejectSteerAsNoActiveTurn?: boolean;
     rejectPermissionsProfile?: boolean;
     managedAllowedApprovalPolicies?: readonly string[];
-    ambiguousManagedApprovalRejection?: boolean;
+    ambiguousManagedApprovalRejection?: boolean | 'map-expected-string';
     rejectGoalMethods?: boolean;
     rejectGoalMethodsAsInvalidRequest?: boolean;
     nativeGoal?: Record<string, unknown>;
@@ -187,7 +187,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         `let nativeGoal = ${JSON.stringify(params.nativeGoal ?? null)};`,
         'const resumedThreadIds = new Set();',
         `const managedAllowedApprovalPolicies = ${JSON.stringify(params.managedAllowedApprovalPolicies ?? null)};`,
-        `const ambiguousManagedApprovalRejection = ${JSON.stringify(params.ambiguousManagedApprovalRejection === true)};`,
+        `const ambiguousManagedApprovalRejection = ${JSON.stringify(params.ambiguousManagedApprovalRejection ?? false)};`,
         'const managedApprovalPolicyError = (policy) => {',
         '    if (!managedAllowedApprovalPolicies || policy == null) return null;',
         '    const granular = typeof policy === "object" && policy.granular != null;',
@@ -197,6 +197,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '    const allowed = managedAllowedApprovalPolicies.map((item) => item === "untrusted" ? "UnlessTrusted" : item === "on-request" ? "OnRequest" : item === "never" ? "Never" : "Granular");',
         '    const tick = String.fromCharCode(96);',
         '    const message = "invalid value for " + tick + "approval_policy" + tick + ": " + tick + candidate + tick + " is not in the allowed set [" + allowed.join(", ") + "] (set by system requirements)";',
+        '    if (ambiguousManagedApprovalRejection === "map-expected-string") return { code: -32600, message: "Invalid request: invalid type: map, expected a string" };',
         '    return { code: -32602, message: ambiguousManagedApprovalRejection ? "invalid approval policy" : message };',
         '};',
         'for await (const line of rl) {',
@@ -213,7 +214,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "invalid params: permissions unsupported" } }) + "\\n");',
         '            continue;',
         '        }',
-        `        if (${JSON.stringify(params.rejectPermissionsProfileAsStringShape === true)} && msg.params?.permissions) {`,
+        `        if (${JSON.stringify(params.rejectPermissionsProfileAsStringShape === true)} && msg.params?.permissions && typeof msg.params.permissions !== "string") {`,
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32600, message: "Invalid request: invalid type: map, expected a string" } }) + "\\n");',
         '            continue;',
         '        }',
@@ -223,7 +224,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32000, message: "missing thread/start flags" } }) + "\\n");',
         '            continue;',
         '        }',
-        `        process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: "thread-started", model: "gpt-5.4", serviceTier: ${JSON.stringify(params.threadStartServiceTier ?? null)}, activePermissionProfile: msg.params?.permissions ?? null } }) + "\\n");`,
+        `        process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: "thread-started", model: "gpt-5.4", serviceTier: ${JSON.stringify(params.threadStartServiceTier ?? null)}, activePermissionProfile: typeof msg.params?.permissions === "string" ? { id: msg.params.permissions } : null } }) + "\\n");`,
         `        if (${JSON.stringify(params.emitIdleMcpRequestAfterThreadStart === true)}) {`,
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ id: "idle-mcp-request", method: "mcpServer/elicitation/request", params: { threadId: "thread-started", id: "request_scoped_idle_mcp", serverName: "happier", message: "Tool \\"change_title\\" needs input", _meta: { tool_params: { title: "Idle Title" } } } }) + "\\n");',
@@ -253,7 +254,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "invalid params: permissions unsupported" } }) + "\\n");',
         '            continue;',
         '        }',
-        `        if (${JSON.stringify(params.rejectPermissionsProfileAsStringShape === true)} && msg.params?.permissions) {`,
+        `        if (${JSON.stringify(params.rejectPermissionsProfileAsStringShape === true)} && msg.params?.permissions && typeof msg.params.permissions !== "string") {`,
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32600, message: "Invalid request: invalid type: map, expected a string" } }) + "\\n");',
         '            continue;',
         '        }',
@@ -271,7 +272,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            process.stdout.write(JSON.stringify({ method: "turn/started", params: { threadId: resumedThreadId, turn: { id: resumeTurnId } } }) + "\\n");',
         '            process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { threadId: resumedThreadId, turnId: resumeTurnId, itemId: "resume_msg_1", delta: "Still working" } }) + "\\n");',
         '            setTimeout(() => {',
-        '                process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: resumedThreadId, model: msg.params?.model ?? (adoptsOverrideThread ? "gpt-5.4-mini" : "gpt-5.4"), serviceTier: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier") ? msg.params.serviceTier : null, activePermissionProfile: msg.params?.permissions ?? null } }) + "\\n");',
+        '                process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: resumedThreadId, model: msg.params?.model ?? (adoptsOverrideThread ? "gpt-5.4-mini" : "gpt-5.4"), serviceTier: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier") ? msg.params.serviceTier : null, activePermissionProfile: typeof msg.params?.permissions === "string" ? { id: msg.params.permissions } : null } }) + "\\n");',
         '            }, 20);',
         '            continue;',
         '        }',
@@ -317,7 +318,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            continue;',
         '        }',
         `        const oversizedPayload = ${JSON.stringify(params.oversizedResumePayloadChars ?? 0)} > 0 ? "x".repeat(${JSON.stringify(params.oversizedResumePayloadChars ?? 0)}) : undefined;`,
-        '        const resumeResponse = JSON.stringify({ id: msg.id, result: { threadId: resumedThreadId, model: msg.params?.model ?? (adoptsOverrideThread ? "gpt-5.4-mini" : "gpt-5.4"), serviceTier: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier") ? msg.params.serviceTier : null, activePermissionProfile: msg.params?.permissions ?? null, ...(oversizedPayload ? { oversizedPayload } : {}) } }) + "\\n";',
+        '        const resumeResponse = JSON.stringify({ id: msg.id, result: { threadId: resumedThreadId, model: msg.params?.model ?? (adoptsOverrideThread ? "gpt-5.4-mini" : "gpt-5.4"), serviceTier: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier") ? msg.params.serviceTier : null, activePermissionProfile: typeof msg.params?.permissions === "string" ? { id: msg.params.permissions } : null, ...(oversizedPayload ? { oversizedPayload } : {}) } }) + "\\n";',
         `        if (${JSON.stringify(params.resumeResponseDelayMs ?? 0)} > 0) {`,
         `            setTimeout(() => { process.stdout.write(resumeResponse); }, ${JSON.stringify(params.resumeResponseDelayMs ?? 0)});`,
         '        } else {',
@@ -540,6 +541,10 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        continue;',
         '    }',
         '    if (msg.method === "turn/start") {',
+        '        if (msg.params?.permissions != null && typeof msg.params.permissions !== "string") {',
+        '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32600, message: "Invalid request: invalid type: map, expected a string" } }) + "\\n");',
+        '            continue;',
+        '        }',
         `        if (${JSON.stringify(params.rejectPermissionsProfile === true)} && msg.params?.permissions) {`,
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "invalid params: permissions unsupported" } }) + "\\n");',
         '            continue;',
@@ -1732,7 +1737,7 @@ describe('createCodexAppServerRuntime', () => {
             rejectSteerAsNoActiveTurn?: boolean;
             rejectPermissionsProfile?: boolean;
             managedAllowedApprovalPolicies?: readonly string[];
-            ambiguousManagedApprovalRejection?: boolean;
+            ambiguousManagedApprovalRejection?: boolean | 'map-expected-string';
             rejectGoalMethods?: boolean;
             rejectGoalMethodsAsInvalidRequest?: boolean;
             nativeGoal?: Record<string, unknown>;
@@ -2143,10 +2148,7 @@ describe('createCodexAppServerRuntime', () => {
                     method: 'thread/start',
                     params: expect.objectContaining({
                         cwd: root,
-                        permissions: {
-                            type: 'profile',
-                            id: ':workspace',
-                        },
+                        permissions: ':workspace',
                         experimentalRawEvents: true,
                         persistExtendedHistory: true,
                     }),
@@ -2175,18 +2177,17 @@ describe('createCodexAppServerRuntime', () => {
                 expect.objectContaining({
                     method: 'thread/start',
                     params: expect.objectContaining({
-                        permissions: {
-                            type: 'profile',
-                            id: ':workspace',
-                        },
+                        permissions: ':workspace',
                     }),
                 }),
             ]),
         );
         const startRequest = requestLog.find((entry: { method: string }) => entry.method === 'thread/start') as { params?: Record<string, unknown> } | undefined;
         expect(startRequest?.params).not.toHaveProperty('sandbox');
-        expect(startRequest?.params).not.toHaveProperty('approvalPolicy');
-        expect(startRequest?.params).not.toHaveProperty('approvalsReviewer');
+        expect(startRequest?.params).toMatchObject({
+            approvalPolicy: { granular: expect.objectContaining({ sandbox_approval: true }) },
+            approvalsReviewer: 'auto_review',
+        });
     });
 
     it('falls back to legacy app-server permission fields after older Codex rejects permission profiles', async () => {
@@ -2208,10 +2209,7 @@ describe('createCodexAppServerRuntime', () => {
         const startRequests = requestLog.filter((entry) => entry.method === 'thread/start') as Array<{ params?: Record<string, unknown> }>;
         expect(startRequests).toHaveLength(2);
         expect(startRequests[0]?.params).toMatchObject({
-            permissions: {
-                type: 'profile',
-                id: ':read-only',
-            },
+            permissions: ':read-only',
         });
         expect(startRequests[0]?.params).not.toHaveProperty('sandbox');
         expect(startRequests[1]?.params).toMatchObject({
@@ -2225,9 +2223,45 @@ describe('createCodexAppServerRuntime', () => {
             approvalPolicy: 'never',
             sandboxPolicy: {
                 type: 'readOnly',
+                networkAccess: false,
             },
         });
         expect(turnStart?.params).not.toHaveProperty('permissions');
+    });
+
+    it.each(['start', 'resume', 'turn'] as const)('retains native permissions through the managed scalar fallback at %s', async (entryPoint) => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-managed-native-', {
+            rejectPermissionsProfileAsStringShape: true,
+            managedAllowedApprovalPolicies: ['untrusted', 'on-request', 'never'],
+        });
+        let permissionMode: PermissionMode = entryPoint === 'turn' ? 'default' : 'safe-yolo';
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: createApiSessionClientFixture(),
+            getPermissionMode: () => permissionMode,
+        });
+
+        await runtime.startOrLoad(entryPoint === 'resume' ? { resumeId: 'thread-managed-native' } : {});
+        permissionMode = 'safe-yolo';
+        await runtime.sendPrompt('managed-native');
+
+        const requests = await readRequestLog(requestLogPath);
+        const method = entryPoint === 'turn' ? 'turn/start' : entryPoint === 'resume' ? 'thread/resume' : 'thread/start';
+        const attempts = requests.filter((entry) => entry.method === method);
+        expect(attempts).toHaveLength(2);
+        expect(attempts[0]?.params).toMatchObject({
+            permissions: ':workspace',
+            approvalPolicy: { granular: expect.any(Object) },
+            approvalsReviewer: 'auto_review',
+        });
+        expect(attempts[1]?.params).toMatchObject({ permissions: ':workspace', approvalPolicy: 'on-request', approvalsReviewer: 'user' });
+        for (const entry of requests.filter((entry) => entry.method === 'turn/start')) {
+            expect(entry.params).toMatchObject({ permissions: ':workspace' });
+            expect(entry.params).not.toHaveProperty('sandboxPolicy');
+        }
+        const turns = requests.filter((entry) => entry.method === 'turn/start');
+        expect(turns.at(-1)?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user' });
     });
 
     it('uses one managed scalar fallback after canonical Auto reaches a rejected legacy granular policy', async () => {
@@ -2250,7 +2284,7 @@ describe('createCodexAppServerRuntime', () => {
         const requests = await readRequestLog(requestLogPath);
         const starts = requests.filter((entry) => entry.method === 'thread/start');
         expect(starts).toHaveLength(3);
-        expect(starts[0]?.params).toMatchObject({ permissions: { type: 'profile', id: ':workspace' } });
+        expect(starts[0]?.params).toMatchObject({ permissions: ':workspace' });
         expect(starts[1]?.params).toMatchObject({ approvalPolicy: { granular: expect.any(Object) }, approvalsReviewer: 'auto_review' });
         expect(starts[2]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write' });
         const turns = requests.filter((entry) => entry.method === 'turn/start');
@@ -2301,7 +2335,7 @@ describe('createCodexAppServerRuntime', () => {
 
         const turns = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'turn/start');
         expect(turns).toHaveLength(3);
-        expect(turns[0]?.params).toMatchObject({ permissions: { type: 'profile', id: ':workspace' } });
+        expect(turns[0]?.params).toMatchObject({ permissions: ':workspace' });
         expect(turns[1]?.params).toMatchObject({ approvalPolicy: { granular: expect.any(Object) }, approvalsReviewer: 'auto_review' });
         expect(turns[2]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandboxPolicy: { type: 'workspaceWrite' } });
     });
@@ -2380,7 +2414,26 @@ describe('createCodexAppServerRuntime', () => {
         expect(starts).toHaveLength(2);
     });
 
-    it('falls back to legacy app-server permission fields when older Codex expects a string profile id', async () => {
+    it('does not remove native permissions after a map/string error from another request field', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-native-unrelated-shape-', {
+            rejectPermissionsProfileAsStringShape: true,
+            managedAllowedApprovalPolicies: ['untrusted', 'on-request', 'never'],
+            ambiguousManagedApprovalRejection: 'map-expected-string',
+        });
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: createApiSessionClientFixture(),
+            permissionMode: 'safe-yolo',
+        });
+
+        await expect(runtime.startOrLoad({})).rejects.toThrow(/invalid type: map, expected a string/);
+        const starts = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'thread/start');
+        expect(starts).toHaveLength(1);
+        expect(starts[0]?.params).toMatchObject({ permissions: ':workspace' });
+    });
+
+    it('keeps native read-only permissions when Codex 0.166 expects a string profile id', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-permission-string-fallback-', {
             rejectPermissionsProfileAsStringShape: true,
         });
@@ -2396,18 +2449,13 @@ describe('createCodexAppServerRuntime', () => {
 
         const requestLog = await readRequestLog(requestLogPath);
         const startRequests = requestLog.filter((entry) => entry.method === 'thread/start') as Array<{ params?: Record<string, unknown> }>;
-        expect(startRequests).toHaveLength(2);
-        expect(startRequests[0]?.params).toMatchObject({
-            permissions: {
-                type: 'profile',
-                id: ':read-only',
-            },
-        });
-        expect(startRequests[1]?.params).toMatchObject({
-            approvalPolicy: 'never',
-            sandbox: 'read-only',
-        });
-        expect(startRequests[1]?.params).not.toHaveProperty('permissions');
+        expect(startRequests).toHaveLength(1);
+        expect(startRequests[0]?.params).toMatchObject({ permissions: ':read-only', approvalPolicy: 'never' });
+        expect(startRequests[0]?.params).not.toHaveProperty('sandbox');
+        await runtime.sendPrompt('native-profile-network-restriction');
+        const turnStart = (await readRequestLog(requestLogPath)).find((entry) => entry.method === 'turn/start');
+        expect(turnStart?.params).toMatchObject({ permissions: ':read-only', approvalPolicy: 'never' });
+        expect(turnStart?.params).not.toHaveProperty('sandboxPolicy');
     });
 
     it('publishes connected-service direct-session metadata when activeServerDir owns CODEX_HOME', async () => {
@@ -2641,10 +2689,7 @@ describe('createCodexAppServerRuntime', () => {
                 expect.objectContaining({
                     params: expect.objectContaining({
                         threadId: 'resume-123',
-                        permissions: {
-                            type: 'profile',
-                            id: ':read-only',
-                        },
+                        permissions: ':read-only',
                         persistExtendedHistory: true,
                         excludeTurns: false,
                     }),
@@ -2810,16 +2855,13 @@ describe('createCodexAppServerRuntime', () => {
                 params: expect.objectContaining({
                     threadId: 'thread-started',
                     input: [{ type: 'text', text: 'hello-world' }],
-                    permissions: {
-                        type: 'profile',
-                        id: ':read-only',
-                    },
+                    permissions: ':read-only',
                 }),
             }),
         ]);
         const turnStart = requestLog.find((entry: { method: string }) => entry.method === 'turn/start') as { params?: Record<string, unknown> } | undefined;
         expect(turnStart?.params).not.toHaveProperty('sandboxPolicy');
-        expect(turnStart?.params).not.toHaveProperty('approvalPolicy');
+        expect(turnStart?.params).toHaveProperty('approvalPolicy', 'never');
     });
 
     it.each([
@@ -4838,7 +4880,7 @@ describe('createCodexAppServerRuntime', () => {
                 { type: 'skill', name: 'Review', path: '/skills/review/SKILL.md' },
                 { type: 'image', url: 'https://example.com/review.png' },
             ],
-            permissions: { type: 'profile', id: ':read-only' },
+            permissions: ':read-only',
         });
         // A failed structured submission must leave the runtime ready for a valid follow-up.
         await runtime.sendPrompt('plain-follow-up');

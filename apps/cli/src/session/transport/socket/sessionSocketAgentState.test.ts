@@ -298,6 +298,73 @@ describe('waitForIdleViaSocket', () => {
     expect(decrypt).not.toHaveBeenCalled();
   });
 
+  it('keeps an active Codex turn busy across assistant checkpoints until its terminal lifecycle event', async () => {
+    const socket = createSocketStub();
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocket: () => socket,
+    }));
+
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+    const promise = waitForIdleViaSocket({
+      token: 'token',
+      sessionId: 'sess-1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+      sessionEncryptionMode: 'plain',
+      timeoutMs: 1_000,
+      initialTurnActivity: { pendingUserTurns: 0, activeTaskInFlight: true, turnInFlight: true },
+      initialAgentStateCiphertextBase64: null,
+    });
+    let settled = false;
+    void promise.then(() => { settled = true; });
+
+    const emitMessage = (seq: number, value: unknown) => socket.emit('update', {
+      id: `u-${seq}`,
+      seq,
+      createdAt: seq,
+      body: {
+        t: 'new-message',
+        sid: 'sess-1',
+        message: {
+          id: `m-${seq}`,
+          seq,
+          localId: null,
+          createdAt: seq,
+          updatedAt: seq,
+          content: { t: 'plain', v: value },
+        },
+      },
+    });
+    for (const [index, segmentState] of ['streaming', 'complete'].entries()) {
+      emitMessage(index + 1, {
+        role: 'agent',
+        content: {
+          type: 'acp',
+          provider: 'codex',
+          data: { type: 'message', message: 'Checking the next file.' },
+        },
+        meta: {
+          happierStreamSegmentV1: {
+            v: 1,
+            segmentKind: 'assistant',
+            segmentLocalId: 'segment-1',
+            segmentState,
+            startedAtMs: 1,
+            updatedAtMs: index + 1,
+          },
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(settled).toBe(false);
+    }
+
+    emitMessage(3, {
+      role: 'agent',
+      content: { type: 'acp', provider: 'codex', data: { type: 'task_complete', id: 'task-1' } },
+    });
+    await expect(promise).resolves.toEqual(expect.objectContaining({ idle: true }));
+  });
+
   it('does not resolve from a projection-only completed update while transcript recheck remains busy', async () => {
     vi.useFakeTimers();
 

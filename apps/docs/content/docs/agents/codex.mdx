@@ -254,6 +254,7 @@ Codex enforcement is a combination of:
 Important notes:
 
 - Read-only is enforced by Happier by **denying write-like actions** (edits/patches/exec) when Happier is the approver.
+- In development builds, Codex App Server Read-only also requests a native read-only sandbox with network access for sandboxed commands and approval-based escalation disabled. Happier reapplies that policy when starting or resuming a session and before each prompt.
 - Auto and YOLO control whether Happier prompts vs auto-approves actions it can approve.
 - On a Codex app-server that rejects granular Auto approvals under a managed policy but allows `on-request`, Happier retries once with `on-request` and keeps the workspace sandbox. That session then sends approval requests to you for review; its Auto review behavior is unavailable. If Codex also rejects `on-request`, the session reports the policy error.
 - Codex backends may have sandbox policies that are **fixed at session start**. Changing permission mode mid-session can still update Happier’s approval behavior, but it may not change Codex’s internal sandbox until you start a new Codex session.

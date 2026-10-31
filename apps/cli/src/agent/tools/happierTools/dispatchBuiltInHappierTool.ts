@@ -93,12 +93,6 @@ function getExecutionRunStartEquivalentActionId(args: unknown): ActionId | null 
   }
 }
 
-const EXECUTION_RUN_START_ACTION_TOOL_NAME_BY_INTENT = Object.freeze({
-  plan: 'subagents_plan_start',
-  delegate: 'subagents_delegate_start',
-  voice_agent: 'voice_agent_start',
-} as const);
-
 function ok(result: unknown): HappierBuiltInToolDispatchResult {
   return { ok: true, result };
 }
@@ -221,12 +215,12 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
     const parsed = executionRunStartToolInputSchema.safeParse(params.args ?? {});
     if (parsed.success) {
       const intent = parsed.data.intent;
-      const actionToolName = EXECUTION_RUN_START_ACTION_TOOL_NAME_BY_INTENT[intent as keyof typeof EXECUTION_RUN_START_ACTION_TOOL_NAME_BY_INTENT];
+      const actionId = intent === 'review' ? null : executionRunStartEquivalentActionId;
 
       // Prefer action-backed intent starts (plan/delegate/voice) for convergence across CLI/MCP/built-in tools.
       // Fall back to the legacy execution.run.start path for older payloads that cannot satisfy action schemas.
       const instructions = typeof parsed.data.instructions === 'string' ? parsed.data.instructions.trim() : '';
-      if (actionToolName && instructions) {
+      if (actionId && instructions) {
         if (typeof parsed.data.sessionId === 'string' && parsed.data.sessionId.trim() !== params.sessionId) {
           return err('execution_run_not_allowed', 'This tool call is scoped to a different session');
         }
@@ -236,13 +230,18 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
           agentId: String(parsed.data.backendId ?? '').trim(),
         };
 
+        // Internal intent routing uses the action id: the action may be discoverable-only
+        // even when execution_run_start is exposed as a direct tool.
         return await params.deps.executeActionByToolName(
-          actionToolName,
+          'action_execute',
           {
-            ...(typeof (params.args as any) === 'object' && params.args !== null ? (params.args as Record<string, unknown>) : {}),
-            sessionId: params.sessionId,
-            instructions,
-            backendTargetKeys: [buildBackendTargetKey(backendTarget)],
+            actionId,
+            input: {
+              ...parsed.data,
+              sessionId: params.sessionId,
+              instructions,
+              backendTargetKeys: [buildBackendTargetKey(backendTarget)],
+            },
           },
           params.sessionId,
           ...actionExecutionOptionsArgs,

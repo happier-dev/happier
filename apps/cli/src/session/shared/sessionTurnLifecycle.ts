@@ -91,6 +91,10 @@ export function detectSessionTurnLifecycleEvent(value: unknown): SessionTurnLife
         const dataObj = asRecord(data);
         const dataType = typeof dataObj?.type === 'string' ? dataObj.type : null;
         if (dataType === 'message') {
+            // Stream segments are checkpointed during a turn and closed at tool-call
+            // boundaries too. Even a complete segment does not finish the turn.
+            const streamSegment = asRecord(asRecord(obj.meta)?.happierStreamSegmentV1);
+            if (streamSegment?.v === 1) return null;
             return 'ready';
         }
         const lifecycleEvent = readLifecycleEventType(dataType);

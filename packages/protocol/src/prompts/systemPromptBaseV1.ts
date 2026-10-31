@@ -1,4 +1,5 @@
 import { trimIdent } from '../strings/trimIdent.js';
+import { isSessionHappierToolsEnabled } from '../mcpServers/sessionSelectionV1.js';
 import {
   isCodingPromptResponseOptionsEnabled,
   resolveCodingPromptSessionTitleInstructionModeV1,
@@ -68,9 +69,10 @@ export function buildHappierBaseSystemPromptV1(args?: Readonly<{
 }>): string {
   const blocks: string[] = [];
   const sessionTitleUpdatesMode = resolveCodingPromptSessionTitleInstructionModeV1(args?.settings, args?.sessionMetadata);
-  if (args?.sessionTitleToolAvailable !== false && sessionTitleUpdatesMode === 'initial') {
+  const titleToolAvailable = args?.sessionTitleToolAvailable !== false && isSessionHappierToolsEnabled(args?.sessionMetadata);
+  if (titleToolAvailable && sessionTitleUpdatesMode === 'initial') {
     blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1);
-  } else if (args?.sessionTitleToolAvailable !== false && sessionTitleUpdatesMode === 'ongoing') {
+  } else if (titleToolAvailable && sessionTitleUpdatesMode === 'ongoing') {
     blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1);
   }
   if (isCodingPromptResponseOptionsEnabled(args?.settings)) {

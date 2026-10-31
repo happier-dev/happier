@@ -363,6 +363,38 @@ Use strict mode when you want the startup behavior to be fail-closed instead of 
 4. Select an additional Happier-managed server you want for this session only
 5. Start the session
 
+### Select tools when creating a session from the CLI
+
+`happier session create --mcp-selection-json <json>` accepts a selection object.
+For example, start with saved MCP defaults disabled and include one saved server:
+
+```bash
+happier session create --mcp-selection-json '{"v":1,"managedServersEnabled":false,"forceIncludeServerIds":["repo-tools"],"forceExcludeServerIds":[]}'
+```
+
+Use saved server IDs in the include and exclude arrays. Exclusion wins when an ID
+appears in both. All fields are optional: the version defaults to `1`, managed
+servers default to enabled, and the arrays default to empty. Disabling managed
+defaults still allows explicitly included servers. It also leaves the built-in
+Happier tools enabled and leaves agent-native MCP configuration unchanged.
+
+In **unreleased development source**, set `happierToolsEnabled` to `false` to omit
+the built-in Happier server and Pi tools extension, along with their tool guidance:
+
+```bash
+happier session create --mcp-selection-json '{"v":1,"managedServersEnabled":false,"happierToolsEnabled":false}'
+```
+
+Omitting `happierToolsEnabled` preserves enabled built-in tools. The opt-out needs
+an updated CLI **and the updated daemon on the target machine**; older runners
+ignore this field and still expose built-in tools. It controls tool delivery for
+the session, rather than restricting the agent's native tools, filesystem,
+network, or ability to invoke an installed CLI.
+
+The development CLI rejects unknown fields such as `{"servers":[]}` and values
+that are not objects, instead of silently selecting defaults. Run
+`happier session create --help` to see the accepted fields in your installed CLI.
+
 ## Troubleshooting
 
 ### “The server is saved, but it does not appear in my session”

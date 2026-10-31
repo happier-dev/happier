@@ -10,6 +10,7 @@ describe('resolveSpawnChildEnvironment (mcp selection)', () => {
       mcpSelection: {
         v: 1,
         managedServersEnabled: false,
+        happierToolsEnabled: false,
         forceIncludeServerIds: ['server-a'],
         forceExcludeServerIds: ['server-b'],
       },

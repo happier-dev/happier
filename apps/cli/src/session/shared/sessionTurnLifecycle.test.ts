@@ -82,6 +82,33 @@ describe('sessionTurnLifecycle', () => {
     expect(isSessionTurnCompletionProof(rawLifecycle('task_complete'))).toBe(true);
   });
 
+  it.each(['streaming', 'complete', 'interrupted'] as const)(
+    'does not treat a %s assistant stream segment as turn completion',
+    (segmentState) => {
+      const checkpoint = {
+        role: 'agent',
+        content: {
+          type: 'acp',
+          provider: 'codex',
+          data: { type: 'message', message: 'I will run the next command.' },
+        },
+        meta: {
+          happierStreamSegmentV1: {
+            v: 1,
+            segmentKind: 'assistant',
+            segmentLocalId: 'segment-1',
+            segmentState,
+            startedAtMs: 1,
+            updatedAtMs: 2,
+          },
+        },
+      };
+
+      expect(detectSessionTurnLifecycleEvent(checkpoint)).toBeNull();
+      expect(isSessionTurnCompletionProof(checkpoint)).toBe(false);
+    },
+  );
+
   it('detects terminal Claude output rows with assistant text as ready activity', () => {
     const output = rawClaudeOutput({
       content: [{ type: 'text', text: 'done' }],

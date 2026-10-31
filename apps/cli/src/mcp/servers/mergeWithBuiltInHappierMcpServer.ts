@@ -1,7 +1,7 @@
 import type { McpServerConfig } from '@/agent';
 
 /**
- * Ensures the built-in `happier` MCP server is always present and wins collisions.
+ * Reserves the `happier` name for the built-in server, when enabled.
  */
 export function mergeWithBuiltInHappierMcpServer(params: Readonly<{
   builtIn: Record<string, McpServerConfig>;
