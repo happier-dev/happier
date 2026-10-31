@@ -908,6 +908,12 @@ machine result, obtain fresh evidence or accept commits. There is no cold-offlin
 or cross-machine reconstruction guarantee. Reconnection reads current authority
 before a revisioned write. Home/Account retirement withdraws requests/listeners.
 
+Session entry points without an explicit Home resolve their unique Home through
+the Session scope owner before binding credentials. An explicit Home remains
+authoritative. A settled Home credential failure or unknown Home ends restoration
+as unavailable; explicit Retry delegates unreadable device storage to the existing
+credential owner before restoring the saved reading.
+
 ## Generator interaction and settings
 
 The runtime contract is `retentionPolicy: 'resumable'`, `runClass: 'long_lived'`,

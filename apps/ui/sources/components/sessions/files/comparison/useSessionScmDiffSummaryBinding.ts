@@ -9,19 +9,21 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { useScmDiffSummaryBinding } from './useScmDiffSummaryBinding';
 import type { ScmWalkthroughRestoration } from '@/components/sessions/files/walkthrough/useSessionScmWalkthrough';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 
 /** Session authority and launch policy feed the shared saved-result binding. */
 export function useSessionScmDiffSummaryBinding(params: Readonly<{
     sessionId: string; serverId?: string | null; comparison: SessionScmReviewComparison | null; output: ScmDiffSummaryOutputKind;
     restoration?: ScmWalkthroughRestoration;
 }>) {
-    const session = useSession(params.sessionId, params.serverId);
-    const machine = useSessionMachineTarget(params.sessionId, params.serverId);
-    const { machineReachable } = useSessionMachineReachability(params.sessionId, params.serverId);
-    const launch = useSessionExecutionRunLaunchability(params.sessionId, session, params.serverId);
+    const serverId = usePreferredServerIdForSession(params);
+    const session = useSession(params.sessionId, serverId);
+    const machine = useSessionMachineTarget(params.sessionId, serverId);
+    const { machineReachable } = useSessionMachineReachability(params.sessionId, serverId);
+    const launch = useSessionExecutionRunLaunchability(params.sessionId, session, serverId);
     const external = useSessionExternalSessionRuntime({ sessionId: params.sessionId,
-        metadata: session ? readSessionOwnerMetadataView(session) : null, serverId: params.serverId });
+        metadata: session ? readSessionOwnerMetadataView(session) : null, serverId });
     const canControl = machineReachable && (external.externalSessionLink === null || external.status?.runnerActive === true);
     const canSend = canControl && Boolean(session && deriveTranscriptInteractionFromSession(session).canSendMessages);
-    return useScmDiffSummaryBinding({ ...params, host: { sessionId: params.sessionId }, machine, machineReachable, launch, canControl, canSend });
+    return useScmDiffSummaryBinding({ ...params, serverId, host: { sessionId: params.sessionId }, machine, machineReachable, launch, canControl, canSend });
 }

@@ -6,6 +6,9 @@ import type { ScmDiffSummaryEntry, ScmDiffSummaryViewModel, ScmDiffSummaryRestor
 import { selectScmWalkthroughKey, scmReviewComparisonMatchesSource, scmDiffSummaryOutputNeedsPublishedFallback } from '@/sync/domains/scm/diffSummary/selection';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import {
     getScmDiffSummaryOperationState,
     getScmDiffSummaryState,
@@ -55,6 +58,9 @@ export function useScmWalkthroughState(host: Readonly<{ sessionId: string }> | R
 /** One acquisition admits complete saved records; each output keeps its own comparison and fallback selection. */
 export function useScmWalkthroughStates(host: ScmWalkthroughHost, selections: readonly ScmWalkthroughSelection[],
     serverId?: string | null, restoration?: ScmWalkthroughRestoration) {
+    const sessionId = 'sessionId' in host ? host.sessionId : null;
+    const sessionServerId = usePreferredServerIdForSession({ sessionId: sessionId ?? '', serverId }, Boolean(sessionId));
+    const hostServerId = sessionId ? sessionServerId : serverId;
     const admittedScope = React.useRef<ServerAccountScope | null>(null);
     const projectionLifecycle = React.useMemo(() => ({
         beforeBinding: (binding: Readonly<{ scope: ServerAccountScope }>) => { admittedScope.current = binding.scope; },
@@ -62,7 +68,7 @@ export function useScmWalkthroughStates(host: ScmWalkthroughHost, selections: re
             if (admittedScope.current?.serverId === changedServerId) retireScmDiffSummaryScope(admittedScope.current);
         },
     }), []);
-    const { binding, resolution } = useServerCredentialAccountScopeBinding(serverId, projectionLifecycle);
+    const { binding, resolution } = useServerCredentialAccountScopeBinding(hostServerId, projectionLifecycle);
     // Profile/reconnect revalidation retires request authority, not hydrated Account data.
     // The scope owner retains this identity until it confirms a different Account or sign-out.
     const scopeKey = resolution.kind === 'bound' ? serverAccountScopeKeySuffix(resolution.scope) : null;
@@ -83,12 +89,11 @@ export function useScmWalkthroughStates(host: ScmWalkthroughHost, selections: re
     }, ['sessionId' in host ? host.sessionId : null, 'machineId' in host ? host.machineId : null,
         'cwd' in host ? host.cwd : null, selectionKey, scopeKey]);
     const viewModels = React.useSyncExternalStore(subscribeScmDiffSummaryState, getSnapshot, getSnapshot);
-    const sessionId = 'sessionId' in host ? host.sessionId : null;
     // The control-target owner admits an exact metadata target before presence hydrates; transport still
     // verifies the captured Session/Account. Display identity is used only to explain known offline state.
-    const sessionTarget = useSessionMachineControlTargetState(sessionId ?? '', serverId);
+    const sessionTarget = useSessionMachineControlTargetState(sessionId ?? '', hostServerId);
     const sessionMachine = sessionTarget.status === 'ready' ? sessionTarget : null;
-    const displayMachine = useSessionMachineDisplayIdentity(sessionId ?? '', serverId);
+    const displayMachine = useSessionMachineDisplayIdentity(sessionId ?? '', hostServerId);
     const machineId = 'machineId' in host ? host.machineId : sessionMachine?.machineId;
     const cwd = 'cwd' in host ? host.cwd : sessionMachine?.basePath;
     const presence = useMachinePresenceSummary(binding?.scope.serverId, machineId ?? (sessionId ? displayMachine.machineId : null));
@@ -96,7 +101,11 @@ export function useScmWalkthroughStates(host: ScmWalkthroughHost, selections: re
     const restoreKey = JSON.stringify([scopeKey, sessionId, machineId, cwd, selectionKey]);
     const [restored, setRestored] = React.useState<Readonly<{ key: string; state: 'ready' | 'unavailable' }> | null>(null);
     const [retry, setRetry] = React.useState(0);
-    const retryRestore = React.useCallback(() => { setRestored(null); setRetry(value => value + 1); }, []);
+    const retryRestore = React.useCallback(() => {
+        retryServerCredentialAccountScope(resolveServerProfileScopeIdForIdentifier(hostServerId));
+        setRestored(null);
+        setRetry(value => value + 1);
+    }, [hostServerId]);
     const needsRestore = selections.some(({ comparison, output }, index) => comparison && (!viewModels[index]
         || (viewModels[index]?.savedResult && scmDiffSummaryOutputNeedsPublishedFallback(viewModels[index]?.outputs?.[output]))));
     // Files, Walkthrough and Commits read the same saved-result owner. A
@@ -191,7 +200,8 @@ export function useScmWalkthroughStates(host: ScmWalkthroughHost, selections: re
     // longer than the read itself; neither is proof that this comparison has no saved output.
     const restoreState: ScmDiffSummaryRestoreState = !selections.some(selection => selection.comparison) ? 'idle' : !needsRestore ? 'ready'
         : restored?.key === restoreKey ? restored.state
-        : machineOffline || (sessionId && sessionTarget.status === 'unavailable') ? 'unavailable' : 'restoring';
+        : (resolution.kind !== 'bound' && resolution.kind !== 'resolving')
+            || machineOffline || (sessionId && sessionTarget.status === 'unavailable') ? 'unavailable' : 'restoring';
     return { viewModels, restoration: restoration ?? { restoreState, retryRestore, machineReachability: presence.reachability } } as const;
 }
 
