@@ -24,7 +24,9 @@ export const ManagedIntentInputSchema = lazyDefinition(() => z.discriminatedUnio
 
 export const ManagedIntentResultSchema = lazyDefinition(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('accepted'), managedId: id(), intentRevision: revision(),
-    operation: ActionOperationGetV1RequestSchema }),
+    // Immediate foreground work completes natively; deferred intent is retained
+    // by its existing row owner. Neither invents an asynchronous Action operation.
+    operation: z.optional(ActionOperationGetV1RequestSchema) }),
   z.strictObject({ kind: z.literal('conflict'), currentRevision: revision() }),
   z.strictObject({ kind: z.literal('refused'), code: ManagedRefusalCodeV1Schema }),
 ]));

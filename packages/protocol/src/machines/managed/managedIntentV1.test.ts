@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import * as protocol from './managedIntentV1.js';
+import { ManagedMachineActionOutputSchemasV1 } from './actionsV1.js';
 
 describe('managed intent transport admission', () => {
+  it('accepts completed foreground power without inventing an asynchronous operation', () => {
+    const completed = { kind: 'accepted', managedId: 'managed', intentRevision: 5 };
+    expect(protocol.ManagedIntentResultSchema.parse(completed)).toEqual(completed);
+    expect(ManagedMachineActionOutputSchemasV1['machines.managed.power.set'].parse(completed)).toEqual(completed);
+    const asynchronous = { ...completed, operation: { operationId: 'actual-operation' } };
+    expect(protocol.ManagedIntentResultSchema.parse(asynchronous)).toEqual(asynchronous);
+    expect(protocol.ManagedIntentResultSchema.safeParse({ ...completed, operation: {} }).success).toBe(false);
+    expect(protocol.ManagedIntentResultSchema.safeParse({ ...completed, completed: true }).success).toBe(false);
+  });
+
   it('requires the explicit reviewed rebuild specialization instead of a generic immediate native command', () => {
     const schema = Reflect.get(protocol, 'DevcontainerRebuildIntentV1Schema');
     const intent = { managedMachineId: 'managed', expectedRevision: 4, kind: 'rebuild', reviewedEffectDigest: 'reviewed-config' };
