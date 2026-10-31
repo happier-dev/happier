@@ -1,9 +1,7 @@
-import { stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { execFile } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
-
-let ffmpegStaticPathPromise: Promise<string | null> | null = null;
 
 function isModuleResolutionFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? '');
@@ -15,32 +13,32 @@ function isModuleResolutionFailure(error: unknown): boolean {
 }
 
 export async function resolveFfmpegStaticBinaryPath(): Promise<string | null> {
-  if (!ffmpegStaticPathPromise) {
-    ffmpegStaticPathPromise = (async () => {
-      let resolvedPath: unknown;
-      try {
-        resolvedPath = require('ffmpeg-static');
-      } catch (error) {
-        if (isModuleResolutionFailure(error)) {
-          return null;
-        }
-        throw error;
-      }
-      const candidate = typeof resolvedPath === 'string'
-        ? resolvedPath
-        : typeof (resolvedPath as { default?: unknown } | null)?.default === 'string'
-          ? (resolvedPath as { default: string }).default
-          : null;
-      if (!candidate) {
-        return null;
-      }
-      try {
-        const candidateStat = await stat(candidate);
-        return candidateStat.isFile() ? candidate : null;
-      } catch {
-        return null;
-      }
-    })();
+  let resolvedPath: unknown;
+  try {
+    resolvedPath = require('ffmpeg-static');
+  } catch (error) {
+    if (isModuleResolutionFailure(error)) {
+      return null;
+    }
+    throw error;
   }
-  return await ffmpegStaticPathPromise;
+  const candidate = typeof resolvedPath === 'string'
+    ? resolvedPath
+    : typeof (resolvedPath as { default?: unknown } | null)?.default === 'string'
+      ? (resolvedPath as { default: string }).default
+      : null;
+  if (!candidate) {
+    return null;
+  }
+  // Check on demand, not once per daemon: support repair/removal must be visible to
+  // the next recording or audio decode request without another daemon restart.
+  try {
+    return await new Promise<string | null>(resolve => {
+      execFile(candidate, ['-version'], { windowsHide: true }, (error, stdout) => {
+        resolve(!error && /^ffmpeg version \S+/u.test(stdout) ? candidate : null);
+      });
+    });
+  } catch {
+    return null;
+  }
 }
