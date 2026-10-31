@@ -1846,6 +1846,7 @@ class Sync {
     }
 
     private clearActiveAccountSettingsScope(): void {
+        actionOperationStore.activateScope(null);
         this.flushSessionMaterializedMaxSeqForCurrentScopeNow();
         this.pendingSettings = {};
         this.pendingSettingsScope = null;
@@ -1881,6 +1882,7 @@ class Sync {
         migratePendingTerminalConnectScopes(scope, legacyScopes);
         migratePendingNotificationActionScopes(scope, legacyScopes);
         migratePendingNotificationNavScopes(scope, legacyScopes);
+        actionOperationStore.activateScope(scope);
         storage.getState().activateSettingsScope(scope, legacyScopes);
         storage.getState().activateProfileScope(scope, legacyScopes);
         storage.getState().activatePetsScope(scope, legacyScopes);

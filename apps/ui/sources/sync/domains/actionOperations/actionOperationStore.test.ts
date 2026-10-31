@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionOperationSnapshotV1, ActionOperationStateV1 } from '@happier-dev/protocol';
+import { log } from '@/log';
+import { getPersistenceStorage } from '../state/persistence';
+import { serverAccountScopedStorageKey } from '../scope/serverAccountScope';
 
 import {
     createActionOperationStore,
@@ -53,6 +56,74 @@ function snapshot(params: Readonly<{
 }
 
 describe('actionOperationStore', () => {
+    it('records acknowledgement read and write failures in the production diagnostic log', () => {
+        const scope = { serverId: 'acknowledgement-errors', accountId: primaryScope.accountId };
+        const storage = getPersistenceStorage();
+        const key = serverAccountScopedStorageKey('action-operation-acknowledgements-v1', scope);
+        storage.set(key, '{');
+        const beforeRead = log.getCount();
+        const store = createActionOperationStore();
+        store.activateScope(scope);
+        expect(store.getState().dismissedOperationIds.size).toBe(0);
+        expect(log.getLogs().slice(beforeRead)).toContain('[actionOperations] Could not load local acknowledgements (SyntaxError)');
+
+        store.merge(snapshot({ revision: 2, state: 'failed' }));
+        const beforeWrite = log.getCount();
+        // MMKV is a persistent system boundary; simulate an unavailable write.
+        const write = vi.spyOn(storage, 'set').mockImplementation(() => { throw new Error('Storage unavailable'); });
+        try {
+            store.dismissTerminal('operation-a');
+            expect(log.getLogs().slice(beforeWrite)).toContain('[actionOperations] Could not save local acknowledgements (Error)');
+        } finally {
+            write.mockRestore();
+            storage.delete(key);
+        }
+    });
+
+    it('restores terminal acknowledgements before replay, isolates accounts and servers, and preserves active work', () => {
+        const scope = { serverId: 'server-a', accountId: primaryScope.accountId };
+        const store = createActionOperationStore();
+        store.activateScope(scope);
+        const success = snapshot({ operationId: 'success', revision: 2, state: 'succeeded' });
+        const failure = snapshot({ operationId: 'failure', revision: 2, state: 'failed' });
+        const active = snapshot({ operationId: 'active', revision: 1, state: 'running' });
+        for (const operation of [success, failure, active]) store.merge(operation);
+        store.markAccountTerminalSeen(scope.accountId, 2_000);
+        store.dismissRecent(scope.accountId);
+        store.markUnavailable(active.operationId);
+        store.dismissUnavailable(active.operationId);
+
+        const restarted = createActionOperationStore();
+        restarted.activateScope(scope);
+        for (const operation of [success, failure, active]) restarted.mergeFullSnapshot(operation);
+        expect(restarted.getState().dismissedOperationIds).toEqual(new Set(['success']));
+        expect(restarted.getState().terminalSeenAtById).toEqual(new Map([['success', 2_000], ['failure', 2_000]]));
+        expect(restarted.getState().operationsById.get('failure')?.state).toBe('failed');
+        expect(restarted.dismissTerminal('active')).toBe(false);
+        expect(restarted.dismissTerminal('failure')).toBe(true);
+
+        const afterDismiss = createActionOperationStore();
+        afterDismiss.activateScope(scope);
+        afterDismiss.mergeFullSnapshot(failure);
+        expect(createActionOperationSelector(primaryScope)(afterDismiss.getState())).toEqual([]);
+        expect(afterDismiss.getState().operationsById.get('failure')?.state).toBe('failed');
+        afterDismiss.activateScope({ ...scope, serverId: 'server-b' });
+        afterDismiss.mergeFullSnapshot(failure);
+        expect(afterDismiss.getState().dismissedOperationIds.size).toBe(0);
+        expect(afterDismiss.getState().terminalSeenAtById.size).toBe(0);
+        afterDismiss.activateScope({ ...scope, accountId: 'account-b' });
+        expect(afterDismiss.getState().operationsById.size).toBe(0);
+        expect(afterDismiss.mergeFullSnapshot(failure)).toBe(false);
+        afterDismiss.activateScope(scope);
+        expect(afterDismiss.getState().dismissedOperationIds.has('failure')).toBe(true);
+        // Complete machine lists also prune persisted decisions not yet replayed this run.
+        afterDismiss.reconcileMachineList(primaryScope, new Set());
+        const afterPrune = createActionOperationStore();
+        afterPrune.activateScope(scope);
+        expect(afterPrune.getState().dismissedOperationIds.size).toBe(0);
+        expect(afterPrune.getState().terminalSeenAtById.size).toBe(0);
+    });
+
     it('merges revisions monotonically and never regresses or changes a terminal lifecycle', () => {
         const store = createActionOperationStore();
 

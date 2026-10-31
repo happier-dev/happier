@@ -367,6 +367,19 @@ an older daemon asks the user to update the daemon before starting work; it does
 not fall back to the synchronous import path. Existing relay RPC routing requires
 no server schema or persistence change.
 
+Development UIs persist Action Operations seen and terminal-dismissal decisions
+locally in the existing MMKV storage, under
+`action-operation-acknowledgements-v1` qualified by server and account. The shared
+operation store hydrates these decisions when sync activates that scope, before
+daemon replay. Complete machine lists prune acknowledgements for operations the
+daemon no longer retains. Snapshots and daemon outcomes remain authoritative:
+explicit dismissal hides a terminal failure from Activity and Inbox without
+changing its failed result; Clear recent preserves failures, active work, and
+unresolved setup attention. Dismissal of an unavailable active projection is
+session-local and is cleared when that work is observed again. These local
+preferences are not synchronized across devices. Older UIs ignore the new key;
+upgrading cannot recover acknowledgements lost by a previous app restart.
+
 Cancellation is cooperative during transcript reading and uploading. The current
 page/media/upload effect may finish before cancellation settles; no next message
 or runner startup follows. Accepted messages remain stored with the existing

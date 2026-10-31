@@ -59,7 +59,6 @@ export const InboxContent = React.memo(function InboxContent(props: Readonly<{
         },
         canDismissOperation: model.actionOperationModel.canDismissOperation,
         onDismissOperation: model.actionOperationModel.dismissOperation,
-        allowTerminalDismissal: true,
         presentationMode: 'inbox',
     } as const;
 
