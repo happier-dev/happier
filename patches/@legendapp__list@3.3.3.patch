@@ -529,7 +529,7 @@ index 229f09a8230ab24079d471f65d28d36908f0f2ea..0d478c29a4af72bdf50d81649538a4d9
 +      const shouldAdjustMaintainedEnd = scrollTarget === void 0 && hasExternalMaintainedEndOwnership && !maintainScrollAtEnd.animated;
 +        const shouldSkipAdjustForMaintainedEnd = scrollTarget === void 0 && (hasExternalMaintainedEndOwnership || hasActiveMaintainedEndOwnership);
 +        if (!shouldSkipAdjustForMaintainedEnd || shouldAdjustMaintainedEnd) {
-+          if (shouldAdjustMaintainedEnd) positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
++          if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
            requestAdjust(ctx, positionDiff, dataChanged && mvcpData);
          }
        }
@@ -1541,7 +1541,7 @@ index c2e0f3823f524e31e2105a5fbda76be78c926226..caf65b2eed69d15fbadbcdc129c14595
 +      const shouldAdjustMaintainedEnd = scrollTarget === void 0 && hasExternalMaintainedEndOwnership && !maintainScrollAtEnd.animated;
 +        const shouldSkipAdjustForMaintainedEnd = scrollTarget === void 0 && (hasExternalMaintainedEndOwnership || hasActiveMaintainedEndOwnership);
 +        if (!shouldSkipAdjustForMaintainedEnd || shouldAdjustMaintainedEnd) {
-+          if (shouldAdjustMaintainedEnd) positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
++          if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
            requestAdjust(ctx, positionDiff, dataChanged && mvcpData);
          }
        }
@@ -2559,7 +2559,7 @@ index 544cca82136ab14cbeec0a01499f554bd4eca75f..28132f7331cefd108364d0299fbbf5f1
 +      const shouldAdjustMaintainedEnd = scrollTarget === void 0 && hasExternalMaintainedEndOwnership && !maintainScrollAtEnd.animated;
 +        const shouldSkipAdjustForMaintainedEnd = scrollTarget === void 0 && (hasExternalMaintainedEndOwnership || hasActiveMaintainedEndOwnership);
 +        if (!shouldSkipAdjustForMaintainedEnd || shouldAdjustMaintainedEnd) {
-+          if (shouldAdjustMaintainedEnd) positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
++          if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
            requestAdjust(ctx, positionDiff);
          }
        }
@@ -3525,7 +3525,7 @@ index 6b2d9011f6c5e85664eca195de538617fe7d9dee..67078710132515ce20efd54ac497374b
 +      const shouldAdjustMaintainedEnd = scrollTarget === void 0 && hasExternalMaintainedEndOwnership && !maintainScrollAtEnd.animated;
 +        const shouldSkipAdjustForMaintainedEnd = scrollTarget === void 0 && (hasExternalMaintainedEndOwnership || hasActiveMaintainedEndOwnership);
 +        if (!shouldSkipAdjustForMaintainedEnd || shouldAdjustMaintainedEnd) {
-+          if (shouldAdjustMaintainedEnd) positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
++          if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
            requestAdjust(ctx, positionDiff);
          }
        }
@@ -4530,7 +4530,7 @@ index 544cca82136ab14cbeec0a01499f554bd4eca75f..28132f7331cefd108364d0299fbbf5f1
 +      const shouldAdjustMaintainedEnd = scrollTarget === void 0 && hasExternalMaintainedEndOwnership && !maintainScrollAtEnd.animated;
 +        const shouldSkipAdjustForMaintainedEnd = scrollTarget === void 0 && (hasExternalMaintainedEndOwnership || hasActiveMaintainedEndOwnership);
 +        if (!shouldSkipAdjustForMaintainedEnd || shouldAdjustMaintainedEnd) {
-+          if (shouldAdjustMaintainedEnd) positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
++          if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
            requestAdjust(ctx, positionDiff);
          }
        }
@@ -5496,7 +5496,7 @@ index 6b2d9011f6c5e85664eca195de538617fe7d9dee..67078710132515ce20efd54ac497374b
 +      const shouldAdjustMaintainedEnd = scrollTarget === void 0 && hasExternalMaintainedEndOwnership && !maintainScrollAtEnd.animated;
 +        const shouldSkipAdjustForMaintainedEnd = scrollTarget === void 0 && (hasExternalMaintainedEndOwnership || hasActiveMaintainedEndOwnership);
 +        if (!shouldSkipAdjustForMaintainedEnd || shouldAdjustMaintainedEnd) {
-+          if (shouldAdjustMaintainedEnd) positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
++          if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
            requestAdjust(ctx, positionDiff);
          }
        }

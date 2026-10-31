@@ -87,10 +87,11 @@ export const LEGEND_PATCH_MARKERS = Object.freeze([
     },
     {
         id: 'maintained-end-commit-anchor',
-        marker: 'HAPPIER-MVCP-END-ANCHOR',
+        marker: 'if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) positionDiff =',
         minOccurrences: 1,
-        defect: 'Nonanimated held-end MVCP now compensates prepended geometry in the same commit, while explicit scroll commands retain authority.',
-        evidence: 'sources/components/sessions/transcript/viewport/shell/renderer/legendListRenderer.real.integration.test.tsx',
+        defect: 'Nonanimated held-end MVCP now compensates prepended geometry in the same commit, while explicit scroll commands retain authority. '
+            + 'Content the same commit inserted above the reader\'s anchor keeps the anchor-preserving correction, so stale end ownership cannot throw a parked reader to the tail.',
+        evidence: 'sources/components/sessions/transcript/viewport/shell/renderer/legendListRenderer.real.integration.test.tsx, sources/components/sessions/transcript/viewport/shell/renderer/legendEndAnchorPrependWhileParked.real.integration.test.tsx',
         removeWhen: 'upstream preserves held-end geometry through MVCP commits and respects explicit scrolling authority',
     },
     {
