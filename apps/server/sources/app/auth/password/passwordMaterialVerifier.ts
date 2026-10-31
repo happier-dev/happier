@@ -64,11 +64,6 @@ export function passwordHashAdmission(): PasswordHashAdmission {
     return sharedAdmission;
 }
 
-/** Test seam for the admission bound; production never passes an override. */
-export function setPasswordHashAdmissionForTesting(admission: PasswordHashAdmission | null): void {
-    sharedAdmission = admission;
-}
-
 /**
  * Hash material under the current writer profile. Callers hash *outside* their
  * database transaction: this is hundreds of milliseconds of CPU and must never
