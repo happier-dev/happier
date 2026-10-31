@@ -16,6 +16,7 @@ describe('waitForSessionIdle', () => {
                 rawSession: {
                     id: 'sess-1',
                     active: true,
+                    pendingCount: 0,
                     agentState: '{"requests":{"stale":{"createdAt":1}}}',
                     pendingPermissionRequestCount: 0,
                     pendingUserActionRequestCount: 0,

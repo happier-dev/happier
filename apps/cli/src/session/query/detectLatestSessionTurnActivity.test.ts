@@ -10,6 +10,7 @@ describe('detectLatestSessionTurnActivity', () => {
     const fetchSessionById = vi.fn(async () => ({
       id: 'sess-1',
       latestTurnStatus: 'completed',
+      pendingCount: 0,
       pendingPermissionRequestCount: 0,
       pendingUserActionRequestCount: 0,
       runtimeActivityState: 'active',

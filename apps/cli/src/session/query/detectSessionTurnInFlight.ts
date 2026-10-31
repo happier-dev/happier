@@ -59,21 +59,27 @@ export function readSessionProjectedPendingRequestCount(value: unknown): number 
     return pendingPermissionRequestCount + pendingUserActionRequestCount;
 }
 
+export function readSessionProjectedPendingInputCount(value: unknown): number | null {
+    const record = asRecord(value);
+    return record ? readNonnegativeInteger(record.pendingCount) : null;
+}
+
 export function detectSessionTurnActivityFromProjection(value: unknown): SessionTurnActivity | null {
     const record = asRecord(value);
     if (!record) return null;
 
     const latestTurnStatus = readSessionProjectedTurnStatus(record.latestTurnStatus);
     const projectedPendingRequestCount = readSessionProjectedPendingRequestCount(record);
-    if (!latestTurnStatus || projectedPendingRequestCount === null) {
+    const pendingUserTurns = readSessionProjectedPendingInputCount(record);
+    if (!latestTurnStatus || projectedPendingRequestCount === null || pendingUserTurns === null) {
         return null;
     }
 
     const activeTaskInFlight = latestTurnStatus === 'in_progress';
     return {
-        pendingUserTurns: 0,
+        pendingUserTurns,
         activeTaskInFlight,
-        turnInFlight: activeTaskInFlight || projectedPendingRequestCount > 0,
+        turnInFlight: activeTaskInFlight || pendingUserTurns > 0 || projectedPendingRequestCount > 0,
     };
 }
 
@@ -180,6 +186,8 @@ export async function detectSessionTurnActivity(params: Readonly<{
                 event: lifecycleEvent,
             }));
         }
+
+        pendingUserTurns = Math.max(pendingUserTurns, readSessionProjectedPendingInputCount(params.sessionProjection) ?? 0);
 
         return {
             pendingUserTurns,
