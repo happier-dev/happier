@@ -19,6 +19,22 @@ function createAxiosConfig(params: Readonly<{
 }
 
 describe('serializeAxiosErrorForLog', () => {
+  it('preserves ordinary startup error codes and sanitized stacks without enumerable payloads', () => {
+    const error = Object.assign(new Error('startup failed with Authorization: Bearer PRIVATE_TOKEN'), {
+      code: 'ERR_STARTUP',
+      config: { env: { SECRET: 'PRIVATE_ENV' } },
+    });
+    error.stack = `${error.name}: ${error.message}\n    at bootstrap (https://alice:PRIVATE_PASSWORD@example.test/start?token=PRIVATE_QUERY:1:2)`;
+    const serialized = serializeAxiosErrorForLog(error);
+    expect(serialized).toMatchObject({ name: 'Error', code: 'ERR_STARTUP',
+      message: expect.stringContaining('startup failed with'),
+      stack: expect.stringContaining('at bootstrap'),
+    });
+    const text = JSON.stringify(serialized);
+    for (const secret of ['PRIVATE_TOKEN', 'PRIVATE_ENV', 'PRIVATE_PASSWORD', 'PRIVATE_QUERY']) expect(text).not.toContain(secret);
+    expect(serialized).not.toHaveProperty('config');
+  });
+
   it('redacts query params and does not include headers/body', () => {
     const err = new AxiosError('boom', 'ECONNABORTED', createAxiosConfig({
       method: 'get',
@@ -186,7 +202,7 @@ describe('serializeAxiosErrorForLog', () => {
     );
 
     expect(serialized).toEqual({
-      message: 'request failed with Authorization: <redacted>',
+      message: expect.stringContaining('request failed with'),
     });
     expect(JSON.stringify(serialized)).not.toContain('SUPER_SECRET_TOKEN');
     expect(JSON.stringify(serialized)).not.toContain('Bearer');

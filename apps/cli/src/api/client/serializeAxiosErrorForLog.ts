@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { sanitizeDoctorDiagnosticText } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
 function redactUrlForLog(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
@@ -43,16 +44,9 @@ function redactUrlForLog(raw: unknown): string | undefined {
 
 const LOG_URL_TOKEN_PATTERN = /\b[a-z][a-z\d+.-]*:\/\/[^\s"'<>]+|(?<!:)\/\/[^\s"'<>]+|\b[^/?#:@\s]+(?::[^/?#@\s]+)?@(?:localhost|\[[^\]\s]+\]|[^/?#@\s]+\.[^/?#@\s]+|[^/?#@\s]+:\d+)[^\s"'<>]*/giu;
 
-function redactAuthorizationTokensForLog(value: string): string {
-  return value
-    .replace(/\b(Authorization\s*[:=]\s*)(?:Bearer|Basic)?\s*[^\s,;]+/giu, '$1<redacted>')
-    .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, '$1 <redacted>');
-}
-
 function redactMessageForLog(raw: unknown): string {
-  return redactAuthorizationTokensForLog(
-    String(raw).replace(LOG_URL_TOKEN_PATTERN, (match) => redactUrlForLog(match) ?? '<redacted>'),
-  );
+  return sanitizeDoctorDiagnosticText(String(raw))
+    .replace(LOG_URL_TOKEN_PATTERN, (match) => redactUrlForLog(match) ?? '<redacted>');
 }
 
 function readSafeResponseField(data: unknown, field: 'error' | 'reason'): string | undefined {
@@ -71,7 +65,7 @@ export function serializeAxiosErrorForLog(error: unknown): Record<string, unknow
     return {
       name: error.name,
       message: redactMessageForLog(error.message),
-      code: error.code,
+      code: typeof error.code === 'string' ? redactMessageForLog(error.code) : error.code,
       status: error.response?.status,
       method: typeof error.config?.method === 'string' ? error.config.method.toUpperCase() : undefined,
       url: redactUrlForLog(error.config?.url),
@@ -81,7 +75,13 @@ export function serializeAxiosErrorForLog(error: unknown): Record<string, unknow
   }
 
   if (error instanceof Error) {
-    return { name: error.name, message: redactMessageForLog(error.message) };
+    const code: unknown = 'code' in error ? error.code : undefined;
+    return {
+      name: error.name,
+      message: redactMessageForLog(error.message),
+      ...(typeof error.stack === 'string' ? { stack: redactMessageForLog(error.stack) } : {}),
+      ...(typeof code === 'string' ? { code: redactMessageForLog(code) } : typeof code === 'number' ? { code } : {}),
+    };
   }
 
   return { message: redactMessageForLog(error) };
