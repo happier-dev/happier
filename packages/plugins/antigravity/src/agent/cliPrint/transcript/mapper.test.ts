@@ -62,14 +62,11 @@ describe('Antigravity cliPrint transcript mapper', () => {
     });
   });
 
-  it('classifies the sanitized source fixture once for cliPrint, external, and terminal consumers', () => {
+  it('classifies the sanitized source fixture into canonical semantic steps', () => {
     const records = parseAntigravityTranscriptJsonl(readFileSync(
       new URL('./__fixtures__/transcript_full.semantic.sanitized.jsonl', import.meta.url),
       'utf8',
     ));
-    const classify = () => mapAntigravityTranscriptRecordsToSteps(records, {
-      generatedIdNamespace: 'fixture-conversation',
-    });
     const expected = [
       {
         id: 'antigravity-turn-fixture-conversation-step-1',
@@ -117,13 +114,9 @@ describe('Antigravity cliPrint transcript mapper', () => {
       },
     ];
 
-    const cliPrintClassification = classify();
-    const externalClassification = classify();
-    const terminalClassification = classify();
-
-    expect(cliPrintClassification).toEqual(expected);
-    expect(externalClassification).toEqual(cliPrintClassification);
-    expect(terminalClassification).toEqual(cliPrintClassification);
+    expect(mapAntigravityTranscriptRecordsToSteps(records, {
+      generatedIdNamespace: 'fixture-conversation',
+    })).toEqual(expected);
   });
 
   it('projects external transcript items from the same semantic classifier with byte-stable fallback ids', () => {
