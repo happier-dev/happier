@@ -1,4 +1,4 @@
-import type { InputFieldHint, InputHints } from './inputFields.js';
+import type { InputFieldHint, InputFieldHintDescriptor, InputHints, InputHintsDescriptor } from './inputFields.js';
 import { evaluateInputPredicate, readInputPath } from './inputPredicates.js';
 import { readRecord } from './inputRecords.js';
 export {
@@ -23,14 +23,14 @@ export type EffectiveInputField = InputFieldHint & Readonly<{
   disabled: boolean;
 }>;
 
-export function resolveEffectiveInputFields(
-  spec: Readonly<{ inputHints?: InputHints }>,
+export function resolveEffectiveInputFields<TText = string, TField extends InputFieldHintDescriptor<TText> = InputFieldHintDescriptor<TText>>(
+  spec: Readonly<{ inputHints?: InputHintsDescriptor<TText> & Readonly<{ fields: readonly TField[] }> }>,
   input: unknown,
   options: Readonly<{ includeHidden?: boolean; contextSlots?: readonly string[] }> = {},
-): readonly EffectiveInputField[] {
+): readonly (TField & InputFieldHintDescriptor<TText> & Pick<EffectiveInputField, 'visible' | 'required' | 'disabled'>)[] {
   const fields = spec.inputHints?.fields ?? [];
 
-  const out: EffectiveInputField[] = [];
+  const out: (TField & InputFieldHintDescriptor<TText> & Pick<EffectiveInputField, 'visible' | 'required' | 'disabled'>)[] = [];
   for (const field of fields) {
     const { visibleWhen, requiredWhen, disabledWhen } = field;
 

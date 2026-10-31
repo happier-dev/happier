@@ -91,4 +91,5 @@ export async function invokeCuaRemoteRole(role: CuaRemoteRole, input: unknown, c
         return { termination: result.termination, stdoutBase64: Buffer.from(result.stdout).toString('base64'), stderrBase64: Buffer.from(result.stderr).toString('base64'),
             stdoutTruncated: result.stdoutTruncated, stderrTruncated: result.stderrTruncated };
     }
+    return undefined;
 }
