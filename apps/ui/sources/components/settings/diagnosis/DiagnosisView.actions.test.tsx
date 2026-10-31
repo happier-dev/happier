@@ -16,7 +16,7 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 // Device clipboard is the system boundary. The Action admission and diagnostic exporter stay real.
-vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: clipboard.write }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: clipboard.write }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
     (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(rpc.machine));
 

@@ -37,8 +37,8 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock().module;
 });
 
-vi.mock('@/utils/ui/clipboard', () => ({
-    setClipboardStringSafe: vi.fn(async () => true),
+vi.mock('expo-clipboard', () => ({
+    setStringAsync: vi.fn(async () => true),
 }));
 
 // The daemon RPC and Home HTTP/credential boundaries leave real admission, state and doctor logic underneath.

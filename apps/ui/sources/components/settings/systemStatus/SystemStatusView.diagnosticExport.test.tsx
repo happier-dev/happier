@@ -8,7 +8,7 @@ const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 installSettingsViewCommonModuleMocks({ storage: 'real' });
 const clipboard = vi.hoisted(() => vi.fn(async (_text: string) => true));
-vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: clipboard }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: clipboard }));
 
 // Package cleanup retires runtimeFetch after each case. Reclaim the same Home
 // HTTP boundary before the next case; its already-imported clients stay real.
