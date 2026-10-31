@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { parse } from 'yaml';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
@@ -11,5 +12,11 @@ test('publish-ui-mobile-dev installs the Dagger CLI version declared by the loca
   const expectedVersion = String(daggerConfig.engineVersion ?? '').replace(/^v/, '');
 
   assert.match(expectedVersion, /^\d+\.\d+\.\d+$/);
-  assert.match(workflow, new RegExp(`version:\\s*["']${expectedVersion.replaceAll('.', '\\.')}["']`));
+  const installers = Object.values(parse(workflow).jobs ?? {})
+    .flatMap((job) => job.steps ?? [])
+    .filter((step) => String(step.uses ?? '').startsWith('dagger/dagger-for-github@'));
+  assert.ok(installers.length > 0, 'expected a Dagger installation step');
+  for (const installer of installers) {
+    assert.equal(installer.with?.version, expectedVersion);
+  }
 });

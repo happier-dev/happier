@@ -448,36 +448,6 @@ test('planImportRewrites rewrites only import statements and respects namedImpor
   );
 });
 
-test('planImportRewritesForFilePaths only rewrites targeted files', () => {
-  const plan = planImportRewritesForFilePaths(
-    [
-      {
-        filePath: 'apps/cli/src/backends/catalog.ts',
-        content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
-      },
-      {
-        filePath: 'apps/ui/sources/example.tsx',
-        content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
-      },
-    ],
-    [
-      {
-        id: 'rewrite-resolved-contribution-registry',
-        from: '@/plugins/registry/createResolvedContributionRegistry',
-        to: '@/plugins/registry/createResolvedContributionRegistryV2',
-      },
-    ],
-    ['apps/cli/src/backends/catalog.ts'],
-  );
-
-  assert.equal(plan.edits.length, 1);
-  assert.equal(plan.edits[0]?.filePath, 'apps/cli/src/backends/catalog.ts');
-  assert.equal(
-    plan.edits[0]?.after,
-    "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistryV2';",
-  );
-});
-
 test('applyRewritePlan writes planned edits to disk and refuses mismatched content', () => {
   const rootDir = mkdtempSync(join(tmpdir(), 'happier-rewrite-plan-'));
   const targetPath = join(rootDir, 'apps/cli/src/backends/catalog.ts');

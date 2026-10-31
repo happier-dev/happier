@@ -1632,7 +1632,7 @@ test('planV2ZeroLaneImportRewrites scopes codemods to lane-targeted files only',
 });
 
 test('buildV2ZeroLaneRewriteExecutionPacket produces lane-scoped rewrite inputs', () => {
-  const report = collectV2ZeroInventory([
+  const files = [
     {
       filePath: 'apps/cli/src/backends/catalog.ts',
       content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
@@ -1641,29 +1641,18 @@ test('buildV2ZeroLaneRewriteExecutionPacket produces lane-scoped rewrite inputs'
       filePath: 'apps/ui/sources/example.tsx',
       content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
     },
-  ]);
-  const laneReport = collectV2ZeroLaneExtractReports(report).find((lane) => lane.laneId === 'a1');
+  ];
+  const laneReport = collectV2ZeroLaneExtractReports(collectV2ZeroInventory(files))
+    .find((lane) => lane.laneId === 'a1');
+  assert.ok(laneReport);
 
-  const packet = buildV2ZeroLaneRewriteExecutionPacket(
-    laneReport as NonNullable<typeof laneReport>,
-    [
-      {
-        filePath: 'apps/cli/src/backends/catalog.ts',
-        content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
-      },
-      {
-        filePath: 'apps/ui/sources/example.tsx',
-        content: "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistry';",
-      },
-    ],
-    [
-      {
-        id: 'rewrite-resolved-contribution-registry',
-        from: '@/plugins/registry/createResolvedContributionRegistry',
-        to: '@/plugins/registry/createResolvedContributionRegistryV2',
-      },
-    ],
-  );
+  const packet = buildV2ZeroLaneRewriteExecutionPacket(laneReport, files, [
+    {
+      id: 'rewrite-resolved-contribution-registry',
+      from: '@/plugins/registry/createResolvedContributionRegistry',
+      to: '@/plugins/registry/createResolvedContributionRegistryV2',
+    },
+  ]);
 
   assert.equal(packet.laneReport.laneId, 'a1');
   assert.deepEqual(packet.targetFilePaths, ['apps/cli/src/backends/catalog.ts']);
@@ -1715,6 +1704,10 @@ test('buildV2ZeroLaneRewriteDryRunPacket validates lane rewrites against live in
   assert.deepEqual(packet.wouldChangeFilePaths, ['apps/cli/src/backends/catalog.ts']);
   assert.equal(packet.rewritePlan.edits.length, 1);
   assert.equal(packet.rewritePlan.edits[0]?.filePath, 'apps/cli/src/backends/catalog.ts');
+  assert.equal(
+    packet.rewritePlan.edits[0]?.after,
+    "import { getResolvedContributionRegistry } from '@/plugins/registry/createResolvedContributionRegistryV2';",
+  );
 });
 
 test('buildV2ZeroLaneRewriteApplyPacket applies lane rewrites when dry-run validation passes', () => {

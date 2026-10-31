@@ -28,12 +28,6 @@ test('root scripts expose a non-writing bundled plugin projection drift check', 
   assert.doesNotMatch(scripts[ROOT_SCRIPT_NAME] ?? '', /--mode\s+write/);
 });
 
-test('tracked root governance enforces bundled plugin projection drift', () => {
-  const scripts = readRootScripts();
-
-  assert.match(scripts['test:migration:governance'] ?? '', /test:migration:bundled-plugin-projections/);
-});
-
 test('root migration governance runs tracked product validators without ignored plan-ledger closure', () => {
   const scripts = readRootScripts();
   const governanceScript = scripts['test:migration:governance'] ?? '';

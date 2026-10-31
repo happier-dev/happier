@@ -274,6 +274,7 @@ test('pipeline help covers every supported subcommand', async () => {
   for (const name of allowlist) {
     if (!unique.includes(name)) unique.push(name);
   }
+  assert.ok(unique.length > 0, 'expected the supported-subcommand inventory to be nonempty');
 
   const style = createAnsiStyle({ enabled: false });
   for (const cmd of unique) {

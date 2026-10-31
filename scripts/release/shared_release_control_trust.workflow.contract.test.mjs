@@ -103,11 +103,12 @@ function renderExpressions(run, replacements) {
   return rendered;
 }
 
-function assertMaliciousInputRemainsData({ run, replacements, env }) {
+function assertMaliciousInputRemainsData({ run, replacements, env, command, expectedArgs }) {
   const scratch = mkdtempSync(join(tmpdir(), 'happier-release-shell-trust-'));
   const marker = join(scratch, 'injected');
   const fakeNode = join(scratch, 'node');
-  writeFileSync(fakeNode, '#!/bin/sh\nexit 0\n');
+  const argvPath = join(scratch, 'argv');
+  writeFileSync(fakeNode, '#!/bin/sh\nprintf \'%s\\0\' "$@" > "$ARGV_LOG"\n');
   chmodSync(fakeNode, 0o755);
 
   try {
@@ -119,11 +120,20 @@ function assertMaliciousInputRemainsData({ run, replacements, env }) {
         ...env,
         PATH: `${scratch}:${process.env.PATH ?? ''}`,
         INJECTION_MARKER: marker,
+        ARGV_LOG: argvPath,
+        GITHUB_STEP_SUMMARY: join(scratch, 'summary'),
       },
       encoding: 'utf8',
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.equal(existsSync(marker), false, 'caller-controlled input executed as shell source');
+    const argv = readFileSync(argvPath, 'utf8').split('\0').slice(0, -1);
+    assert.deepEqual(argv.slice(0, 2), ['scripts/pipeline/run.mjs', command]);
+    for (const [flag, expected] of Object.entries(expectedArgs)) {
+      const index = argv.indexOf(flag);
+      assert.notEqual(index, -1, `missing publisher argument: ${flag}`);
+      assert.equal(argv[index + 1], expected, `${flag} must remain one opaque argument`);
+    }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -228,6 +238,8 @@ test('malicious branch and release inputs remain opaque publisher arguments', ()
   const promoteRun = step(workflow('promote-branch.yml').jobs.promote, 'Promote branch (pipeline)').run;
   assertMaliciousInputRemainsData({
     run: promoteRun,
+    command: 'promote-branch',
+    expectedArgs: { '--source': injection, '--target': 'main' },
     replacements: {
       'inputs.source': injection,
       'inputs.target': 'main',
@@ -244,13 +256,14 @@ test('malicious branch and release inputs remain opaque publisher arguments', ()
       INPUT_ALLOW_RESET: 'false',
       INPUT_CONFIRM: 'promote main from safe',
       INPUT_DRY_RUN: 'true',
-      GITHUB_STEP_SUMMARY: join(tmpdir(), 'unused-release-summary'),
     },
   });
 
   const publishRun = step(workflow('publish-github-release.yml').jobs.publish, 'Publish GitHub release (pipeline)').run;
   assertMaliciousInputRemainsData({
     run: publishRun,
+    command: 'github-publish-release',
+    expectedArgs: { '--tag': injection, '--title': 'Release title' },
     replacements: {
       'inputs.tag': injection,
       'inputs.title': 'Release title',

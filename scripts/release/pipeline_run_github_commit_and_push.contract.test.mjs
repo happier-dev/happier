@@ -27,5 +27,9 @@ test('pipeline run exposes github-commit-and-push (dry-run)', () => {
     '--dry-run',
   ]);
   assert.equal(res.status, 0, `expected exit 0, got ${res.status} stderr=${res.stderr}`);
+  assert.match(res.stdout, /\[dry-run\].*git add package\.json/);
+  assert.match(res.stdout, /\[dry-run\].*git commit -m "test commit \(dry-run\)"/);
+  assert.match(res.stdout, /DID_COMMIT=true/);
+  assert.doesNotMatch(res.stdout, /\[dry-run\].*git push\b/);
 });
 

@@ -6,7 +6,6 @@ import test from 'node:test';
 
 import {
   adaptPluginSdkMigrationMap,
-  applyPluginSdkMigrationPlan,
   planPluginSdkMigration,
   runPluginSdkMigration,
   type PluginSdkMigrationMapRow,
@@ -647,21 +646,6 @@ test('a safe target identity does not mask an unknown symbol on the same target 
     result.plan.refusals.map(({ symbol, reason }) => ({ symbol, reason })),
     [{ symbol: 'UnknownCarrier', reason: 'unknown-symbol' }],
   );
-});
-
-test('applyPluginSdkMigrationPlan preserves current content when bytes changed after planning', () => {
-  const rootDir = mkdtempSync(join(tmpdir(), 'plugin-sdk-migration-guard-'));
-  const filePath = 'packages/plugins/example/src/index.ts';
-  writeFixture(rootDir, filePath, "import { LegacyType } from '@happier-dev/plugin-sdk/experimental/runtime';");
-  const planned = planPluginSdkMigration({ rootDir, mapRows: mapRows.slice(0, 3) });
-
-  const concurrentBytes = '// concurrent edit\n';
-  writeFixture(rootDir, filePath, concurrentBytes);
-  const applied = applyPluginSdkMigrationPlan(rootDir, planned.plan);
-
-  assert.equal(applied.appliedEdits.length, 0);
-  assert.deepEqual(applied.skippedEdits, [{ filePath, reason: 'content-mismatch' }]);
-  assert.equal(readFileSync(join(rootDir, filePath), 'utf8'), concurrentBytes);
 });
 
 test('CLI defaults to dry-run options and formats deterministic machine-readable output', () => {

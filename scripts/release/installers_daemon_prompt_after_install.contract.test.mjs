@@ -11,7 +11,7 @@ test('install.sh resolves the background-service choice only after the CLI paylo
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
   const source = await readFile(path, 'utf8');
 
-  const appendPathHintIndex = source.indexOf('append_path_hint');
+  const appendPathHintIndex = source.search(/^append_path_hint[ \t]*$/m);
   const preflightIndex = source.indexOf('read_background_service_preflight_json "${DISPLAY_SHIM_PATH}"');
   const withDaemonIndex = source.indexOf('WITH_DAEMON="$(resolve_with_daemon_choice');
 

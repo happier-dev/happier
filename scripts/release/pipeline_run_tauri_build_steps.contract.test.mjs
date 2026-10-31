@@ -100,5 +100,8 @@ for (const environment of ['preview', 'dev']) {
       ],
     );
     assert.equal(res.status, 0, `expected exit 0, got ${res.status} stderr=${res.stderr}`);
+    assert.match(res.stdout, /\[dry-run\] search: apps\/ui\/src-tauri\/target\/x86_64-unknown-linux-gnu/);
+    assert.match(res.stdout, /\[dry-run\] output: dist\/tauri\/updates\/linux-x64/);
+    assert.ok(res.stdout.includes(`[dry-run] out_base: happier-ui-desktop-${environment}-linux-x64`), res.stdout);
   });
 }

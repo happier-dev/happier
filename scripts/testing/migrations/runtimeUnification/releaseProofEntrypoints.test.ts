@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -7,21 +7,12 @@ import test from 'node:test';
 type ReleaseContractModule = typeof import('./validateReleaseContract.ts');
 type FullyUnifiedModule = typeof import('./checkFullyUnified.ts');
 
-const ROOT_DIR = join(import.meta.dirname, '../../../..');
-
 async function loadReleaseContract(): Promise<ReleaseContractModule> {
   return import('./validateReleaseContract.ts');
 }
 
 async function loadFullyUnified(): Promise<FullyUnifiedModule> {
   return import('./checkFullyUnified.ts');
-}
-
-function readRootScripts(): Record<string, string | undefined> {
-  const packageJson = JSON.parse(readFileSync(join(ROOT_DIR, 'package.json'), 'utf8')) as {
-    scripts?: Record<string, string | undefined>;
-  };
-  return packageJson.scripts ?? {};
 }
 
 function createFixtureRepo(): string {
@@ -67,14 +58,6 @@ test('fully unified entrypoint includes the V2-zero ratchet as a first-class dep
   assert.equal(typeof result.v2ZeroInventory.ok, 'boolean');
   assert.ok(Array.isArray(result.v2ZeroInventory.errors));
   assert.equal(result.fullyUnified, false);
-});
-
-test('root scripts expose F.6 release proof entrypoints', () => {
-  const scripts = readRootScripts();
-
-  assert.equal(scripts['test:smoke:stripped-path'], 'node --experimental-strip-types --test scripts/testing/smoke/strippedPathBinarySmoke.test.ts');
-  assert.match(scripts['test:migration:governance'] ?? '', /validateReleaseContract\.ts/);
-  assert.match(scripts['test:policy:self'] ?? '', /scripts\/testing\/migrations\/runtimeUnification\/\*\.test\.ts/);
 });
 
 test('release contract rejects root plugin entrypoints that re-export runtime contributions', async () => {

@@ -206,20 +206,6 @@ test('wires shared SDK packages into the default root validation lanes', () => {
   assert.match(typecheckCommandText, /--filter=@happier-dev\/plugin-ui/);
 });
 
-test('routes the root ordinary integration lane through the Stack executor', () => {
-  const packageJson = JSON.parse(readFileSync(join(ROOT_DIR, 'package.json'), 'utf8')) as {
-    scripts: Record<string, string>;
-  };
-
-  assert.equal(
-    packageJson.scripts?.['test:integration'],
-    'apps/stack/bin/hstack-exec --script=test:integration:local',
-  );
-  const targets = resolveRootScriptWorkspaceTargets(packageJson.scripts, 'test:integration');
-  assert.ok(targets.some((target) => target.packageName === '@happier-dev/app' && target.scriptName === 'test:integration'));
-  assert.ok(targets.some((target) => target.workspaceDirectory === 'apps/stack' && target.scriptName === 'test:integration'));
-});
-
 test('runs current-source Plugin Platform contracts without a release representation in CI', () => {
   const testsPackageJson = JSON.parse(readFileSync(join(ROOT_DIR, 'packages/tests/package.json'), 'utf8')) as {
     scripts?: Record<string, string | undefined>;

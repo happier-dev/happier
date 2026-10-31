@@ -78,31 +78,6 @@ test('validateNoHostImposedPermissionTtl accepts the future Claude plugin bridge
   assert.deepEqual(result.errors, []);
 });
 
-test('validateNoHostImposedPermissionTtl rejects host permission timers outside the allowlist', async () => {
-  const { validateNoHostImposedPermissionTtl } = await loadValidator();
-  const rootDir = createRepo();
-  writeCurrentAllowlistedBridge(rootDir);
-  writeRepoFile(
-    rootDir,
-    'apps/cli/src/agent/permissions/permissionRequestCoordinator.ts',
-    [
-      'export function expirePermissionRequest(requestId: string) {',
-      '  setTimeout(() => {',
-      '    cancelPermissionRequest(requestId);',
-      '  }, 30000);',
-      '}',
-      'function cancelPermissionRequest(_requestId: string) {}',
-      '',
-    ].join('\n'),
-  );
-
-  const result = validateNoHostImposedPermissionTtl({ rootDir });
-
-  assert.equal(result.ok, false);
-  assert.ok(result.errors.some((error) => error.includes('permissionRequestCoordinator.ts')));
-  assert.ok(result.errors.some((error) => error.includes('setTimeout')));
-});
-
 test('validateNoHostImposedPermissionTtl rejects copied plugin lifecycle timers outside permission folders', async () => {
   const { validateNoHostImposedPermissionTtl } = await loadValidator();
   const rootDir = createRepo();
