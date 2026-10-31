@@ -448,11 +448,23 @@ async function ensureUiPostinstallOutputs(componentDir, installDir, { quiet = fa
 
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: installDir, env, quiet, pm });
-    await runPm(pm, ['-s', 'workspace', '@happier-dev/app', 'postinstall:real'], {
+    const runUiPostinstall = () => runPm(pm, ['-s', 'workspace', '@happier-dev/app', 'postinstall:real'], {
       cwd: installDir,
       stdio,
       env,
     });
+    try {
+      await runUiPostinstall();
+    } catch {
+      // A changed patch cannot apply over bytes an earlier version already patched. Re-extract
+      // pristine packages once, then apply the current patches; a second failure is real.
+      if (!quiet) {
+        // eslint-disable-next-line no-console
+        console.log('[local] restoring pristine happier-ui dependencies before re-applying patches...');
+      }
+      await runPm(pm, ['install', '--production=false', '--force'], { cwd: installDir, stdio, env });
+      await runUiPostinstall();
+    }
   } else {
     await runPm(pm, ['run', '-s', 'postinstall:real'], {
       cwd: componentDir,

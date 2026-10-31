@@ -105,6 +105,11 @@ async function writeYarnUiPostinstallStub({ binDir, outputPath, requiredOutputPa
       'set -euo pipefail',
       'echo "$*" >> "${OUTPUT_PATH:?}"',
       'if [[ "${1:-}" == "install" ]]; then mkdir -p node_modules; fi',
+      // A forced install re-extracts pristine package bytes, which is what clears a mixed tree.
+      'if [[ "${1:-}" == "install" && " $* " == *" --force "* ]]; then rm -f "${MIXED_TREE_PATH:-/nonexistent}"; fi',
+      'if [[ "$*" == "-s workspace @happier-dev/app postinstall:real" && -n "${MIXED_TREE_PATH:-}" && -f "$MIXED_TREE_PATH" ]]; then',
+      '  echo "**ERROR** Failed to apply patch for package some-package" >&2; exit 1',
+      'fi',
       'if [[ "$*" == "-s workspace @happier-dev/app postinstall:real" ]]; then',
       `  mkdir -p ${JSON.stringify(dirname(requiredOutputPath))}`,
       `  printf '%s\n' 'export const patched = true;' > ${JSON.stringify(requiredOutputPath)}`,
@@ -981,6 +986,63 @@ test('ensureDepsInstalled reapplies UI postinstall when a refresh is triggered o
     1,
     `expected the patch-only refresh to re-apply UI patches exactly once, got:\n${commands.join('\n')}`,
   );
+});
+
+// A changed patch cannot apply over bytes an earlier version already patched; patch-package
+// fails. The refresh restores pristine packages once and re-applies, instead of failing every run.
+test('ensureDepsInstalled restores pristine packages once when a changed UI patch cannot apply over the old one', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-ui-mixed-tree-'));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+
+  for (const component of ['cli', 'server']) {
+    await mkdir(join(root, 'apps', component), { recursive: true });
+    await writeFile(join(root, 'apps', component, 'package.json'), `{ "name": "@happier-dev/${component}" }\n`, 'utf-8');
+  }
+  const uiDir = join(root, 'apps', 'ui');
+  await mkdir(join(uiDir, 'patches'), { recursive: true });
+  await writeFile(join(uiDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/app',
+    happier: { installFreshnessInputs: ['patches'] },
+    scripts: { 'postinstall:real': 'node ./tools/postinstall.mjs' },
+  }) + '\n', 'utf-8');
+  const patchPath = join(uiDir, 'patches', 'some-package+1.0.0.patch');
+  await writeFile(patchPath, 'first\n', 'utf-8');
+  await writeFile(join(root, 'package.json'), JSON.stringify({
+    name: 'monorepo', private: true, workspaces: { packages: ['apps/ui', 'apps/cli', 'apps/server'] },
+  }) + '\n', 'utf-8');
+  await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  await writeFile(join(root, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
+  const requiredOutputPath = join(uiDir, 'node_modules', 'react-native-enriched-markdown', 'lib', 'module', 'web', 'streamingReveal.js');
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  const mixedTreePath = join(root, 'mixed-tree');
+  await writeYarnUiPostinstallStub({ binDir, outputPath, requiredOutputPath });
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    MIXED_TREE_PATH: mixedTreePath,
+    HAPPIER_STACK_HOME_DIR: join(root, 'home'),
+    HAPPIER_STACK_ENV_FILE: '',
+  };
+  const serverDir = join(root, 'apps', 'server');
+  await ensureDepsInstalled(serverDir, 'happier-server', { quiet: true, env });
+
+  await writeFile(mixedTreePath, 'old patch applied\n', 'utf-8');
+  await writeFile(patchPath, 'second\n', 'utf-8');
+  await writeFile(outputPath, '', 'utf-8');
+  await ensureDepsInstalled(serverDir, 'happier-server', { quiet: true, env });
+
+  const commands = (await readFile(outputPath, 'utf-8')).split('\n').filter(Boolean);
+  assert.deepEqual(commands.filter((line) => line.startsWith('install') || line.includes('postinstall:real')), [
+    'install --production=false',
+    '-s workspace @happier-dev/app postinstall:real',
+    'install --production=false --force',
+    '-s workspace @happier-dev/app postinstall:real',
+  ]);
+  assert.equal((await readFile(requiredOutputPath, 'utf-8')).trim(), 'export const patched = true;');
 });
 
 test('ensureDepsInstalled refreshes monorepo dependencies when root yarn.lock changes', async (t) => {
