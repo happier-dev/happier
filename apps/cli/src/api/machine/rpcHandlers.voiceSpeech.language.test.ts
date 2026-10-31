@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse, VoiceProviderContributionSchema } from '@happier-dev/protocol';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -28,6 +28,11 @@ function snapshot(language: string | null, settingsVersion = 1): ActiveAccountSe
 }
 
 describe('registered speech recognition language at the real daemon/plugin boundary', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    clearActiveAccountSettingsSnapshot();
+  });
+
   it('invalidates only the Dictation settings snapshot when its captured language changes', () => {
     let current = snapshot('de');
     const input = { providerId, contribution, readSnapshot: () => current, isRuntimeCurrent: () => true };
@@ -94,7 +99,6 @@ describe('registered speech recognition language at the real daemon/plugin bound
     } finally {
       await registration.dispose();
       await fixture.dispose();
-      clearActiveAccountSettingsSnapshot();
     }
   });
 });

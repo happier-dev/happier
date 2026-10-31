@@ -769,8 +769,9 @@ describe('Voice account Plugin fetch credential binding', () => {
             code: 'plugin_fetch_voice_account_operation_unauthorized',
         });
         const caller = new AbortController();
+        const cancelledService = bind('mint-session', caller.signal);
         caller.abort();
-        await expect(bind('mint-session', caller.signal).request(request)).rejects.toMatchObject({
+        await expect(cancelledService.request(request)).rejects.toMatchObject({
             code: 'plugin_fetch_voice_account_operation_cancelled',
         });
         await expect(bind(
