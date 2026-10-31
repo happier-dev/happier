@@ -1,5 +1,11 @@
 type ManifestFixtureOverrides = Readonly<Record<string, unknown>>;
 
+export function createPluginManifestV2Fixture<T extends ManifestFixtureOverrides>(
+    overrides: T,
+): Readonly<Record<string, unknown> & T>;
+export function createPluginManifestV2Fixture(
+    overrides?: ManifestFixtureOverrides,
+): Readonly<Record<string, unknown>>;
 export function createPluginManifestV2Fixture(
     overrides: ManifestFixtureOverrides = {},
 ): Readonly<Record<string, unknown>> {

@@ -64,7 +64,7 @@ describe('projectVoiceProcessingDisclosures', () => {
         ...openaiManifest,
         contributes: { ...openaiManifest.contributes, voiceProviders: [{
           ...declaration,
-          settings: { ...declaration.settings, privacyDisclosure: undefined },
+          settings: VoiceProviderSettingsSchema.parse({ ...declaration.settings, privacyDisclosure: undefined }),
         }] },
       }),
       bundledPresentations: [{ providerId: 'happier.voice.openai/realtime-openai', settingsSectionId: 'openai' }],

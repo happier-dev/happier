@@ -396,7 +396,6 @@ export function createVoiceQaController(
                       ? { commitUserTranscript: deps.commitLocalUserTranscript }
                       : {}),
                     sendTurn: deps.sendLocalTurn,
-                    stop: deps.stopLocal,
                   },
                   onUserTranscriptAccepted: onAccepted,
                   onAssistantTurn: async ({ assistantText }) => {

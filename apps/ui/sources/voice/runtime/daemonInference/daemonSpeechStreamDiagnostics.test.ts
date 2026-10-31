@@ -183,7 +183,6 @@ describe('daemonSpeechStreamDiagnostics', () => {
             streamId: 'stream-1',
             generation: 7,
         });
-        receipt.recordRelayEvidence({ phase: 'install' });
         receipt.recordRelayEvidence({ phase: 'data', ackSeq: 4 });
         receipt.recordRelayEvidence({ phase: 'finish', ackSeq: 4 });
 

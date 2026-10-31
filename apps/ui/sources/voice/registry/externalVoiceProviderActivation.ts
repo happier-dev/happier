@@ -311,11 +311,9 @@ export function bindVoiceProviderSettingsActions(input: Readonly<{
   });
 }
 
-export type ExternalVoiceProviderActivationApi = Readonly<{
-  voiceProviders: Readonly<{
-    register(localId: string, runtime: ExternalVoiceProviderRuntimeRegistration): void;
-  }>;
-}>;
+export type ExternalVoiceProviderActivationApi = Pick<
+  PluginUiClientExecutableRegistrationScope['api'], 'voiceProviders'
+>;
 
 /**
  * The generic executable composition supplies this transaction for projected
