@@ -26,6 +26,7 @@ import { buildNewSessionDraftPatch } from './screenModel/newSessionDraftReposito
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const pendingFireAndForget = vi.hoisted((): Array<Promise<unknown>> => []);
+const interactionTasks = vi.hoisted(() => [] as Array<{ run: () => void; cancelled: boolean }>);
 const applySettingsMock = vi.hoisted(() => vi.fn());
 const modalShowMock = vi.hoisted(() => vi.fn(() => 'modal-id'));
 const modalAlertMock = vi.hoisted(() => vi.fn());
@@ -265,7 +266,11 @@ installNewSessionScreenModelCommonModuleMocks({
                 get: () => ({ width: 900, height: 800 }),
             },
             InteractionManager: {
-                runAfterInteractions: () => ({ cancel: () => {} }),
+                runAfterInteractions: (run: () => void) => {
+                    const task = { run, cancelled: false };
+                    interactionTasks.push(task);
+                    return { cancel: () => { task.cancelled = true; } };
+                },
             },
             useWindowDimensions: () => ({ width: 900, height: 800 }),
         });
@@ -670,6 +675,7 @@ describe('useNewSessionScreenModel (installables)', () => {
     beforeEach(() => {
         for (const key of Object.keys(routeParamsState)) delete routeParamsState[key];
         tempSessionDataState.value = null;
+        interactionTasks.length = 0;
         applySettingsMock.mockClear();
         modalShowMock.mockClear();
         modalAlertMock.mockClear();
@@ -2152,5 +2158,113 @@ describe('useNewSessionScreenModel (installables)', () => {
         if (updated.variant !== 'simple') throw new Error('Expected the simple new-session model');
         expect(updated.simpleProps.agentType).toBe('claude');
         expect(applySettingsMock.mock.calls.some(([patch]) => Object.hasOwn(patch, 'lastUsedBackendTarget'))).toBe(false);
+    });
+    it.each(['backend', 'manual', 'profile'] as const)('keeps permission defaults current after queued profile work: %s', async (nextAction) => {
+        const baseProfile = await configureDefaultProfile({ currentCompatible: true, defaultTargetKey: 'agent:codex' });
+        const profile = {
+            ...baseProfile,
+            defaultPermissionModeByTargetKey: { 'agent:claude': 'yolo', 'agent:codex': 'default' } as const,
+        };
+        settingsState.profiles = [profile];
+        persistedDraft.agentType = 'claude';
+        const hook = await renderNewSessionScreenModel();
+        routeParamsState.profileId = profile.id;
+        await hook.rerender();
+        expect(hook.getCurrent().simpleProps.agentType).toBe('codex');
+        expect(hook.getCurrent().simpleProps.permissionMode).toBe('default');
+
+        if (nextAction === 'manual') {
+            await invokeHookAction(() => hook.getCurrent().simpleProps.handlePermissionModeChange('read-only'));
+        } else if (nextAction === 'profile') {
+            const nextProfile = {
+                ...profile, id: 'next-profile', defaultBackendTargetKey: 'agent:claude',
+                defaultPermissionModeByTargetKey: { 'agent:claude': 'read-only', 'agent:codex': 'yolo' } as const,
+            };
+            settingsState.profiles = [profile, nextProfile];
+            routeParamsState.profileId = nextProfile.id;
+            await hook.rerender();
+            expect(hook.getCurrent().simpleProps.agentType).toBe('claude');
+            expect(hook.getCurrent().simpleProps.permissionMode).toBe('read-only');
+        }
+        await act(async () => {
+            for (const task of interactionTasks.splice(0)) {
+                if (!task.cancelled) task.run();
+            }
+        });
+        await flushHookEffects(initialHookFlushOptions);
+        expect(hook.getCurrent().simpleProps.permissionMode).toBe(nextAction === 'backend' ? 'default' : 'read-only');
+    });
+    it.each([false, true])('resolves permissions by exact configured target while retaining manual intent: %s', async (manual) => {
+        const baseProfile = await configureDefaultProfile({ currentCompatible: true });
+        const profile = {
+            ...baseProfile,
+            defaultPermissionModeByTargetKey: {
+                'acpBackend:custom-default': 'read-only', 'acpBackend:second-backend': 'yolo',
+            } as const,
+        };
+        settingsState.profiles = [profile];
+        settingsState.acpCatalogSettingsV1 = AcpCatalogSettingsV1Schema.parse({ v: 2, backends: [
+            ...settingsState.acpCatalogSettingsV1.backends,
+            { id: 'second-backend', name: 'second', title: 'Second Backend', command: 'second-acp', args: [], env: {}, createdAt: 1, updatedAt: 1 },
+        ] });
+        persistedDraft.agentType = 'customAcp';
+        Object.assign(persistedDraft, { backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-default' } });
+        persistedDraft.selectedProfileId = profile.id;
+        delete (persistedDraft as { permissionMode?: string }).permissionMode;
+        const hook = await renderNewSessionScreenModel();
+        expect(hook.getCurrent().simpleProps.permissionMode).toBe('read-only');
+        if (manual) await invokeHookAction(() => hook.getCurrent().simpleProps.handlePermissionModeChange('safe-yolo'));
+        await invokeHookAction(() => hook.getCurrent().simpleProps.onAgentPickerSelect('acpBackend:second-backend'));
+        expect(hook.getCurrent().simpleProps.agentLabel).toBe('Second Backend');
+        expect(hook.getCurrent().simpleProps.permissionMode).toBe(manual ? 'safe-yolo' : 'yolo');
+    });
+
+    it('reads current same-profile permission metadata when queued work runs', async () => {
+        const baseProfile = await configureDefaultProfile({ currentCompatible: true, defaultTargetKey: 'agent:codex' });
+        const profile = { ...baseProfile, defaultPermissionModeByTargetKey: { 'agent:codex': 'read-only' } as const };
+        settingsState.profiles = [profile];
+        const hook = await renderNewSessionScreenModel();
+        routeParamsState.profileId = profile.id;
+        await hook.rerender();
+        settingsState.profiles = [{ ...profile, defaultPermissionModeByTargetKey: { 'agent:codex': 'yolo' } }];
+        await hook.rerender();
+        await act(async () => {
+            for (const task of interactionTasks.splice(0)) {
+                if (!task.cancelled) task.run();
+            }
+        });
+        await flushHookEffects(initialHookFlushOptions);
+        expect(hook.getCurrent().simpleProps.permissionMode).toBe('yolo');
+    });
+    it.each([
+        { source: 'temp', mode: 'read-only', expected: 'read-only' },
+        { source: 'temp', mode: 'default', expected: 'default' },
+        { source: 'persisted', mode: 'default', expected: 'yolo' },
+    ] as const)('preserves authored permission intent from $source ($mode)', async (scenario) => {
+        const baseProfile = await configureDefaultProfile({ currentCompatible: true, defaultTargetKey: 'agent:codex' });
+        const profile = {
+            ...baseProfile,
+            defaultPermissionModeByTargetKey: { 'agent:claude': 'yolo', 'agent:codex': 'yolo' } as const,
+        };
+        settingsState.profiles = [profile];
+        persistedDraft.agentType = 'claude';
+        if (scenario.source === 'temp') {
+            routeParamsState.dataId = 'permission-handoff';
+            tempSessionDataState.value = {
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: scenario.mode,
+            };
+        }
+        const hook = await renderNewSessionScreenModel();
+        expect(hook.getCurrent().simpleProps.permissionMode).toBe(scenario.mode);
+        routeParamsState.profileId = profile.id;
+        await hook.rerender();
+        await act(async () => {
+            for (const task of interactionTasks.splice(0)) {
+                if (!task.cancelled) task.run();
+            }
+        });
+        await flushHookEffects(initialHookFlushOptions);
+        expect(hook.getCurrent().simpleProps.agentType).toBe('codex');
+        expect(hook.getCurrent().simpleProps.permissionMode).toBe(scenario.expected);
     });
 });

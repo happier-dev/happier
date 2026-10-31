@@ -953,10 +953,12 @@ export function ProfileEditForm({
                             trigger={({ toggle }) => (
                                 <Item
                                     testID="profile-default-backend-trigger"
-                                    title={selectedEntry ? selectedEntry.title : t('profiles.defaultBackend.noneTitle')}
+                                    title={selectedEntry?.title ?? (defaultBackendTargetKey
+                                        ? t('common.unavailable')
+                                        : t('profiles.defaultBackend.noneTitle'))}
                                     subtitle={selectedEntry
                                         ? t('profiles.defaultBackend.selectedSubtitle')
-                                        : t('profiles.defaultBackend.noneSubtitle')}
+                                        : defaultBackendTargetKey ? undefined : t('profiles.defaultBackend.noneSubtitle')}
                                     leftElement={selectedEntry
                                         ? <AgentIcon agentId={selectedEntry.iconAgentId} size={24} color={theme.colors.text.secondary} />
                                         : undefined}

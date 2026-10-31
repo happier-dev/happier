@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { InteractionManager } from 'react-native';
 
 import { type AgentId } from '@/agents/catalog/catalog';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -10,7 +11,7 @@ import {
 import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import { buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 type PersistedAuthoringDraftLike = Readonly<{
     permissionMode?: string | null;
@@ -31,11 +32,7 @@ export function useNewSessionPermissionModeState(params: Readonly<{
     sessionDefaultPermissionModeByTargetKey: Settings['sessionDefaultPermissionModeByTargetKey'];
 }>): Readonly<{
     permissionMode: PermissionMode;
-    hasUserSelectedPermissionModeRef: React.MutableRefObject<boolean>;
-    permissionModeRef: React.MutableRefObject<PermissionMode>;
-    applyPermissionMode: (mode: PermissionMode, source: 'user' | 'auto') => void;
     handlePermissionModeChange: (mode: PermissionMode) => void;
-    resolveDefaultPermissionMode: (profile: AIBackendProfile | null) => PermissionMode;
 }> {
     const accountDefaults = React.useMemo(() => {
         return readAccountPermissionDefaults(
@@ -71,6 +68,8 @@ export function useNewSessionPermissionModeState(params: Readonly<{
     });
 
     const hasUserSelectedPermissionModeRef = React.useRef<boolean>((() => {
+        // Setup copies and automation edits carry an authored mode, including `default`.
+        if (isPermissionMode(params.hydratedTempAuthoringDraft?.permissionMode)) return true;
         const draft = params.hydratedPersistedAuthoringDraft?.permissionMode;
         if (isPermissionMode(draft) && draft !== 'default') return true;
         return false;
@@ -92,12 +91,46 @@ export function useNewSessionPermissionModeState(params: Readonly<{
         applyPermissionMode(mode, 'user');
     }, [applyPermissionMode]);
 
+    const selectedProfile = params.selectedProfileId
+        ? params.profileMap.get(params.selectedProfileId) ?? getBuiltInProfile(params.selectedProfileId) ?? null
+        : null;
+    const currentDefaultsRef = React.useRef({ selectedProfile, resolveDefaultPermissionMode });
+    currentDefaultsRef.current = { selectedProfile, resolveDefaultPermissionMode };
+    const targetKey = buildBackendTargetKey(params.backendTarget);
+    const previousScopeRef = React.useRef({ profileId: params.selectedProfileId, targetKey });
+
+    React.useEffect(() => {
+        const previous = previousScopeRef.current;
+        previousScopeRef.current = { profileId: params.selectedProfileId, targetKey };
+        const backendChanged = previous.targetKey !== targetKey;
+        const profileChanged = previous.profileId !== params.selectedProfileId;
+        if (!backendChanged && !profileChanged) return;
+
+        if (hasUserSelectedPermissionModeRef.current) {
+            if (backendChanged) {
+                applyPermissionMode(normalizePermissionModeForAgentType(permissionModeRef.current, params.agentType), 'auto');
+            }
+            return;
+        }
+
+        const applyCurrentDefault = () => {
+            if (hasUserSelectedPermissionModeRef.current) return;
+            const current = currentDefaultsRef.current;
+            applyPermissionMode(current.resolveDefaultPermissionMode(current.selectedProfile), 'auto');
+        };
+        if (backendChanged) {
+            applyCurrentDefault();
+            return;
+        }
+
+        // Profile-only follow-up stays deferred. A backend/profile transition cancels it;
+        // same-scope metadata refreshes use the latest canonical resolver when it runs.
+        const task = InteractionManager.runAfterInteractions(applyCurrentDefault);
+        return () => task.cancel();
+    }, [applyPermissionMode, params.agentType, params.selectedProfileId, targetKey]);
+
     return {
         permissionMode,
-        hasUserSelectedPermissionModeRef,
-        permissionModeRef,
-        applyPermissionMode,
         handlePermissionModeChange,
-        resolveDefaultPermissionMode,
     };
 }

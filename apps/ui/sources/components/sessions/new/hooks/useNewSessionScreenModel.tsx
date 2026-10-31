@@ -13,7 +13,6 @@ import { getTempData, type NewSessionData } from '@/utils/sessions/tempDataStore
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { tryShowDaemonUnavailableAlertForRpcError } from '@/utils/errors/daemonUnavailableAlert';
 import { type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import {
     getProfileEnvironmentVariables,
     getProfileDefaultBackendTarget,
@@ -1177,11 +1176,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
     });
     const {
         permissionMode,
-        hasUserSelectedPermissionModeRef,
-        permissionModeRef,
-        applyPermissionMode,
         handlePermissionModeChange,
-        resolveDefaultPermissionMode,
     } = useNewSessionPermissionModeState({
         agentType,
         backendTarget,
@@ -1192,10 +1187,6 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         enabledAgentIds,
         sessionDefaultPermissionModeByTargetKey,
     });
-
-    // NOTE: Permission mode reset on agentType change is handled by the validation useEffect below (lines ~670-681)
-    // which intelligently resets only when the current mode is invalid for the new agent type.
-    // A duplicate unconditional reset here was removed to prevent race conditions.
 
     const handleDeleteProfile = React.useCallback((profile: AIBackendProfile) => {
         Modal.alert(
@@ -1431,17 +1422,8 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
             pendingSelection?.applyBackendDefault === true || profileChanged,
         );
         if (nextEntry) setBackendTargetAutomatically(nextEntry.target);
-        if (!pendingSelection) return;
-
-        InteractionManager.runAfterInteractions(() => {
-            if (!hasUserSelectedPermissionModeRef.current) {
-                applyPermissionMode(resolveDefaultPermissionMode(profile), 'auto');
-            }
-        });
     }, [
         agentType,
-        applyPermissionMode,
-        resolveDefaultPermissionMode,
         cliAvailability.available,
         cliAvailability.timestamp,
         installableDepKeyCountByAgentId,
@@ -1533,35 +1515,6 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
             } as never);
         }
     }, [canSelectProfile, hasExplicitBackendTarget, navigation, profileIdParam, selectedProfileId, selectProfile, setSelectedProfileId, useProfiles]);
-
-    const prevAgentTypeRef = React.useRef(agentType);
-
-    // When agent type changes, keep the "permission level" consistent by mapping modes across backends.
-    React.useEffect(() => {
-        const prev = prevAgentTypeRef.current;
-        if (prev === agentType) {
-            return;
-        }
-        prevAgentTypeRef.current = agentType;
-
-        // Defaults should only apply in the new-session flow (not in existing sessions),
-        // and only if the user hasn't explicitly chosen a mode on this screen.
-        if (!hasUserSelectedPermissionModeRef.current) {
-            const profile = selectedProfileId ? (profileMap.get(selectedProfileId) || getBuiltInProfile(selectedProfileId)) : null;
-            applyPermissionMode(resolveDefaultPermissionMode(profile), 'auto');
-            return;
-        }
-
-        const current = permissionModeRef.current;
-        const mapped = normalizePermissionModeForAgentType(current, agentType);
-        applyPermissionMode(mapped, 'auto');
-    }, [
-        agentType,
-        applyPermissionMode,
-        profileMap,
-        resolveDefaultPermissionMode,
-        selectedProfileId,
-    ]);
 
     // Reset model mode when agent type changes to appropriate default
     React.useEffect(() => {

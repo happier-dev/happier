@@ -99,7 +99,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: ({ title, subtitle, onPress }: any) => {
+    Item: ({ title, subtitle, onPress, testID }: any) => {
         if (title === 'Custom Backend' && typeof onPress === 'function') {
             capture.customBackendPress = onPress;
         }
@@ -108,7 +108,7 @@ vi.mock('@/components/ui/lists/Item', () => ({
         if (subtitle === 'codex' && typeof onPress === 'function') {
             capture.codexPresses.push(onPress);
         }
-        return React.createElement('Item', { title, onPress });
+        return React.createElement('Item', { title, subtitle, onPress, testID });
     },
 }));
 
@@ -293,6 +293,22 @@ describe('ProfileEditForm backend targets', () => {
 });
 
 describe('ProfileEditForm default backend preservation', () => {
+    it('displays a saved hidden default as unavailable while retaining its selection', async () => {
+        const { ProfileEditForm } = await loadProfileEditForm();
+        const profile = AIBackendProfileSchema.parse({
+            ...buildProfile(),
+            compatibilityByTargetKey: { 'agent:codex': true, 'agent:gemini': true },
+            defaultBackendTargetKey: 'agent:gemini',
+        });
+        const rendered = await renderScreen(React.createElement(ProfileEditForm, {
+            profile, machineId: null, onSave: vi.fn(() => true), onCancel: vi.fn(),
+        }));
+        const picker = rendered.tree.findAllByType('DropdownMenu').find((node) => node.props.selectedId === 'agent:gemini');
+        expect(picker).toBeDefined();
+        const trigger = await renderScreen(picker?.props.trigger({ toggle: vi.fn() }));
+        expect(trigger.findByTestId('profile-default-backend-trigger')?.props.title).toBe('common.unavailable');
+    });
+
     it('clears a hidden backend default denied by the saved compatibility map', async () => {
         const saveRef = { current: null as null | (() => boolean) };
         const onSave = vi.fn((_: AIBackendProfile) => true);
