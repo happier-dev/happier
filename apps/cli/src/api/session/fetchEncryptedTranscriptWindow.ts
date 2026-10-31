@@ -1,8 +1,5 @@
-import axios from 'axios';
-
-import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { configuration } from '@/configuration';
-import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
+import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { SessionMessageContentSchema, type SessionMessageContent } from '../types';
 
 export type TranscriptRow = Readonly<{
@@ -11,6 +8,7 @@ export type TranscriptRow = Readonly<{
   content: SessionMessageContent;
   id?: string;
   localId?: string | null;
+  sidechainId?: string | null;
 }>;
 
 type RawTranscriptRow = Readonly<{
@@ -19,30 +17,23 @@ type RawTranscriptRow = Readonly<{
   localId?: unknown;
   createdAt?: unknown;
   content?: unknown;
+  sidechainId?: unknown;
 }>;
-
-const DEFAULT_TRANSCRIPT_FETCH_TIMEOUT_MS = 10_000;
-
-function resolveTranscriptFetchTimeoutMs(value: number | undefined): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? Math.max(1, Math.trunc(value))
-    : DEFAULT_TRANSCRIPT_FETCH_TIMEOUT_MS;
-}
 
 export type FetchEncryptedTranscriptRangeResult =
   | Readonly<{ ok: true; rows: TranscriptRow[] }>
   | Readonly<{ ok: false; errorCode: 'window_too_large'; maxMessages: number; requestedMessages: number }>;
 
 function parseTranscriptRows(raw: unknown): TranscriptRow[] {
-  if (!Array.isArray(raw)) return [];
+  if (!Array.isArray(raw)) throw new Error('Invalid transcript messages');
   const out: TranscriptRow[] = [];
   for (const entry of raw as RawTranscriptRow[]) {
-    const seq = typeof entry?.seq === 'number' && Number.isFinite(entry.seq) ? Math.trunc(entry.seq) : null;
+    const seq = typeof entry?.seq === 'number' && Number.isSafeInteger(entry.seq) && entry.seq >= 0 ? entry.seq : null;
     const createdAt =
       typeof entry?.createdAt === 'number' && Number.isFinite(entry.createdAt) ? Math.trunc(entry.createdAt) : null;
-    if (seq === null || createdAt === null) continue;
+    if (seq === null || createdAt === null) throw new Error('Invalid transcript message row');
     const parsedContent = SessionMessageContentSchema.safeParse(entry?.content);
-    if (!parsedContent.success) continue;
+    if (!parsedContent.success) throw new Error('Invalid transcript message content');
     const id = typeof entry?.id === 'string' ? entry.id : undefined;
     const localId = typeof entry?.localId === 'string' ? entry.localId : null;
     out.push({
@@ -51,6 +42,7 @@ function parseTranscriptRows(raw: unknown): TranscriptRow[] {
       seq,
       createdAt,
       content: parsedContent.data,
+      ...(typeof entry.sidechainId === 'string' ? { sidechainId: entry.sidechainId } : {}),
     });
   }
   return out;
@@ -62,27 +54,10 @@ export async function fetchEncryptedTranscriptPageAfterSeq(params: Readonly<{
   afterSeq: number;
   limit: number;
   timeoutMs?: number;
+  deadlineAtMs?: number;
+  signal?: AbortSignal;
 }>): Promise<TranscriptRow[]> {
-  const serverUrl = resolveServerHttpBaseUrl();
-  const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
-    headers: {
-      Authorization: `Bearer ${params.token}`,
-      'Content-Type': 'application/json',
-    },
-    params: { afterSeq: params.afterSeq, limit: params.limit },
-    timeout: resolveTranscriptFetchTimeoutMs(params.timeoutMs),
-    validateStatus: () => true,
-  });
-
-  const responseStatus = response.status;
-  if (isAuthenticationStatus(responseStatus)) {
-    throw createAuthenticationHttpStatusError(responseStatus, 'Authentication failed while fetching transcript messages');
-  }
-  if (response.status !== 200) {
-    throw new Error(`Unexpected status from /v1/sessions/:id/messages: ${response.status}`);
-  }
-
-  return parseTranscriptRows((response.data as any)?.messages);
+  return parseTranscriptRows((await fetchEncryptedTranscriptMessagesPage(params)).messages);
 }
 
 export async function fetchEncryptedTranscriptPageLatest(params: Readonly<{
@@ -90,27 +65,22 @@ export async function fetchEncryptedTranscriptPageLatest(params: Readonly<{
   sessionId: string;
   limit: number;
   timeoutMs?: number;
+  deadlineAtMs?: number;
+  signal?: AbortSignal;
 }>): Promise<TranscriptRow[]> {
-  const serverUrl = resolveServerHttpBaseUrl();
-  const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
-    headers: {
-      Authorization: `Bearer ${params.token}`,
-      'Content-Type': 'application/json',
-    },
-    params: { limit: params.limit },
-    timeout: resolveTranscriptFetchTimeoutMs(params.timeoutMs),
-    validateStatus: () => true,
-  });
+  return parseTranscriptRows((await fetchEncryptedTranscriptMessagesPage(params)).messages);
+}
 
-  const responseStatus = response.status;
-  if (isAuthenticationStatus(responseStatus)) {
-    throw createAuthenticationHttpStatusError(responseStatus, 'Authentication failed while fetching transcript messages');
-  }
-  if (response.status !== 200) {
-    throw new Error(`Unexpected status from /v1/sessions/:id/messages: ${response.status}`);
-  }
-
-  return parseTranscriptRows((response.data as any)?.messages);
+export async function fetchEncryptedTranscriptPageBeforeSeq(params: Readonly<{
+  token: string;
+  sessionId: string;
+  beforeSeq: number;
+  limit: number;
+  deadlineAtMs?: number;
+  signal?: AbortSignal;
+}>): Promise<Readonly<{ rows: TranscriptRow[]; hasMore: boolean; nextBeforeSeq: number | null }>> {
+  const page = await fetchEncryptedTranscriptMessagesPage(params);
+  return { rows: parseTranscriptRows(page.messages), hasMore: page.hasMore, nextBeforeSeq: page.nextBeforeSeq };
 }
 
 export async function fetchEncryptedTranscriptRange(params: Readonly<{

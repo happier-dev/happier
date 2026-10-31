@@ -523,7 +523,7 @@ describe('waitForIdleViaSocket', () => {
     const httpRead = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { messages: [{
       id: 'msg-ready', seq: 3, localId: null, createdAt: 3, updatedAt: 3,
       content: { t: 'plain', v: { role: 'agent', content: { type: 'event', data: { type: 'ready' } } } },
-    }] } });
+    }], hasMore: false } });
     const { detectSessionTurnActivity } = await import('@/session/query/detectSessionTurnInFlight');
     const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
 
@@ -682,7 +682,7 @@ describe('waitForIdleViaSocket', () => {
     } });
     const httpRead = vi.spyOn(axios, 'get')
       .mockImplementationOnce(() => new Promise<AxiosResponse>((resolve) => { confirmIdle = resolve; }))
-      .mockImplementation(async (url) => response(url.includes('/messages') ? { messages: [] } : snapshot('completed')));
+      .mockImplementation(async (url) => response(url.includes('/messages') ? { messages: [], hasMore: false } : snapshot('completed')));
     const { detectLatestSessionTurnActivity } = await import('@/session/query/detectLatestSessionTurnActivity');
     const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
     let confirmedActivity: unknown;
@@ -747,7 +747,7 @@ describe('waitForIdleViaSocket', () => {
     vi.doMock('@/api/session/sockets', () => ({ createSessionScopedSocket: () => socket }));
     const axios = (await import('axios')).default;
     const response = (messages: unknown[]): AxiosResponse => ({
-      status: 200, statusText: 'OK', headers: {}, config: { headers: new axios.AxiosHeaders() }, data: { messages },
+      status: 200, statusText: 'OK', headers: {}, config: { headers: new axios.AxiosHeaders() }, data: { messages, hasMore: false },
     });
     let releaseOlderRead: (value: AxiosResponse) => void = () => undefined;
     let messages: unknown[] = [{

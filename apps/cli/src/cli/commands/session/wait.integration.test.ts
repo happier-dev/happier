@@ -111,9 +111,25 @@ describe('happier session wait (integration)', () => {
 
       if (req.method === 'GET' && url.pathname === `/v1/sessions/${sessionId}/messages`) {
         transcriptFetchCount += 1;
+        const afterSeq = url.searchParams.has('afterSeq') ? Number(url.searchParams.get('afterSeq')) : null;
+        const beforeSeq = url.searchParams.has('beforeSeq') ? Number(url.searchParams.get('beforeSeq')) : null;
+        const limit = Number(url.searchParams.get('limit') ?? 100);
+        const selected = transcriptMessages
+          .filter((row) => typeof row.seq === 'number'
+            && (afterSeq === null || row.seq > afterSeq)
+            && (beforeSeq === null || row.seq < beforeSeq))
+          .sort((a, b) => afterSeq === null ? Number(b.seq) - Number(a.seq) : Number(a.seq) - Number(b.seq));
+        const messages = selected.slice(0, limit);
+        const hasMore = selected.length > limit;
+        const boundarySeq = messages.at(-1)?.seq ?? null;
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ messages: transcriptMessages }));
+        res.end(JSON.stringify({
+          messages,
+          hasMore,
+          nextBeforeSeq: hasMore && afterSeq === null ? boundarySeq : null,
+          nextAfterSeq: hasMore && afterSeq !== null ? boundarySeq : null,
+        }));
         return;
       }
 
@@ -331,7 +347,7 @@ describe('happier session wait (integration)', () => {
     }
   });
 
-  it('does not resolve from an initially idle active session while transcript activity still shows an in-flight task', async () => {
+  it.each([0, 24])('does not resolve from an idle agent while an in-flight task precedes %i tool results', async (toolResultCount) => {
     initialAgentStateCiphertext = idleAgentStateCiphertext;
     transcriptMessages = [
       {
@@ -363,19 +379,38 @@ describe('happier session wait (integration)', () => {
         },
       },
     ];
+    for (let index = 0; index < toolResultCount; index += 1) {
+      const seq = index + 3;
+      transcriptMessages.push({
+        id: `tool-result-${seq}`,
+        seq,
+        createdAt: seq,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'agent',
+            content: {
+              type: 'acp',
+              provider: 'claude',
+              data: { type: 'tool-result', callId: `call-${seq}`, id: `result-${seq}`, output: 'ok' },
+            },
+          },
+        },
+      });
+    }
 
     socketOnConnect = (currentSocket) => {
       setTimeout(() => {
         currentSocket.trigger('update', {
           id: 'u_task_complete',
-          seq: 3,
+          seq: toolResultCount + 3,
           createdAt: Date.now(),
           body: {
             t: 'new-message',
             sid: sessionId,
             message: {
               id: 'm3',
-              seq: 3,
+              seq: toolResultCount + 3,
               localId: null,
               createdAt: Date.now(),
               updatedAt: Date.now(),

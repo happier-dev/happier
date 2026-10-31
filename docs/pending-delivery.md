@@ -79,6 +79,25 @@ requests server settlement. The server transaction commits or updates the
 transcript message and removes that Pending row before publishing the message
 event and the separate Pending count/version event.
 
+In development source, native Codex app-server acceptance explicitly identifies
+primary-turn delivery. `SessionClient` retains the exact Pending row until its
+bound canonical turn's begin has been acknowledged through the existing durable
+mutation outbox. Local journal admission alone does not establish publication.
+The target may already be terminal; delayed acceptance still belongs to the
+captured input and turn. Native steering binds to the existing turn before
+provider dispatch, and retries before acceptance can bind the same input to a
+new turn. Locally handled clear and compact commands explicitly require no turn.
+Provider dispatch does not wait for network publication, and transcript anchors
+still wait for accepted input commitment.
+
+Other accepted-input producers retain their released opaque delivery contract
+and emit a default-level file diagnostic when using it. Their exact Pending
+acceptance does not yet establish a canonical primary-turn publication barrier.
+In particular, Claude terminal queued steering may be consumed by a later turn;
+its submission or acceptance callback cannot safely bind to whichever turn is
+currently active. Missing delivery classification is never interpreted as a
+no-turn command.
+
 In development source, Claude's Agent SDK and legacy remote runtimes share
 `createClaudeRemotePromptSettlementTracker`. They request the documented
 [`--replay-user-messages`](https://code.claude.com/docs/en/cli-reference) acknowledgment and correlate its main-chain user UUID
@@ -116,6 +135,10 @@ its native queue. `UserPromptSubmit` can fire at enqueue and does not prove that
 Claude has consumed the steer. The arbiter accepts a steer from its exact
 transcript consumption evidence; the existing queued-command matcher correlates
 the native enqueue/remove episode with its main-chain `queued_command` attachment.
+The attachment may precede native queue consumption, so the custody episode joins
+both facts in either order. Native cancellation and plugin-discard removals do
+not establish acceptance, and available native command and delivery identities
+keep a canceled episode separate from an identical replacement.
 The session scanner observes that evidence after awaiting earlier visible-message
 commits, including known resumes and rows appended while the replay baseline loads.
 There is no separate acceptance-only follower of the resume transcript.

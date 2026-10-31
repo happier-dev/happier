@@ -2338,6 +2338,7 @@ describe('runCodex CodexACP resume behavior', () => {
     expect(providerInputOutcomeObserverMock).toHaveBeenCalledWith({
       kind: 'accepted',
       localId: 'codex-compact-63',
+      delivery: { kind: 'command' },
     });
   });
 
@@ -2407,6 +2408,7 @@ describe('runCodex CodexACP resume behavior', () => {
     expect(providerInputOutcomeObserverMock).toHaveBeenCalledWith({
       kind: 'accepted',
       localId: 'codex-clear-64',
+      delivery: { kind: 'command' },
     });
   });
 
@@ -3114,6 +3116,7 @@ describe('runCodex CodexACP resume behavior', () => {
       kind: 'accepted',
       localId: 'local-user-message-mode-change',
       providerTurnId: 'turn-app-server-mode-steer',
+      delivery: { kind: 'primary_turn' },
     });
     expect(appServerRuntime.sendPrompt).not.toHaveBeenCalled();
     expect(outcome.ok).toBe(false);
@@ -3525,6 +3528,7 @@ describe('runCodex CodexACP resume behavior', () => {
       kind: 'accepted',
       localId: 'pending-local-provider-claim',
       providerTurnId: 'turn-provider-owned-pending',
+      delivery: { kind: 'primary_turn' },
     });
   });
 

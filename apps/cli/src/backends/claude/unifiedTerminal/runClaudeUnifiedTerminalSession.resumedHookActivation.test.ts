@@ -87,6 +87,98 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     }
   });
 
+  it.each(['absorbed_mid_turn', 'cleared_on_cancel'] as const)(
+    'joins queued attachment and later removal through the live transcript importer: %s', async (reason) => {
+      const dir = await mkdtemp(join(tmpdir(), 'happier-claude-native-queue-order-'));
+      tempDirs.push(dir);
+      const workspaceDir = join(dir, 'workspace');
+      await mkdir(workspaceDir, { recursive: true });
+      const sessionId = '12121212-1212-4212-8212-121212121212';
+      const configDir = join(dir, 'claude-config');
+      const projectDir = getProjectPath(workspaceDir, configDir);
+      await mkdir(projectDir, { recursive: true });
+      const transcriptPath = join(projectDir, `${sessionId}.jsonl`);
+      await writeFile(transcriptPath, '');
+      const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+      process.env.CLAUDE_CONFIG_DIR = configDir;
+      const abort = new AbortController();
+      const prompt = 'queued native attachment ordering';
+      const accepted: string[] = [];
+      const observed: unknown[] = [];
+      let hook: ((data: SessionHookData) => void) | undefined;
+      let pulled = false;
+      let injected = false;
+      const handle: TerminalHostHandle = { kind: 'tmux', sessionName: 'native-queue-order', paneId: '%1',
+        attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', locality: 'same_machine', liveProbe: 'required' } };
+      // Only the terminal host/OS boundary is replaced. The arbiter, discovery,
+      // hook lifecycle and filesystem transcript follower remain real.
+      const adapter: TerminalHostAdapter = {
+        kind: 'tmux',
+        createOrAttachHost: async () => {
+          if (!hook) throw new Error('Missing hook subscription before host launch');
+          hook({ hook_event_name: 'SessionStart', session_id: sessionId, transcript_path: transcriptPath, source: 'startup' });
+          hook({ hook_event_name: 'UserPromptSubmit', session_id: sessionId, prompt: 'previous running prompt' });
+          return handle;
+        },
+        injectUserPrompt: async (_handle, input) => {
+          if (!hook) throw new Error('Missing hook subscription before terminal injection');
+          hook({ hook_event_name: 'UserPromptSubmit', session_id: sessionId, prompt: input.text });
+          return { status: 'injected', at: Date.now(), bytesWritten: input.text.length };
+        },
+        evaluateLiveness: async () => ({ paneAlive: true, observedAt: Date.now() }),
+        captureInputState: async () => ({ stable: true, currentInput: composerScreen('', true), observedAt: Date.now() }),
+        interruptTurn: async () => {}, dispose: async () => {},
+      };
+      const run = runClaudeUnifiedTerminalSession({
+        path: workspaceDir, sessionId, transcriptPath, hookPluginDir: join(dir, 'owned-hooks'), signal: abort.signal,
+        nextMessage: async () => {
+          if (pulled) return await new Promise(() => undefined);
+          pulled = true;
+          return { message: prompt, mode: { permissionMode: 'default', claudeUnifiedTerminalHost: 'tmux' },
+            pendingProviderAction: 'steer', userMessageLocalIds: ['queued-live-input'] };
+        },
+        onTerminalPromptInjected: () => { injected = true; },
+        onPromptAcceptedByProvider: ({ userMessageLocalIds }) => { accepted.push(...userMessageLocalIds); },
+        onRawTranscriptValue: (value) => { observed.push(value); },
+        resolveHostAdapter: async () => ({ status: 'resolved', adapter, reason: 'test' }),
+        buildSpawn: async () => ({ spawnArgv: ['/bin/claude'], spawnEnv: {} }),
+        createSessionName: () => 'native-queue-order',
+        subscribeClaudeSessionHooks: (callback) => { hook = callback; return () => { hook = undefined; }; },
+        lifecycleCompletionQuiescenceMs: 0, dialogTurnEndScreenProbeDelaysMs: [],
+      });
+      try {
+        await waitUntil(() => injected);
+        expect(accepted).toEqual([]);
+        const timestamp = new Date().toISOString();
+        const operation = { type: 'queue-operation', sessionId, content: prompt, timestamp };
+        await appendFile(transcriptPath, `${JSON.stringify({ ...operation, operation: 'enqueue' })}\n`);
+        await appendFile(transcriptPath, `${JSON.stringify({ type: 'attachment', uuid: 'live-queued-attachment',
+          parentUuid: 'previous-tool-result', isSidechain: false, sessionId, timestamp,
+          attachment: { type: 'queued_command', prompt, commandMode: 'prompt', origin: { kind: 'human' },
+            source_uuid: 'native-live-command', delivery_id: 'native-live-delivery', timestamp } })}\n`);
+        await waitUntil(() => observed.some((value) => typeof value === 'object' && value !== null
+          && 'uuid' in value && value.uuid === 'live-queued-attachment'));
+        expect(accepted).toEqual([]);
+        await appendFile(transcriptPath, `${JSON.stringify({ ...operation, operation: 'remove', reason,
+          commandUuid: 'native-live-command', deliveryId: 'native-live-delivery' })}\n`);
+        if (reason === 'absorbed_mid_turn') {
+          await waitUntil(() => accepted.length === 1);
+          expect(accepted).toEqual(['queued-live-input']);
+        } else {
+          await waitUntil(() => observed.some((value) => typeof value === 'object' && value !== null
+            && 'operation' in value && value.operation === 'remove'));
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          expect(accepted).toEqual([]);
+        }
+      } finally {
+        abort.abort();
+        await run;
+        if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+        else process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+      }
+    },
+  );
+
   it.each([false, true])('fails closed before prompt injection when Claude starts a different session than the explicit resume (native broker: %s)', async (withNativeBroker) => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-claude-resume-identity-mismatch-'));
     tempDirs.push(dir);

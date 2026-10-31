@@ -62,10 +62,10 @@ describe('detectLatestSessionTurnActivity', () => {
       turnInFlight: false,
     });
 
-    expect(fetchSessionById).toHaveBeenCalledWith({
+    expect(fetchSessionById).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token',
       sessionId: 'sess-1',
-    });
+    }));
     expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
     expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
   });

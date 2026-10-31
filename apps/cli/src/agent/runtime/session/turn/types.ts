@@ -22,6 +22,7 @@ export type SessionTurnTranscriptAnchorsInput = Readonly<{
 export type BeginTurnInput = Readonly<{
     provider?: string | null;
     providerTurnId?: string | null;
+    startingInputLocalIds?: readonly string[];
     transcriptAnchors?: SessionTurnTranscriptAnchorsInput;
     observedAt?: number;
 }>;

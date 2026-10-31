@@ -125,4 +125,17 @@ describe('fetchEncryptedTranscriptMessages', () => {
     const { fetchEncryptedTranscriptMessagesPage } = await import('./fetchEncryptedTranscriptMessages');
     await expect(fetchEncryptedTranscriptMessagesPage({ token: 't', sessionId: 'sess_1', limit: 10, afterSeq: 3 })).rejects.toThrow();
   });
+  it.each(['before', 'after'] as const)('rejects a %s continuation that skips past the returned boundary', async (direction) => {
+    const messages = (direction === 'before' ? [8, 3] : [3, 8]).map(seq => ({ id: `m-${seq}`, seq, localId: null, createdAt: seq, updatedAt: seq, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'prompt' } } } }));
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data: { messages, hasMore: true, nextBeforeSeq: direction === 'before' ? 1 : null, nextAfterSeq: direction === 'after' ? 10 : null } });
+    const { fetchEncryptedTranscriptMessagesPage } = await import('./fetchEncryptedTranscriptMessages');
+    await expect(fetchEncryptedTranscriptMessagesPage({ token: 't', sessionId: 'sess_1', limit: 2, ...(direction === 'before' ? { beforeSeq: 10 } : { afterSeq: 0 }) })).rejects.toThrow();
+  });
+  it.each(['before', 'after'] as const)('preserves valid sequence gaps in a %s page', async (direction) => {
+    const messages = (direction === 'before' ? [8, 3] : [3, 8]).map(seq => ({ id: `m-${seq}`, seq, localId: null, createdAt: seq, updatedAt: seq, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'prompt' } } } }));
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data: { messages, hasMore: true, nextBeforeSeq: direction === 'before' ? 3 : null, nextAfterSeq: direction === 'after' ? 8 : null } });
+    const { fetchEncryptedTranscriptMessagesPage } = await import('./fetchEncryptedTranscriptMessages');
+    await expect(fetchEncryptedTranscriptMessagesPage({ token: 't', sessionId: 'sess_1', limit: 2, ...(direction === 'before' ? { beforeSeq: 10 } : { afterSeq: 0 }) })).resolves.toMatchObject({ messages, hasMore: true });
+  });
+
 });

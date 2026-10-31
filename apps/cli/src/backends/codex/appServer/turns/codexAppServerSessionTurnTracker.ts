@@ -422,6 +422,7 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
                     try {
                         const beginResult = await lifecycle.beginTurn({
                             provider: CODEX_AGENT_ID,
+                            ...(paramsForTurn.startUserMessageLocalId ? { startingInputLocalIds: [paramsForTurn.startUserMessageLocalId] } : {}),
                             ...(providerTurnId ? { providerTurnId } : {}),
                         });
                         const sessionTurnId = readLifecycleBeginTurnId(beginResult) ?? providerTurnId;
@@ -449,6 +450,7 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
                 try {
                     const beginResult = await lifecycle.beginTurn({
                         provider: CODEX_AGENT_ID,
+                        ...(paramsForTurn.startUserMessageLocalId ? { startingInputLocalIds: [paramsForTurn.startUserMessageLocalId] } : {}),
                         ...(providerTurnId ? { providerTurnId } : {}),
                         transcriptAnchors,
                     });
@@ -577,6 +579,21 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
                     : entry),
             }));
             activeTurn = { kind: 'tracked', turnId: nextTurnId, providerTurnId: nextTurnId };
+        },
+
+        async beginSteerInput(paramsForSteer: Readonly<{ localId?: string | null }>): Promise<void> {
+            if (!activeTurn || activeTurn.kind !== 'tracked' || !paramsForSteer.localId) return;
+            const lifecycle = params.session.sessionTurnLifecycle;
+            if (!lifecycle) return;
+            const expectedTurnId = activeTurn.turnId;
+            const handle = await lifecycle.beginTurn({
+                provider: CODEX_AGENT_ID,
+                startingInputLocalIds: [paramsForSteer.localId],
+            });
+            const boundTurnId = readLifecycleBeginTurnId(handle);
+            if (boundTurnId !== null && boundTurnId !== expectedTurnId) {
+                throw new Error('Codex steer lost its canonical turn before dispatch');
+            }
         },
 
         async appendSteerMessage(paramsForSteer: Readonly<{ localId?: string | null }>): Promise<void> {

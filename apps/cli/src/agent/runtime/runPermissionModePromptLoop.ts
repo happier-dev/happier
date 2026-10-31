@@ -212,6 +212,7 @@ export async function runPermissionModePromptLoop(opts: {
   const confirmQueuedUserMessageDeliveredToProvider = (
     message: QueuedPermissionModeMessage,
     appliedModelId?: string | null,
+    delivery?: Readonly<{ kind: 'command' }>,
   ): void => {
     const localIds = normalizePendingDeliveryLocalIds(message.userMessageLocalIds);
     if (localIds.length !== 1) return;
@@ -219,6 +220,7 @@ export async function runPermissionModePromptLoop(opts: {
     opts.providerInputOutcomeObserver?.({
       kind: 'accepted',
       localId: localIds[0],
+      ...(delivery ? { delivery } : {}),
       ...(normalizedAppliedModelId ? { appliedModelId: normalizedAppliedModelId } : {}),
     });
   };
@@ -427,7 +429,7 @@ export async function runPermissionModePromptLoop(opts: {
     if (special.type === 'clear') {
       opts.messageBuffer.addMessage(`Resetting ${opts.providerName} session…`, 'status');
       await opts.runtime.reset();
-      confirmQueuedUserMessageDeliveredToProvider(message);
+      confirmQueuedUserMessageDeliveredToProvider(message, undefined, { kind: 'command' });
       wasStarted = false;
       pendingFreshSessionSystemPrompt = false;
       await opts.onAfterReset?.();

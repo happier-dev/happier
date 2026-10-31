@@ -26,11 +26,13 @@ describe('createCodexAppServerProviderInputOutcomeBridge', () => {
             localId: 'local-1',
             providerTurnId: 'turn-1',
             appliedModelId: 'gpt-5.6-sol',
+            delivery: { kind: 'primary_turn' },
         });
-        expect(bridge.observeAcceptedLocalInput({ localIds: ['local-command'] })).toBe(true);
+        expect(bridge.observeAcceptedLocalInput({ localIds: ['local-command'], delivery: { kind: 'command' } })).toBe(true);
         expect(observe).toHaveBeenLastCalledWith({
             kind: 'accepted',
             localId: 'local-command',
+            delivery: { kind: 'command' },
         });
 
         expect(bridge.observeAccepted({
