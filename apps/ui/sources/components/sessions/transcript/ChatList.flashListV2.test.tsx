@@ -1112,7 +1112,8 @@ describe('ChatList (FlashList v2)', () => {
 
     beforeEach(async () => {
         const syncMod = await import('@/sync/sync');
-        vi.mocked(syncMod.sync.loadOlderMessages).mockReset();
+        // The real loader always resolves a result; web open-fill may now page older on its own.
+        vi.mocked(syncMod.sync.loadOlderMessages).mockReset().mockResolvedValue({ loaded: 0, hasMore: false, status: 'no_more' });
         vi.mocked(syncMod.sync.loadNewerMessages).mockReset();
         vi.mocked(
             (syncMod.sync as unknown as { loadTargetWindowMessages: ReturnType<typeof vi.fn> }).loadTargetWindowMessages,
