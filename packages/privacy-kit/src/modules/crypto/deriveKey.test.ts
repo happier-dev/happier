@@ -43,14 +43,8 @@ describe('Key Derivation Tests', () => {
         for (const vector of testVectors) {
             const result = deriveKey(vector.seed, vector.usage, vector.path);
             expect(encodeHex(result)).toEqual(vector.expectedFinalKey);
-        }
-    });
-
-    test('deriveKey should be deterministic', () => {
-        for (const vector of testVectors) {
-            const result1 = deriveKey(vector.seed, vector.usage, vector.path);
-            const result2 = deriveKey(vector.seed, vector.usage, vector.path);
-            expect(encodeHex(result1)).toEqual(encodeHex(result2));
+            const repeated = deriveKey(vector.seed, vector.usage, vector.path);
+            expect(encodeHex(repeated)).toEqual(vector.expectedFinalKey);
         }
     });
 

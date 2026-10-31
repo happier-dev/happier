@@ -33,13 +33,6 @@ describe('keyTree', () => {
         }
     });
 
-    it('should encrypt and decrypt', async () => {
-        const keyTree = new KeyTree(deriveSecretKeyTreeRoot("test", "testcase").chainCode);
-        const encrypted = await keyTree.symmetricEncrypt(['test'], 'test');
-        const decrypted = await keyTree.symmetricDecryptString(['test'], encrypted);
-        expect(decrypted).toEqual('test');
-    });
-
     it('should detect tampering with encrypted data', async () => {
         const keyTree = new KeyTree(deriveSecretKeyTreeRoot("test", "testcase").chainCode);
         const encrypted = await keyTree.symmetricEncrypt(['test'], 'test');
@@ -77,8 +70,7 @@ describe('keyTree', () => {
         const encrypted1 = await keyTree.symmetricEncrypt(['path1'], data);
         const encrypted2 = await keyTree.symmetricEncrypt(['path2'], data);
 
-        // Encrypted data should be different due to different keys and random nonce
-        expect(encrypted1).not.toEqual(encrypted2);
+        expect(keyTree.deriveSymmetricKey(['path1'])).not.toEqual(keyTree.deriveSymmetricKey(['path2']));
 
         // But both should decrypt correctly with their respective paths
         const decrypted1 = await keyTree.symmetricDecryptString(['path1'], encrypted1);
