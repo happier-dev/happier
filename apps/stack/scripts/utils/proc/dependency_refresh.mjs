@@ -9,7 +9,8 @@ import { withJsonOwnerFileLock } from './jsonOwnerFileLock.mjs';
 import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.mjs';
 import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './cliDistBuildLock.mjs';
 
-const REFRESH_STATE_VERSION = 5;
+// v6: v5 Yarn refreshes could admit a patch-only change without re-applying UI patches.
+const REFRESH_STATE_VERSION = 6;
 const REFRESH_MARKER = '.happier-stack-dependencies-ready';
 const DEPENDENCY_INSTALL_MODE = 'development-full-v1';
 

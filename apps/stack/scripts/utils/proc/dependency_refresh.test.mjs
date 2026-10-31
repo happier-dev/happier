@@ -35,7 +35,7 @@ test('dependency readiness survives relocation of a byte-identical installed tre
   const sourceInspection = await inspectDependencyRefresh({ installDir: sourceRoot });
   assert.equal(sourceInspection.required, false);
   const marker = JSON.parse(await readFile(sourceInspection.markerPath, 'utf8'));
-  assert.equal(marker.version, 5);
+  assert.equal(marker.version, 6);
   assert.equal(Object.hasOwn(marker, 'installDir'), false);
   assert.equal(marker.inputs.every((input) => !input.path.includes(sourceRoot)), true);
   assert.equal(JSON.stringify(marker).includes(sourceRoot), false, 'symlink targets must be hashed instead of storing absolute paths');

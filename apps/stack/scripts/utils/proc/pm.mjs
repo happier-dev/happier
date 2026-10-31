@@ -419,7 +419,7 @@ function findInstalledEnrichedMarkdownPackageDirs(componentDir, installDir) {
   ])).filter((packageDir) => existsSync(packageDir));
 }
 
-async function ensureUiPostinstallOutputs(componentDir, installDir, { quiet = false, env: envIn, pm: pmIn } = {}) {
+async function ensureUiPostinstallOutputs(componentDir, installDir, { quiet = false, force = false, env: envIn, pm: pmIn } = {}) {
   const componentPkg = await readPackageJsonIfExists(join(componentDir, 'package.json'));
   if (componentPkg?.name !== '@happier-dev/app') return;
   if (typeof componentPkg?.scripts?.['postinstall:real'] !== 'string') return;
@@ -434,7 +434,7 @@ async function ensureUiPostinstallOutputs(componentDir, installDir, { quiet = fa
       .map((packageDir) => join(packageDir, requiredRelativePath))
       .filter((outputPath) => !existsSync(outputPath));
   };
-  if (readMissingOutputs().length === 0) return;
+  if (!force && readMissingOutputs().length === 0) return;
 
   const env = pmIn
     ? (envIn ?? process.env)
@@ -674,12 +674,17 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
           // eslint-disable-next-line no-console
           console.log(`[local] refreshing ${label} dependencies (yarn.lock/package.json/workspace package.json/patches changed)...`);
         }
-        await runPm(pm, installArgs, {
-          cwd: installDir,
-          stdio,
-          env: heldCliLockValue
-            ? { ...env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldCliLockValue }
-            : env,
+        const refreshEnv = heldCliLockValue
+          ? { ...env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldCliLockValue }
+          : env;
+        await runPm(pm, installArgs, { cwd: installDir, stdio, env: refreshEnv });
+        // Yarn 1 skips workspace lifecycle scripts when the lockfile is already satisfied,
+        // so a patch-only input change would otherwise be recorded fresh while unpatched.
+        await ensureUiPostinstallOutputs(join(installDir, 'apps', 'ui'), installDir, {
+          quiet,
+          force: true,
+          env: refreshEnv,
+          pm,
         });
       });
     }
