@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SESSION_PERMISSION_INTENT_INPUTS } from '@happier-dev/protocol';
+import { AIBackendProfileSchema, SESSION_PERMISSION_INTENT_INPUTS, type AIBackendProfile } from '@happier-dev/protocol';
 
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
+import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
 import { SESSION_CREATE_USAGE } from './create/parseSessionCreateSpawnOptions';
 
 const execute = vi.fn();
@@ -87,6 +88,79 @@ describe('happier session create (action executor)', () => {
           session: { id: 'sess-1' },
         }),
       }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('routes the profile default agent when no backend is specified', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { type: 'success', sessionId: 'sess-routed', created: true, session: { id: 'sess-routed' } },
+    });
+
+    const { cmdSessionCreate } = await import('./create');
+    const workProfile = AIBackendProfileSchema.parse({
+      id: 'work',
+      name: 'Work Codex',
+      defaultBackendTargetKey: 'agent:codex',
+      compatibilityByTargetKey: { 'agent:codex': true, 'agent:claude': false },
+    } as Partial<AIBackendProfile>);
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await cmdSessionCreate(
+        ['create', '--path', '/tmp', '--launch-profile', 'work', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+          }),
+          fetchProfileRoutingCustomProfiles: async () => [workProfile],
+        },
+      );
+
+      expect(execute).toHaveBeenCalledWith(
+        'session.spawn_new',
+        expect.objectContaining({ path: '/tmp', profileId: 'work', agentId: 'codex' }),
+        expect.objectContaining({ surface: 'cli' }),
+      );
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('keeps the default agent when the profile has no routable default backend', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { type: 'success', sessionId: 'sess-plain', created: true, session: { id: 'sess-plain' } },
+    });
+
+    const { cmdSessionCreate } = await import('./create');
+    const plainProfile = AIBackendProfileSchema.parse({
+      id: 'plain',
+      name: 'Plain',
+      compatibilityByTargetKey: { 'agent:codex': true, 'agent:claude': false },
+    } as Partial<AIBackendProfile>);
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await cmdSessionCreate(
+        ['create', '--path', '/tmp', '--launch-profile', 'plain', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+          }),
+          fetchProfileRoutingCustomProfiles: async () => [plainProfile],
+        },
+      );
+
+      expect(execute).toHaveBeenCalledWith(
+        'session.spawn_new',
+        expect.objectContaining({ path: '/tmp', profileId: 'plain', agentId: DEFAULT_CATALOG_AGENT_ID }),
+        expect.objectContaining({ surface: 'cli' }),
+      );
     } finally {
       output.restore();
     }

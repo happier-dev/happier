@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
     AIBackendProfileSchema as ProtocolAIBackendProfileSchema,
     type BackendTargetRefV1,
+    getProfileDefaultBackendTarget as getProfileDefaultBackendTargetProtocol,
     getProfileEnvironmentVariables as getProfileEnvironmentVariablesProtocol,
     isProfileCompatibleWithBackendTarget as isProfileCompatibleWithBackendTargetProtocol,
     isProfileCompatibleWithAgent as isProfileCompatibleWithAgentProtocol,
@@ -38,6 +39,12 @@ export function isProfileCompatibleWithAgent(
     agentId: AgentId,
 ): boolean {
     return isProfileCompatibleWithAgentProtocol(normalizeCompatibilityProfile(profile), agentId);
+}
+
+export function getProfileDefaultBackendTarget(
+    profile: Pick<AIBackendProfile, 'defaultBackendTargetKey'>,
+): BackendTargetRefV1 | null {
+    return getProfileDefaultBackendTargetProtocol(profile);
 }
 
 export function getProfileEnvironmentVariables(profile: AIBackendProfile): Record<string, string> {

@@ -10834,6 +10834,13 @@ settingsSession: {
                 bypassPermissions: 'Skip all permissions',
             },
         },
+        defaultBackend: {
+            title: 'Default AI backend',
+            footer: 'Starts new sessions on this backend when the profile is selected and no other backend is chosen.',
+            noneTitle: 'No default',
+            noneSubtitle: 'Happier picks the backend as usual.',
+            selectedSubtitle: 'Used when starting a session with this profile.',
+        },
         defaultPermissions: {
             title: 'Default permissions',
             footer: 'Overrides the account-level default permissions for new sessions when this profile is selected.',

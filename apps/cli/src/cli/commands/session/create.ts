@@ -6,6 +6,9 @@ import { parseBackendTargetKey } from '@happier-dev/protocol';
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
+import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
+import { resolveProfileRoutedAgentIdFromSettings } from '@/cli/profileDefaultAgentRouting';
+import type { AIBackendProfile } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
@@ -63,7 +66,11 @@ async function resolveSessionCreateConnectedServices(params: Readonly<{
 
 export async function cmdSessionCreate(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
+  deps: Readonly<{
+    readCredentialsFn: () => Promise<Credentials | null>;
+    /** Test seam for profile-default agent routing; defaults to cached account settings. */
+    fetchProfileRoutingCustomProfiles?: (credentials: Credentials) => Promise<ReadonlyArray<AIBackendProfile>>;
+  }>,
 ): Promise<void> {
   const json = wantsJson(argv);
   const parsedOptions = parseSessionCreateSpawnOptions(argv);
@@ -86,12 +93,33 @@ export async function cmdSessionCreate(
     throw new Error(`Usage: ${SESSION_CREATE_USAGE}`);
   }
 
+  // A launch profile with a default backend routes the agent when the caller did not
+  // choose one explicitly; the parser emits `agentId` only for that no-choice case.
+  const profileIdForRouting = typeof parsedOptions.actionInput.profileId === 'string'
+    ? parsedOptions.actionInput.profileId.trim()
+    : '';
+  const shouldRouteProfileDefault = profileIdForRouting.length > 0
+    && parsedOptions.actionInput.agentId === DEFAULT_CATALOG_AGENT_ID;
+  const routedAgentId = shouldRouteProfileDefault
+    ? await resolveProfileRoutedAgentIdFromSettings({
+      profileQuery: profileIdForRouting,
+      credentials,
+      ...(deps.fetchProfileRoutingCustomProfiles ? { fetchCustomProfiles: deps.fetchProfileRoutingCustomProfiles } : {}),
+    })
+    : null;
+  const effectiveParsedOptions = routedAgentId && routedAgentId !== DEFAULT_CATALOG_AGENT_ID
+    ? {
+      ...parsedOptions,
+      actionInput: { ...parsedOptions.actionInput, agentId: routedAgentId },
+    }
+    : parsedOptions;
+
   const executor = createCliActionExecutorFromCredentials({ credentials });
   let actionRes;
   try {
     const actionInput = await resolveSessionCreateConnectedServices({
       executor,
-      parsedOptions,
+      parsedOptions: effectiveParsedOptions,
     });
     actionRes = await executor.execute(
       'session.spawn_new',

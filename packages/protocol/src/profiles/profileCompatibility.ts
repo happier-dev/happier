@@ -1,5 +1,10 @@
 import type { AIBackendProfile } from './backendProfileSchema.js';
-import { buildBackendTargetKey, type BackendTargetRefV1 } from '../backendTargets/backendTargetRef.js';
+import {
+  BackendTargetKeySchema,
+  buildBackendTargetKey,
+  parseBackendTargetKey,
+  type BackendTargetRefV1,
+} from '../backendTargets/backendTargetRef.js';
 
 export function isProfileCompatibleWithBackendTarget(
   profile: Pick<AIBackendProfile, 'compatibilityByTargetKey' | 'compatibility' | 'isBuiltIn'>,
@@ -22,4 +27,18 @@ export function isProfileCompatibleWithAgent(
   agentId: string,
 ): boolean {
   return isProfileCompatibleWithBackendTarget(profile, { kind: 'builtInAgent', agentId });
+}
+
+/**
+ * The profile's default backend target for sessions started under it without an explicit
+ * backend choice, or null when unset or malformed. Callers must additionally verify the
+ * target is compatible with the profile and available on the target machine.
+ */
+export function getProfileDefaultBackendTarget(
+  profile: Pick<AIBackendProfile, 'defaultBackendTargetKey'>,
+): BackendTargetRefV1 | null {
+  const key = profile.defaultBackendTargetKey;
+  if (!key) return null;
+  if (!BackendTargetKeySchema.safeParse(key).success) return null;
+  return parseBackendTargetKey(key);
 }

@@ -1485,6 +1485,13 @@ export const ja: TranslationStructure = {
         bypassPermissions: "すべての権限をスキップ",
       },
     },
+    defaultBackend: {
+        title: 'デフォルトのAIバックエンド',
+        footer: 'プロファイルが選択されていて他のバックエンドが選ばれていない場合、新しいセッションをこのバックエンドで開始します。',
+        noneTitle: 'デフォルトなし',
+        noneSubtitle: 'Happierが通常どおりバックエンドを選択します。',
+        selectedSubtitle: 'このプロファイルでセッションを開始するときに使用されます。',
+    },
     defaultPermissions: {
       title: "既定の権限",
       footer:

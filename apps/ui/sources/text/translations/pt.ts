@@ -11535,6 +11535,13 @@ settingsSession: {
         bypassPermissions: "Ignorar todas as permissões",
       },
     },
+    defaultBackend: {
+        title: 'Backend de IA padrão',
+        footer: 'Inicia novas sessões neste backend quando o perfil está selecionado e nenhum outro backend é escolhido.',
+        noneTitle: 'Sem padrão',
+        noneSubtitle: 'O Happier escolhe o backend como de costume.',
+        selectedSubtitle: 'Usado ao iniciar uma sessão com este perfil.',
+    },
     defaultPermissions: {
       title: "Permissões padrão",
       footer:

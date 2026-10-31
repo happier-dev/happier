@@ -573,6 +573,13 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         return raw || null;
     }, [worktreeParam]);
 
+    // The currently selected profile constrains the new-session backend target: its default
+    // backend target seeds the initial agent, and its allowed backends bound later selections.
+    const selectedProfileForBackendTarget = React.useMemo(() => {
+        if (!useProfiles || !selectedProfileId) return null;
+        return profileMap.get(selectedProfileId) ?? getBuiltInProfile(selectedProfileId) ?? null;
+    }, [profileMap, selectedProfileId, useProfiles]);
+
     const { backendTarget, setBackendTarget, builtInAgentId: agentType } = useNewSessionBackendTargetState({
         entries: resolvedBackendEntries,
         lastUsedAgent,
@@ -581,6 +588,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         persistedBackendTarget: hydratedPersistedAuthoringDraft?.backendTarget,
         tempBackendTarget: routeBackendTarget ?? hydratedTempAuthoringDraft?.backendTarget ?? tempSessionData?.backendTarget,
         tempAgentType: hydratedTempAuthoringDraft?.agentId ?? agentTypeParam ?? hydratedPersistedAuthoringDraft?.agentId,
+        profile: selectedProfileForBackendTarget,
     });
     const setAgentType = React.useCallback((next: React.SetStateAction<AgentId>) => {
         setBackendTarget((prevTarget) => {

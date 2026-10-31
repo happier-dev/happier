@@ -6,6 +6,8 @@ import { isTmuxAllowedCommand } from '@/cli/commandSurfaceManifest';
 import { readStartedByArg } from '@/cli/readStartedByArg';
 import { AGENTS, requireCatalogEntry } from '@/backends/catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
+import { readCredentials } from '@/persistence';
+import { readProfileQueryFromArgs, resolveProfileRoutedAgentIdFromSettings } from '@/cli/profileDefaultAgentRouting';
 import { resolveInheritedHerdrRuntime } from '@/terminal/runtime/inheritedHerdrRuntime';
 import { applyDaemonAutostartEnvForInvocation, shouldEnsureDaemonForInvocation } from '@/daemon/ensureDaemon';
 import { applyEphemeralServerSelectionFromPrefixArgs } from '@/server/serverSelection';
@@ -103,6 +105,24 @@ export async function dispatchCli(params: Readonly<{
   }
 
   const defaultEntry = requireCatalogEntry(DEFAULT_CATALOG_AGENT_ID);
+
+  // Bare `happier --profile <query>` starts the profile's default agent when it has one;
+  // without a routable default the default-backend handler below reports the profile error.
+  const profileQuery = readProfileQueryFromArgs(args);
+  if (profileQuery) {
+    const credentials = await readCredentials();
+    const routedAgentId = await resolveProfileRoutedAgentIdFromSettings({ profileQuery, credentials });
+    if (routedAgentId && routedAgentId !== DEFAULT_CATALOG_AGENT_ID && AGENTS[routedAgentId as keyof typeof AGENTS]?.getCliCommandHandler) {
+      const routedHandler = await AGENTS[routedAgentId as keyof typeof AGENTS]!.getCliCommandHandler!();
+      await routedHandler({
+        args,
+        rawArgv,
+        terminalRuntime: await resolveInheritedHerdrRuntime({ terminalRuntime, env: process.env }),
+      });
+      return;
+    }
+  }
+
   if (!defaultEntry.getCliCommandHandler) {
     throw new Error(`Default agent '${DEFAULT_CATALOG_AGENT_ID}' has no CLI command handler registered`);
   }

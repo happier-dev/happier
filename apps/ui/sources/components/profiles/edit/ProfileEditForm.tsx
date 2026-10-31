@@ -257,6 +257,10 @@ export function ProfileEditForm({
         return out;
     });
 
+    const [defaultBackendTargetKey, setDefaultBackendTargetKey] = React.useState<string | null>(
+        profile.defaultBackendTargetKey ?? null,
+    );
+
     React.useEffect(() => {
         setCompatibilityByTargetKeyState((prev) => {
             let changed = false;
@@ -474,6 +478,7 @@ export function ProfileEditForm({
     const [openPermissionProvider, setOpenPermissionProvider] = React.useState<null | string>(null);
     const [openStorageProvider, setOpenStorageProvider] = React.useState<null | string>(null);
     const [openPromptBehaviorMenu, setOpenPromptBehaviorMenu] = React.useState<null | 'title' | 'response'>(null);
+    const [openDefaultBackendMenu, setOpenDefaultBackendMenu] = React.useState(false);
     const titleUpdatesModeItems = React.useMemo(getCodingPromptTitleUpdatesModeItems, []);
     const responseOptionsModeItems = React.useMemo(getCodingPromptResponseOptionsModeItems, []);
 
@@ -549,6 +554,7 @@ export function ProfileEditForm({
             defaultPermissionModesByTargetKey,
             defaultTranscriptStorageModesByTargetKey,
             compatibilityByTargetKeyState,
+            defaultBackendTargetKey,
             authMode,
             requiresMachineLogin,
             derivedEnvVarRequirements,
@@ -566,6 +572,7 @@ export function ProfileEditForm({
             defaultPermissionModesByTargetKey,
             defaultTranscriptStorageModesByTargetKey,
             compatibilityByTargetKeyState,
+            defaultBackendTargetKey,
             authMode,
             requiresMachineLogin,
             derivedEnvVarRequirements,
@@ -577,6 +584,7 @@ export function ProfileEditForm({
     }, [
         authMode,
         compatibilityByTargetKeyState,
+        defaultBackendTargetKey,
         defaultPermissionModesByTargetKey,
         defaultTranscriptStorageModesByTargetKey,
         environmentVariables,
@@ -593,16 +601,19 @@ export function ProfileEditForm({
     }, [isDirty, onDirtyChange]);
 
     const toggleCompatibility = React.useCallback((targetKey: string) => {
-        setCompatibilityByTargetKeyState((prev) => {
-            const next = { ...prev, [targetKey]: !prev[targetKey] };
-            const enabledCount = resolvedBackendEntries.filter((entry) => next[entry.targetKey] === true).length;
-            if (enabledCount === 0) {
-                Modal.alert(t('common.error'), t('profiles.aiBackend.selectAtLeastOneError'));
-                return prev;
-            }
-            return next;
-        });
-    }, [resolvedBackendEntries]);
+        const wasEnabled = compatibilityByTargetKeyState[targetKey] === true;
+        const enabledCount = resolvedBackendEntries.filter(
+            (entry) => (entry.targetKey === targetKey ? !wasEnabled : compatibilityByTargetKeyState[entry.targetKey] === true),
+        ).length;
+        if (enabledCount === 0) {
+            Modal.alert(t('common.error'), t('profiles.aiBackend.selectAtLeastOneError'));
+            return;
+        }
+        setCompatibilityByTargetKeyState((prev) => ({ ...prev, [targetKey]: !wasEnabled }));
+        if (!wasEnabled) return;
+        // Disallowing a backend also drops it as the profile's default backend.
+        setDefaultBackendTargetKey((prev) => (prev === targetKey ? null : prev));
+    }, [compatibilityByTargetKeyState, resolvedBackendEntries]);
 
     const openSetupGuide = React.useCallback(async () => {
         const url = profileDocs?.setupGuideUrl;
@@ -682,6 +693,9 @@ export function ProfileEditForm({
             defaultPersistenceModeByAgent: {},
             compatibilityByTargetKey,
             compatibility: {},
+            defaultBackendTargetKey: defaultBackendTargetKey && compatibilityByTargetKeyState[defaultBackendTargetKey] === true
+                ? defaultBackendTargetKey
+                : undefined,
             codingPromptBehaviorV1: sessionTitleUpdatesOverride || responseOptionsOverride
                 ? {
                     v: 1,
@@ -693,6 +707,7 @@ export function ProfileEditForm({
         }, secretBindingsDraft);
     }, [
         compatibilityByTargetKeyState,
+        defaultBackendTargetKey,
         defaultPermissionModesByTargetKey,
         defaultTranscriptStorageModesByTargetKey,
         derivedEnvVarRequirements,
@@ -902,6 +917,76 @@ export function ProfileEditForm({
                     );
                 })()}
             </ItemGroup>
+
+            {(() => {
+                const compatibleEntries = resolvedBackendEntries.filter((entry) => compatibilityByTargetKeyState[entry.targetKey] === true);
+                if (compatibleEntries.length < 2) return null;
+                const selectedEntry = compatibleEntries.find((entry) => entry.targetKey === defaultBackendTargetKey) ?? null;
+                return (
+                    <ItemGroup
+                        title={t('profiles.defaultBackend.title')}
+                        footer={t('profiles.defaultBackend.footer')}
+                    >
+                        <DropdownMenu
+                            open={openDefaultBackendMenu}
+                            onOpenChange={setOpenDefaultBackendMenu}
+                            popoverBoundaryRef={popoverBoundaryRef}
+                            variant="selectable"
+                            search={false}
+                            showCategoryTitles={false}
+                            matchTriggerWidth={true}
+                            connectToTrigger={true}
+                            rowKind="item"
+                            selectedId={defaultBackendTargetKey ?? '__none__'}
+                            trigger={({ toggle }) => (
+                                <Item
+                                    title={selectedEntry ? selectedEntry.title : t('profiles.defaultBackend.noneTitle')}
+                                    subtitle={selectedEntry
+                                        ? t('profiles.defaultBackend.selectedSubtitle')
+                                        : t('profiles.defaultBackend.noneSubtitle')}
+                                    leftElement={selectedEntry
+                                        ? <AgentIcon agentId={selectedEntry.iconAgentId} size={24} color={theme.colors.text.secondary} />
+                                        : undefined}
+                                    rightElement={(
+                                        <Icon
+                                            name={openDefaultBackendMenu ? 'caret-up' : 'caret-down'}
+                                            size={20}
+                                            color={theme.colors.text.secondary}
+                                        />
+                                    )}
+                                    showChevron={false}
+                                    onPress={toggle}
+                                    showDivider={false}
+                                />
+                            )}
+                            items={[
+                                {
+                                    id: '__none__',
+                                    title: t('profiles.defaultBackend.noneTitle'),
+                                    subtitle: t('profiles.defaultBackend.noneSubtitle'),
+                                    icon: (
+                                        <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                            <Icon name="sliders-horizontal" size={20} color={theme.colors.text.secondary} />
+                                        </View>
+                                    ),
+                                },
+                                ...compatibleEntries.map((entry) => ({
+                                    id: entry.targetKey,
+                                    title: entry.title,
+                                    subtitle: entry.subtitle ?? undefined,
+                                    icon: (
+                                        <AgentIcon agentId={entry.iconAgentId} size={24} color={theme.colors.text.secondary} />
+                                    ),
+                                })),
+                            ]}
+                            onSelect={(id) => {
+                                setDefaultBackendTargetKey(id === '__none__' ? null : id);
+                                setOpenDefaultBackendMenu(false);
+                            }}
+                        />
+                    </ItemGroup>
+                );
+            })()}
             <ItemGroup
                 title={t('profiles.defaultPermissions.title')}
                 footer={t('profiles.defaultPermissions.footer')}

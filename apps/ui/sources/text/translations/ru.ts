@@ -11402,6 +11402,13 @@ settingsSession: {
         bypassPermissions: "Пропускать все разрешения",
       },
     },
+    defaultBackend: {
+        title: 'Бэкенд ИИ по умолчанию',
+        footer: 'Запускает новые сессии на этом бэкенде, когда выбран профиль и другой бэкенд не выбран.',
+        noneTitle: 'Без бэкенда по умолчанию',
+        noneSubtitle: 'Happier выбирает бэкенд как обычно.',
+        selectedSubtitle: 'Используется при запуске сессии с этим профилем.',
+    },
     defaultPermissions: {
       title: "Разрешения по умолчанию",
       footer:

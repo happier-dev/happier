@@ -3660,6 +3660,7 @@ export {
   EnvironmentVariableSchema,
   SavedSecretSchema,
   getBuiltInBackendProfile,
+  getProfileDefaultBackendTarget,
   getRequiredConfigEnvVarNames,
   getMissingRequiredConfigEnvVarNames,
   getProfileEnvironmentVariables,

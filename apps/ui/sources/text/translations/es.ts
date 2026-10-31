@@ -11490,6 +11490,13 @@ settingsSession: {
         bypassPermissions: "Omitir todos los permisos",
       },
     },
+    defaultBackend: {
+        title: 'Backend de IA predeterminado',
+        footer: 'Inicia nuevas sesiones en este backend cuando el perfil está seleccionado y no se elige otro backend.',
+        noneTitle: 'Sin predeterminado',
+        noneSubtitle: 'Happier elige el backend como de costumbre.',
+        selectedSubtitle: 'Se usa al iniciar una sesión con este perfil.',
+    },
     defaultPermissions: {
       title: "Permisos predeterminados",
       footer:
