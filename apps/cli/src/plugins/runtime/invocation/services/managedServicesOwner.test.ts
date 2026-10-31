@@ -1189,7 +1189,7 @@ describe('managed-services SVC09 owner', () => {
         const input = createProjectLifecycleInput();
         const inspected = deferred<void>();
         let stopped = false;
-        const edges: unknown[] = [];
+        const edges: ReturnType<typeof owner.activity.read>[] = [];
         const unsubscribe = owner.activity.subscribe(() => edges.push(owner.activity.read()));
         const establishment = owner.superviseProject({ ...input, processSpec: { ...input.processSpec,
             mode: { kind: 'native', instance: { adapter: { pluginId: 'native', localId: 'worker' },
@@ -1199,18 +1199,18 @@ describe('managed-services SVC09 owner', () => {
             } },
         } });
         try {
-            expect(owner.activity.read()).toMatchObject({ coverage: 'complete', items: [
+            expect(await owner.activity.read()).toMatchObject({ coverage: 'complete', items: [
                 { category: 'service', attribution: input.requester, state: 'active' },
             ] });
             inspected.resolve();
             const handle = await establishment;
             expect(handle.snapshot().baseUrl).toBeNull();
-            expect(owner.activity.read()).toMatchObject({ coverage: 'complete', items: [
+            expect(await owner.activity.read()).toMatchObject({ coverage: 'complete', items: [
                 { category: 'service', ownerRef: handle.instanceId, state: 'active' },
             ] });
             await handle.stop();
-            expect(owner.activity.read()).toEqual({ coverage: 'complete', items: [] });
-            expect(edges).toContainEqual({ coverage: 'complete', items: [] });
+            expect(await owner.activity.read()).toEqual({ coverage: 'complete', items: [] });
+            expect(await Promise.all(edges)).toContainEqual({ coverage: 'complete', items: [] });
         } finally {
             inspected.resolve();
             unsubscribe();
