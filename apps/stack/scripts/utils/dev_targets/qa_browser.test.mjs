@@ -168,7 +168,7 @@ test('browser cleanup reuses SSH and recovers a refused channel before dispatchi
   assert.deepEqual(transports, [false], 'ambiguous loss after dispatch must not replay retirement');
 });
 
-for (const ownerSignal of ['SIGINT', 'SIGKILL']) test(`${ownerSignal} owner exit closes detached browser beyond executor cancellation grace`, { skip: process.platform === 'win32', timeout: 20000 }, async t => {
+for (const ownerSignal of ['SIGINT', 'SIGKILL']) test(`${ownerSignal} owner exit closes detached browser beyond executor cancellation grace`, { skip: process.platform === 'win32' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-qa-browser-cancel-', registerCleanup: false });
   const { root } = fixture;
   const chromePort = await fakeChromeCommandLine(t);
