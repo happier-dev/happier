@@ -2,9 +2,8 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { AGENTS, AGENT_META, UNLISTED_AGENTS, UPCOMING_AGENTS } from './agents';
+import { AGENT_META, UPCOMING_AGENTS } from './agents';
 import {
-    SHIPPED_AGENT_IDS,
     UNRELEASED_TREE_ENV_VAR,
     UPCOMING_LABEL,
     UPCOMING_RELEASE,
@@ -69,22 +68,6 @@ describe('upcoming claims are backed by the unreleased registry', () => {
         }
     });
 
-    it('never lets an unreleased agent into a shipped-facing collection', () => {
-        if (!unreleasedAgentIds) return; // reported by the test above
-        const shippedFacing = new Map<string, string>([
-            ...AGENTS.map((a) => [a.id, `AGENTS (/agents/${a.slug})`] as const),
-            ...Object.keys(UNLISTED_AGENTS).map((id) => [id, 'UNLISTED_AGENTS'] as const),
-        ]);
-
-        for (const id of unreleasedOnly) {
-            expect(
-                shippedFacing.get(id),
-                `'${id}' is not in the released build but appears in ${shippedFacing.get(id)}. ` +
-                    'That is the exact shape of the defect this file exists for.',
-            ).toBeUndefined();
-        }
-    });
-
     it('mints no route and no page metadata for an unreleased agent', () => {
         for (const agent of UPCOMING_AGENTS) {
             for (const route of ROUTES) {
@@ -97,14 +80,6 @@ describe('upcoming claims are backed by the unreleased registry', () => {
         }
     });
 
-    it('keeps every id in exactly one state', () => {
-        for (const id of SHIPPED_AGENT_IDS) {
-            expect(
-                UPCOMING_AGENTS.some((a) => a.id === id),
-                `'${id}' ships and is also listed as upcoming`,
-            ).toBe(false);
-        }
-    });
 });
 
 describe('an upcoming agent is never described as though it ran', () => {

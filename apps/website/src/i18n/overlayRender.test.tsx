@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { LocaleProvider } from './index';
 import { AgentsIndex } from '../pages/AgentsIndex';
 import { UPCOMING_LABEL } from '../data/availability';
+import { PAGE_PROSE } from '../data/pageProse';
 import { registerOverlay, siteDataFor } from './siteData';
 import zhHansOverlay from './messages/overlays/zh-Hans.json';
 
@@ -77,15 +78,18 @@ describe('a translated string reaches rendered HTML', () => {
     });
 
     it('falls back to English for every string the overlay does not cover', () => {
-        // The overlay carries one id. Everything else on the page must still
-        // render, in English, rather than blanking — that is the whole point of
-        // the per-key fallback.
-        const markup = renderToStaticMarkup(
-            <LocaleProvider locale="zh-Hans" path="/zh/agents">
-                <AgentsIndex />
-            </LocaleProvider>,
-        );
-        expect(markup).toContain('Claude Code');
-        expect(markup.length).toBeGreaterThan(5000);
+        registerOverlay('zh-Hans', { 'availability.UPCOMING_LABEL': chinese });
+        try {
+            const markup = renderToStaticMarkup(
+                <LocaleProvider locale="zh-Hans" path="/zh/agents">
+                    <AgentsIndex />
+                </LocaleProvider>,
+            );
+            expect(markup).toContain(chinese);
+            expect(markup).toContain(PAGE_PROSE.agentsIndex.p8);
+            expect(markup).not.toContain(UPCOMING_LABEL);
+        } finally {
+            registerOverlay('zh-Hans', overlay);
+        }
     });
 });
