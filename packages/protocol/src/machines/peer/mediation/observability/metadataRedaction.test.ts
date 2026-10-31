@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
+import { build } from 'vite';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -65,10 +67,35 @@ describe('peer mediation observability shared redactor (DUP-3 single owner)', ()
   });
 
   it('keeps the shared redactor browser-portable for Protocol root consumers', async () => {
-    const source = await readFile(new URL('./metadataRedaction.ts', import.meta.url), 'utf8');
-
-    expect(source).not.toContain('node:crypto');
-    expect(source).toContain("from '@noble/hashes/sha2'");
-    expect(source).toContain("from '@noble/hashes/utils'");
+    const chunks: string[] = [];
+    const externalImports: string[] = [];
+    await build({
+      configFile: false,
+      logLevel: 'silent',
+      plugins: [{
+        name: 'peer-redaction-browser-contract',
+        generateBundle(_options, bundle) {
+          for (const chunk of Object.values(bundle)) {
+            if (chunk.type !== 'chunk') continue;
+            chunks.push(chunk.code);
+            externalImports.push(...chunk.imports, ...chunk.dynamicImports);
+          }
+        },
+      }],
+      build: {
+        write: false,
+        minify: false,
+        lib: {
+          entry: fileURLToPath(new URL('./metadataRedaction.ts', import.meta.url)),
+          name: 'PeerRedaction',
+          formats: ['iife'],
+        },
+      },
+    });
+    expect(externalImports).toEqual([]);
+    expect(chunks).toHaveLength(1);
+    expect(runInNewContext(`${chunks[0]}\nPeerRedaction.redactedPeerMediationObservabilityReference('grant', 'abc')`, {
+      URL, TextEncoder, TextDecoder,
+    })).toBe('grant_ba7816bf8f01');
   });
 });

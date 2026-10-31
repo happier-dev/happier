@@ -50,6 +50,8 @@ describe('active Account transition Workflow participant', () => {
       lifecycle: 'completed' as const, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
     const rowBinding = { ...binding, purpose: 'invocation_progress' as const, recordId: id,
       sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0' };
+    const checkpoint = { kind: 'happier.workflow-checkpoint.v1' as const, rootRecordId: id,
+      nextSequence: '1', frontier: { nextBlockOrdinal: 1, paused: false } };
     const run: AccountEncryptionMigrateAutomationsInventoryResponse['runs'][number] = {
       runId, expectedRunRevision: 4, automationId: null, occurrenceKey: null, triggerId: null, summaryCiphertext: null,
       triggerEvidenceEnvelope: null, occurrenceEvidenceEqualityTag: null, executionInputEnvelope: null,
@@ -60,8 +62,7 @@ describe('active Account transition Workflow participant', () => {
       workflow: { acceptedSnapshotEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
         mode: 'plain', binding: { ...binding, purpose: 'accepted_snapshot' }, acceptedSnapshot: materialized.snapshot })),
         checkpointEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain',
-          binding: { ...binding, purpose: 'checkpoint' }, checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: id,
-            nextSequence: '1', frontier: { nextBlockOrdinal: 1, paused: false } } })),
+          binding: { ...binding, purpose: 'checkpoint' }, checkpoint })),
         keyCensus: { runId, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain', visibleTeamId: null,
           ownerAccountCurrentness: plain.witness, dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [] },
         invocations: [{ index, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
@@ -79,9 +80,11 @@ describe('active Account transition Workflow participant', () => {
     if (resolved.kind !== 'available') throw new Error('target_key_unavailable');
     const crypto = resolved.encryption.runCrypto;
     expect(openWorkflowAcceptedSnapshotStoredEnvelopeV1({ ...crypto, binding: { ...binding, purpose: 'accepted_snapshot' },
-      envelope: parseWorkflowStoredContentEnvelopeV1(encrypted.workflow.acceptedSnapshotEnvelope) }).kind).toBe('available');
+      envelope: parseWorkflowStoredContentEnvelopeV1(encrypted.workflow.acceptedSnapshotEnvelope) }))
+      .toEqual({ kind: 'available', content: materialized.snapshot });
     expect(openWorkflowCheckpointStoredEnvelopeV1({ ...crypto, binding: { ...binding, purpose: 'checkpoint' },
-      envelope: parseWorkflowStoredContentEnvelopeV1(encrypted.workflow.checkpointEnvelope) }).kind).toBe('available');
+      envelope: parseWorkflowStoredContentEnvelopeV1(encrypted.workflow.checkpointEnvelope) }))
+      .toEqual({ kind: 'available', content: checkpoint });
     const progress = openWorkflowProgressStoredEnvelopeV1({ ...crypto, binding: rowBinding,
       envelope: parseWorkflowStoredContentEnvelopeV1(encrypted.workflow.invocations[0].contentEnvelope) });
     expect(progress.kind === 'available' && progress.content.result).toBe('Kept answer');

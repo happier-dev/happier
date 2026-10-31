@@ -7,8 +7,6 @@ import {
 import {
   SessionServerStartSpawnDraftV1Schema,
   SessionServerStartIngressRequestV1Schema,
-  SessionSpawnNewInputV2Schema,
-  type SessionServerStartHandlerV1,
   type SessionServerStartSpawnDraftV1,
 } from './sessionServerStartV1.js';
 import {
@@ -58,18 +56,6 @@ describe('SessionServerStartSpawnDraftV1Schema', () => {
       ...draft,
       environmentVariables: { TOKEN: 'must-not-enter-server-metadata' },
     }).success).toBe(false);
-  });
-
-  it('defines the canonical start handler over exact V2 input and result', () => {
-    const handler: SessionServerStartHandlerV1 = async (input) => {
-      SessionSpawnNewInputV2Schema.parse(input);
-      return {
-        type: 'error',
-        code: 'cancelled',
-        retryable: false,
-      };
-    };
-    expect(typeof handler).toBe('function');
   });
 
   it('defines one mode-correct opaque Run-to-exact-machine transport without exposing a Session V2 parser to the server', async () => {

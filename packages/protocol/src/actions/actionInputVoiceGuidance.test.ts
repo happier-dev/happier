@@ -10,20 +10,17 @@ function declaredField(actionId: Parameters<typeof getActionSpec>[0], path: stri
 }
 
 describe('actionInputVoiceGuidance', () => {
-  it('uses backendTargetKeys in backend-selection guidance', () => {
-    const fieldNotes = getActionInputFieldVoiceNotes(
-      { id: 'subagents.plan.start' },
-      declaredField('subagents.plan.start', 'backendTargetKeys'),
-    ).join(' ');
-    const workflowNotes = getActionVoiceWorkflowNotes('subagents.plan.start').join(' ');
+  it('offers backend discovery guidance only while its prerequisite Action is available', () => {
+    const field = declaredField('subagents.plan.start', 'backendTargetKeys');
+    const enabled = { availableActionIds: ['agents.backends.list'] };
+    const disabled = { ...enabled, disabledActionIds: ['agents.backends.list'] };
 
-    expect(fieldNotes).toContain('backendTargetKeys');
-    expect(fieldNotes).toContain('provider/backend targets');
-    expect(fieldNotes).toContain('not as parallelism capacity');
-    expect(fieldNotes).not.toContain('backendIds');
-    expect(workflowNotes).toContain('backendTargetKeys');
-    expect(workflowNotes).toContain('provider/backend targets');
-    expect(workflowNotes).not.toContain('backendIds');
+    expect(getActionInputFieldVoiceNotes({ id: 'subagents.plan.start' }, field, enabled)).not.toEqual([]);
+    expect(getActionVoiceWorkflowNotes('subagents.plan.start', enabled)).not.toEqual([]);
+    for (const availability of [disabled, { availableActionIds: [] }]) {
+      expect(getActionInputFieldVoiceNotes({ id: 'subagents.plan.start' }, field, availability)).toEqual([]);
+      expect(getActionVoiceWorkflowNotes('subagents.plan.start', availability)).toEqual([]);
+    }
   });
 
   it('describes canonical backend targets and runtime carrier guidance for agents.models.list', () => {

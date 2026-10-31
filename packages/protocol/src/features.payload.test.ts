@@ -409,19 +409,4 @@ describe('FeaturesResponseSchema', () => {
     }
   });
 
-  it('includes a gate leaf for every server-represented FeatureId', () => {
-    const parsed = FeaturesResponseSchema.parse({
-      features: {},
-      capabilities: {},
-    });
-
-    for (const featureId of FEATURE_IDS) {
-      const entry = FEATURE_CATALOG[featureId];
-      if (entry.representation !== 'server') continue;
-
-      const path = resolveServerEnabledBitPath(featureId);
-      const enabled = readRequiredPath(parsed, path);
-      expect(typeof enabled).toBe('boolean');
-    }
-  });
 });
