@@ -44,6 +44,7 @@ describe('stdioMcpServerLauncher Windows commands', () => {
       expect(options.env?.COMSPEC).toBe(comspec);
       expect(options.env?.PATH).toBe(root);
       expect(options.shell).toBe(false);
+      expect(options.windowsHide).toBe(true);
       expect(invocationArgs[3]).toContain('--yes');
       expect(invocationArgs[3]).toContain('--package');
     } finally {

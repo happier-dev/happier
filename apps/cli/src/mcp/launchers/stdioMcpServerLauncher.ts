@@ -57,6 +57,7 @@ export async function runStdioMcpServerLauncher(): Promise<void> {
       : {}),
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: false,
+    windowsHide: true,
   });
 
   const forwardSignal = (signal: NodeJS.Signals) => {

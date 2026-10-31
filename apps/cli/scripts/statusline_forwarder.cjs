@@ -127,6 +127,7 @@ function chainOriginal(originalCommand, body) {
     try {
         child = spawn(originalCommand, {
             shell: true,
+            windowsHide: true,
             stdio: ['pipe', 'pipe', 'inherit'],
         });
     } catch {

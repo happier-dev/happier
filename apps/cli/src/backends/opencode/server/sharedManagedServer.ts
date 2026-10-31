@@ -700,7 +700,7 @@ async function readProcessStartTimeMsBestEffort(pid: number): Promise<number | n
     const output = execFileSync(
       'ps',
       ['-o', 'lstart=', '-p', String(Math.floor(pid))],
-      { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' },
+      { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', windowsHide: true },
     )
       .trim();
     if (!output) return null;

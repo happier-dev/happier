@@ -701,6 +701,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             cwd: rootDir,
             env: childEnv,
             stdio: background ? ['ignore', outFd ?? 'ignore', outFd ?? 'ignore'] : 'inherit',
+            windowsHide: background,
             shell: false,
             detached: background && process.platform !== 'win32',
           });
@@ -859,6 +860,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               cwd: rootDir,
               env,
               stdio: ['ignore', logHandle.fd, logHandle.fd],
+              windowsHide: true,
               shell: false,
               detached: process.platform !== 'win32',
             });

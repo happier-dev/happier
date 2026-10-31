@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -279,6 +280,37 @@ describe('statusline_forwarder.cjs', () => {
       expect(result.stderr).toBe('');
     } finally {
       await capture.stop();
+    }
+  });
+});
+
+describe('statusline forwarder background command', () => {
+  it('hides the chained shell while preserving its output', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'happier-statusline-console-'));
+    try {
+      const optionsPath = join(directory, 'spawn-options.json');
+      const preload = join(directory, 'capture-spawn.cjs');
+      const original = join(directory, 'original.cjs');
+      // Observe the genuine OS adapter inside the published CommonJS script.
+      writeFileSync(preload, `const cp = require('node:child_process');
+const spawn = cp.spawn;
+cp.spawn = (...args) => {
+  require('node:fs').writeFileSync(${JSON.stringify(optionsPath)}, JSON.stringify(args[1]));
+  return spawn(...args);
+};`);
+      writeFileSync(original, 'process.stdout.write("original status");');
+      const command = `"${process.execPath}" "${original}"`;
+      const output = execFileSync(process.execPath, [
+        '--require', preload,
+        scriptPath,
+        '0', 'test-secret', Buffer.from(command).toString('base64'),
+      ], { input: '{}', encoding: 'utf8', windowsHide: true });
+      expect(output).toBe('original status');
+      expect(JSON.parse(readFileSync(optionsPath, 'utf8'))).toMatchObject({
+        shell: true, windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'],
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 });

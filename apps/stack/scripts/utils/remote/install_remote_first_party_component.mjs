@@ -100,7 +100,7 @@ async function createScpReadyPayloadArchive(payloadRoot) {
       '-C',
       join(payloadRoot, '..'),
       extractedPayloadDirName,
-    ]);
+    ], { windowsHide: true });
     return {
       archiveStageRoot,
       archiveFileName,

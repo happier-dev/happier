@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ChildProcess, spawn } from 'node:child_process';
+import { ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { inspect } from 'node:util';
 
@@ -24,7 +24,7 @@ import { ClaudeNativeProviderExitUnverifiedError } from './types';
 // Record real OS children so cleanup assertions wait for the actual close boundary.
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
-  return { ...actual, spawn: vi.fn(actual.spawn) };
+  return { ...actual, spawn: vi.fn(actual.spawn), spawnSync: vi.fn(actual.spawnSync) };
 });
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -55,6 +55,35 @@ describe('claude sdk query exit handling', () => {
     if (tmpRoot) {
       rmSync(tmpRoot, { recursive: true, force: true });
       tmpRoot = '';
+    }
+  });
+
+  it('hides the Windows exit-time process-tree cleanup command', async () => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'happier-claude-query-exit-console-'));
+    const script = join(tmpRoot, 'provider.cjs');
+    writeFileSync(script, "console.log(JSON.stringify({ type: 'system', subtype: 'init' })); setInterval(() => {}, 1000);");
+    const before = new Set(process.listeners('exit'));
+    const response = query({ prompt: 'hi', options: {
+      cwd: tmpRoot, executable: process.execPath, pathToClaudeCodeExecutable: script,
+    } });
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const childResult = vi.mocked(spawn).mock.results.at(-1);
+    try {
+      await response.next();
+      const cleanup = process.listeners('exit').find((listener) => !before.has(listener));
+      expect(cleanup).toBeDefined();
+      vi.mocked(spawnSync).mockReturnValueOnce({ pid: 0, output: [], stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), status: 0, signal: null });
+      Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+      try {
+        cleanup!(0);
+      } finally {
+        Object.defineProperty(process, 'platform', platform);
+      }
+      expect(spawnSync).toHaveBeenCalledWith('taskkill', expect.arrayContaining(['/F', '/T', '/PID']), expect.objectContaining({ windowsHide: true, stdio: 'ignore' }));
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+      if (childResult?.type === 'return') await killProcessTree(childResult.value);
+      await response.return();
     }
   });
 

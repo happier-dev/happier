@@ -3,7 +3,7 @@
  * Handles spawning Claude process and managing message streams
  */
 
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { existsSync } from 'node:fs'
 import { Stream } from './stream'
@@ -30,7 +30,7 @@ import { createManagedChildProcess } from '@/subprocess/supervision/managedChild
 import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable'
 import { buildMissingJavaScriptRuntimeMessage } from '@/runtime/js/buildMissingJavaScriptRuntimeMessage'
 import { prepareClaudeSubprocessEnv } from '@/backends/claude/spawn/buildClaudeSubprocessEnv'
-import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process'
+import { spawnBackgroundSync, resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process'
 import { resolveExistingManagedJavaScriptRuntimeCommand } from '@happier-dev/cli-common/providers'
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree'
 import { logClaudeRuntimeAuthEnvDiagnostic } from '@/backends/claude/spawn/logClaudeRuntimeAuthEnvDiagnostic'
@@ -494,7 +494,7 @@ export function query(config: {
 
         if (process.platform === 'win32') {
             try {
-                const result = spawnSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' })
+                const result = spawnBackgroundSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' })
                 if (!result.error && result.status === 0) return
             } catch {
                 // ignore and fall back to a direct child signal

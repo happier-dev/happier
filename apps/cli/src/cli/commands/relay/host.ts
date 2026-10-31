@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
 import { existsSync, lstatSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -443,7 +443,7 @@ function resolveKnownHostsMode(ssh: SystemTaskSshConnectionConfig): 'app' | 'sys
 }
 
 function runCommandCapture(command: string, args: readonly string[]): Readonly<{ status: number; stdout: string; stderr: string }> {
-  const out = spawnSync(command, [...args], { encoding: 'utf8' });
+  const out = spawnBackgroundSync(command, args, { encoding: 'utf8' });
   return {
     status: typeof out.status === 'number' ? out.status : 1,
     stdout: String(out.stdout ?? ''),

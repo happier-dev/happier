@@ -124,6 +124,7 @@ function runChild(filePath, argv, options) {
         cwd: options.cwd,
         env: options.env,
         shell: false,
+        windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (error) {

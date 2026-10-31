@@ -69,6 +69,7 @@ export function spawnStackOwnerDeathWatchdog({
         ...(envPathValue ? { HAPPIER_STACK_ENV_FILE: envPathValue } : {}),
       },
       stdio: 'ignore',
+      windowsHide: true,
       shell: false,
       detached: process.platform !== 'win32',
     },

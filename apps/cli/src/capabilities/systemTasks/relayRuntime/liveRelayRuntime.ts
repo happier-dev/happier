@@ -1,11 +1,10 @@
-import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, rm, symlink, writeFile, cp, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import net from 'node:net';
 
-import { commandExistsOnPath } from '@happier-dev/cli-common/process';
+import { commandExistsOnPath, spawnBackgroundSync } from '@happier-dev/cli-common/process';
 import {
   applyServicePlan,
   buildReadWindowsScheduledTaskStatusPowerShellCommand,
@@ -331,7 +330,7 @@ function runCommand(command: string, args: readonly string[]): Readonly<{
   stdout: string;
   stderr: string;
 }> {
-  const result = spawnSync(command, [...args], {
+  const result = spawnBackgroundSync(command, args, {
     encoding: 'utf8',
     env: process.env,
   });
