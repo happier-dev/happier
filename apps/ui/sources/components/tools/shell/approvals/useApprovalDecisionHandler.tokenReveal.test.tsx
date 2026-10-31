@@ -17,7 +17,6 @@ vi.mock('@/modal', async () => {
 // Only the Home network, device credential store, Socket.IO transport and modal host are replaced.
 // The Action executor, Artifact codec/claim, decision hook and reveal controller run for real.
 const home = createHomeGovernanceHarness();
-let restoreNativeFetch: (() => void) | undefined;
 let webLocks: ReturnType<typeof installWebLockManagerMock> | undefined;
 installHomeGovernanceBoundaries(home);
 installDisconnectedServerSocketBoundary((socket) => { configureConnectedServerSocketBoundary(socket); });
@@ -38,20 +37,13 @@ function expectSuccessfulStoredExecution(serverId: string, artifactId: string) {
     expect(request.execution?.ok).toBe(true);
 }
 
-async function addConnectedHome() {
-    const serverId = await home.addHome({ name: 'Home A', serverUrl: 'https://home-a.example',
+async function addApprovalHome() {
+    return await home.addHome({ name: 'Home A', serverUrl: 'https://home-a.example',
         serverIdentityId: 'srv_stable-home-a', accountId: 'account-a' });
-    home.answer(serverId, '/v1/auth/ping', { body: {} });
-    home.answer(serverId, '/v2/cursor', { body: { cursor: '0' } });
-    const bearer = home.findByServerUrl('https://home-a.example')?.token;
-    if (!bearer) throw new Error('expected_account_credentials');
-    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
-    await restoreConnectionToActiveServer({ token: bearer });
-    return serverId;
 }
 
 async function createRequestedTokenApproval() {
-    const serverId = await addConnectedHome();
+    const serverId = await addApprovalHome();
     await home.requireUiApproval(serverId, 'account.apiTokens.create');
     const cancellation = new AbortController();
     const invocation = createDefaultActionExecutor().execute('account.apiTokens.create', { tokenId, label: summary.label }, {
@@ -81,27 +73,15 @@ async function createRequestedTokenApproval() {
 beforeEach(async () => {
     webLocks = installWebLockManagerMock();
     await home.reset();
-    // The native Sync graph also reaches the genuine fetch boundary while restoring
-    // its Account; keep it on the same Home fixture as the scoped Action transports.
-    const boundary = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-        return await home.request(input, init);
-    });
-    restoreNativeFetch = () => boundary.mockRestore();
-    const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
-    await loadSyncSingletonForTests();
     modal.boundary?.spies.show.mockClear();
     modal.boundary?.spies.hide.mockClear();
 });
 afterEach(async () => {
     standardCleanup();
-    const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
-    await disconnectActiveServerConnection();
     const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
     const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
     serverScopedRpcSocketPool.resetForTests();
     resetScopedMachineTransportCacheForTests();
-    restoreNativeFetch?.();
-    restoreNativeFetch = undefined;
     webLocks?.restore();
     webLocks = undefined;
 });
@@ -125,41 +105,52 @@ describe('approved API token reveal', () => {
 
 describe('approved Team invitation reveal', () => {
     it.each(['teams.invitations.create', 'teams.invitations.reissue'] as const)(
-        'delivers the %s bearer only to the approving UI and retires the reveal with its Account', async (actionId) => {
-            const serverId = await addConnectedHome();
-            const requested = await createDefaultActionExecutor().execute(actionId, actionId === 'teams.invitations.create'
+        'acknowledges retained %s without adopting its caller-owned bearer', async (actionId) => {
+            const serverId = await addApprovalHome();
+            // Live-only results retain the original invocation (APPR-S1 step 2).
+            // Present its Artifact while it waits; awaiting it here deadlocks consent.
+            const cancellation = new AbortController();
+            const requested = createDefaultActionExecutor().execute(actionId, actionId === 'teams.invitations.create'
                 ? { v: 1, teamId: 'team-a', role: 'member', historyAccess: 'from_membership', recipientEmail: null,
                     requestKey: 'requested-invitation-create' }
                 : { v: 1, teamId: 'team-a', invitationId: 'old-invitation', recipientEmail: null,
                     requestKey: 'requested-invitation-reissue' }, {
                 surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
-                serverId, actionRequestId: `requested-${actionId}`,
+                serverId, actionRequestId: `requested-${actionId}`, signal: cancellation.signal,
             });
-            expect(requested).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-            if (!requested.ok || typeof requested.result !== 'object' || !requested.result
-                || !('artifactId' in requested.result) || typeof requested.result.artifactId !== 'string') return;
-            const artifactId = requested.result.artifactId;
-            const approval = ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(artifactId)!));
-            const invitation = { id: 'invitation-a', teamId: 'team-a', role: 'member', historyAccess: 'from_membership',
-                state: 'active', recipientEmailMask: null, expiresAt: 2, createdAt: 1, createdByAccountId: 'account-a',
-                acceptedByAccountId: null, lastEmailDelivery: null };
-            const joinUrl = 'https://home-a.example/team-invitations/live-human-only';
-            const output = actionId === 'teams.invitations.create' ? { invitation, joinUrl }
-                : { previous: { ...invitation, id: 'old-invitation', state: 'revoked' }, replacement: invitation, joinUrl };
-            const path = `/v1/teams/invitations/${actionId === 'teams.invitations.create' ? 'create' : 'reissue'}`;
-            home.answer(serverId, `POST ${path}`, { body: output });
-            const hook = await renderHook(() => useApprovalDecisionHandler({ id: artifactId, header: null }, approval, '', serverId));
-            const revealed = await hook.getCurrent()('approve');
-            expectSuccessfulStoredExecution(serverId, artifactId);
-            expect(revealed).toBe(true);
-            const shown = modal.boundary?.spies.show.mock.calls.at(-1)?.[0];
-            expect(shown?.props).toMatchObject({ url: joinUrl });
-            expect(home.requestsFor(path)).toHaveLength(1);
-            expect(home.artifacts(serverId).readPlainBody(artifactId)).not.toContain(joinUrl);
-            await home.switchAccount(serverId, 'account-b');
-            expect(modal.boundary?.spies.update).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ url: '' }));
-            expect(modal.boundary?.spies.hide).toHaveBeenCalled();
-            shown?.onHostUnmount?.();
+            try {
+                const artifactId = await vi.waitFor(() => {
+                    const stored = home.requestsFor('/v1/artifacts').find(request => request.input !== null)?.input;
+                    if (!stored || typeof stored !== 'object' || !('id' in stored) || typeof stored.id !== 'string') {
+                        throw new Error('invitation_approval_not_created');
+                    }
+                    expect(home.artifacts(serverId).readPlainBody(stored.id)).not.toBeNull();
+                    return stored.id;
+                });
+                const approval = ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(artifactId)!));
+                const invitation = { id: 'invitation-a', teamId: 'team-a', role: 'member', historyAccess: 'from_membership',
+                    state: 'active', recipientEmailMask: null, expiresAt: 2, createdAt: 1, createdByAccountId: 'account-a',
+                    acceptedByAccountId: null, lastEmailDelivery: null };
+                const joinUrl = 'https://home-a.example/team-invitations/live-human-only';
+                const output = actionId === 'teams.invitations.create' ? { invitation, joinUrl }
+                    : { previous: { ...invitation, id: 'old-invitation', state: 'revoked' }, replacement: invitation, joinUrl };
+                const path = `/v1/teams/invitations/${actionId === 'teams.invitations.create' ? 'create' : 'reissue'}`;
+                home.answer(serverId, `POST ${path}`, { body: output });
+                const hook = await renderHook(() => useApprovalDecisionHandler({ id: artifactId, header: null }, approval, '', serverId));
+                const revealed = await hook.getCurrent()('approve');
+                const requesterResult = await requested;
+                // APPR-S1's signed invitation cases retain the original live
+                // recipient; only observations/Artifacts drop the bearer.
+                expect(requesterResult).toEqual({ ok: true, result: output });
+                expectSuccessfulStoredExecution(serverId, artifactId);
+                expect(revealed).toBe(true);
+                expect(modal.boundary?.spies.show).not.toHaveBeenCalled();
+                expect(home.requestsFor(path)).toHaveLength(1);
+                expect(home.artifacts(serverId).readPlainBody(artifactId)).not.toContain(joinUrl);
+                await home.switchAccount(serverId, 'account-b');
+                expect(modal.boundary?.spies.show).not.toHaveBeenCalled();
+                await hook.unmount();
+            } finally { cancellation.abort(); await requested; }
         },
     );
 });

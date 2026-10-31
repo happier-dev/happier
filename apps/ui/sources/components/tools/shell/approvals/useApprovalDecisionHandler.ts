@@ -308,8 +308,10 @@ export function useApprovalDecisionHandler(
             account.assertCurrent();
             const live = typeof outcome === 'object' && outcome !== null && 'liveExecution' in outcome
                 ? outcome.liveExecution : null;
+            // A retained invocation owns its private result. Its successful
+            // decision still counts as handled when this app has no reveal.
             if (typeof live !== 'object' || live === null || !('ok' in live) || live.ok !== true
-                || !('result' in live)) return false;
+                || !('result' in live)) return true;
             const captured = account;
             const parsed = builtInApproval?.actionId === 'teams.invitations.create'
                 ? TeamInvitationCreateResultV1Schema.safeParse(live.result)

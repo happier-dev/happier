@@ -67,15 +67,17 @@ describe('built-in approval decisions through the canonical owner', () => {
         await installOwnMachineApprovalReplayBoundary({ harness, serverId, accountId: 'bob', machineId: 'machine' });
         const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
             createdBy: { surface: 'agent', sessionId: 'source' }, requestedSurface: 'agent',
-            actionId: 'session.title.set', actionArgs: { sessionId: 'source', title: 'Garden' }, summary: 'Set title',
+            // APPR-S1 step 2: Account title edits replay in the app; archive
+            // remains Session-placed and exercises the exact-daemon receipt.
+            actionId: 'session.archive', actionArgs: { sessionId: 'source' }, summary: 'Archive session',
             executionOriginV1: { v: 1, authority: 'account_automation', surface: 'api', caller: { kind: 'host' },
                 serverId, serverIdentityId: 'srv_approval-settlement', accountId: 'bob', principalId: 'principal', credentialId: 'credential',
                 machineId: 'machine', sessionId: 'source', target: { kind: 'session', sessionId: 'source' },
-                actionId: 'session.title.set', requestId: 'title-request', externalActionInputSignature: 'a'.repeat(86),
+                actionId: 'session.archive', requestId: 'title-request', externalActionInputSignature: 'a'.repeat(86),
                 externalActionExecutionAuthorization: { v: 1, token: 'synthetic-private-daemon-authorization', binding: {
                     serverIdentityId: 'srv_approval-settlement', accountId: 'bob', principalId: 'principal', credentialId: 'credential',
                     grant: API_TOKEN_FULL_GRANT_V1, machineId: 'machine', custodianAccountId: 'bob', installationId: 'machine-installation',
-                    actionId: 'session.title.set', requestId: 'title-request', requestEnvelopeDigest: 'a'.repeat(43),
+                    actionId: 'session.archive', requestId: 'title-request', requestEnvelopeDigest: 'a'.repeat(43),
                     target: { kind: 'session', sessionId: 'source' },
                 } },
             } });
@@ -137,7 +139,39 @@ describe('built-in approval decisions through the canonical owner', () => {
             } finally { await hook.unmount(); }
         } finally { context.dispose(); }
     });
-    it('reports a durably stale execution instead of accepting it as a successful answer', async () => {
+    it('reports a durably stale V2 execution with its typed rejection', async () => {
+        const serverId = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://stale-effect.test',
+            accountId: 'bob', teamsEnabled: true });
+        await harness.requireUiApproval(serverId, 'teams.update');
+        const artifactId = await createUiApprovalRequest({ serverId, actionId: 'teams.update',
+            actionInput: { v: 1, teamId: 'team-1', name: 'Garden' }, actionRequestId: 'stale-effect' });
+        const request = ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId)!));
+        // The daemon/other app already settled the request. Store its receipt
+        // at the Home boundary; an arbitrary HTTP409 is a Home conflict, not
+        // proof of an approval-domain stale execution.
+        const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'failed', updatedAtMs: request.updatedAtMs + 2,
+            decision: { kind: 'approve', decidedAtMs: request.updatedAtMs + 1 },
+            execution: { executedAtMs: request.updatedAtMs + 2, ok: false, errorCode: 'approval_stale', error: 'approval_stale' },
+        });
+        const context = await captureActionAccountContext(serverId);
+        try {
+            const basis = await context.fetchArtifact(artifactId);
+            if (!basis) throw new Error('Expected the approval before settlement');
+            await context.updateArtifact(artifactId, buildApprovalRequestArtifactHeaderV1(settled), JSON.stringify(settled), basis);
+        } finally { context.dispose(); }
+        const hook = await renderHook(() => useApprovalDecisionHandler({ id: artifactId, header: null }, settled, '', serverId));
+        try {
+            const decision = hook.getCurrent()('approve');
+            await expect(decision).rejects.toMatchObject({ code: 'approval_stale', canTryAgain: false });
+            const failure: unknown = await decision.catch((error: unknown) => error);
+            expect(presentApprovalFailure(failure).reason).toBe(t('approvals.staleFailure'));
+            expect(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId)!)).toMatchObject({
+                status: 'failed', decision: { kind: 'approve' }, execution: { ok: false, errorCode: 'approval_stale' },
+            });
+            expect(harness.requestsFor('/v1/teams/update')).toHaveLength(0);
+        } finally { await hook.unmount(); }
+    });
+    it('leaves a legacy request open without recording consent or attempting an effect', async () => {
         const serverId = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://stale-approval.test', accountId: 'bob' });
         const request = ApprovalRequestSchema.parse({
             v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
@@ -156,18 +190,17 @@ describe('built-in approval decisions through the canonical owner', () => {
         }) });
         expect(response?.ok).toBe(true);
         const hook = await renderHook(() => useApprovalDecisionHandler(artifact, request, '', serverId));
-        const decision = hook.getCurrent()('approve');
-        await expect(decision).rejects.toMatchObject({ code: 'approval_stale', canTryAgain: false });
-        const failure: unknown = await decision.catch((error: unknown) => error);
-        expect(presentApprovalFailure(failure).reason).toBe(t('approvals.staleFailure'));
-        expect(JSON.parse(harness.artifacts(serverId).readPlainBody(artifact.id) ?? 'null')).toMatchObject({
-            status: 'failed', decision: { kind: 'approve' }, execution: { ok: false, errorCode: 'approval_stale' },
-        });
+        // APPROVALS-SIMPLIFY step 2 resolves V1 as legacy/unavailable before
+        // consent; it no longer manufactures a failed execution receipt.
+        await expect(hook.getCurrent()('approve')).resolves.toBe(false);
+        expect(JSON.parse(harness.artifacts(serverId).readPlainBody(artifact.id) ?? 'null')).toEqual(request);
         expect(harness.requests.filter(({ path }) => path.includes('/rpc'))).toEqual([]);
         await hook.unmount();
     });
     it('cancels a real pending Machine open without running the physical effect', async () => {
-        const serverId = await harness.addHome({ name: 'Terminal Home', serverUrl: 'https://terminal-cancel.test', accountId: 'bob', currentAccount: true });
+        const serverId = await harness.addHome({ name: 'Terminal Home', serverUrl: 'https://terminal-cancel.test',
+            serverIdentityId: 'srv_terminal-cancel', accountId: 'bob', currentAccount: true });
+        harness.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] } });
         await harness.requireUiApproval(serverId, 'machines.terminal.open');
         const artifactId = await createUiApprovalRequest({ serverId, actionId: 'machines.terminal.open',
             actionInput: { serverId, machineId: 'machine', terminalKey: 'owned-member', cwd: '/accepted' }, actionRequestId: 'open-own-member' });
