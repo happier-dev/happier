@@ -26,8 +26,9 @@ describe('hosted-web theme CSS variables (§3.3, EU-8)', () => {
         // a projection fails here rather than silently disappearing.
         const declaredValues = Object.keys(theme.colors).length
             + Object.keys(theme.spacing).length
-            + Object.keys(theme.radii).length;
-        expect(Object.keys(variables).length).toBeGreaterThan(declaredValues);
+            + Object.keys(theme.radii).length
+            + Object.values(theme.typography).reduce((total, style) => total + Object.keys(style).length, 0);
+        expect(Object.keys(variables)).toHaveLength(declaredValues);
         expect(Object.keys(variables).every((name) => name.startsWith('--happier-plugin-'))).toBe(true);
 
         expect(variables['--happier-plugin-color-canvas']).toBe(theme.colors.canvas);

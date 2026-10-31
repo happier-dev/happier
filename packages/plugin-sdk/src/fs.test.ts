@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -175,7 +175,7 @@ describe('fs helpers', () => {
     expect(fs).not.toHaveProperty('reclaimJsonOwnerFileLockSnapshot');
   });
 
-  it('atomically publishes JSON through a temporary sibling file', async () => {
+  it('serializes JSON in a new parent without leaving temporary siblings', async () => {
     const fs = await loadFs();
     const root = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-fs-'));
     const path = join(root, 'nested', 'auth.json');
@@ -214,11 +214,16 @@ describe('fs helpers', () => {
       contents: 'export default {}\n',
       mode: 0o600,
     })).toBe(true);
+    // A rewrite followed by `false` must not masquerade as an unchanged file.
+    const priorTime = new Date('2000-01-01T00:00:00Z');
+    await utimes(path, priorTime, priorTime);
+    const unchanged = await stat(path);
     expect(await fs.writeAtomicTextFileIfChanged({
       path,
       contents: 'export default {}\n',
       mode: 0o600,
     })).toBe(false);
+    expect((await stat(path)).mtimeMs).toBe(unchanged.mtimeMs);
     expect(await readFile(path, 'utf8')).toBe('export default {}\n');
   });
 

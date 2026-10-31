@@ -72,15 +72,30 @@ describe('targeted contribution point semantics', () => {
         );
     });
 
-    it('uses Protocol\'s accepted protocol-epoch ceiling instead of a private literal', async () => {
-        const source = await readFile(
-            new URL('./targetedContributionAuthoring.ts', import.meta.url),
-            'utf8',
+    it('admits the Protocol epoch ceiling and refuses one additional valid epoch', () => {
+        const epoch = (version: number) => defineContributionProtocol({
+            id: 'bounded-epochs',
+            version,
+            operations: {
+                inspect: {
+                    required: true,
+                    input: { kind: 'protocolDefined', schema: emptyResultSchema },
+                    resultSchema: emptyResultSchema,
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
+                },
+            },
+        });
+        const first = epoch(1);
+        const remaining = Array.from(
+            { length: PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1 - 1 },
+            (_, index) => epoch(index + 2),
         );
 
-        expect(PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1).toBe(4);
-        expect(source).toContain('PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1');
-        expect(source).not.toContain('protocols.length > 4');
+        expect(defineContributionPoint([first, ...remaining]).protocols)
+            .toHaveLength(PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1);
+        expect(() => defineContributionPoint([
+            first, ...remaining, epoch(PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1 + 1),
+        ])).toThrow(TypeError);
     });
 
     it('preserves public composable-schema inference for target descriptors and surface inputs', () => {

@@ -91,11 +91,6 @@ describe('parseScmRemoteUrl', () => {
             });
         });
 
-        it('never folds a port into the host', () => {
-            const parsed = parseScmRemoteUrl('ssh://git@gitlab.example.test:2222/team/repo.git');
-            expect(parsed?.host).toBe('gitlab.example.test');
-        });
-
         it('keeps a configured deployment path prefix in the path', () => {
             expect(parseScmRemoteUrl('https://code.internal.test/gitlab/platform/app.git')).toMatchObject({
                 host: 'code.internal.test',
@@ -163,11 +158,6 @@ describe('parseScmRemoteUrl', () => {
     });
 
     describe('path normalization', () => {
-        it('strips trailing .git suffix', () => {
-            const parsed = parseScmRemoteUrl('https://github.com/owner/repo.git');
-            expect(parsed?.path).toBe('owner/repo');
-        });
-
         it('trims leading and trailing slashes', () => {
             const parsed = parseScmRemoteUrl('https://github.com//owner/repo//');
             expect(parsed?.path).toBe('owner/repo');

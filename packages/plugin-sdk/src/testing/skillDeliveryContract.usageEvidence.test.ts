@@ -21,7 +21,7 @@ vi.mock('vitest', async importOriginal => ({
 import { createAgentLaunchObserver, type AgentLaunchObserverBoundaries } from './observeAgentLaunch.js';
 import { runAgentSkillDeliveryContract } from './skillDeliveryContract.js';
 
-test.each(['invalid', 'duplicate', 'missing-invoker'])('K13 rejects %s evidence from a claiming Agent', async mode => {
+test.each(['valid', 'invalid', 'duplicate', 'missing-invoker'])('K13 validates %s evidence from a claiming Agent', async mode => {
     const home = await mkdtemp(join(tmpdir(), 'happier-skill-kit-evidence-'));
     const observer = createAgentLaunchObserver({ home });
     const boundaries = observer.boundaries as AgentLaunchObserverBoundaries;
@@ -50,7 +50,21 @@ test.each(['invalid', 'duplicate', 'missing-invoker'])('K13 rejects %s evidence 
     expect(run).toBeTypeOf('function');
     try {
         for (const before of registration.before) await before();
-        await expect(run!()).rejects.toBeDefined();
+        if (mode === 'valid') {
+            await expect(run!()).resolves.toBeUndefined();
+        } else if (mode === 'invalid') {
+            await expect(run!()).rejects.toMatchObject({
+                issues: expect.arrayContaining([
+                    expect.objectContaining({ code: 'unrecognized_keys', keys: ['unsupported'] }),
+                ]),
+            });
+        } else if (mode === 'duplicate') {
+            await expect(run!()).rejects.toThrow(/K13: a native invocation is reported exactly once/u);
+        } else {
+            await expect(run!()).rejects.toMatchObject({
+                name: 'AssertionError', actual: 'undefined', expected: 'function',
+            });
+        }
     } finally {
         try { for (const after of registration.after) await after(); }
         finally { await rm(home, { recursive: true, force: true }); }

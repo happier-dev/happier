@@ -12,10 +12,10 @@ import {
 
 describe('connected-service auth materialization helpers', () => {
   it('keeps provider-specific env materialization facts out of the SDK helper surface', () => {
-    expect(Object.keys(cloudAuth)).not.toEqual(expect.arrayContaining([
+    for (const name of [
       'readGoogleGenAiVertexMetadataEnv',
       'resolveGoogleGenAiConnectedServiceTokenEnv',
-    ]));
+    ]) expect(cloudAuth).not.toHaveProperty(name);
   });
 
   it('builds service selection and materialization input helpers from provider-owned bindings', () => {

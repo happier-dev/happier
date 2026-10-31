@@ -117,18 +117,12 @@ describe('External Session takeover public contract', () => {
 
     it('rejects inherited and accessor-backed DTO fields without reading accessors', () => {
         let accessorReads = 0;
-        class StructuralRequest {
-            readonly signal = request.signal;
-            readonly deadlineAtMs = request.deadlineAtMs;
-            readonly maxSerializedBytes = request.maxSerializedBytes;
-            readonly linkedSessionId = request.linkedSessionId;
-            readonly source = request.source;
-            readonly remoteSessionId = request.remoteSessionId;
-            readonly linkData = request.linkData;
-            readonly targetDirectory = request.targetDirectory;
-        }
+        class StructuralRequest {}
+        const classRequest = Object.assign(new StructuralRequest(), request);
+        expect(validateAgentExternalSessionTakeoverResolveLaunchRequest({ ...classRequest }))
+            .toEqual(request);
         rejects(() => validateAgentExternalSessionTakeoverResolveLaunchRequest(
-            new StructuralRequest(),
+            classRequest,
         ));
 
         const accessorResult = { ok: true } as Record<string, unknown>;

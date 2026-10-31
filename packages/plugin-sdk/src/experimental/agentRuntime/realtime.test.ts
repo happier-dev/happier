@@ -49,27 +49,23 @@ describe('experimental Agent session realtime contract', () => {
     it.each([
         null,
         {},
-        { realtimeConversation: {} },
-        { realtimeConversation: { inspect() {} } },
-        { realtimeConversation: { start() {} } },
+        ...[{}, { inspect() {} }, { start() {} }, { inspect: true, start() {} }, { inspect() {}, start: true }]
+            .map(realtimeConversation => ({
+                send() {}, watch() {}, dispose() {}, realtimeConversation,
+            })),
     ])('rejects malformed extension value %#', (candidate) => {
         expect(() => assertExperimentalAgentSessionRealtimeRuntime(candidate)).toThrow(
             'Malformed experimental Agent session realtime runtime',
         );
     });
 
-    it('publishes the exact immutable WebRTC-only DTO family', () => {
+    it('publishes the exact WebRTC-only DTO types', () => {
         const event: AgentSessionRealtimeLifecycleEvent = {
             kind: 'terminal',
             reason: 'error',
             diagnostic: { code: 'upstream_rejected', severity: 'error' },
         };
 
-        expect(event).toEqual({
-            kind: 'terminal',
-            reason: 'error',
-            diagnostic: { code: 'upstream_rejected', severity: 'error' },
-        });
         expectTypeOf<AgentSessionRealtimeAvailability>().toEqualTypeOf<
             | Readonly<{ status: 'available'; transport: 'webrtc' }>
             | Readonly<{

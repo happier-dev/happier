@@ -36,8 +36,7 @@ runAgentSkillDeliveryContract({ agent, openSession: open, observeLaunch: observe
     async invokeSkill(_runtime, name) {
         boundaries.recordRuntimeEvent({ kind: 'skill-usage', sequence: 1, sessionId: 'skill-delivery-contract',
             turnId: 'fixture-turn', emittedAtMs: 1, skills: [{ name }] });
-    },
-    variants: [{ id: 'native', open, expect: 'delivers' }] });
+    } });
 
 const privateHomeAgent = {
     ...agent,

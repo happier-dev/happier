@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,7 +21,9 @@ describe('native SQLite filesystem seam', () => {
             } finally {
                 reader.close();
             }
-            expect(() => fs.openSqliteDatabaseSync(join(directory, 'missing.sqlite'), { readOnly: true })).toThrow();
+            const missing = join(directory, 'missing.sqlite');
+            expect(() => fs.openSqliteDatabaseSync(missing, { readOnly: true })).toThrow();
+            expect(existsSync(missing)).toBe(false);
         } finally {
             rmSync(directory, { recursive: true, force: true });
         }

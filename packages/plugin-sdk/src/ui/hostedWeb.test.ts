@@ -11,15 +11,17 @@ import { defineHostedWebBridgeMessage } from './hostedWeb';
 
 describe('hosted web UI SDK helpers', () => {
     it('defines bridge envelopes without exposing raw host internals', () => {
-        const message = defineHostedWebBridgeMessage({
-            version: 1,
+        const envelope = {
+            version: 1 as const,
             identity: { instanceId: 'mount-1', mountNonce: 'nonce-1' },
             sequence: 1,
-            kind: 'ready',
+            kind: 'ready' as const,
             payload: { ready: true },
-        });
+        };
 
-        expect(message.kind).toBe('ready');
+        expect(defineHostedWebBridgeMessage(envelope)).toEqual(envelope);
+        expect(() => defineHostedWebBridgeMessage({ ...envelope, rawHost: {} })).toThrow();
+        expect(() => defineHostedWebBridgeMessage({ ...envelope, sequence: -1 })).toThrow();
     });
 
     it('projects the canonical hosted Collection UI-query bridge schemas for guest UI consumers', () => {
