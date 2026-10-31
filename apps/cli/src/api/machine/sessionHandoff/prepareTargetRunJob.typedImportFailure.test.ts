@@ -49,7 +49,8 @@ describe('runSessionHandoffPrepareTargetJob typed native-import failures', () =>
           requestPayloadFile: async (request) => {
             const payload = request.transferId === transferId ? seed.payloadSource : await seed.onDemandScope.resolvePayloadSourceOnOpen({ transferId: request.transferId, requestBody: undefined });
             if (payload.kind === 'buffer') await writeFile(request.destinationPath, payload.payload);
-            else await copyFile(payload.filePath, request.destinationPath);
+            else if (payload.kind === 'file') await copyFile(payload.filePath, request.destinationPath);
+            else throw new Error('Unexpected native payload in fixture');
             return { destinationPath: request.destinationPath };
           },
         },
