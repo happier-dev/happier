@@ -5,11 +5,8 @@ function isStringArray(value: unknown): value is string[] {
 export function addDiscardedCommittedMessageLocalIds(
   metadata: Record<string, unknown>,
   localIds: string[],
-  opts?: { max?: number },
 ): Record<string, unknown> {
-  const max = opts?.max ?? 500;
-
-  const existingRaw = (metadata as any).discardedCommittedMessageLocalIds;
+  const existingRaw = metadata.discardedCommittedMessageLocalIds;
   const existing = isStringArray(existingRaw) ? existingRaw : [];
   const existingSet = new Set(existing);
 
@@ -21,11 +18,9 @@ export function addDiscardedCommittedMessageLocalIds(
     next.push(id);
   }
 
-  const capped = next.length > max ? next.slice(-max) : next;
-
   return {
     ...metadata,
-    discardedCommittedMessageLocalIds: capped,
+    discardedCommittedMessageLocalIds: next,
   };
 }
 

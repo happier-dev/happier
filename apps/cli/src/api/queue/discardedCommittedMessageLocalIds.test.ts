@@ -6,20 +6,19 @@ describe('addDiscardedCommittedMessageLocalIds', () => {
     const next = addDiscardedCommittedMessageLocalIds(
       { discardedCommittedMessageLocalIds: ['a'] },
       ['b', 'a', 'c'],
-      { max: 10 },
     );
 
     expect(next.discardedCommittedMessageLocalIds).toEqual(['a', 'b', 'c']);
   });
 
-  it('caps the list to the last max entries', () => {
+  it('retains historical discarded identities beyond the former eviction limit', () => {
+    const historical = Array.from({ length: 501 }, (_, index) => `old-${index}`);
     const next = addDiscardedCommittedMessageLocalIds(
-      { discardedCommittedMessageLocalIds: ['a', 'b'] },
+      { discardedCommittedMessageLocalIds: historical },
       ['c', 'd'],
-      { max: 3 },
     );
 
-    expect(next.discardedCommittedMessageLocalIds).toEqual(['b', 'c', 'd']);
+    expect(next.discardedCommittedMessageLocalIds).toEqual([...historical, 'c', 'd']);
   });
 });
 
