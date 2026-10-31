@@ -1123,6 +1123,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             const registry = await activatePluginRuntimeRegistry({
                 contributes: params.contributes,
                 generation: params.generation,
+                executionRealm: params.executionRealm,
                 happyHomeDir: params.happyHomeDir,
                 pluginIds: [pluginId],
                 occurrenceIdsByPluginId: params.occurrenceIdsByPluginId,
