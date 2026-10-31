@@ -16,6 +16,12 @@ export type ActiveLocalVoiceAgentBinding = Readonly<{
 }>;
 
 export function resolveActiveLocalVoiceAgentBinding(): ActiveLocalVoiceAgentBinding | null {
+  const capture = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', getVoiceConversationRuntimeSnapshot());
+  // Runtime activity owns demand. Retained bindings alone never justify a scan.
+  if (!localVoiceRuntimeController.isAgentActive(VOICE_AGENT_GLOBAL_SESSION_ID)
+    && !(capture.status === 'connected' && capture.sessionId === VOICE_AGENT_GLOBAL_SESSION_ID)) {
+    return null;
+  }
   const binding = voiceConversationBindingResolver.resolveByControlSessionId({
     controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
     adapterId: 'local_conversation',
@@ -27,21 +33,15 @@ export function resolveActiveLocalVoiceAgentBinding(): ActiveLocalVoiceAgentBind
   const controlSessionId = binding.controlSessionId;
   const boundSessionId = resolveVoiceOperationalSessionId(binding, controlSessionId);
 
-  const capture = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', getVoiceConversationRuntimeSnapshot());
   // A connected, lazily initialized Voice Agent accepts explicit text just as
   // it accepts the first spoken turn. Prewarming is not an admission prerequisite.
-  if (localVoiceRuntimeController.isAgentActive(controlSessionId)
-    || (capture.status === 'connected' && capture.sessionId === controlSessionId)) {
-    const announcementSessionId = binding?.conversationSessionId?.trim() || boundSessionId;
-    return {
-      binding,
-      operationalSessionId: controlSessionId,
-      announcementSessionId,
-      sendAutomaticUiContextUpdate: (update) => localVoiceRuntimeController.appendAgentAutomaticUiContextUpdate(controlSessionId, update),
-      sendTextUpdate: (update) => localVoiceRuntimeController.sendAgentTextUpdate(controlSessionId, update),
-      announceAssistantText: (text) => localVoiceRuntimeController.announceAgentAssistantText(announcementSessionId, text),
-    };
-  }
-
-  return null;
+  const announcementSessionId = binding.conversationSessionId.trim() || boundSessionId;
+  return {
+    binding,
+    operationalSessionId: controlSessionId,
+    announcementSessionId,
+    sendAutomaticUiContextUpdate: (update) => localVoiceRuntimeController.appendAgentAutomaticUiContextUpdate(controlSessionId, update),
+    sendTextUpdate: (update) => localVoiceRuntimeController.sendAgentTextUpdate(controlSessionId, update),
+    announceAssistantText: (text) => localVoiceRuntimeController.announceAgentAssistantText(announcementSessionId, text),
+  };
 }

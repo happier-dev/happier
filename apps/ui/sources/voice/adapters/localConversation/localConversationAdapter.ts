@@ -47,12 +47,12 @@ export function createLocalConversationVoiceAdapter(input: Readonly<{
       };
     },
     resolveContextChannel: (voiceSettings) => {
+      const active = resolveActiveLocalVoiceAgentBinding();
+      if (!active) return null;
       // The registry already selected this adapter from the canonical active
       // owner. Do not let a concurrent settings selection steal its live sink.
       const config = readConfig(voiceSettings);
       if (!config || config.conversationMode !== 'agent') return null;
-      const active = resolveActiveLocalVoiceAgentBinding();
-      if (!active) return null;
       return {
         // Local Voice is Happier's own assistant: it has no external prompt
         // authority, so host-authored session context is its normal input.

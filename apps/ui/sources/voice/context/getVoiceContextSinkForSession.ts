@@ -6,7 +6,6 @@ import {
 } from '@/voice/session/voiceAdapterRegistry';
 import type { VoiceContextSink } from './VoiceContextSink';
 import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
-import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
 function createProjectedContextSink(adapterId: string, voiceSettings: unknown): VoiceContextSink | null {
     const channel = resolveVoiceAdapterContextChannel(adapterId, voiceSettings);
@@ -30,8 +29,8 @@ function resolveActiveOwnerAdapterId(): string | null {
 }
 
 export function getVoiceContextSinkForSession(_sessionId: string): VoiceContextSink | null {
-    const settings = storage.getState().settings as any;
-    const voiceSettings = voiceSettingsParse(settings?.voice);
+    // The settings owner already normalized this state at ingress.
+    const voiceSettings = storage.getState().settings.voice;
     const activeOwnerAdapterId = resolveActiveOwnerAdapterId();
     if (activeOwnerAdapterId) {
         return createProjectedContextSink(activeOwnerAdapterId, voiceSettings);
