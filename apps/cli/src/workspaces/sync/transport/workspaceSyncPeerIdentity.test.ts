@@ -169,7 +169,6 @@ describe('plugs into the live broker as validatePeerIdentity', () => {
         const broker = await listenWorkspaceSyncBroker({
             socketPath: join(directory, 'b.sock'),
             launchSecret: secret,
-            expectedSidecarPid: 4242,
             validatePeerIdentity: (context) => {
                 observedKinds.push(context.kind);
                 return validator.validate(context);
@@ -227,7 +226,6 @@ describe('plugs into the live broker as validatePeerIdentity', () => {
         const broker = await listenWorkspaceSyncBroker({
             socketPath: join(directory, 'b.sock'),
             launchSecret: secret,
-            expectedSidecarPid: 4242,
             validatePeerIdentity: (context) => validator.validate(context),
             openExternalStream: async () => new PeerStream(),
         });
