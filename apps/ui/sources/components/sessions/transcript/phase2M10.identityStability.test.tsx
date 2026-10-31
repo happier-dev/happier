@@ -438,6 +438,7 @@ describe('phase2 M10 hook identity stability', () => {
     it('keeps web viewport diagnostics callbacks stable across fresh params identities', async () => {
         const members = {
             chatListNativeId: 'chat-list:s1',
+            listRef: createRef(null),
             listContentHeightRef: createRef(0),
             listLayoutHeightRef: createRef(0),
             olderPaginationSnapshotRef: createRef({ phase: 'idle', suspendedReasons: [] }),

@@ -87,7 +87,10 @@ export type TranscriptListShellRef<TItem = unknown> = Readonly<{
     observeNativePhysicalViewport?: (
         request: TranscriptRendererNativePhysicalViewportObservationRequest,
     ) => TranscriptRendererNativePhysicalViewportObservationResult;
-    /** Web renderer scroll element used by the shared document keyboard-input owner. */
+    /**
+     * Web renderer scroll element: the transcript scroller identity for keyboard input and scroll
+     * metrics, valid before content overflows.
+     */
     getScrollableNode?: () => unknown;
     /**
      * Web only: after a successful entry-anchor restore write, the driver arms a

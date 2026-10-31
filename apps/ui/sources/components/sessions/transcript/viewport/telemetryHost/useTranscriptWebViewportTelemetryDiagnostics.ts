@@ -14,11 +14,13 @@ import {
 } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
 import type { TranscriptOlderPaginationSnapshot } from '@/components/sessions/transcript/pagination/useTranscriptOlderPagination';
 import type { TranscriptNavigationRuntimeAnchor } from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationRuntimeAnchors';
+import type { TranscriptListShellRef } from '@/components/sessions/transcript/viewport/shell/renderer/types';
 
 type MutableRef<T> = { current: T };
 
 export function useTranscriptWebViewportTelemetryDiagnostics(params: Readonly<{
     chatListNativeId: string;
+    listRef: MutableRef<TranscriptListShellRef | null>;
     listContentHeightRef: MutableRef<number>;
     listLayoutHeightRef: MutableRef<number>;
     olderPaginationSnapshotRef: MutableRef<TranscriptOlderPaginationSnapshot>;
@@ -27,6 +29,7 @@ export function useTranscriptWebViewportTelemetryDiagnostics(params: Readonly<{
 }>) {
     const {
         chatListNativeId,
+        listRef,
         listContentHeightRef,
         listLayoutHeightRef,
         olderPaginationSnapshotRef,
@@ -40,6 +43,7 @@ export function useTranscriptWebViewportTelemetryDiagnostics(params: Readonly<{
         const root = document.getElementById(chatListNativeId);
         const metrics = resolveWebTranscriptScrollMetrics({
             root,
+            scrollElement: listRef.current?.getScrollableNode?.(),
             cachedElement: webScrollContainerRef.current,
             win: window,
             minOverflowPx: 50,
@@ -53,7 +57,7 @@ export function useTranscriptWebViewportTelemetryDiagnostics(params: Readonly<{
             webScrollContainerRef.current = metrics.element;
         }
         return metrics;
-    }, [chatListNativeId, webScrollContainerRef]);
+    }, [chatListNativeId, listRef, webScrollContainerRef]);
 
     const resolveEnabledViewportTelemetryTuning = React.useCallback(() => {
         const tuning = sync.getSyncTuning();

@@ -460,14 +460,15 @@ function LegendListTranscriptRendererInner<TItem>(
     const readWebScrollMetrics = React.useCallback((): WebTranscriptScrollMetrics | null => {
         if (!isWebFrame || typeof document === 'undefined' || typeof window === 'undefined') return null;
         const nativeID = props.frame.rendererOptions.identity.nativeID;
-        const directLegendNode = nativeID ? null : legendListRef.current?.getScrollableNode?.();
+        const legendScrollNode = legendListRef.current?.getScrollableNode?.();
         const root = nativeID
             ? document.getElementById(nativeID)
-            : typeof HTMLElement !== 'undefined' && directLegendNode instanceof HTMLElement
-                ? directLegendNode
+            : typeof HTMLElement !== 'undefined' && legendScrollNode instanceof HTMLElement
+                ? legendScrollNode
                 : null;
         const metrics = resolveWebTranscriptScrollMetrics({
             root,
+            scrollElement: legendScrollNode,
             cachedElement: webScrollableElementRef.current,
             win: window,
             minOverflowPx: 0,
@@ -481,14 +482,10 @@ function LegendListTranscriptRendererInner<TItem>(
         // and the ring then certified an unrelated element's silence as the transcript's.
         // Legend's own scrollable node is the earliest TRUE identity of the transcript scroller
         // — it is the element Legend writes to and it does not wait for transient overflow — so
-        // it is preferred, and the containment check keeps that preference honest.
+        // the resolver reads it first, and the containment check keeps that preference honest.
         if (isTranscriptViewportDiagnosticsEnabled()) {
-            const legendNode = directLegendNode ?? legendListRef.current?.getScrollableNode?.();
-            const legendScrollElement = typeof HTMLElement !== 'undefined' && legendNode instanceof HTMLElement
-                ? legendNode
-                : null;
             ensureTranscriptViewportElementObservers({
-                element: legendScrollElement ?? metrics?.element ?? null,
+                element: metrics?.element ?? null,
                 transcriptRoot: root,
             });
         }
