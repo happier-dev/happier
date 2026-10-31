@@ -326,7 +326,7 @@ ${chalk.bold.cyan(`Claude Code Options (from \`${providerHelpCommand}\`):`)}
     const effectiveSnapshot = await resolveSessionStartAccountSettingsContext({
       startedBy,
       snapshot,
-      refreshRequested: shouldForceAccountSettingsRefresh,
+      refreshRequested: refreshSettings,
     });
     assertBackendEnabledByAccountSettings({ agentId: 'claude', settings: effectiveSnapshot.settings });
     options.claudeRemoteMetaDefaults = resolveProviderOutgoingMessageMetaExtras({

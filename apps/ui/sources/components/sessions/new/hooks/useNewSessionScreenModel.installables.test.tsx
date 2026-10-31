@@ -2060,6 +2060,21 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(hook.getCurrent().simpleProps.agentType).toBe('claude');
     });
 
+    it('does not replay an active-profile reselect after availability refresh', async () => {
+        const profile = await configureDefaultProfile({ currentCompatible: true });
+        persistedDraft.selectedProfileId = profile.id;
+        const hook = await renderNewSessionScreenModel();
+        await invokeHookAction(() => hook.getCurrent().simpleProps.onAgentPickerSelect('agent:claude'));
+        settingsState.useEnhancedSessionWizard = true;
+        await hook.rerender();
+        expect(hook.getCurrent().wizardProps.agent.agentType).toBe('claude');
+        await invokeHookAction(() => hook.getCurrent().wizardProps.profiles.onPressProfile(profile));
+        expect(hook.getCurrent().wizardProps.agent.agentType).toBe('claude');
+        cliAvailabilityState.value = { ...cliAvailabilityState.value, timestamp: 2 };
+        await hook.rerender();
+        expect(hook.getCurrent().wizardProps.agent.agentType).toBe('claude');
+    });
+
     it.each(['route', 'handoff', 'draft'] as const)('preserves an explicit %s backend when the initial profile route is consumed', async (source) => {
         const profile = await configureDefaultProfile({ currentCompatible: true });
         routeParamsState.profileId = profile.id;

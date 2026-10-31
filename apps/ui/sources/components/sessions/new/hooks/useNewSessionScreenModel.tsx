@@ -1147,7 +1147,9 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
     const selectProfile = React.useCallback((profileId: string, applyBackendDefault = true) => {
         prepareSecretPromptForProfileSelection(selectedProfileId);
         hasUserTouchedProfileSelectionRef.current = true;
-        pendingProfileSelectionRef.current = { profileId, applyBackendDefault };
+        pendingProfileSelectionRef.current = profileId === selectedProfileId
+            ? null
+            : { profileId, applyBackendDefault };
         setSelectedProfileId(profileId);
     }, [prepareSecretPromptForProfileSelection, selectedProfileId]);
 

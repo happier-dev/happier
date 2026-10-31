@@ -11,6 +11,9 @@ import { prepareProfileSessionStart } from './profileDefaultAgentRouting';
 import { runBackendSessionCliCommand } from './runBackendSessionCliCommand';
 import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleConfiguredAcpCatalogCliCommand';
 import { dispatchCli } from './dispatch';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { handleClaudeCliCommand } from '@/backends/claude/cli/command';
+import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 
 describe('profile startup through authentication and settings', () => {
   const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_NO_BROWSER_OPEN', 'HAPPIER_AUTH_METHOD', 'HAPPIER_AUTH_POLL_INTERVAL_MS', 'HAPPIER_TAILSCALE_AUTO_PUBLIC_URL', 'HAPPIER_SESSION_AUTOSTART_DAEMON', 'HAPPIER_ACCOUNT_SETTINGS_MODE', 'ROUTING_PROFILE_TEST', 'HAPPIER_SESSION_PROFILE_ID'] as const;
@@ -33,6 +36,31 @@ describe('profile startup through authentication and settings', () => {
     reloadConfiguration();
     resetInMemoryAccountSettingsContextForTests();
     await removeTempDir(directory);
+  });
+
+  it('uses cached daemon-started Claude settings while the automatic refresh is pending', async () => {
+    const cached: AccountSettingsContext = {
+      source: 'cache', settings: accountSettingsParse({ backendEnabledByTargetKey: { 'agent:claude': false } }),
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], whenRefreshed: null,
+    };
+    let completeRefresh!: (snapshot: AccountSettingsContext) => void;
+    const whenRefreshed = new Promise<AccountSettingsContext>((resolve) => { completeRefresh = resolve; });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let startupError: unknown;
+    const startup = handleClaudeCliCommand({
+      args: ['--started-by', 'daemon', '--happy-starting-mode', 'remote'], rawArgv: [], terminalRuntime: null,
+      sessionStart: { credentials: { token: 'cached-daemon-token', encryption: null }, accountSettingsContext: { ...cached, whenRefreshed } },
+    }).catch((error: unknown) => { startupError = error; });
+    try {
+      // Real parsing/startup and cached admission must finish before the network
+      // refresh. The disabled backend stops before any provider process starts.
+      await vi.waitFor(() => expect(startupError).toBeInstanceOf(Error));
+      expect((startupError as Error).message).toBe('process.exit(1)');
+      expect(errors.mock.calls.flat().join(' ')).toContain('disabled in your account settings');
+    } finally {
+      completeRefresh(cached);
+      await startup;
+    }
   });
 
   it.each(['agent:codex', 'acpBackend:review-bot'])('authenticates once and reuses settled settings for %s profile application', async (defaultBackendTargetKey) => {
