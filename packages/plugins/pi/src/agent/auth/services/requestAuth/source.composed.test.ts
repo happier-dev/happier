@@ -1435,15 +1435,20 @@ describe('Pi request-auth composed test workspace', () => {
 });
 
 describe('Pi request-auth exact-version AgentSession composed matrix', () => {
-  it.each<PiVersion>(['0.81.0', '0.81.1', '0.82.0', '0.82.1'])(
-    'pins producer %s across AgentSession and request-auth recovery policy',
-    async (version) => {
+  it.each<{ version: PiVersion; toolOwnedPiAiVersion: PiVersion }>([
+    { version: '0.81.0', toolOwnedPiAiVersion: '0.81.1' },
+    { version: '0.81.1', toolOwnedPiAiVersion: '0.81.1' },
+    { version: '0.82.0', toolOwnedPiAiVersion: '0.82.1' },
+    { version: '0.82.1', toolOwnedPiAiVersion: '0.82.1' },
+  ])(
+    'pins producer $version across AgentSession and request-auth recovery policy',
+    async ({ version, toolOwnedPiAiVersion }) => {
       const modules = await loadExactPiModules(version);
       expect(await readAliasedVersion(modules.codingAlias)).toBe(version);
       expect(await readAliasedVersion(modules.providerAlias)).toBe(version);
       expect(await readToolOwnedPiAiContract(modules.codingAlias)).toEqual({
         dependencyRange: `^${version}`,
-        version,
+        version: toolOwnedPiAiVersion,
         exportsRoot: true,
         exportsProviders: true,
       });

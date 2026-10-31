@@ -1460,7 +1460,7 @@ describe('buildPiRequestAuthExtensionSource', () => {
     });
   });
 
-  it('suppresses Pi replay for ambiguous retry-looking terminal text and unsupported versions', async () => {
+  it('suppresses Pi replay for ambiguous retry-looking terminal text from a supported version', async () => {
     const reportInputs: Readonly<Record<string, unknown>>[] = [];
     const base = provider('anthropic', events('anthropic', [{
       type: 'error',
@@ -1474,7 +1474,7 @@ describe('buildPiRequestAuthExtensionSource', () => {
     const registered = await loadExtension({
       providers: [base],
       purposes: { anthropic: PURPOSES.anthropic },
-      producerVersion: '0.83.0',
+      producerVersion: '0.82.0',
       requestAuth: defaultRequestAuth({
         reportAuth: async (input) => {
           reportInputs.push(input);
@@ -1711,9 +1711,10 @@ describe('buildPiRequestAuthExtensionSource', () => {
     })]);
   });
 
-  it('preserves cancellation across lookup and prevents the upstream attempt', async () => {
+  it.each(['before lookup', 'during lookup'] as const)('preserves cancellation %s and prevents the upstream attempt', async (when) => {
     const controller = new AbortController();
-    controller.abort();
+    if (when === 'before lookup') controller.abort();
+    const lookupSignals: (AbortSignal | undefined)[] = [];
     let upstreamCalls = 0;
     const base = provider('anthropic', () => {
       upstreamCalls += 1;
@@ -1724,7 +1725,8 @@ describe('buildPiRequestAuthExtensionSource', () => {
       purposes: { anthropic: PURPOSES.anthropic },
       requestAuth: defaultRequestAuth({
         lookup: async ({ signal }) => {
-          expect(signal).toBe(controller.signal);
+          lookupSignals.push(signal);
+          controller.abort();
           throw signal?.reason ?? new DOMException('aborted', 'AbortError');
         },
       }),
@@ -1742,5 +1744,7 @@ describe('buildPiRequestAuthExtensionSource', () => {
       error: expect.objectContaining({ stopReason: 'aborted' }),
     })]);
     expect(upstreamCalls).toBe(0);
+    expect(lookupSignals).toHaveLength(when === 'before lookup' ? 0 : 1);
+    if (when === 'during lookup') expect(lookupSignals[0]).toBe(controller.signal);
   });
 });

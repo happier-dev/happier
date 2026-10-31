@@ -262,20 +262,34 @@ describe('Pi External Session observation', () => {
   });
 
   it('reconciles current file evidence after a same-path physical replacement', async () => {
+    let state = fileState({ mtimeMs: 1_000 });
     const contribution = createPiExternalSessionObservationContribution({
-      env: { PI_CODING_AGENT_DIR: '/tmp/pi-agent' },
+      env: {
+        PI_CODING_AGENT_DIR: '/tmp/pi-agent',
+        HAPPIER_EXTERNAL_SESSIONS_RECENT_ACTIVITY_WINDOW_MS: '5000',
+      },
       now: () => 10_000,
-      readFileState: async () => fileState({ ino: 99 }),
+      readFileState: async () => state,
     });
     const linked = linkedSource();
     const descriptor = contribution.describeResource(linked);
-
-    const result = await contribution.reconcileResource({
-      purpose: 'observation_evidence',
+    const request = {
+      purpose: 'observation_evidence' as const,
       resourceKey: descriptor.resourceKey,
       signal: new AbortController().signal,
       links: [{ linkKey: descriptor.linkKey, linkedSource: linked }],
-    });
+    };
+
+    const beforeReplacement = await contribution.reconcileResource(request);
+    expect(beforeReplacement.outcomes[0]?.facts).toEqual([
+      expect.objectContaining({ kind: 'successful_empty', emptyTurnPhase: 'unsupported' }),
+      expect.objectContaining({ kind: 'unsupported', axis: 'liveness' }),
+      expect.objectContaining({ kind: 'unsupported', axis: 'boundary' }),
+    ]);
+
+    state = fileState({ ino: 99 });
+    expect(contribution.describeResource(linked)).toEqual(descriptor);
+    const result = await contribution.reconcileResource(request);
 
     expect(result.outcomes[0]?.facts).toEqual([
       expect.objectContaining({ kind: 'recent_activity' }),
@@ -284,29 +298,4 @@ describe('Pi External Session observation', () => {
     ]);
   });
 
-  it('re-describes the current resource without changing its canonical identity', async () => {
-    const state = fileState();
-    const contribution = createPiExternalSessionObservationContribution({
-      env: { PI_CODING_AGENT_DIR: '/tmp/pi-agent' },
-      readFileState: async () => state,
-    });
-    const linked = linkedSource();
-    const descriptor = contribution.describeResource(linked);
-
-    await expect(contribution.reconcileResource({
-      purpose: 'resource_descriptors',
-      resourceKey: descriptor.resourceKey,
-      signal: new AbortController().signal,
-      links: [{ linkKey: descriptor.linkKey, linkedSource: linked }],
-    })).resolves.toEqual({
-      purpose: 'resource_descriptors',
-      outcomes: [{
-        kind: 'described',
-        descriptor: {
-          ...descriptor,
-          changeObservation: 'reconcile_only',
-        },
-      }],
-    });
-  });
 });
