@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { isProfileCompatibleWithBackendTarget } from './profileCompatibility.js';
 import { AIBackendProfileSchema } from './backendProfileSchema.js';
 import { LaunchProfileV2Schema } from './v2/schema.js';
 import { normalizeBackendTargetKeyV2Input } from '../backends/targets/backendTargetRefV2.js';
@@ -21,6 +22,36 @@ import {
 } from './read.js';
 
 describe('readAiLaunchProfileCollection', () => {
+  it('retains the predecessor backend preference through collection, transfer and opened rows', () => {
+    const raw = { profiles: [{ id: 'work', name: 'Work', defaultBackendTargetKey: 'acpBackend:review', compatibilityByTargetKey: { 'agent:custom-acp': true }, createdAt: 1, updatedAt: 2 }] };
+    const collection = readAiLaunchProfileCollection(raw.profiles);
+    expect(collection.entries[0]).toMatchObject({ kind: 'legacy', profile: {
+      defaultBackendTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:review',
+    } });
+    const transfer = prepareLegacyProfileRecordsV1(raw);
+    expect(transfer.status).toBe('complete');
+    const opened = readAiLaunchProfileRecords(transfer.records);
+    expect(opened.entries[0]).toMatchObject({ kind: 'legacy', profile: {
+      defaultBackendTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:review',
+    } });
+  });
+
+  it.each([{ compatibilityByTargetKey: { 'agent:customAcp': false } }, { compatibility: { customAcp: false } },
+    { compatibilityByTargetKey: { 'agent:customAcp': false }, compatibility: { customAcp: true } },
+    { compatibilityByTargetKey: { 'agent:customAcp': false }, compatibility: { 'custom-acp': true } }])(
+    'reads the exact released customAcp container denial through collection and transfer (%s)', compatibility => {
+    const raw = { profiles: [{ id: 'work', name: 'Work', defaultBackendTargetKey: 'acpBackend:review', ...compatibility }] };
+    const transfer = prepareLegacyProfileRecordsV1(raw);
+    expect(transfer.status).toBe('complete');
+    for (const collection of [readAiLaunchProfileCollection(raw.profiles), readAiLaunchProfileRecords(transfer.records)]) {
+      const entry = collection.entries[0];
+      expect(entry?.kind).toBe('legacy');
+      if (!entry || entry.kind !== 'legacy') throw new Error('Expected released legacy profile');
+      expect(entry.profile.defaultBackendTargetKey).toBe('agent:happier.agent.custom-acp/custom-acp:definition:review');
+      expect(isProfileCompatibleWithBackendTarget(entry.profile, entry.profile.defaultBackendTargetKey)).toBe(false);
+    }
+  });
+
   it('keeps unreadable shared definitions visible as incomplete in both catalog projections', () => {
     const artifact = { artifactId: 'unreadable-shared', access: 'view' as const,
       header: { kind: 'launch-profile.v1', profileId: 'shared', name: 'Shared' }, body: null };

@@ -75,6 +75,53 @@ it.each(['azure-openai', 'gemini-api-key', 'gemini-vertex'])('duplicates the act
 });
 
 describe('migrateLegacyAiLaunchProfilesV1', () => {
+  it('converts a default-only predecessor profile without dropping its configured target', () => {
+    const { selectedModel: _selection, ...candidate } = connectionCandidate('work', 'pc-work');
+    const raw = { profiles: [{ id: 'work', name: 'Work', defaultBackendTargetKey: 'acpBackend:review', createdAt: 1, updatedAt: 2 }] };
+    const result = migrateLegacyAiLaunchProfilesV1(raw, DEFAULT_PROVIDER_SETTINGS_V1, {
+      migratedAt: 20, candidates: [candidate], pendingCustomProfileIds: [],
+    }, { lastUsedProfile: null });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.settings.profiles).toEqual([expect.objectContaining({ v: 2, id: 'work',
+      preferredAgentTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:review' })]);
+  });
+
+  it.each(['agent:claude', 'agent:acme.agent/native'])('keeps a matching predecessor preference beside its migrated Provider model: %s', agentTargetKey => {
+    const raw = { profiles: [{ id: 'work', name: 'Work', defaultBackendTargetKey: agentTargetKey, createdAt: 1, updatedAt: 2 }] };
+    const result = migrateLegacyAiLaunchProfilesV1(raw, DEFAULT_PROVIDER_SETTINGS_V1, {
+      migratedAt: 20, candidates: [{ ...connectionCandidate('work', 'pc-work'), selectedModel: { agentTargetKey, modelId: 'deepseek-reasoner' } }], pendingCustomProfileIds: [],
+    }, { lastUsedProfile: null });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.settings.profiles).toEqual([expect.objectContaining({
+      preferredAgentTargetKey: normalizeBackendTargetKeyV2Input(agentTargetKey),
+      preferredModelSelection: expect.objectContaining({ ref: expect.objectContaining({ modelId: 'deepseek-reasoner' }) }),
+    })]);
+  });
+
+  it('keeps retained configured-container compatibility representable during Provider conversion', () => {
+    const raw = { profiles: [{ id: 'work', name: 'Work', defaultBackendTargetKey: 'agent:claude',
+      compatibilityByTargetKey: { 'agent:custom-acp': false }, createdAt: 1, updatedAt: 2 }] };
+    const result = migrateLegacyAiLaunchProfilesV1(raw, DEFAULT_PROVIDER_SETTINGS_V1, {
+      migratedAt: 20, candidates: [connectionCandidate('work', 'pc-work')], pendingCustomProfileIds: [],
+    }, { lastUsedProfile: null });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.settings.profiles).toEqual([expect.objectContaining({
+      defaultBackendTargetKey: 'agent:happier.agent.claude/claude', compatibilityByTargetKey: { 'agent:custom-acp': false },
+    })]);
+  });
+
+  it('refuses conflicting predecessor Agent and Provider model migration without losing either intent', () => {
+    const raw = { profiles: [{ id: 'work', name: 'Work', defaultBackendTargetKey: 'agent:codex', createdAt: 1, updatedAt: 2 }] };
+    const result = migrateLegacyAiLaunchProfilesV1(raw, DEFAULT_PROVIDER_SETTINGS_V1, {
+      migratedAt: 20, candidates: [connectionCandidate('work', 'pc-work')], pendingCustomProfileIds: [],
+    }, { lastUsedProfile: null });
+    expect(result).toMatchObject({ ok: false, changed: false, reason: 'migration_conflict', settings: raw,
+      providerSettings: DEFAULT_PROVIDER_SETTINGS_V1 });
+  });
+
   it('keeps deletion guards only while the actual current builtin remains selectable from source evidence', () => {
     const sourceId = 'gemini-api-key';
     const preset = getBuiltInBackendProfile(sourceId);

@@ -49,6 +49,7 @@ import { LegacyProfileBackendCompatibilitySection } from './LegacyProfileBackend
 import { buildLegacyProfileSave } from './buildLegacyProfileSave';
 import { useLegacyProfileSecretRequirements } from './useLegacyProfileSecretRequirements';
 import { ProfileNameSection } from '../ProfileNameSection';
+import { ProfilePreferredAgentField } from '../ProfilePreferredAgentField';
 import { ProfileEditActions } from '../ProfileEditActions';
 import { Icon } from '@/components/ui/icons/Icon';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
@@ -361,6 +362,7 @@ function LegacyProfileEditFormReady({
         });
     }, [profile.isBuiltIn, resolvedBackendEntries]);
 
+    const [defaultBackendTargetKey, setDefaultBackendTargetKey] = React.useState<string | null>(profile.defaultBackendTargetKey ?? null);
     const [authMode, setAuthMode] = React.useState<AIBackendProfile['authMode']>(profile.authMode);
     const [requiresMachineLogin, setRequiresMachineLogin] = React.useState<AIBackendProfile['requiresMachineLogin']>(profile.requiresMachineLogin);
     const compatibleBackendEntries = React.useMemo(() => {
@@ -467,11 +469,12 @@ function LegacyProfileEditFormReady({
     }, [authMode, canSelectMachineLogin, effectiveAuthMode, machineLoginRequirement.machineLoginKey, requiresMachineLogin, sourcePreservingClone, backendCatalogAvailable]);
 
     const bodySnapshot = React.useMemo(() => JSON.stringify({ environmentVariables, defaultPermissionModesByTargetKey,
-        defaultTranscriptStorageModesByTargetKey, compatibilityByTargetKeyState, authMode, requiresMachineLogin,
+        defaultTranscriptStorageModesByTargetKey, defaultBackendTargetKey, compatibilityByTargetKeyState, authMode, requiresMachineLogin,
         derivedEnvVarRequirements, secretBindings: profileSecretBindings }), [
         authMode,
         compatibilityByTargetKeyState,
         defaultPermissionModesByTargetKey,
+        defaultBackendTargetKey,
         defaultTranscriptStorageModesByTargetKey,
         environmentVariables,
         derivedEnvVarRequirements,
@@ -488,16 +491,15 @@ function LegacyProfileEditFormReady({
     }, [isDirty, onDirtyChange]);
 
     const toggleCompatibility = React.useCallback((targetKey: string) => {
-        setCompatibilityByTargetKeyState((prev) => {
-            const next = { ...prev, [targetKey]: !prev[targetKey] };
-            const enabledCount = resolvedBackendEntries.filter((entry) => next[resolveProfileBackendTargetKeyForEntry(entry)] === true).length;
-            if (enabledCount === 0) {
-                Modal.alert(t('common.error'), t('profiles.aiBackend.selectAtLeastOneError'));
-                return prev;
-            }
-            return next;
-        });
-    }, [resolvedBackendEntries]);
+        const next = { ...compatibilityByTargetKeyState, [targetKey]: !compatibilityByTargetKeyState[targetKey] };
+        const enabledCount = resolvedBackendEntries.filter(entry => next[resolveProfileBackendTargetKeyForEntry(entry)] === true).length;
+        if (enabledCount === 0) {
+            Modal.alert(t('common.error'), t('profiles.aiBackend.selectAtLeastOneError'));
+            return;
+        }
+        setCompatibilityByTargetKeyState(next);
+        if (defaultBackendTargetKey === targetKey && next[targetKey] === false) setDefaultBackendTargetKey(null);
+    }, [compatibilityByTargetKeyState, defaultBackendTargetKey, resolvedBackendEntries]);
 
     const openSetupGuide = React.useCallback(async () => {
         const url = profileDocs?.setupGuideUrl;
@@ -536,11 +538,13 @@ function LegacyProfileEditFormReady({
             defaultPermissionModesByTargetKey,
             defaultTranscriptStorageModesByTargetKey,
             compatibilityByTargetKey: compatibilityByTargetKeyState,
+            defaultBackendTargetKey,
             updatedAt: Date.now(),
             preserveSourceDefinition: sourcePreservingClone && bodyUnchanged,
         }), secretBindings);
     }, [
         compatibilityByTargetKeyState,
+        defaultBackendTargetKey,
         defaultPermissionModesByTargetKey,
         defaultTranscriptStorageModesByTargetKey,
         derivedEnvVarRequirements,
@@ -633,6 +637,13 @@ function LegacyProfileEditFormReady({
                 getDisplayAgentIconName={getDisplayAgentIconNameForEntry}
                 toggleCompatibility={toggleCompatibility}
             />
+            <ItemGroup title={t('profiles.sessionStart.title')} description={t('profiles.sessionStart.description')}>
+                <ProfilePreferredAgentField
+                    entries={compatibleBackendEntries}
+                    preferredAgentTargetKey={defaultBackendTargetKey ?? undefined}
+                    onChange={targetKey => setDefaultBackendTargetKey(targetKey ?? null)}
+                />
+            </ItemGroup>
             <LegacyProfileDefaultsSections
                 resolvedBackendEntries={resolvedBackendEntries}
                 supportedDirectBackendEntries={supportedDirectBackendEntries}

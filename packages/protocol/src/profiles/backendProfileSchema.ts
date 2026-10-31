@@ -21,7 +21,7 @@ const RequiresMachineLoginSchema = lazyZodSchema(() => z.string().check(z.minLen
 const RequiresMachineLoginTargetKeySchema = BackendTargetKeyV2InputSchema;
 
 const ProfileCompatibilitySchema = lazyZodSchema(() => z._default(z.record(z.string(), z.boolean()), {}));
-const ProfileCompatibilityByTargetKeySchema = lazyZodSchema(() => z._default(z.record(BackendTargetKeyV2InputSchema, z.boolean()), {}));
+const ProfileCompatibilityByTargetKeySchema = lazyZodSchema(() => z._default(z.record(z.union([BackendTargetKeyV2InputSchema, z.literal('agent:custom-acp'), z.literal('agent:customAcp')]), z.boolean()), {}));
 const SessionTranscriptStorageModeSchema = lazyZodSchema(() => z.enum(['persisted', 'direct']));
 
 export const AIBackendProfileSchema = lazyZodSchema(() => z.object({
@@ -51,6 +51,9 @@ export const AIBackendProfileSchema = lazyZodSchema(() => z.object({
 
   // Default model mode for this profile.
   defaultModelMode: z.optional(z.string()),
+
+  // Retained 0.2 preference; current logical Profiles write preferredAgentTargetKey.
+  defaultBackendTargetKey: z.optional(BackendTargetKeyV2InputSchema),
 
   // Canonical compatibility metadata.
   compatibilityByTargetKey: z._default(ProfileCompatibilityByTargetKeySchema, {}),

@@ -33,6 +33,16 @@ A profile can include:
 Profiles are applied **only when starting a new session**.
 They are **fixed per session** after launch. If you want a different profile, start a new session.
 
+In **unreleased 0.3 development source**, use **Preferred agent** to choose the
+Agent a profile supplies when a start has no explicit Agent choice. Select
+**Choose when starting** to clear it, including when only one compatible Agent is
+available. A preference for an Agent hidden on the current client survives
+unrelated edits; making that Agent incompatible clears the preference.
+
+Imported 0.2 profile defaults are preserved in this preferred-Agent model.
+If a default conflicts with the Agent of a selected migration model, resolve
+the migration review before retrying; both original choices remain available.
+
 In **0.3 development source**, a Profile can also carry [skill seeds](/extending/skills#existing-library-and-profile-seeds).
 They add skills at the Session level when a Session starts with that Profile,
 without introducing a Profile level in Where-it's-on rules. Legacy Profile skill

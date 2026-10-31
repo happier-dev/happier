@@ -14,6 +14,7 @@ import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentTyp
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { t } from '@/text';
 import { resolveProfileBackendTargetKeyForEntry } from './profileBackendEntryStorage';
+import { ProfilePreferredAgentField } from './ProfilePreferredAgentField';
 
 type Entry = ResolvedBackendCatalogEntry;
 
@@ -41,7 +42,6 @@ export function SlimProfileRoutingFields(props: Readonly<{
 }>) {
     const [openPermissionTarget, setOpenPermissionTarget] = React.useState<string | null>(null);
     const [openPersistenceTarget, setOpenPersistenceTarget] = React.useState<string | null>(null);
-    const [agentOpen, setAgentOpen] = React.useState(false);
     const selectedEntry = props.entries.find((entry) => resolveProfileBackendTargetKeyForEntry(entry) === props.preferredAgentTargetKey) ?? null;
     const preferredModelFieldLabel = t('profiles.preferredModel.title');
     const preferredModel = useExactModelChoice({
@@ -70,26 +70,10 @@ export function SlimProfileRoutingFields(props: Readonly<{
 
     return <>
         <ItemGroup title={t('profiles.sessionStart.title')} description={t('profiles.sessionStart.description')}>
-            <DropdownMenu
-                open={agentOpen}
-                onOpenChange={setAgentOpen}
-                variant="selectable"
-                search={props.entries.length >= 10}
-                showCategoryTitles={false}
-                rowKind="item"
-                selectedId={props.preferredAgentTargetKey ?? '__none__'}
-                itemTrigger={{
-                    title: t('profiles.preferredAgent.title'),
-                    subtitle: selectedEntry?.title ?? t('profiles.preferredAgent.none'),
-                    showSelectedDetail: false,
-                    showSelectedSubtitle: false,
-                }}
-                items={[
-                    { id: '__none__', title: t('profiles.preferredAgent.none') },
-                    ...props.entries.map((entry) => ({ id: resolveProfileBackendTargetKeyForEntry(entry), title: entry.title, subtitle: entry.subtitle ?? undefined })),
-                ]}
-                onSelect={(id) => {
-                    const next = id === '__none__' ? undefined : id;
+            <ProfilePreferredAgentField
+                entries={props.entries}
+                preferredAgentTargetKey={props.preferredAgentTargetKey}
+                onChange={next => {
                     props.onPreferredAgentChange(next);
                     if (next !== props.preferredModelSelection?.ref.agentTargetKey) props.onPreferredModelChange(undefined);
                 }}

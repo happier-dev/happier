@@ -1,4 +1,5 @@
 import React from 'react';
+import { t } from '@/text';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -120,6 +121,37 @@ function buildProfile(): AIBackendProfile & { profileRecordRevision: number } {
 }
 
 describe('ProfileEditForm backend targets', () => {
+    it('offers a clearable preferred Agent for an imported single-target legacy profile', async () => {
+        const saveRef = { current: null as null | (() => boolean) };
+        const onSave = vi.fn((_: AIBackendProfile) => true);
+        const profile = { ...buildProfile(), defaultBackendTargetKey: 'agent:happier.agent.codex/codex' };
+        const screen = await renderScreen(React.createElement(ProfileEditForm, {
+            profile, machineId: null, onSave, onCancel: vi.fn(), saveRef,
+        }));
+        const picker = screen.findAll(node => node.props.selectedId === profile.defaultBackendTargetKey
+            && Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === '__none__'))
+            .find(node => typeof node.props.onSelect === 'function');
+        expect(picker).toBeTruthy();
+        await act(async () => { picker?.props.onSelect('__none__'); });
+        expect(saveRef.current?.()).toBe(true);
+        expect(onSave.mock.calls[0]?.[0].defaultBackendTargetKey).toBeUndefined();
+    });
+
+    it('shows an unavailable saved default without clearing it on an unrelated save', async () => {
+        const saveRef = { current: null as null | (() => boolean) };
+        const onSave = vi.fn((_: AIBackendProfile) => true);
+        const profile = { ...buildProfile(), defaultBackendTargetKey: 'agent:acme.review/reviewer' };
+        const screen = await renderScreen(React.createElement(ProfileEditForm, {
+            profile, machineId: null, onSave, onCancel: vi.fn(), saveRef,
+        }));
+        const picker = screen.findAll(node => node.props.selectedId === profile.defaultBackendTargetKey
+            && Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === '__none__'))
+            .find(node => typeof node.props.onSelect === 'function');
+        expect(picker?.props.itemTrigger.subtitle).toBe(t('common.unavailable'));
+        expect(saveRef.current?.()).toBe(true);
+        expect(onSave.mock.calls[0]?.[0].defaultBackendTargetKey).toBe(profile.defaultBackendTargetKey);
+    });
+
     it('renders configured ACP backends as editable backend rows and persists target compatibility changes', async () => {
         capture.reset();
         const saveRef = { current: null as null | (() => boolean) };
@@ -152,6 +184,22 @@ describe('ProfileEditForm backend targets', () => {
                 })]: true,
             }),
         }));
+    });
+
+    it('clears the saved default when that target is explicitly disabled', async () => {
+        capture.reset();
+        const saveRef = { current: null as null | (() => boolean) };
+        const onSave = vi.fn((_: AIBackendProfile) => true);
+        const targetKey = buildBackendTargetKeyV2({ kind: 'backend', backendId: 'custom-backend', configuredBackendId: 'custom-backend', sourceKind: 'configured' });
+        const base = buildProfile();
+        const profile = { ...base, defaultBackendTargetKey: targetKey,
+            compatibilityByTargetKey: { ...base.compatibilityByTargetKey, [targetKey]: true } };
+        await renderScreen(React.createElement(ProfileEditForm, { profile, machineId: null, onSave, onCancel: vi.fn(), saveRef }));
+        expect(capture.customBackendPress).toBeTruthy();
+        await act(async () => { capture.customBackendPress?.(); });
+        expect(saveRef.current?.()).toBe(true);
+        expect(onSave.mock.calls[0]?.[0].defaultBackendTargetKey).toBeUndefined();
+        expect(onSave.mock.calls[0]?.[0].compatibilityByTargetKey[targetKey]).toBe(false);
     });
 
     it('persists the canonical machine-login target when exactly one login-capable Agent is compatible', async () => {

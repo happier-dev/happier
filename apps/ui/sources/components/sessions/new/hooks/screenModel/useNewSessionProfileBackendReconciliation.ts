@@ -78,7 +78,8 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
         const prevSelectedProfileId = params.selectedProfileId;
         const requestId = latestSelectionRequestIdRef.current + 1;
         latestSelectionRequestIdRef.current = requestId;
-        pendingProfileSelectionRef.current = { profileId, prevProfileId: prevSelectedProfileId, requestId };
+        pendingProfileSelectionRef.current = profileId === prevSelectedProfileId
+            ? null : { profileId, prevProfileId: prevSelectedProfileId, requestId };
         const profile = params.profileMap.get(profileId) || getBuiltInProfile(profileId);
         const authoringIntent = params.resolveProfileAuthoringIntent?.(profileId) ?? null;
         if (profile && authoringIntent?.preferredAgentTargetKey) {

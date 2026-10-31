@@ -61,11 +61,7 @@ export function mapAiLaunchProfileToListItemV1(
     name: profile.name,
     isBuiltIn: slim ? false : profile.isBuiltIn === true,
     ...(profile.description ? { description: profile.description } : {}),
-    supportedAgentIds: params.agentIds.filter((agentId) => (slim
-      ? profile.compatibilityByTargetKey[`agent:${agentId}`] !== false
-        && (Object.keys(profile.compatibilityByTargetKey).length === 0
-          || profile.compatibilityByTargetKey[`agent:${agentId}`] === true)
-      : isProfileCompatibleWithAgent(profile, agentId))),
+    supportedAgentIds: params.agentIds.filter(agentId => isProfileCompatibleWithAgent(profile, agentId)),
     requiredSecretEnvVarNames: slim ? [] : getRequiredSecretEnvVarNames(profile),
     requiredConfigEnvVarNames: slim ? [] : getRequiredConfigEnvVarNames(profile),
     ...(!slim && profile.authMode ? { authMode: profile.authMode } : {}),

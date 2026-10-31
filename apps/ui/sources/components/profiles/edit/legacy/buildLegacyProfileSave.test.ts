@@ -6,6 +6,19 @@ import { readAiLaunchProfileRecords } from '@happier-dev/protocol/profiles/read'
 import { buildLegacyProfileSave } from './buildLegacyProfileSave';
 
 describe('captured legacy clone editor preparation', () => {
+    it('preserves an unavailable imported default until a rendered target is explicitly disallowed', () => {
+        const profile = AIBackendProfileSchema.parse({ id: 'work', name: 'Work', defaultBackendTargetKey: 'agent:codex' });
+        const input = { profile, name: 'Work', environmentVariables: [], envVarRequirements: [], authMode: undefined,
+            machineLoginTargetKey: null, resolvedBackendEntries: [], supportedDirectBackendEntries: [],
+            defaultPermissionModesByTargetKey: {}, defaultTranscriptStorageModesByTargetKey: {}, compatibilityByTargetKey: {}, updatedAt: 2 };
+        expect(buildLegacyProfileSave(input).defaultBackendTargetKey).toBe(profile.defaultBackendTargetKey);
+        expect(buildLegacyProfileSave({ ...input, defaultBackendTargetKey: null }).defaultBackendTargetKey).toBeUndefined();
+        const denied = { ...profile, compatibilityByTargetKey: { 'agent:happier.agent.codex/codex': false } };
+        expect(buildLegacyProfileSave({ ...input, profile: denied }).defaultBackendTargetKey).toBeUndefined();
+        const allowed = { ...profile, compatibilityByTargetKey: { 'agent:happier.agent.codex/codex': true } };
+        expect(buildLegacyProfileSave({ ...input, profile: allowed }).defaultBackendTargetKey).toBe(profile.defaultBackendTargetKey);
+    });
+
     it('preserves an unchanged captured body on a name-only save and refuses normalized body edits at the owner', async () => {
         const source = ProfileRecordV1Schema.parse({ v: 1, id: 'source', enabled: false, promptStack: [], secretBindings: { MASKED: null },
             definition: { kind: 'legacy', profile: AIBackendProfileSchema.parse({ id: 'source', name: 'Original', authMode: 'machineLogin',

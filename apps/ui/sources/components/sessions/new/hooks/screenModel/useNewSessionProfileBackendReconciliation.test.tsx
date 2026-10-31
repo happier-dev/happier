@@ -96,7 +96,7 @@ type HarnessProps = Readonly<{
     useProfiles?: boolean;
     applyPermissionModeSpy: ReturnType<typeof vi.fn<(mode: PermissionMode, source: 'user' | 'auto') => void>>;
     prepareSecretPromptForProfileSelectionSpy: ReturnType<typeof vi.fn<(prevProfileId: string | null) => void>>;
-    resolveDefaultPermissionMode: (profile: AIBackendProfile | null) => PermissionMode;
+    resolveDefaultPermissionMode: (profile: AIBackendProfile | null, target: PersistedBackendTargetRefV2) => PermissionMode;
     resolveProfileAuthoringIntent?: (profileId: string) => Readonly<{
         preferredAgentTargetKey: string | null;
         modelSelection: SessionModelSelectionV1 | null;
@@ -111,25 +111,30 @@ function useHarness(props: HarnessProps) {
     );
     const hasUserSelectedPermissionModeRef = React.useRef(false);
     const permissionModeRef = React.useRef<PermissionMode>('default');
+    const resolveDefaultPermissionMode = React.useCallback((profile: AIBackendProfile | null) =>
+        props.resolveDefaultPermissionMode(profile, backendTarget), [props.resolveDefaultPermissionMode, backendTarget]);
+    const applyPermissionMode = React.useCallback((mode: PermissionMode, source: 'user' | 'auto') => {
+        permissionModeRef.current = mode;
+        props.applyPermissionModeSpy(mode, source);
+    }, [props.applyPermissionModeSpy]);
 
+    const getCompatibleProfileBackendEntries = React.useCallback((profile: AIBackendProfile) =>
+        props.compatibleEntriesByProfileId[profile.id] ?? [], [props.compatibleEntriesByProfileId]);
     const profileBackendReconciliation = useNewSessionProfileBackendReconciliation({
         useProfiles: props.useProfiles ?? true,
         selectedProfileId,
         setSelectedProfileId,
         profileMap: props.profileMap,
-        getCompatibleProfileBackendEntries: (profile) => props.compatibleEntriesByProfileId[profile.id] ?? [],
+        getCompatibleProfileBackendEntries,
         selectedBackendTargetKey: resolveBackendTargetKeyV2(backendTarget),
         setBackendTarget,
         machineAgentsById: props.machineAgentsById ?? readyMachineAgentsById,
         hasUserSelectedPermissionModeRef,
         permissionModeRef,
-        applyPermissionMode: (mode, source) => {
-            permissionModeRef.current = mode;
-            props.applyPermissionModeSpy(mode, source);
-        },
-        resolveDefaultPermissionMode: props.resolveDefaultPermissionMode,
+        applyPermissionMode,
+        resolveDefaultPermissionMode,
         prepareSecretPromptForProfileSelection: props.prepareSecretPromptForProfileSelectionSpy,
-        agentType: 'codex',
+        agentType: backendTarget.kind === 'backend' ? backendTarget.backendId : backendTarget.identity.localId,
         resolveProfileAuthoringIntent: props.resolveProfileAuthoringIntent,
         setModelSelectionForBackendTarget: props.setModelSelectionForBackendTargetSpy,
     });
@@ -137,6 +142,7 @@ function useHarness(props: HarnessProps) {
     return {
         ...profileBackendReconciliation,
         backendTarget,
+        setBackendTarget,
         permissionMode: permissionModeRef.current,
         selectedProfileId,
     };
@@ -192,6 +198,8 @@ describe('useNewSessionProfileBackendReconciliation', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 2 });
 
+        // The first Agent change may apply its valid defaults immediately; only late callbacks are stale.
+        applyPermissionModeSpy.mockClear();
         await act(async () => {
             hook.getCurrent().selectProfile('profile-b');
         });
@@ -256,6 +264,57 @@ describe('useNewSessionProfileBackendReconciliation', () => {
 
         expect(hook.getCurrent().backendTarget).toEqual({ kind: 'backend', backendId: stale ? 'codex' : 'claude' });
         expect(setModelSelectionForBackendTargetSpy).toHaveBeenCalledWith(claudeTargetKey, selection);
+    });
+
+    it('resolves delayed permission defaults for the newly preferred target', async () => {
+        const profile = createProfile('profile-codex');
+        const applyPermissionModeSpy = vi.fn<(mode: PermissionMode, source: 'user' | 'auto') => void>();
+        const codexTargetKey = 'agent:happier.agent.codex/codex';
+        const hook = await renderHook(useHarness, {
+            initialProps: {
+                initialSelectedProfileId: null,
+                initialBackendTarget: { kind: 'backend', backendId: 'claude' },
+                compatibleEntriesByProfileId: { [profile.id]: [{
+                    backendTarget: { kind: 'backend', backendId: 'codex' },
+                    backendTargetKey: codexTargetKey, builtInAgentId: 'codex', agentId: 'codex', kind: 'builtInAgent',
+                }] },
+                profileMap: new Map([[profile.id, profile]]),
+                applyPermissionModeSpy,
+                prepareSecretPromptForProfileSelectionSpy: vi.fn(),
+                resolveDefaultPermissionMode: (_profile, target) => resolveBackendTargetKeyV2(target) === codexTargetKey ? 'default' : 'yolo',
+                resolveProfileAuthoringIntent: () => ({ preferredAgentTargetKey: codexTargetKey, modelSelection: null }),
+            },
+        });
+        await act(async () => { hook.getCurrent().selectProfile(profile.id); });
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushNextInteractionTask();
+        expect(hook.getCurrent().backendTarget).toEqual({ kind: 'backend', backendId: 'codex' });
+        expect(applyPermissionModeSpy).toHaveBeenLastCalledWith('default', 'auto');
+        expect(applyPermissionModeSpy).not.toHaveBeenCalledWith('yolo', 'auto');
+    });
+
+    it('does not leave deferred backend intent after selecting the already selected profile', async () => {
+        const profile = createProfile('profile-a');
+        const claude = { kind: 'backend' as const, backendId: 'claude' };
+        const codex = { kind: 'backend' as const, backendId: 'codex' };
+        const prepareSecretPromptForProfileSelectionSpy = vi.fn();
+        const hook = await renderHook(useHarness, { initialProps: {
+            initialSelectedProfileId: profile.id, initialBackendTarget: claude,
+            compatibleEntriesByProfileId: { [profile.id]: [
+                { backendTarget: claude, backendTargetKey: 'agent:happier.agent.claude/claude', builtInAgentId: 'claude', agentId: 'claude', kind: 'builtInAgent' },
+                { backendTarget: codex, backendTargetKey: 'agent:happier.agent.codex/codex', builtInAgentId: 'codex', agentId: 'codex', kind: 'builtInAgent' },
+            ] },
+            profileMap: new Map([[profile.id, profile]]), applyPermissionModeSpy: vi.fn(), prepareSecretPromptForProfileSelectionSpy,
+            resolveDefaultPermissionMode: () => 'default',
+            resolveProfileAuthoringIntent: () => ({ preferredAgentTargetKey: 'agent:happier.agent.claude/claude', modelSelection: null }),
+        } });
+        await act(async () => { hook.getCurrent().selectProfile(profile.id); });
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        await act(async () => { hook.getCurrent().setBackendTarget(codex); });
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushNextInteractionTask();
+        expect(hook.getCurrent().backendTarget).toEqual(codex);
+        expect(prepareSecretPromptForProfileSelectionSpy).toHaveBeenCalledWith(profile.id);
     });
 
     it('uses the next selectable compatible backend when reconciling an incompatible profile backend', async () => {

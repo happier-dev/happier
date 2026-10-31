@@ -1425,6 +1425,12 @@ In development 0.3, remembered profile evidence comes from the Account authoring
 - Gemini API-key and Vertex profiles remain Agent-auth configurations, not generic model-provider connections;
 - ambiguous user-created routing profiles remain visible and enter a guided migration flow rather than being guessed or deleted.
 
+In development 0.3, retained 0.2 Profiles preserve `defaultBackendTargetKey` at the legacy boundary. Current logical Profiles use `preferredAgentTargetKey`; the shared Profile preference owner also derives an Agent from a native model-only preference. Explicit Session target choices remain authoritative. Exact qualified or configured-definition compatibility overrides win; custom and native Profiles otherwise remain permissive, while historical built-ins remain restrictive. Released configured-container compatibility is read only on its retained legacy shape.
+
+Provider conversion counts an Agent default as a real preference, so a default-only Profile survives conversion. A matching Provider model and Agent preference are retained together. A conflicting initial mapping returns the existing `migration_conflict` refusal before any write, preserving both inputs for a coherent guided mapping. The RPC exposes this as `provider_profile_migration_conflict` with the existing retryable error presentation. Machine-login prerequisites and legacy configured-container wildcard compatibility retain their V1 definition because V2 cannot represent those contracts.
+
+After conversion, a person's current retained Profile preference takes precedence over a historical migration default. A model tied to another Agent remains in migration history and becomes applicable again when that Agent is selected; it cannot retarget the current Profile. The current native model choice likewise precedes migration history. These are current-source semantics, not a mixed-version or rollback promise.
+
 Migration descriptors are plugin-owned provider facts. New writes use provider connections; compatibility readers are boundary-owned and narrowly preserve the deployed legacy shapes.
 
 ## Adding a provider plugin

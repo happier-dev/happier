@@ -18,6 +18,17 @@ describe('normalizeLegacyAiLaunchProfileReferenceV1', () => {
     pendingCustomProfileIds: ['company'],
   };
 
+  it('keeps an edited retained preference while leaving another Agent model in migration history', () => {
+    const before = structuredClone(migration);
+    expect(normalizeLegacyAiLaunchProfileReferenceV1({ legacyAiLaunchProfileId: 'deepseek', migration,
+      retainedSlimProfileIds: [], retainedProfileTargetKey: 'agent:codex' }))
+      .toEqual({ status: 'retained', legacyAiLaunchProfileId: 'deepseek', modelRef: null });
+    expect(migration).toEqual(before);
+    expect(normalizeLegacyAiLaunchProfileReferenceV1({ legacyAiLaunchProfileId: 'deepseek', migration,
+      retainedSlimProfileIds: [], retainedProfileTargetKey: 'agent:claude' }).modelRef)
+      .toEqual(migration.completedSources[1].modelSelection);
+  });
+
   it('normalizes placeholders and migrated refs without changing retained/pending/unknown ids', () => {
     expect(normalizeLegacyAiLaunchProfileReferenceV1({ legacyAiLaunchProfileId: 'anthropic', migration, retainedSlimProfileIds: [] }))
       .toEqual({ status: 'default_environment', legacyAiLaunchProfileId: null, modelRef: null });

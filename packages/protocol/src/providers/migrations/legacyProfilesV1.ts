@@ -1,7 +1,8 @@
+import { getProfileDefaultBackendTarget } from '../../profiles/profileCompatibility.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
-import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '../../backends/targets/backendTargetRefV2.js';
+import { buildBackendTargetKeyV2, readBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
 import { AIBackendProfileSchema, type AIBackendProfile } from '../../profiles/backendProfileSchema.js';
 import { LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1, StoredLaunchProfileV2Schema, type LaunchProfileV2 } from '../../profiles/v2/schema.js';
 import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '../selection/v1.js';
@@ -131,12 +132,8 @@ function toSelection(
 }
 
 function hasSameAgentTargetIdentity(left: string, right: string): boolean {
-  try {
-    return buildBackendTargetKeyV2(readBackendTargetRefV2(left))
-      === buildBackendTargetKeyV2(readBackendTargetRefV2(right));
-  } catch {
-    return false;
-  }
+  const key = readBackendTargetKeyV2(left);
+  return key !== null && key === readBackendTargetKeyV2(right);
 }
 
 function repairSelectionForKnownMigration(
@@ -200,12 +197,16 @@ function slimLegacyProfile(
     (entry) => !removed.has(entry.name),
   );
   const codingPromptBehaviorOverrides = projectHistoricalCodingPromptBehaviorProfileOverrideV1(profile.codingPromptBehaviorV1);
-  if (profile.authMode === 'machineLogin' || profile.requiresMachineLoginTargetKey !== undefined || profile.requiresMachineLogin !== undefined) {
-    // V2 has no machine-login prerequisite representation. A successful
+  if (profile.authMode === 'machineLogin' || profile.requiresMachineLoginTargetKey !== undefined || profile.requiresMachineLogin !== undefined
+    || profile.compatibilityByTargetKey['agent:custom-acp'] !== undefined
+    || profile.compatibilityByTargetKey['agent:customAcp'] !== undefined
+    || profile.compatibility.customAcp !== undefined || profile.compatibility['custom-acp'] !== undefined) {
+    // V2 has no machine-login prerequisite or legacy container-wildcard representation. A successful
     // Provider move updates this existing compatibility definition in place.
     return AIBackendProfileSchema.parse({ ...profile, environmentVariables: extraEnvironmentVariables, envVarRequirements });
   }
-  const hasPreferences = extraEnvironmentVariables.length > 0
+  const preferredTarget = getProfileDefaultBackendTarget(profile);
+  const hasPreferences = preferredTarget !== null || extraEnvironmentVariables.length > 0
     || envVarRequirements.length > 0
     || Object.keys(profile.defaultPermissionModeByTargetKey).length > 0
     || Object.keys(profile.defaultPersistenceModeByTargetKey).length > 0
@@ -223,6 +224,7 @@ function slimLegacyProfile(
     defaultPermissionModeByTargetKey: profile.defaultPermissionModeByTargetKey,
     defaultPersistenceModeByTargetKey: profile.defaultPersistenceModeByTargetKey,
     compatibilityByTargetKey: profile.compatibilityByTargetKey,
+    ...(preferredTarget ? { preferredAgentTargetKey: buildBackendTargetKeyV2(preferredTarget) } : {}),
     ...(codingPromptBehaviorOverrides ? { codingPromptBehaviorOverrides } : {}),
     ...(preferredModelSelection ? { preferredModelSelection } : {}),
     createdAt: profile.createdAt,
@@ -268,6 +270,18 @@ export function migrateLegacyAiLaunchProfilesV1(
   if (!isRecord(raw)) return { ok: false, changed: false, settings: raw, providerSettings, reason: 'account_settings_invalid' };
   if (hasConflictingConnectionCandidates(context.candidates)) {
     return { ok: false, changed: false, settings: raw, providerSettings, reason: 'migration_conflict' };
+  }
+  // A Provider mapping cannot silently replace a person-authored Agent choice.
+  // The existing guided migration can submit a coherent mapping on retry.
+  const rawProfilesForPreference = Array.isArray(raw.profiles) ? raw.profiles : [];
+  for (const candidate of context.candidates) {
+    if (candidate.kind !== 'connection' || !candidate.selectedModel) continue;
+    const source = rawProfilesForPreference.find(entry => isRecord(entry) && entry.id === candidate.sourceProfileId);
+    if (!isRecord(source) || source.v !== undefined || typeof source.defaultBackendTargetKey !== 'string') continue;
+    const preferredTarget = getProfileDefaultBackendTarget({ defaultBackendTargetKey: source.defaultBackendTargetKey });
+    if (preferredTarget && !hasSameAgentTargetIdentity(buildBackendTargetKeyV2(preferredTarget), candidate.selectedModel.agentTargetKey)) {
+      return { ok: false, changed: false, settings: raw, providerSettings, reason: 'migration_conflict' };
+    }
   }
   const migrated = migrateProviderAccountSettingsV1(providerSettings, context);
   if (!migrated.ok) return { ...migrated, settings: raw };

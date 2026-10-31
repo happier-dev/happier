@@ -71,6 +71,7 @@ export function useNewSessionPermissionModeState(params: Readonly<{
     });
 
     const hasUserSelectedPermissionModeRef = React.useRef<boolean>((() => {
+        if (isPermissionMode(params.hydratedTempAuthoringDraft?.permissionMode)) return true;
         const draft = params.hydratedPersistedAuthoringDraft?.permissionMode;
         if (isPermissionMode(draft) && draft !== 'default') return true;
         return false;

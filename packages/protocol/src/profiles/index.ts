@@ -35,7 +35,7 @@ export {
   PROVIDER_MIGRATION_SOURCE_PROFILE_IDS,
 } from './builtInBackendProfiles.js';
 
-export { isProfileCompatibleWithAgent, isProfileCompatibleWithBackendTarget } from './profileCompatibility.js';
+export { getProfileDefaultBackendTarget, isProfileCompatibleWithAgent, isProfileCompatibleWithBackendTarget, type ProfileCompatibilitySummary } from './profileCompatibility.js';
 
 export {
   LaunchProfileListItemV1Schema,

@@ -1,3 +1,4 @@
+import { isProfileCompatibleWithBackendTarget } from '@happier-dev/protocol/profiles/profileCompatibility';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
@@ -31,6 +32,7 @@ export function buildLegacyProfileSave(input: Readonly<{
     defaultTranscriptStorageModesByTargetKey: Readonly<Record<string, SessionTranscriptStorageMode | null>>;
     compatibilityByTargetKey: Readonly<Record<string, boolean>>;
     updatedAt: number;
+    defaultBackendTargetKey?: string | null;
     /** Only an unchanged captured clone may retain its source definition verbatim. */
     preserveSourceDefinition?: boolean;
 }>): AIBackendProfile {
@@ -77,8 +79,9 @@ export function buildLegacyProfileSave(input: Readonly<{
         compatibilityByTargetKey[targetKey] = input.compatibilityByTargetKey[targetKey] === true;
     }
 
-    return {
+    const saved: AIBackendProfile = {
         ...profileBase,
+        defaultBackendTargetKey: input.defaultBackendTargetKey === undefined ? input.profile.defaultBackendTargetKey : input.defaultBackendTargetKey ?? undefined,
         name: input.name.trim(),
         environmentVariables: input.environmentVariables,
         authMode: input.authMode,
@@ -96,4 +99,8 @@ export function buildLegacyProfileSave(input: Readonly<{
         compatibility: {},
         updatedAt: input.updatedAt,
     };
+    if (saved.defaultBackendTargetKey && !isProfileCompatibleWithBackendTarget(saved, saved.defaultBackendTargetKey)) {
+        saved.defaultBackendTargetKey = undefined;
+    }
+    return saved;
 }

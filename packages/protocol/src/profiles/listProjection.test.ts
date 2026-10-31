@@ -51,11 +51,16 @@ describe('projectLaunchProfileListV1', () => {
     expect(projection.coverage).toBe('truncated');
   });
 
+  it('uses native deny-only compatibility when filtering a sparse Profile', () => {
+    expect(projectLaunchProfileListV1([profile('sparse', 'Sparse', { 'agent:claude': true })],
+      { agentIds: AGENT_IDS, agentId: 'codex' }).items.map(item => item.id)).toEqual(['sparse']);
+  });
+
   it('narrows by agent without pretending the agent is required', () => {
     const projection = projectLaunchProfileListV1(
       [
-        profile('claude-only', 'Claude only', { 'agent:claude': true }),
-        profile('codex-only', 'Codex only', { 'agent:codex': true }),
+        profile('claude-only', 'Claude only', { 'agent:claude': true, 'agent:codex': false }),
+        profile('codex-only', 'Codex only', { 'agent:codex': true, 'agent:claude': false }),
       ],
       { agentIds: AGENT_IDS, agentId: 'codex' },
     );

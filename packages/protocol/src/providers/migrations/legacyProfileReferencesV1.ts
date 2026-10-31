@@ -1,3 +1,4 @@
+import { readBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
 import type { ProviderBoundModelRef } from '../selection/v1.js';
 import type { ProviderSettingsMigrationStateV1 } from '../settings/v1.js';
 
@@ -11,6 +12,8 @@ export function normalizeLegacyAiLaunchProfileReferenceV1(input: Readonly<{
   legacyAiLaunchProfileId: string | null;
   migration: ProviderSettingsMigrationStateV1 | undefined;
   retainedSlimProfileIds: readonly string[];
+  /** Current retained row preference; historical model defaults cannot retarget it. */
+  retainedProfileTargetKey?: string;
 }>): LegacyAiLaunchProfileReferenceResolutionV1 {
   const profileId = input.legacyAiLaunchProfileId;
   if (profileId === null) return { status: 'unchanged', legacyAiLaunchProfileId: null, modelRef: null };
@@ -23,6 +26,9 @@ export function normalizeLegacyAiLaunchProfileReferenceV1(input: Readonly<{
     };
   }
   if (outcome.kind === 'default_environment') {
+    if (input.retainedProfileTargetKey && readBackendTargetKeyV2(input.retainedProfileTargetKey)) {
+      return { status: 'retained', legacyAiLaunchProfileId: profileId, modelRef: null };
+    }
     return { status: 'default_environment', legacyAiLaunchProfileId: null, modelRef: null };
   }
   if (outcome.kind === 'skipped_disabled') {
@@ -32,6 +38,15 @@ export function normalizeLegacyAiLaunchProfileReferenceV1(input: Readonly<{
     && outcome.modelSelection
     && (outcome.sourceRevision === undefined || outcome.modelSelectionOrigin === undefined)) {
     return { status: 'review_required', legacyAiLaunchProfileId: profileId, modelRef: null };
+  }
+  const retainedTargetKey = readBackendTargetKeyV2(input.retainedProfileTargetKey);
+  if (retainedTargetKey) {
+    return {
+      status: 'retained',
+      legacyAiLaunchProfileId: profileId,
+      modelRef: outcome.modelSelection && readBackendTargetKeyV2(outcome.modelSelection.agentTargetKey) === retainedTargetKey
+        ? outcome.modelSelection : null,
+    };
   }
   return {
     status: 'migrated',

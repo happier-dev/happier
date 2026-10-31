@@ -21,6 +21,45 @@ function migration(completedSources: ProviderSettingsMigrationStateV1['completed
 }
 
 describe('resolveLaunchProfileAuthoringIntent', () => {
+    it('uses a retained predecessor default through the same authoring preference owner', async () => {
+        const { AIBackendProfileSchema } = await import('@happier-dev/protocol');
+        const profile = AIBackendProfileSchema.parse({ id: 'work', name: 'Work', defaultBackendTargetKey: 'acpBackend:review' });
+        expect(resolveLaunchProfileAuthoringIntent({ profileId: 'work', profiles: [profile], migration: undefined }))
+            .toEqual({ profileId: 'work', preferredAgentTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:review', modelSelection: null });
+    });
+
+    it('keeps a retained default edited after migration and recovers the model when its Agent is selected again', async () => {
+        const { AIBackendProfileSchema } = await import('@happier-dev/protocol');
+        const legacy = AIBackendProfileSchema.parse({ id: 'work', name: 'Work', defaultBackendTargetKey: 'agent:codex' });
+        const completed = migration([{ sourceProfileId: 'work', kind: 'connection', connectionId: providerRef.providerConnectionId!,
+            sourceRevision: 2, modelSelectionOrigin: 'implicit_default', modelSelection: providerRef }]);
+        expect(resolveLaunchProfileAuthoringIntent({ profileId: 'work', profiles: [legacy], migration: completed }))
+            .toEqual({ profileId: 'work', preferredAgentTargetKey: 'agent:happier.agent.codex/codex', modelSelection: null });
+        const recovered = resolveLaunchProfileAuthoringIntent({ profileId: 'work', profiles: [{ ...legacy, defaultBackendTargetKey: 'agent:claude' }], migration: completed });
+        expect(recovered.profileId).toBe('work');
+        expect(recovered.modelSelection?.ref.modelId).toBe(providerRef.modelId);
+        expect(completed.completedSources[0]).toMatchObject({ modelSelection: providerRef });
+    });
+
+    it('keeps the current native model preference ahead of its historical migration default', () => {
+        const profile = LaunchProfileV2Schema.parse({ v: 2, id: 'work', name: 'Work', createdAt: 1, updatedAt: 30,
+            preferredAgentTargetKey: 'agent:claude', preferredModelSelection: { v: 1, updatedAt: 30,
+                ref: { ...providerRef, modelId: 'current-model' } } });
+        const result = resolveLaunchProfileAuthoringIntent({ profileId: 'work', profiles: [profile],
+            migration: migration([{ sourceProfileId: 'work', kind: 'connection', connectionId: providerRef.providerConnectionId!,
+                sourceRevision: 2, modelSelectionOrigin: 'implicit_default', modelSelection: providerRef }]) });
+        expect(result.modelSelection?.ref.modelId).toBe('current-model');
+    });
+
+    it('does not resurrect migration preferences after both current native fields are cleared', () => {
+        const profile = LaunchProfileV2Schema.parse({ v: 2, id: 'work', name: 'Work', createdAt: 1, updatedAt: 30 });
+        const completed = migration([{ sourceProfileId: 'work', kind: 'connection', connectionId: providerRef.providerConnectionId!,
+            sourceRevision: 2, modelSelectionOrigin: 'implicit_default', modelSelection: providerRef }]);
+        expect(resolveLaunchProfileAuthoringIntent({ profileId: 'work', profiles: [profile], migration: completed }))
+            .toEqual({ profileId: 'work', preferredAgentTargetKey: null, modelSelection: null });
+        expect(completed.completedSources[0]).toMatchObject({ modelSelection: providerRef });
+    });
+
     it('applies a slim profile preferred agent and exact provider-bound model selection', () => {
         const profile = LaunchProfileV2Schema.parse({
             v: 2, id: 'work', name: 'Work', createdAt: 1, updatedAt: 2,

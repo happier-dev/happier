@@ -263,6 +263,25 @@ describe('profiles (protocol)', () => {
     })).toThrow(failure);
   });
 
+  it('derives a model-only native preference through the shared profile default owner', async () => {
+    const { getProfileDefaultBackendTarget } = await import('./profileCompatibility.js');
+    expect(getProfileDefaultBackendTarget({ preferredModelSelection: { ref: { agentTargetKey: 'agent:acme.agent/native' } } }))
+      .toEqual({ kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'native' } });
+    expect(getProfileDefaultBackendTarget({ defaultBackendTargetKey: 'acpBackend:review' }))
+      .toEqual({ kind: 'agent', identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'review' });
+  });
+
+  it('shares canonical compatibility for qualified, configured and predecessor targets', () => {
+    const configured = 'agent:happier.agent.custom-acp/custom-acp:definition:review';
+    for (const target of [configured, 'acpBackend:review', { kind: 'configuredAcpBackend', backendId: 'review' }]) {
+      expect(isProfileCompatibleWithBackendTarget({ compatibility: { 'custom-acp': true }, isBuiltIn: true }, target)).toBe(true);
+      expect(isProfileCompatibleWithBackendTarget({ compatibilityByTargetKey: { [configured]: false }, compatibility: { 'custom-acp': true } }, target)).toBe(false);
+    }
+    expect(isProfileCompatibleWithBackendTarget({ compatibilityByTargetKey: { 'agent:claude': true }, isBuiltIn: true }, 'agent:happier.agent.claude/claude')).toBe(true);
+    expect(isProfileCompatibleWithBackendTarget({ compatibilityByTargetKey: { 'agent:claude': true } }, 'agent:acme.agent/native')).toBe(true);
+    expect(isProfileCompatibleWithBackendTarget({ isBuiltIn: true }, 'agent:acme.agent/native')).toBe(false);
+  });
+
   it('returns required env var names (secret vs config)', async () => {
     const { getRequiredSecretEnvVarNames, getRequiredConfigEnvVarNames, getMissingRequiredConfigEnvVarNames } = await import('./index.js');
 

@@ -1,7 +1,8 @@
 import { isLaunchProfileV2, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
-import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2, resolveBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { normalizeLegacyAiLaunchProfileReferenceV1 } from '@happier-dev/protocol/providers/migrations/legacyProfileReferencesV1';
 import type { ProviderSettingsMigrationStateV1 } from '@happier-dev/protocol/providers/settings/v1';
+import { getProfileDefaultBackendTarget } from '@happier-dev/protocol/profiles/profileCompatibility';
 import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 
 export type LaunchProfileAuthoringIntent = Readonly<{
@@ -11,7 +12,7 @@ export type LaunchProfileAuthoringIntent = Readonly<{
 }>;
 
 function normalizeAuthoringTargetKey(targetKey: string): string {
-    return buildBackendTargetKeyV2(readBackendTargetRefV2(targetKey));
+    return resolveBackendTargetKeyV2(targetKey);
 }
 
 function normalizeAuthoringModelSelection(
@@ -32,10 +33,14 @@ export function resolveLaunchProfileAuthoringIntent(input: Readonly<{
     profiles: readonly AiLaunchProfile[];
     migration: ProviderSettingsMigrationStateV1 | undefined;
 }>): LaunchProfileAuthoringIntent {
+    const currentProfile = input.profiles.find(profile => profile.id === input.profileId);
+    const currentTarget = currentProfile && (isLaunchProfileV2(currentProfile) || !currentProfile.isBuiltIn)
+        ? getProfileDefaultBackendTarget(currentProfile) : null;
     const resolution = normalizeLegacyAiLaunchProfileReferenceV1({
         legacyAiLaunchProfileId: input.profileId,
         migration: input.migration,
         retainedSlimProfileIds: input.profiles.filter(isLaunchProfileV2).map((profile) => profile.id),
+        ...(currentTarget ? { retainedProfileTargetKey: buildBackendTargetKeyV2(currentTarget) } : {}),
     });
     const retainedProfile = resolution.legacyAiLaunchProfileId
         ? input.profiles.find((profile) => profile.id === resolution.legacyAiLaunchProfileId)
@@ -47,14 +52,16 @@ export function resolveLaunchProfileAuthoringIntent(input: Readonly<{
         ref: resolution.modelRef,
     } : null;
     const modelSelection = normalizeAuthoringModelSelection(
-        migratedModelSelection
-            ?? (resolution.status === 'review_required' ? null : slim?.preferredModelSelection)
-            ?? null,
+        resolution.status === 'review_required' ? null
+            : slim ? slim.preferredModelSelection ?? null : migratedModelSelection,
     );
+    const preferredTarget = getProfileDefaultBackendTarget({
+        ...retainedProfile,
+        preferredModelSelection: modelSelection ?? undefined,
+    });
     return {
         profileId: resolution.legacyAiLaunchProfileId,
-        preferredAgentTargetKey: modelSelection?.ref.agentTargetKey
-            ?? (slim?.preferredAgentTargetKey ? normalizeAuthoringTargetKey(slim.preferredAgentTargetKey) : null),
+        preferredAgentTargetKey: preferredTarget ? buildBackendTargetKeyV2(preferredTarget) : null,
         modelSelection,
     };
 }
