@@ -708,6 +708,7 @@ function resolveRuntimeAuthRecoveryDisposition(input: Readonly<{
   return resolveRuntimeAuthRecoveryResultDisposition({
     result: input.result,
     classificationFailureKind: input.intent.classification.kind,
+    classificationProfileId: input.intent.classification.profileId,
     classificationResetsAtMs: input.intent.classification.resetsAtMs ?? null,
     additionalWaitCandidatesMs: [input.intent.nextRetryAtMs],
     unknownNoEligibleMemberBackoffMs: input.unknownNoEligibleMemberBackoffMs,
@@ -1114,6 +1115,7 @@ function mergeRuntimeAuthRecoveryWakeWrite(input: Readonly<{
 
 function isRuntimeAuthDurableWaitIntent(intent: RuntimeAuthRecoveryIntent): boolean {
   return intent.lastError === 'no_eligible_member'
+    || intent.lastError === 'quota_proof_unavailable'
     || intent.lastError === 'switch_limit_reached'
     || intent.lastError === 'awaiting_limit_reset';
 }
@@ -1219,6 +1221,13 @@ export class RuntimeAuthRecoveryScheduler {
       && deps.providerOutcomePendingWaitMs > 0
       ? Math.trunc(deps.providerOutcomePendingWaitMs)
       : null;
+    // Only initial attempts present before this process took custody lost their
+    // in-band owner. Live intake below must keep its null deadline unarmed.
+    const restoredInitialAttemptIds = new Set((deps.durableStore?.readAll?.() ?? []).flatMap(([, value]) => {
+      const intent = normalizeIntent(value);
+      return intent?.status === 'waiting' && intent.lastSettledTransition === 'working'
+        && intent.nextRetryAtMs === null && intent.attemptId ? [intent.attemptId] : [];
+    }));
     this.scheduler = new DurableBackoffRecoveryScheduler<RuntimeAuthRecoveryIntent>({
       nowMs: deps.nowMs,
       baseBackoffMs: deps.baseBackoffMs,
@@ -1231,7 +1240,11 @@ export class RuntimeAuthRecoveryScheduler {
         : intent.status === 'recovered'
           ? 'cancelled'
           : intent.status,
-      getNextRetryAtMs: (intent) => intent.nextRetryAtMs,
+      getNextRetryAtMs: (intent) => intent.nextRetryAtMs ?? (
+        intent.status === 'waiting' && intent.lastSettledTransition === 'working'
+          && intent.attemptId && restoredInitialAttemptIds.has(intent.attemptId)
+          ? deps.nowMs() : null
+      ),
       getAttemptCount: (intent) => intent.attemptCount,
       getMaxAttempts: (intent) => isRuntimeAuthDurableWaitIntent(intent)
         ? Number.MAX_SAFE_INTEGER
@@ -1943,6 +1956,7 @@ export class RuntimeAuthRecoveryScheduler {
     const disposition = resolveRuntimeAuthRecoveryResultDisposition({
       result: input.result,
       classificationFailureKind: input.classificationFailureKind,
+      classificationProfileId: intent.classification.profileId,
       classificationResetsAtMs: input.classificationResetsAtMs,
       unknownNoEligibleMemberBackoffMs: computeRuntimeAuthRecoveryBackoffMs({
         attemptCount,

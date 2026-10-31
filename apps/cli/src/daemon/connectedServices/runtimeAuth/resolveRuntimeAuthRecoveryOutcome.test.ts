@@ -1,9 +1,30 @@
 import { describe, expect, it } from 'vitest';
+import { resolveRuntimeAuthRecoveryResultDisposition } from './resolveRuntimeAuthRecoveryResultDisposition';
 
 import {
   isProvenRuntimeAuthRecoverySuccess,
   resolveRuntimeAuthRecoveryProof,
 } from './resolveRuntimeAuthRecoveryOutcome';
+
+describe('resolveRuntimeAuthRecoveryResultDisposition', () => {
+  it.each([
+    { activeProfileId: 'primary', expectedRetryAtMs: 604_800_000 },
+    { activeProfileId: 'backup', expectedRetryAtMs: 63_000 },
+  ])('scopes a classification reset to the current member ($activeProfileId)', ({ activeProfileId, expectedRetryAtMs }) => {
+    expect(resolveRuntimeAuthRecoveryResultDisposition({
+      result: { status: 'no_eligible_member', activeProfileId, groupExhausted: true, retryAtMs: null, excluded: [] },
+      classificationProfileId: 'primary', classificationResetsAtMs: 604_800_000,
+      additionalWaitCandidatesMs: [604_800_000], unknownNoEligibleMemberBackoffMs: 60_000, nowMs: 3_000,
+    })).toEqual({ kind: 'durable_wait', reason: 'no_eligible_member', nextRetryAtMs: expectedRetryAtMs });
+  });
+
+  it('uses the existing growing backoff for unavailable proof regardless of the old reset', () => {
+    expect(resolveRuntimeAuthRecoveryResultDisposition({
+      result: { status: 'quota_proof_unavailable', activeProfileId: 'backup', generation: 2 },
+      classificationResetsAtMs: 604_800_000, unknownNoEligibleMemberBackoffMs: 60_000, nowMs: 3_000,
+    })).toEqual({ kind: 'durable_wait', reason: 'quota_proof_unavailable', nextRetryAtMs: 63_000 });
+  });
+});
 
 describe('resolveRuntimeAuthRecoveryProof', () => {
   it('keeps exact switch application as progress until a provider-qualified outcome arrives', () => {

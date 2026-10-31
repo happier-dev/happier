@@ -335,7 +335,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     }
   }
 
-  private async probeQuotaSnapshotsBeforePreTurnSelection(input: Readonly<{
+  private async probeQuotaSnapshotsBeforeSelection(input: Readonly<{
     trigger: ConnectedServiceAuthGroupSwitchPipelineTrigger;
     request: Readonly<{
       serviceId: string;
@@ -729,6 +729,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       case 'generation_apply_failed':
       case 'predictive_apply_unavailable':
       case 'superseded_after_apply':
+      case 'quota_proof_unavailable':
         return input.result.activeProfileId;
       case 'auto_switch_disabled':
       case 'switch_reason_disabled':
@@ -873,7 +874,21 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     groupId: string;
     observedProfileId: string | null;
   }>): Promise<ConnectedServiceAuthGroupSwitchResult> {
-    const loaded = await this.deps.loadState(input);
+    const initial = await this.deps.loadState(input);
+    let loaded: ConnectedServiceAuthGroupSwitchState;
+    try {
+      loaded = await this.probeQuotaSnapshotsBeforeSelection({
+        trigger: 'classified_failure', request: { ...input, reason: 'usage_limit' },
+        loaded: { ...initial, members: initial.members.filter((member) => member.profileId === initial.activeProfileId) },
+        allowCurrentProfileRetry: true,
+      });
+    } catch (error) {
+      if (!(error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError)) throw error;
+      logger.warn('[ConnectedServiceAuthGroupSwitchCoordinator] Current-member quota proof unavailable', {
+        serviceId: input.serviceId, groupId: input.groupId, reason: error.reason,
+      });
+      return { status: 'quota_proof_unavailable', activeProfileId: initial.activeProfileId, generation: initial.generation };
+    }
     const selected = selectConnectedServiceAuthGroupCandidate({
       nowMs: this.deps.nowMs(),
       quotaFreshnessMs: this.deps.quotaFreshnessMs,
@@ -888,9 +903,16 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     // Selection can allow an unknown quota when choosing a replacement. Resuming
     // a previously stopped turn needs the existing fresh, usable-quota proof.
     const quotaRecovery = resolveCurrentProfileQuotaRecoveryProof({ selected, loaded });
+    if (selected.selected && !quotaRecovery) {
+      return {
+        status: 'quota_proof_unavailable', activeProfileId: loaded.activeProfileId, generation: loaded.generation,
+        diagnostics: buildSwitchDecisionDiagnostics({ decisionTrace: selected.decisionTrace }),
+      };
+    }
     if (!loaded.activeProfileId || !quotaRecovery) {
       return {
         status: 'no_eligible_member', generation: loaded.generation, groupExhausted: true,
+        activeProfileId: loaded.activeProfileId,
         retryAtMs: resolveEarliestRetryAtMs(selected.excluded), excluded: selected.excluded,
         diagnostics: buildSwitchDecisionDiagnostics({ decisionTrace: selected.decisionTrace }),
       };
@@ -986,7 +1008,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
         loaded: preloadedPreTurnState,
       });
       if (!policyResult) {
-        preloadedPreTurnState = await this.probeQuotaSnapshotsBeforePreTurnSelection({
+        preloadedPreTurnState = await this.probeQuotaSnapshotsBeforeSelection({
           trigger,
           request: input,
           loaded: preloadedPreTurnState,
@@ -1110,7 +1132,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
         let didProbeForSelection = false;
         if (observedProfileId && loadedActiveProfileId && loadedActiveProfileId !== observedProfileId) {
           selectionActiveProfileId = observedProfileId;
-          loaded = await this.probeQuotaSnapshotsBeforePreTurnSelection({
+          loaded = await this.probeQuotaSnapshotsBeforeSelection({
             trigger,
             request: input,
             loaded,
@@ -1181,7 +1203,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
           selectionActiveProfileId = currentLoadedActiveProfileId;
         }
         if (!didProbeForSelection) {
-          loaded = await this.probeQuotaSnapshotsBeforePreTurnSelection({
+          loaded = await this.probeQuotaSnapshotsBeforeSelection({
             trigger,
             request: input,
             loaded,
@@ -1209,7 +1231,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       if (trigger === 'pre_turn') {
         const allowCurrentProfileRetry = canRetryObservedProfileDuringPreTurnSelection(input.reason);
         if (!didProbePreTurnQuota) {
-          loaded = await this.probeQuotaSnapshotsBeforePreTurnSelection({
+          loaded = await this.probeQuotaSnapshotsBeforeSelection({
             trigger,
             request: input,
             loaded,

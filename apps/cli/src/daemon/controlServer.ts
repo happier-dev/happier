@@ -656,6 +656,7 @@ export function createRuntimeAuthFailureReportIntake({
       const disposition = resolveRuntimeAuthRecoveryResultDisposition({
         result,
         classificationFailureKind: classification.kind,
+        classificationProfileId: classification.profileId,
         classificationResetsAtMs: classification.resetsAtMs ?? null,
         nowMs: Date.now(),
       });

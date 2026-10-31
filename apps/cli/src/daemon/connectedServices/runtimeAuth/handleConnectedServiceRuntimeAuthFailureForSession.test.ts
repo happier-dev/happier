@@ -2082,8 +2082,11 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
       }));
     } else {
       expect(result).toMatchObject({ status: 'switch_attempted', result: {
-        status: 'no_eligible_member', groupExhausted: true,
+        ...(state === 'unknown'
+          ? { status: 'quota_proof_unavailable', activeProfileId: 'current' }
+          : { status: 'no_eligible_member', groupExhausted: true }),
       } });
+      if (state === 'unknown') expect(result).not.toHaveProperty('result.groupExhausted');
       expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
     }
     expect(effects).toEqual([]);

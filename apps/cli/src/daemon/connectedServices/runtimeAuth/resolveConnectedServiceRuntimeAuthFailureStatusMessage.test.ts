@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveConnectedServiceRuntimeAuthFailureStatusMessage } from './resolveConnectedServiceRuntimeAuthFailureStatusMessage';
+import { connectedServiceRuntimeAuthRecoveryWillContinue } from './projection/connectedServiceRuntimeAuthRecoverySessionEvent';
 
 describe('resolveConnectedServiceRuntimeAuthFailureStatusMessage', () => {
+  it('presents unavailable quota proof as a continuing recovery', () => {
+    const note = resolveConnectedServiceRuntimeAuthFailureStatusMessage({ ok: true,
+      result: { status: 'switch_attempted', result: { status: 'quota_proof_unavailable', activeProfileId: 'backup', generation: 2 } },
+    });
+    expect(note?.code).toBe('switch_attempted_quota_proof_unavailable');
+    expect(connectedServiceRuntimeAuthRecoveryWillContinue({ handled: true, statusCode: note?.code })).toBe(true);
+  });
+
   it.each([
     {
       mode: 'restart_resume',

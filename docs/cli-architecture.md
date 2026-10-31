@@ -1783,8 +1783,12 @@ attempts retain their `RuntimeAuthRecoveryScheduler` owner rather than starting
 a second ordinary wait.
 
 After publishing its state, the daemon restores both schedulers' persisted retry
-deadlines through their shared timer owner. Hydration itself performs no recovery;
-each timer re-enters normal recovery and checks current session/source state.
+deadlines through their shared timer owner. An initial runtime-auth attempt left
+working without a deadline by the previous process also becomes immediately due,
+preserving its durable attempt and continuation identity. A live in-band attempt
+in the current process keeps ownership. Hydration itself performs no recovery;
+each timer re-enters normal recovery and checks current session/source state,
+authorization and attempt budget.
 It also drains stranded runtime-auth reports in-process through the same
 authorization, report-ID deduplication and durable intake used by local HTTP
 reports. The session-side fast-path drain remains active.
@@ -1796,8 +1800,10 @@ Fresh eligible quota evidence is necessary but does not prove that this runner
 adopted the account: when its authorized tuple differs, the existing generation
 consumer must settle the already-committed target before continuation. If that
 application redirects to newer committed truth, continuation and the recovery's
-provider-proof identity follow the recipient's actual settled target. Exhausted
-or unknown quota evidence preserves the durable wait.
+provider-proof identity follow the recipient's actual settled target. Missing or
+stale current-member quota proof uses the existing recovery backoff and quota
+probe owner to recheck that member. Fresh exhaustion waits for that member's
+reset; a different failed member's classification reset cannot govern this wait.
 
 Initial intake and scheduler replay use the same durable recovery identity for
 Pending deduplication, even after the first continuation is consumed and the

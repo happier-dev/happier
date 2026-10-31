@@ -1104,8 +1104,8 @@ async function continueRuntimeAuthRecoveryOnCurrentGroup(input: Readonly<{
     groupId: input.selection.groupId,
     observedProfileId: normalizeNullableProfileId(input.classification.profileId),
   }) ?? {
-    status: 'no_eligible_member' as const, generation: 0,
-    groupExhausted: true, retryAtMs: null, excluded: [],
+    status: 'quota_proof_unavailable' as const, generation: 0,
+    activeProfileId: input.selection.activeProfileId ?? null,
   };
   if (result.status === 'observed_generation') {
     const source = input.authorizedSource;

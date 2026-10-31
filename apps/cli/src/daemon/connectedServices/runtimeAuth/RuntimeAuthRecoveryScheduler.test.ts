@@ -12,6 +12,7 @@ import { buildRuntimeAuthRecoveryKey } from './recoveryKey/runtimeAuthRecoveryKe
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
 import type { DurableRecoveryStore } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
 import { createRecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
+import { createRuntimeAuthRecoverySchedulerForDaemon } from './createRuntimeAuthRecoverySchedulerForDaemon';
 import { decideConnectedServiceRecovery } from './ConnectedServiceRecoveryPolicy';
 import { createConnectedServiceContinuationMessageDispatcher } from '../continuation/createConnectedServiceContinuationMessageDispatcher';
 import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
@@ -82,6 +83,82 @@ async function settleRecoveryGeneration(input: Parameters<NonNullable<Parameters
 }
 
 describe('RuntimeAuthRecoveryScheduler', () => {
+  it.each([
+    { remainingPercent: 60, incomplete: false },
+    { remainingPercent: 0, incomplete: false },
+    { remainingPercent: 60, incomplete: true },
+  ])('rechecks unknown current-member quota before the failed member reset, then consumes fresh evidence ($remainingPercent percent, incomplete=$incomplete)', async ({ remainingPercent, incomplete }) => {
+    let nowMs = 1_000;
+    let publishFreshEvidence = false;
+    const probes: ReadonlyArray<string>[] = [];
+    const failure = classificationFor({ profileId: 'primary', groupGeneration: 1, resetsAtMs: 604_800_000,
+      credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', recoveryAction: { kind: 'quota_recovery_required' } });
+    let current: ConnectedServiceAuthGroupSwitchState = {
+      serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'backup', generation: 2,
+      runtimeStateRevision: 0, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: ['primary', 'backup'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+      memberStatesByProfileId: new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>(),
+    };
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => nowMs,
+      quotaFreshnessMs: 60_000, loadState: async () => current,
+      // Quota probing reads provider/server state at a genuine external boundary.
+      probeQuotaSnapshotsForGroup: async ({ profileIds }) => {
+        probes.push(profileIds);
+        if (!publishFreshEvidence && incomplete) return {
+          status: 'incomplete', requestedProfileCount: 1, completedProfileCount: 0,
+          completedProfileIds: [], reason: 'probe_unavailable',
+        };
+        if (publishFreshEvidence) current = { ...current, memberStatesByProfileId: new Map([['backup', {
+          quotaSnapshot: { capturedAtMs: nowMs, effectiveRemainingPercent: remainingPercent, exhausted: remainingPercent === 0,
+            meters: [{ meterId: 'weekly', limitCategory: 'usage_limit', remainingPct: remainingPercent, resetAtMs: 180_000, providerLimitId: null }] },
+          ...(remainingPercent === 0 ? { quotaExhaustedUntilMs: 180_000 } : {}),
+        }]]) };
+        return undefined;
+      },
+      commitSwitch: async () => { throw new Error('Observation must not select another member'); },
+      applyGeneration: async () => { throw new Error('Observation must not reapply the switch'); },
+    });
+    let continuations = 0;
+    let recovered: unknown;
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => nowMs,
+      recover: async (input) => {
+        recovered = await handleConnectedServiceRuntimeAuthFailureForSession({ ...input,
+          recoveryInvocationSource: input.source,
+          getChildren: () => [{ startedBy: 'daemon', happySessionId: 'quota-recheck', pid: 123 }],
+          switchCoordinator: coordinator,
+          resolveRegisteredRuntimeAuthFailureSource: () => ({ serviceId: 'openai-codex', groupId: 'team', profileId: 'backup', generation: 2,
+            credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' }),
+          continueAfterRuntimeAuthSwitch: async () => { continuations += 1; },
+        });
+        return recovered;
+      },
+    });
+    const recoveryKey = buildRuntimeAuthRecoveryKey({ sessionId: 'quota-recheck', ...failure });
+    try {
+      await scheduler.enqueueHandlerFailure({ sessionId: 'quota-recheck', classification: failure, switchesThisTurn: 0,
+        error: Object.assign(new Error('network unavailable'), { code: 'ECONNRESET' }) });
+      nowMs = 3_000;
+      await scheduler.wakeByKey({ recoveryKey, reason: 'manual' });
+      expect(continuations).toBe(0);
+      expect(recovered).toMatchObject({ status: 'switch_attempted' });
+      expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({ status: 'waiting', nextRetryAtMs: 33_000 });
+      expect(recovered).toMatchObject({ result: { status: 'quota_proof_unavailable', activeProfileId: 'backup' } });
+      nowMs = 33_000;
+      publishFreshEvidence = true;
+      await scheduler.wakeByKey({ recoveryKey, reason: 'manual' });
+      expect(probes).toEqual([['backup'], ['backup']]);
+      if (remainingPercent > 0) {
+        expect(continuations).toBe(1);
+        expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({ status: 'resumed_awaiting_proof', pendingTargetProfileId: 'backup' });
+      } else {
+        expect(continuations).toBe(0);
+        expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({ status: 'waiting', nextRetryAtMs: 180_000 });
+      }
+    } finally { scheduler.dispose(); }
+  });
+
   it.each([
     { ordinarySwitch: false, settle: true },
     { ordinarySwitch: true, settle: true },
@@ -242,9 +319,15 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     } finally { release.resolve(); await outcome; }
   });
 
-  it.each(['hot_apply', 'spawn_next_turn'] as const)('reuses the consumed initial Pending identity after daemon replacement without provider proof (%s)', async (initialMode) => {
+  it.each([
+    { initialMode: 'hot_apply', interrupted: true },
+    { initialMode: 'spawn_next_turn', interrupted: true },
+    { initialMode: 'hot_apply', interrupted: false },
+    { initialMode: 'spawn_next_turn', interrupted: false },
+  ] as const)('resumes interrupted initial custody with the consumed Pending identity after daemon replacement ($initialMode, interrupted=$interrupted)', async ({ initialMode, interrupted }) => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-continuation-replacement-'));
-    const file = join(dir, 'recovery.json');
+    const initialDelivered = createDeferred<void>();
+    const releaseInitial = createDeferred<void>();
     const consumedIds = new Set<string>();
     let deliveries = 0;
     let sendAttempts = 0;
@@ -284,6 +367,10 @@ describe('RuntimeAuthRecoveryScheduler', () => {
           sendAttempts += 1;
           if (!localId) throw new Error('Expected Pending identity');
           if (!consumedIds.has(localId)) { consumedIds.add(localId); deliveries += 1; }
+          if (sendAttempts === 1) {
+            initialDelivered.resolve();
+            if (interrupted) await releaseInitial.promise;
+          }
           return { ok: true, sessionId: input.sessionId, localId, waited: false };
         },
       });
@@ -302,25 +389,47 @@ describe('RuntimeAuthRecoveryScheduler', () => {
         },
       });
     };
-    const makeScheduler = () => new RuntimeAuthRecoveryScheduler({ nowMs: () => 1_000,
-      durableStore: createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(file), recover: handle });
+    const makeScheduler = () => createRuntimeAuthRecoverySchedulerForDaemon({ activeServerDir: dir,
+      nowMs: () => 1_000, recover: handle }).scheduler;
     const first = makeScheduler();
     let replacement: RuntimeAuthRecoveryScheduler | undefined;
+    let pendingIntake: Promise<unknown> | undefined;
     try {
       const intake = createRuntimeAuthFailureReportIntake({ runtimeAuthRecoveryScheduler: first,
         handleConnectedServiceRuntimeAuthFailure: handle });
-      await intake({ reportId: 'runtime-auth-report:replacement', sessionId: tracked.happySessionId!,
+      pendingIntake = intake({ reportId: 'runtime-auth-report:replacement', sessionId: tracked.happySessionId!,
         switchesThisTurn: 0, classification: classification() });
+      await initialDelivered.promise;
+      if (!interrupted) await pendingIntake;
       expect(deliveries).toBe(1);
-      expect(first.read(tracked.happySessionId!)).toMatchObject({ status: 'resumed_awaiting_proof' });
+      const original = first.read(tracked.happySessionId!);
+      expect(original).toMatchObject(interrupted
+        ? { status: 'waiting', lastSettledTransition: 'working', nextRetryAtMs: null }
+        : { status: 'resumed_awaiting_proof' });
+      // Readiness in the same process must leave the live in-band owner alone.
+      first.hydrate();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(sendAttempts).toBe(1);
       first.dispose();
-      replacement = makeScheduler(); replacement.hydratePassive();
-      await replacement.wakeByKey({ recoveryKey: buildRuntimeAuthRecoveryKey({ sessionId: tracked.happySessionId!, ...classification() }), reason: 'manual' });
+      replacement = makeScheduler();
+      expect(sendAttempts).toBe(1);
+      if (interrupted) replacement.hydrate();
+      else await replacement.wakeByKey({ recoveryKey: buildRuntimeAuthRecoveryKey({
+        sessionId: tracked.happySessionId!, ...classification(),
+      }), reason: 'manual' });
+      await vi.waitFor(() => expect(sendAttempts).toBe(2));
+      await vi.waitFor(() => expect(replacement!.readByKeyPassive(buildRuntimeAuthRecoveryKey({
+        sessionId: tracked.happySessionId!, ...classification(),
+      }))).toMatchObject({ attemptId: original?.attemptId, status: 'resumed_awaiting_proof' }));
       expect(deliveries).toBe(1);
       expect(consumedIds.size).toBe(1);
       expect(sendAttempts).toBe(2);
       expect(replacement.read(tracked.happySessionId!)).toMatchObject({ status: 'resumed_awaiting_proof' });
-    } finally { first.dispose(); replacement?.dispose(); await rm(dir, { recursive: true, force: true }); }
+    } finally {
+      first.dispose(); replacement?.dispose(); releaseInitial.resolve();
+      await pendingIntake;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
   it.each([
     { eligible: true, source: 'selection' },
