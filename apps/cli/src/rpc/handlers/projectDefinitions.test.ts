@@ -117,7 +117,7 @@ describe('project definition Actions through registered Machine RPC', () => {
         // The private review adapter's filesystem is the failing system boundary.
         inspectSetup: async () => ({ setupReadiness: ProjectSetupReadinessV1Schema.parse(JSON.parse(await readFile(file, 'utf8'))) }) });
       const executor = createActionExecutor({ ...createCliActionDeps({ token: 'fixture-token', mode: 'plain', ctx: null,
-        sessionId: 'project-definition-fixture', serverId: workspace.serverId }), projectDefinitionAction: action });
+        sessionId: 'project-definition-fixture', serverId: workspace.serverId, serverHttpBaseUrl: 'https://project-definition.example' }), projectDefinitionAction: action });
       const handlers = new Map<string, (input: unknown) => Promise<unknown>>();
       registerProjectDefinitionHandlers({ machineId: workspace.machineId, actionExecutor: executor,
         rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } } });
