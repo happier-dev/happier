@@ -6,6 +6,8 @@ import type { FirstPartyComponentId } from './componentCatalog.js';
 import {
   resolveFirstPartyComponentPublicReleaseVariant,
 } from './componentCatalog.js';
+import { FIRST_PARTY_INSTALL_HOME_ENV_KEY, assertValidFirstPartyVersionId } from './installLayoutContract.js';
+export { FIRST_PARTY_INSTALL_HOME_ENV_KEY, InvalidFirstPartyVersionIdError, assertValidFirstPartyVersionId } from './installLayoutContract.js';
 
 export interface FirstPartyInstallLayout {
   componentId: FirstPartyComponentId;
@@ -21,38 +23,12 @@ export interface FirstPartyInstallLayout {
   shimDir: string;
 }
 
-const FIRST_PARTY_VERSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
-const FIRST_PARTY_VERSION_ID_MAX_LENGTH = 200;
-
-export const FIRST_PARTY_INSTALL_HOME_ENV_KEY = 'HAPPIER_FIRST_PARTY_INSTALL_HOME';
-
 /** Reuse the canonical home expansion rules without changing daemon-private state. */
 export function resolveFirstPartyInstallHomeDir(processEnv: Readonly<Record<string, string | undefined>> = process.env): string {
   const override = processEnv[FIRST_PARTY_INSTALL_HOME_ENV_KEY]?.trim();
   return resolveHappyHomeDirFromEnvironment(override
     ? { ...processEnv, HAPPIER_HOME_DIR: override }
     : processEnv);
-}
-
-export class InvalidFirstPartyVersionIdError extends Error {
-  readonly code = 'FIRST_PARTY_VERSION_ID_INVALID';
-  readonly versionId: string;
-
-  constructor(versionId: string) {
-    super(`Invalid first-party payload version id '${versionId}'. Expected one portable path segment.`);
-    this.name = 'InvalidFirstPartyVersionIdError';
-    this.versionId = versionId;
-  }
-}
-
-export function assertValidFirstPartyVersionId(versionId: string): void {
-  if (
-    versionId.length === 0
-    || versionId.length > FIRST_PARTY_VERSION_ID_MAX_LENGTH
-    || !FIRST_PARTY_VERSION_ID_PATTERN.test(versionId)
-  ) {
-    throw new InvalidFirstPartyVersionIdError(versionId);
-  }
 }
 
 export function resolveFirstPartyInstallLayout(params: Readonly<{
