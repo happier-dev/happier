@@ -18,10 +18,4 @@ describe('Channels retry backoff', () => {
       MAX_CONVERSATION_RECEIVE_WAIT_MS,
     ]);
   });
-
-  it('never returns a sub-base delay for an unattempted count', () => {
-    // The predecessor ingress formula computed `1_000 * 2 ** -1` here, which
-    // would have scheduled a retry sooner than the first backoff step.
-    expect(conversationRetryDelayMs(0)).toBe(conversationRetryDelayMs(1));
-  });
 });

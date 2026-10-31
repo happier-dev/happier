@@ -258,6 +258,7 @@ describe('Channels file attachment', () => {
     expect(result).toMatchObject({ attachments: [{ status: 'ready',
       data: { file: { kind: 'unavailable', reason: 'attachmentNotAvailableOnThisMachine' } },
     }] });
+    expect(result).toMatchObject({ inputText: expect.stringContaining('Original inline mail') });
     expect(fileBytes).toBeNull();
   });
 
