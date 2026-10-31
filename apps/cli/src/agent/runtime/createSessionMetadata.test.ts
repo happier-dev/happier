@@ -188,6 +188,7 @@ describe('createSessionMetadata', () => {
         process.env.HAPPIER_SESSION_MCP_SELECTION_JSON = JSON.stringify({
             v: 1,
             managedServersEnabled: false,
+            happierToolsEnabled: false,
             forceIncludeServerIds: ['server-a'],
             forceExcludeServerIds: ['server-b'],
         });
@@ -202,6 +203,7 @@ describe('createSessionMetadata', () => {
             expect((metadata as any).mcpSelectionV1).toEqual({
                 v: 1,
                 managedServersEnabled: false,
+                happierToolsEnabled: false,
                 forceIncludeServerIds: ['server-a'],
                 forceExcludeServerIds: ['server-b'],
             });

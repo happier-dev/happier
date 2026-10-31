@@ -41,6 +41,7 @@ export async function resolveRunnerMcpServers(params: Readonly<{
     commandMode: params.commandMode,
     credentials: params.credentials,
     accountSettings,
+    sessionMetadata: params.sessionMetadata ?? params.session.getMetadataSnapshot?.(),
     ...(typeof params.requestedBuiltInMcpPort === 'number'
       ? { requestedPort: params.requestedBuiltInMcpPort }
       : {}),

@@ -3,6 +3,7 @@ import {
   MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS,
   buildCodingSessionPromptPlanBaseV1,
   isActionEnabledByActionsSettings,
+  isSessionHappierToolsEnabled,
   renderPromptPlanV1,
   resolveCodingPromptSessionTitleUpdatesModeV1,
   type ActionId,
@@ -52,7 +53,7 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
   memoryRecallGuidanceEnabled: boolean;
   memoryMachineId?: string | null;
 }>): Promise<HappyToolsBridgeBackendOptions | null> {
-  if (!params.agentDir) return null;
+  if (!params.agentDir || !isSessionHappierToolsEnabled(params.sessionMetadata)) return null;
 
   const sessionRenameMode = resolveCodingPromptSessionTitleUpdatesModeV1(params.settings ?? null);
   const defaultSessionMachineId = params.memoryRecallGuidanceEnabled === true

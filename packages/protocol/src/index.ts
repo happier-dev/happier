@@ -1337,11 +1337,13 @@ export {
 } from './mcpServers/resolveEffectiveServersV1.js';
 export {
   areSessionMcpSelectionsEquivalent,
+  isSessionHappierToolsEnabled,
   parseSessionMcpSelectionV1Json,
   readSessionMcpSelectionRestartRequiredV1FromMetadata,
   readSessionMcpSelectionV1FromMetadata,
   SessionMcpSelectionRestartRequiredV1Schema,
   SessionMcpSelectionV1Schema,
+  SessionMcpSelectionV1InputSchema,
   type SessionMcpSelectionRestartRequiredV1,
   type SessionMcpSelectionV1,
 } from './mcpServers/sessionSelectionV1.js';

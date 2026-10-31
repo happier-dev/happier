@@ -1,15 +1,18 @@
 import type { PermissionMode } from '@/api/types';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
 
-import { resolveCodexAppServerPolicyForPermissionMode } from '../utils/permissionModePolicy';
+import {
+    resolveCodexAppServerPolicyForPermissionMode,
+    resolveCodexMcpPolicyForPermissionMode,
+    type CodexAppServerPolicy,
+} from '../utils/permissionModePolicy';
 
-export type CodexAppServerPermissionProfileId = ':read-only' | ':workspace' | ':danger-no-sandbox';
+export type CodexAppServerPermissionProfileId = ':read-only' | ':workspace' | ':danger-full-access';
 
 export type CodexAppServerPermissionsParams = Readonly<{
-    permissions?: Readonly<{
-        type: 'profile';
-        id: CodexAppServerPermissionProfileId;
-    }>;
+    permissions?: CodexAppServerPermissionProfileId;
+    approvalPolicy?: CodexAppServerPolicy['approvalPolicy'];
+    approvalsReviewer?: CodexAppServerPolicy['approvalsReviewer'];
 }>;
 
 export type CodexAppServerLegacyPermissionTarget = 'thread' | 'turn';
@@ -17,25 +20,28 @@ export type CodexAppServerLegacyPermissionTarget = 'thread' | 'turn';
 export function resolveCodexAppServerPermissionProfileId(
     permissionMode: PermissionMode,
 ): CodexAppServerPermissionProfileId | null {
-    switch (normalizePermissionModeToIntent(permissionMode)) {
-        case 'read-only':
-            return ':read-only';
-        case 'safe-yolo':
-        case 'plan':
-            return ':workspace';
-        case 'yolo':
-            return ':danger-no-sandbox';
-        case 'default':
-        default:
-            return null;
-    }
+    if (normalizePermissionModeToIntent(permissionMode) === 'default') return null;
+    const profiles = {
+        'read-only': ':read-only',
+        'workspace-write': ':workspace',
+        'danger-full-access': ':danger-full-access',
+    } as const;
+    return profiles[resolveCodexMcpPolicyForPermissionMode(permissionMode).sandbox];
 }
 
 export function buildCodexAppServerPermissionsParams(params: Readonly<{
     permissionMode: PermissionMode;
+    directory: string;
+    managedScalarFallback?: boolean;
 }>): CodexAppServerPermissionsParams {
     const id = resolveCodexAppServerPermissionProfileId(params.permissionMode);
-    return id ? { permissions: { type: 'profile', id } } : {};
+    if (!id) return {};
+    const policy = resolveCodexAppServerPolicyForPermissionMode(params.permissionMode, params);
+    return {
+        permissions: id,
+        approvalPolicy: policy.approvalPolicy,
+        ...(policy.approvalsReviewer ? { approvalsReviewer: policy.approvalsReviewer } : {}),
+    };
 }
 
 export function buildCodexAppServerLegacyPermissionParams(params: Readonly<{

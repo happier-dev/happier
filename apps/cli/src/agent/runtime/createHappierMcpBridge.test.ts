@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge'
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata'
 
 const { requireJavaScriptRuntimeExecutableMock } = vi.hoisted(() => ({
   requireJavaScriptRuntimeExecutableMock: vi.fn(async (): Promise<string> => process.execPath),
@@ -60,6 +61,23 @@ describe('createHappierMcpBridge', () => {
     } else {
       process.env.HAPPIER_ACTIONS_SETTINGS_V1 = originalActionSettingsEnv
     }
+  })
+
+  it('honors the selection snapshot for direct lazy bridge consumers', async () => {
+    vi.mocked(existsSync).mockImplementation((pathLike) => String(pathLike).endsWith('/package-dist/backends/codex/happyMcpStdioBridge.mjs'))
+    const session = {
+      sessionId: 'restricted-session',
+      rpcHandlerManager: { registerHandler: () => undefined, invokeLocal: async () => undefined },
+      sendClaudeSessionMessage: () => undefined,
+      updateMetadata: () => undefined,
+      getMetadataSnapshot: () => ({ ...createTestMetadata(), mcpSelectionV1: {
+        v: 1, managedServersEnabled: true, happierToolsEnabled: false,
+        forceIncludeServerIds: [], forceExcludeServerIds: [],
+      } }),
+    } satisfies Parameters<typeof createHappierMcpBridge>[0]
+    const bridge = await createHappierMcpBridge(session)
+    expect(bridge.mcpServers).toEqual({})
+    expect(startHappyServerMock).not.toHaveBeenCalled()
   })
 
   it('uses direct script mode by default', async () => {

@@ -7,31 +7,38 @@ import {
 
 describe('permissionProfile', () => {
     it('maps Happier read-only mode to the Codex built-in read-only permission profile', () => {
-        expect(buildCodexAppServerPermissionsParams({ permissionMode: 'read-only' })).toEqual({
-            permissions: { type: 'profile', id: ':read-only' },
+        expect(buildCodexAppServerPermissionsParams({ permissionMode: 'read-only', directory: '/repo' })).toEqual({
+            permissions: ':read-only',
+            approvalPolicy: 'never',
         });
     });
 
     it('maps workspace write modes to the Codex workspace profile', () => {
-        expect(buildCodexAppServerPermissionsParams({ permissionMode: 'acceptEdits' })).toEqual({
-            permissions: { type: 'profile', id: ':workspace' },
+        expect(buildCodexAppServerPermissionsParams({ permissionMode: 'acceptEdits', directory: '/repo' })).toEqual({
+            permissions: ':workspace',
+            approvalPolicy: { granular: expect.objectContaining({ sandbox_approval: true, request_permissions: true }) },
+            approvalsReviewer: 'auto_review',
         });
-        expect(buildCodexAppServerPermissionsParams({ permissionMode: 'safe-yolo' })).toEqual({
-            permissions: { type: 'profile', id: ':workspace' },
+        expect(buildCodexAppServerPermissionsParams({ permissionMode: 'safe-yolo', directory: '/repo' })).toEqual({
+            permissions: ':workspace',
+            approvalPolicy: { granular: expect.objectContaining({ sandbox_approval: true, request_permissions: true }) },
+            approvalsReviewer: 'auto_review',
         });
     });
 
-    it('maps bypass modes to the Codex danger-no-sandbox profile', () => {
-        expect(buildCodexAppServerPermissionsParams({ permissionMode: 'yolo' })).toEqual({
-            permissions: { type: 'profile', id: ':danger-no-sandbox' },
+    it('maps bypass modes to the Codex full-access profile', () => {
+        expect(buildCodexAppServerPermissionsParams({ permissionMode: 'yolo', directory: '/repo' })).toEqual({
+            permissions: ':danger-full-access',
+            approvalPolicy: 'never',
         });
-        expect(buildCodexAppServerPermissionsParams({ permissionMode: 'bypassPermissions' })).toEqual({
-            permissions: { type: 'profile', id: ':danger-no-sandbox' },
+        expect(buildCodexAppServerPermissionsParams({ permissionMode: 'bypassPermissions', directory: '/repo' })).toEqual({
+            permissions: ':danger-full-access',
+            approvalPolicy: 'never',
         });
     });
 
     it('omits native permission profile params for default mode', () => {
-        expect(buildCodexAppServerPermissionsParams({ permissionMode: 'default' })).toEqual({});
+        expect(buildCodexAppServerPermissionsParams({ permissionMode: 'default', directory: '/repo' })).toEqual({});
     });
 
     it('keeps legacy thread and turn params separate from native permissions params', () => {
@@ -44,7 +51,7 @@ describe('permissionProfile', () => {
             sandboxPolicy: {
                 type: 'readOnly',
                 access: { type: 'fullAccess' },
-                networkAccess: true,
+                networkAccess: false,
             },
         });
 

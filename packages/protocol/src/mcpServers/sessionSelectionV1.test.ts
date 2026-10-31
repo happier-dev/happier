@@ -2,12 +2,36 @@ import { describe, expect, it } from 'vitest';
 
 import {
   areSessionMcpSelectionsEquivalent,
+  parseSessionMcpSelectionV1Json,
   readSessionMcpSelectionRestartRequiredV1FromMetadata,
   readSessionMcpSelectionV1FromMetadata,
   SessionMcpSelectionV1Schema,
 } from './sessionSelectionV1.js';
 
 describe('SessionMcpSelectionV1Schema', () => {
+  it('retains the explicit built-in Happier tools opt-out', () => {
+    expect(SessionMcpSelectionV1Schema.parse({ happierToolsEnabled: false }))
+      .toMatchObject({ happierToolsEnabled: false });
+    expect(areSessionMcpSelectionsEquivalent(
+      SessionMcpSelectionV1Schema.parse({}),
+      SessionMcpSelectionV1Schema.parse({ happierToolsEnabled: false }),
+    )).toBe(false);
+    expect(areSessionMcpSelectionsEquivalent(
+      SessionMcpSelectionV1Schema.parse({}),
+      SessionMcpSelectionV1Schema.parse({ happierToolsEnabled: true }),
+    )).toBe(true);
+  });
+
+  it('retains tolerant metadata reading for released V1 selections', () => {
+    expect(readSessionMcpSelectionV1FromMetadata({ mcpSelectionV1: {
+      v: 1, managedServersEnabled: false, extensionField: 'from-another-reader',
+    } })).toEqual({ v: 1, managedServersEnabled: false, forceIncludeServerIds: [], forceExcludeServerIds: [] });
+  });
+
+  it.each(['{"servers":[]}', '[]', 'null', 'false'])('rejects unsupported selection JSON %s', (raw) => {
+    expect(parseSessionMcpSelectionV1Json(raw)).toBeNull();
+  });
+
   it('defaults to enabled managed servers with empty include/exclude lists', () => {
     const parsed = SessionMcpSelectionV1Schema.parse({});
     expect(parsed).toEqual({

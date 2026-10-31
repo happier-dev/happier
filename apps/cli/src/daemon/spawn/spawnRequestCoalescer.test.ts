@@ -37,6 +37,18 @@ function computeRuntimeDescriptorKeys(
 }
 
 describe('computeDaemonSpawnRequestKey', () => {
+  it('does not coalesce requests with different built-in Happier tool policies', () => {
+    const base = { directory: '/tmp/repo' };
+    const enabled = computeDaemonSpawnRequestKey({ ...base, mcpSelection: {
+      v: 1, managedServersEnabled: false, forceIncludeServerIds: [], forceExcludeServerIds: [],
+    } });
+    const disabled = computeDaemonSpawnRequestKey({ ...base, mcpSelection: {
+      v: 1, managedServersEnabled: false, forceIncludeServerIds: [], forceExcludeServerIds: [],
+      happierToolsEnabled: false,
+    } });
+    expect(enabled.key).not.toBe(disabled.key);
+  });
+
   it('distinguishes re-armed durable authorizations while preserving exact duplicate identity', () => {
     const baseExistingSessionOptions = {
       directory: '/tmp/repo',

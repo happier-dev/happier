@@ -1896,6 +1896,18 @@ and unreadable secret-file error codes on stderr. It keeps secrets, paths, hook
 payloads, and server response bodies out of those diagnostics. A listening hook port
 alone does not prove that a hook was authenticated or processed successfully.
 
+### Codex App Server permissions (development)
+
+`backends/codex/utils/permissionModePolicy.ts` owns approval and sandbox policy.
+Native profile selection and the legacy wire adapter derive from that same owner.
+Codex 0.166 accepts `permissions` as a profile-id string: `:read-only`,
+`:workspace`, or `:danger-full-access`. Read-only requests keep approval policy
+`never` and network access restricted for sandboxed commands; the legacy
+`readOnly` turn policy also sets `networkAccess: false`. Native profile support and the managed-policy scalar
+approval fallback are independent: falling back from granular Auto approvals
+preserves an accepted native profile. These are development-source corrections,
+not a claim about released CLI availability.
+
 ### Control server (local IPC)
 
 ```mermaid
@@ -2034,6 +2046,27 @@ RPC is used to send commands over the Socket.IO connection:
 - The daemon registers a spawn-session handler so the server/mobile client can ask it to start a local session.
 
 This mechanism allows the server and mobile clients to drive local actions without exposing a broad REST surface.
+
+Session MCP selection in development source is owned by
+`packages/protocol/src/mcpServers/sessionSelectionV1.ts`. Authoring through
+`--mcp-selection-json` uses its strict input schema; stored metadata retains the
+tolerant V1 reader. The daemon passes the normalized selection through
+`HAPPIER_SESSION_MCP_SELECTION_JSON` into `mcpSelectionV1`, and its spawn-request
+fingerprint includes the effective built-in tools policy.
+
+The optional `happierToolsEnabled: false` omits the built-in bridge through
+`createHappierMcpBridge`, including Claude's lazy bridge path. The shared runner
+resolver still resolves independently selected managed servers. Pi's extension
+and coding tool guidance consume the same protocol policy reader. An absent
+field preserves enabled built-in tools. This is session-start tool delivery;
+selection changes use the existing restart-required lifecycle. It does not add
+action authorization, filesystem restrictions, or a network sandbox.
+
+CLI stable/preview 0.2.17 at `a2c45c86804b24e60ac0b76146a3ef36dfcaa15b`
+strips unknown selection fields, so an older target daemon ignores this opt-out.
+The operation requires an updated initiating CLI and target daemon; no existing
+MCP capability advertises this individual field. Persisted old selections remain
+accepted without rewriting or migrating them.
 
 In the current development CLI, UI permission responses settle through
 `PermissionRequestCoordinator.completeRpcResponse`, including detached late responses

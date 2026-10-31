@@ -52,6 +52,25 @@ function createCredentials(): DataKeyCredentials {
 }
 
 describe('resolveEffectiveCodingPromptText', () => {
+  it.each(['native_mcp', 'shell_bridge'] as const)('omits disabled Happier tool guidance with %s delivery', async (toolDelivery) => {
+    const prompt = await resolveEffectiveCodingPromptText({
+      credentials: createCredentials(),
+      settings: {},
+      profileId: null,
+      sessionMetadata: { mcpSelectionV1: { happierToolsEnabled: false } },
+      toolDelivery,
+      toolDeliverySessionId: 'restricted-session',
+      toolDeliveryDirectory: '/workspace',
+      executionRunsFeatureEnabled: true,
+      memoryRecallGuidanceEnabled: true,
+    });
+    expect(prompt).not.toContain('change_title');
+    expect(prompt).not.toContain('memory_search');
+    expect(prompt).not.toContain('Happier-Managed Runs');
+    expect(prompt).not.toContain('happier tools');
+    expect(prompt).toContain('Linked workspace files');
+  });
+
   it.each(['native_mcp', 'shell_bridge'] as const)('preserves an existing title under initial title policy with %s delivery', async (toolDelivery) => {
     const input = {
       credentials: createCredentials(),

@@ -67,6 +67,7 @@ function normalizeMcpSelectionForFingerprint(value: SpawnSessionOptions['mcpSele
   return {
     v,
     managedServersEnabled,
+    happierToolsEnabled: parsed.data.happierToolsEnabled ?? true,
     forceIncludeServerIds: [...forceIncludeServerIds].sort(),
     forceExcludeServerIds: [...forceExcludeServerIds].sort(),
   };
