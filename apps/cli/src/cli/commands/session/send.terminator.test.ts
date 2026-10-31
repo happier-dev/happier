@@ -99,7 +99,7 @@ it('delivers the caller-selected local id and waits with options after a literal
     if (path === `/v1/sessions/${sessionId}/messages`) return { messages: [user(), {
       id: 'msg-complete', seq: 2, localId: null, createdAt: 2, updatedAt: 2,
       content: { t: 'plain', v: { role: 'agent', content: { type: 'event', data: { type: 'task_complete' } } } },
-    }] };
+    }], hasMore: false };
     return reply.code(404).send({ error: 'unexpected_fixture_route', path });
   });
   const restoreHttp = installAxiosFastifyAdapter({ app, origin: 'http://relay.test' });
