@@ -213,8 +213,7 @@ export function createDevcontainerProvider(input: Readonly<{
     },
     async inspect(raw: DevcontainerResource) {
       try {
-        const { resource, running, paused } = await exact(raw);
-        if (running) await assertNamespaceCurrent(resource);
+        const { running, paused } = await exact(raw);
         return { observedAt: input.observedAt, availability: 'present' as const, power: paused ? 'suspended' as const : running ? 'running' as const : 'stopped' as const,
           billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const } };
       } catch (error) { return { observedAt: input.observedAt, availability: code(error) === 'native_resource_absent' ? 'absent' as const : 'unavailable' as const,

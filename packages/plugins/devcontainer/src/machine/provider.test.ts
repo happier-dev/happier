@@ -236,15 +236,17 @@ describe('Devcontainer native roles', () => {
     expect(await provider.inspect(resource)).toMatchObject({ availability: 'unavailable', reason: 'resource_mismatch' });
   });
 
-  it('refuses retained child namespace drift during running inspection', async () => {
+  it('keeps running inspection passive while bootstrap still refuses child namespace drift', async () => {
     // An absolute symlink replacing the retained workspace changes guest pwd -P
     // without changing the container identity, labels or Docker mount facts.
     const { provider, requests } = native({ namespace: 'coder\n/etc/x\n' });
-    expect(await provider.inspect(resource)).toMatchObject({ availability: 'unavailable', reason: 'resource_mismatch' });
+    expect(await provider.inspect(resource)).toMatchObject({ availability: 'present', power: 'running' });
+    expect(requests.map(request => request.args?.[0])).toEqual(['inspect']);
+    await expect(provider.bootstrap(resource)).rejects.toMatchObject({ code: 'resource_mismatch' });
     expect(requests.some(request => request.args?.some(arg => ['up', 'rm', 'down', '--volumes'].includes(arg)))).toBe(false);
   });
 
-  it('refuses changed userEnvProbe before running inspection can evaluate shell startup', async () => {
+  it('observes running after userEnvProbe changes without exec or effect review', async () => {
     await writeFile(launch.configPath, JSON.stringify({ image: 'example:latest', userEnvProbe: 'none' }));
     const { provider, tools, requests } = native();
     const reviewed = await readDevcontainerEffectReview(tools, { workspaceFolder: launch.workspaceFolder, configPath: launch.configPath });
@@ -255,7 +257,10 @@ describe('Devcontainer native roles', () => {
     // Native exec reads the current config before its command: a configured
     // login-shell probe can evaluate startup scripts even for id/pwd discovery.
     await writeFile(launch.configPath, JSON.stringify({ image: 'example:latest', userEnvProbe: 'loginInteractiveShell' }));
-    expect(await provider.inspect(retained)).toMatchObject({ availability: 'unavailable', reason: 'request_conflict' });
+    expect(await provider.inspect(retained)).toMatchObject({ availability: 'present', power: 'running' });
+    expect(requests.map(request => request.args?.[0])).toEqual(['inspect']);
+    await expect(provider.bootstrap(retained)).rejects.toMatchObject({ code: 'request_conflict' });
+    expect(await provider.power(retained, 'start')).toMatchObject({ kind: 'refused', code: 'request_conflict' });
     expect(requests.some(request => ['exec', 'up', 'rm', 'stop'].includes(request.args?.[0] ?? ''))).toBe(false);
   });
 
