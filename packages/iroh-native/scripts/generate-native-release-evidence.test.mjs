@@ -160,20 +160,22 @@ test('license collection reads every distributed licence and NOTICE text from th
 });
 
 test('license collection honours a Cargo manifest that names a non-standard licence file', () => {
+  const packageDirectory = '/registry/iroh-custom-license';
+  const licenseText = 'iroh custom terms\n';
   const texts = collectCargoLicenseTexts({
     metadata: {
       ...metadata,
       packages: metadata.packages.map((pkg) => (pkg.name === 'iroh'
-        ? { ...pkg, license: null, license_file: 'NOTICE' }
+        ? { ...pkg, manifest_path: `${packageDirectory}/Cargo.toml`, license: null, license_file: 'terms.txt' }
         : pkg)),
     },
-    ...licenseIo,
+    listDir: (directory) => directory === packageDirectory ? ['Cargo.toml', 'terms.txt'] : licenseIo.listDir(directory),
+    readText: (path) => path === `${packageDirectory}/terms.txt` ? licenseText : licenseIo.readText(path),
   });
 
   assert.deepEqual(
-    texts.get('registry+https://github.com/rust-lang/crates.io-index#iroh@0.95.1')
-      .map((file) => file.name),
-    ['LICENSE-APACHE', 'LICENSE-MIT', 'NOTICE'],
+    texts.get('registry+https://github.com/rust-lang/crates.io-index#iroh@0.95.1'),
+    [{ name: 'terms.txt', text: licenseText }],
   );
 });
 
