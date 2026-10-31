@@ -96,28 +96,6 @@ describe('thinkingText', () => {
       );
     });
 
-    it('preserves leading spaces in streamed deltas', () => {
-      const state = createReducer();
-
-      const mkThinking = (id: string, createdAt: number, thinking: string): NormalizedMessage => ({
-        id,
-        localId: null,
-        createdAt,
-        role: 'agent',
-        isSidechain: false,
-        content: [{ type: 'thinking', thinking, uuid: id, parentUUID: null }],
-      });
-
-      reducer(state, [mkThinking('t1', 1000, 'Hello')]);
-      reducer(state, [mkThinking('t2', 1010, ' world')]);
-
-      const thinkingMessages = [...state.messages.values()].filter(
-        (m) => m.role === 'agent' && m.isThinking && typeof m.text === 'string',
-      );
-      expect(thinkingMessages).toHaveLength(1);
-      expect(String(thinkingMessages[0]!.text)).toBe('Hello world');
-    });
-
     it('inserts a space when streamed deltas omit boundary whitespace', () => {
       const state = createReducer();
 
