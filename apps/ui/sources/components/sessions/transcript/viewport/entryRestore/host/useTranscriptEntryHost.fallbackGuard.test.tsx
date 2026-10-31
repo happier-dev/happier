@@ -131,6 +131,7 @@ function createStableMembers(overrides?: {
         invalidateViewportAnchorCapture: vi.fn(),
         isScrollable: vi.fn(() => false),
         isViewportAnchorSeqLoaded: vi.fn(() => false),
+        isViewportNearOlderEdge: vi.fn(() => false),
         lastScrollOffsetForIntentRef: overrides?.lastScrollOffsetForIntentRef ?? { current: null },
         lastUserScrollIntentAtMsRef: { current: Number.NEGATIVE_INFINITY },
         userScrollIntent: createTranscriptUserScrollIntentOwner(),
@@ -1017,6 +1018,7 @@ describe('useTranscriptEntryHost fallback guard', () => {
         members.sessionOpenLatch.onHostFacts({
             contentHeight: 20_000,
             isLoaded: true,
+            isNearOlderEdge: false,
             isScrollable: true,
             itemCount: items.length,
             layoutHeight: 670,

@@ -363,6 +363,7 @@ export function useTranscriptSessionEntryLifecycle(
         deps.applySessionOpenLatchEffectsRef.current(deps.sessionOpenLatch.onHostFacts({
             contentHeight: deps.listContentHeightRef.current,
             isLoaded: deps.isLoaded,
+            isNearOlderEdge: false,
             isScrollable: false,
             itemCount: deps.getItemCount(),
             layoutHeight: deps.listLayoutHeightRef.current,

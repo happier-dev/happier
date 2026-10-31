@@ -78,6 +78,8 @@ export type SessionOpenLatchArmInput = Readonly<{
 export type SessionOpenHostFacts = Readonly<{
     contentHeight: number;
     isLoaded: boolean;
+    /** The reader sits inside the older pager's prefetch threshold (measured on web only). */
+    isNearOlderEdge: boolean;
     isScrollable: boolean;
     itemCount: number;
     layoutHeight: number;

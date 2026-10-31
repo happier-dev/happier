@@ -15,6 +15,18 @@ import type {
     SessionOpenPlatform,
 } from './types';
 
+/**
+ * Whether a bottom entry's history covers the reader: the transcript scrolls, and the reader is
+ * not already inside the older pager's prefetch threshold. That pager arms only on a live
+ * threshold ENTER, so a reader who opens inside it would spend their first upward gesture at the
+ * loaded top before any older page exists.
+ */
+export function isBottomEntryInitialFillSufficient(
+    facts: Readonly<Pick<SessionOpenHostFacts, 'isNearOlderEdge' | 'isScrollable'>>,
+): boolean {
+    return facts.isScrollable && !facts.isNearOlderEdge;
+}
+
 type ArmedState = Readonly<{
     entryKind: SessionOpenEntryKind;
     firstPaintFallbackDeadlineAtMs: number | null;
@@ -195,7 +207,7 @@ export function createSessionOpenLatch(): SessionOpenLatch {
                 armed.entryKind === 'bottom' &&
                 initialFillStatus === 'idle' &&
                 !requestedInitialFill &&
-                !facts.isScrollable
+                !isBottomEntryInitialFillSufficient(facts)
             ) {
                 requestedInitialFill = true;
                 effects.push({ type: 'request-initial-fill' });
@@ -203,9 +215,9 @@ export function createSessionOpenLatch(): SessionOpenLatch {
                 armed.entryKind === 'bottom' &&
                 initialFillStatus === 'idle' &&
                 !requestedInitialFill &&
-                facts.isScrollable
+                isBottomEntryInitialFillSufficient(facts)
             ) {
-                // Already scrollable at the first measured facts: there is nothing for the
+                // Already sufficient at the first measured facts: there is nothing for the
                 // initial fill to do. Settle the status immediately so fill-gated consumers
                 // (older pagination's 'fill-not-done' suspension) unblock, and complete the
                 // phase exactly like `onInitialFillSettled` would for a bottom entry.

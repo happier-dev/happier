@@ -24,6 +24,7 @@ describe('session open latch', () => {
         const facts = {
             contentHeight: 0,
             isLoaded: false,
+            isNearOlderEdge: false,
             isScrollable: false,
             itemCount: 0,
             layoutHeight: 600,
@@ -46,6 +47,7 @@ describe('session open latch', () => {
         expect(latch.onHostFacts({
             contentHeight: 1200,
             isLoaded: true,
+            isNearOlderEdge: false,
             isScrollable: true,
             itemCount: 3,
             layoutHeight: 600,
@@ -118,6 +120,7 @@ describe('session open latch', () => {
         const ready = latch.onHostFacts({
             contentHeight: 800,
             isLoaded: true,
+            isNearOlderEdge: false,
             isScrollable: true,
             itemCount: 12,
             layoutHeight: 400,
@@ -141,6 +144,7 @@ describe('session open latch', () => {
         const facts = {
             contentHeight: 240,
             isLoaded: true,
+            isNearOlderEdge: false,
             isScrollable: false,
             itemCount: 3,
             layoutHeight: 600,
@@ -167,6 +171,7 @@ describe('session open latch', () => {
         const decision = latch.onHostFacts({
             contentHeight: 0,
             isLoaded: true,
+            isNearOlderEdge: false,
             isScrollable: false,
             itemCount: 3,
             layoutHeight: 0,
@@ -189,6 +194,7 @@ describe('session open latch', () => {
         const ready = latch.onHostFacts({
             contentHeight: 1_000,
             isLoaded: true,
+            isNearOlderEdge: false,
             isScrollable: true,
             itemCount: 1,
             layoutHeight: 100,
@@ -222,6 +228,7 @@ describe('session open latch', () => {
         const ready = latch.onHostFacts({
             contentHeight: 1_000,
             isLoaded: true,
+            isNearOlderEdge: false,
             isScrollable: true,
             itemCount: 2,
             layoutHeight: 100,
@@ -251,6 +258,7 @@ describe('session open latch', () => {
         const ready = latch.onHostFacts({
             contentHeight: 80,
             isLoaded: true,
+            isNearOlderEdge: false,
             isScrollable: false,
             itemCount: 1,
             layoutHeight: 600,
@@ -287,6 +295,7 @@ describe('session open latch', () => {
         const first = latch.onHostFacts({
             contentHeight: 80,
             isLoaded: true,
+            isNearOlderEdge: false,
             isScrollable: false,
             itemCount: 1,
             layoutHeight: 600,
@@ -296,6 +305,7 @@ describe('session open latch', () => {
         const second = latch.onHostFacts({
             contentHeight: 90,
             isLoaded: true,
+            isNearOlderEdge: false,
             isScrollable: false,
             itemCount: 1,
             layoutHeight: 600,
@@ -311,6 +321,7 @@ describe('session open latch', () => {
         const third = latch.onHostFacts({
             contentHeight: 100,
             isLoaded: true,
+            isNearOlderEdge: false,
             isScrollable: false,
             itemCount: 1,
             layoutHeight: 600,
@@ -328,6 +339,7 @@ describe('session open latch', () => {
         const facts = (nowMs: number) => latch.onHostFacts({
             contentHeight: 4_000,
             isLoaded: true,
+            isNearOlderEdge: false,
             isScrollable: false,
             itemCount: 20,
             layoutHeight: 600,

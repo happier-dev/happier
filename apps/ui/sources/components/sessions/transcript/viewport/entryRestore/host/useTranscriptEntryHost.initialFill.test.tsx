@@ -58,6 +58,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
 
 type EntryHostDeps = Parameters<typeof useTranscriptEntryHost>[0];
 
+const OLDER_PREFETCH_THRESHOLD_PX = 800;
+
 function createFillHarness(params: Readonly<{
     layoutHeightPx: number;
     initialContentHeightPx: number;
@@ -72,6 +74,13 @@ function createFillHarness(params: Readonly<{
     const listContentHeightRef = { current: params.initialContentHeightPx };
     const listLayoutHeightRef = { current: params.layoutHeightPx };
     const isScrollable = vi.fn(() => listContentHeightRef.current > listLayoutHeightRef.current + 16);
+    // The pager's older-threshold answer for a reader held at the tail: its offset from the top
+    // is everything above the viewport. Production measures it from web DOM metrics only.
+    const isViewportNearOlderEdge = vi.fn(() => (
+        Platform.OS === 'web'
+        && isScrollable()
+        && listContentHeightRef.current - listLayoutHeightRef.current <= OLDER_PREFETCH_THRESHOLD_PX
+    ));
     const loadOlder = vi.fn<EntryHostDeps['loadOlder']>(async () => {
         nowMs += params.loadDurationMs;
         const growth = params.contentGrowthPerLoadPx[loadOlder.mock.calls.length - 1];
@@ -142,6 +151,7 @@ function createFillHarness(params: Readonly<{
         isLoaded: true,
         isScrollable,
         isViewportAnchorSeqLoaded: vi.fn(() => false),
+        isViewportNearOlderEdge,
         jumpToSeq: null,
         lastScrollOffsetForIntentRef: { current: null },
         lastUserScrollIntentAtMsRef: { current: Number.NEGATIVE_INFINITY },
@@ -189,7 +199,7 @@ function createFillHarness(params: Readonly<{
         wantsPinnedRef: { current: true },
     };
 
-    return { deps, isScrollable, listContentHeightRef, loadOlder, sessionOpenLatch };
+    return { deps, isScrollable, isViewportNearOlderEdge, listContentHeightRef, loadOlder, sessionOpenLatch };
 }
 
 describe('useTranscriptEntryHost initial fill sufficiency (S-L/S-M)', () => {
@@ -242,6 +252,33 @@ describe('useTranscriptEntryHost initial fill sufficiency (S-L/S-M)', () => {
 
         expect(settleObservation.value?.loads).toBe(0);
         expect(settleObservation.value!.atMs - openedAtMs).toBe(0);
+    });
+
+    it('web post-settle fill keeps loading until the tail reader is outside the older-page threshold', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        // Ported by intent from 0.2 (live 2026-10-31: a first page painted 911px in a 671px
+        // viewport). Barely scrollable, so the fill stopped, but the reader already sat inside
+        // the pager's own prefetch threshold, where `olderPaginationMachine` cannot arm until a
+        // live threshold ENTER. The first upward gesture then clamped at the top before history
+        // existed. Filling past the pager's threshold leaves room for that gesture.
+        const harness = createFillHarness({
+            layoutHeightPx: 671,
+            initialContentHeightPx: 911,
+            contentGrowthPerLoadPx: [7_278, 7_000],
+            loadDurationMs: 500,
+        });
+
+        await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { wrapper: TranscriptHostTestProvider, initialProps: harness.deps },
+        );
+        await vi.waitFor(() => {
+            expect(harness.loadOlder).toHaveBeenCalledTimes(1);
+        }, { timeout: 5000 });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(harness.loadOlder).toHaveBeenCalledTimes(1);
+        expect(harness.isViewportNearOlderEdge()).toBe(false);
     });
 
     it('web post-settle fill stays out of an ANCHORED entry, whose anchor lookup owns the loader', async () => {
