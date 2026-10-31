@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ChangedFilesList } from '@/components/sessions/files/content/ChangedFilesList';
+import { ChangedFilesTreeList, resolveChangedFilesRowSource } from '@/components/sessions/files/content/ChangedFilesTreeList';
 import { ChangedFilesReview } from '@/components/sessions/files/content/ChangedFilesReview';
 import { FilesToolbar } from '@/components/sessions/files/FilesToolbar';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
@@ -106,6 +107,26 @@ export const RepositoryTreeChangedFilesPane = React.memo((props: RepositoryTreeC
         ? scmReviewMaxChangedLines
         : 2000;
 
+    const repositoryViewUsesTree = React.useMemo(() => {
+        if (changedFilesViewMode !== 'repository') return false;
+        if (!props.scmSnapshot?.repo.isRepo) return false;
+        // Collapsed untracked directory rows are the one row shape the flat
+        // changed-files list cannot represent (it filters directory-like rows),
+        // so a summary snapshot would silently hide them.
+        return resolveChangedFilesRowSource({
+            entriesWindow: changed.entriesWindow?.state ?? null,
+            snapshot: props.scmSnapshot,
+        }).some((entry) => entry.isDirectory === true);
+    }, [changed.entriesWindow?.state, changedFilesViewMode, props.scmSnapshot]);
+
+    const openFileByPath = React.useCallback((fullPath: string) => {
+        props.onOpenFile(fullPath);
+    }, [props]);
+
+    const openFilePinnedByPath = React.useCallback((fullPath: string) => {
+        (props.onOpenFilePinned ?? props.onOpenFile)(fullPath);
+    }, [props]);
+
     const openFile = React.useCallback((file: ScmFileStatus) => {
         props.onOpenFile(file.fullPath);
     }, [props]);
@@ -154,6 +175,18 @@ export const RepositoryTreeChangedFilesPane = React.memo((props: RepositoryTreeC
                     onFilePressPinned={openFilePinned}
                     providerDiffByPath={reviewProviderDiffByPath}
                     rowDensity="compact"
+                />
+            ) : repositoryViewUsesTree ? (
+                <ChangedFilesTreeList
+                    theme={theme}
+                    snapshot={props.scmSnapshot as ScmWorkingSnapshot}
+                    searchQuery={props.searchQuery}
+                    onOpenFile={openFileByPath}
+                    onOpenFilePinned={openFilePinnedByPath}
+                    entriesWindow={changed.entriesWindow?.state ?? null}
+                    onExpandDirectory={changed.entriesWindow?.expandDirectory}
+                    onCollapseDirectory={changed.entriesWindow?.collapseDirectory}
+                    onLoadMoreExpanded={changed.entriesWindow?.loadMoreExpanded}
                 />
             ) : (
                 <ChangedFilesList

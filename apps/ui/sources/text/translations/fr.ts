@@ -7048,6 +7048,8 @@ export const fr: TranslationStructure = {
     },
 
         files: {
+            changedFilesDirectoryFileCount: ({ count }: { count: number }) => (count === 1 ? '1 fichier' : `${count} fichiers`),
+            changedFilesLoadMore: 'Charger plus de fichiers',
             revealInFiles: "Afficher dans Fichiers",
             openChanges: "Ouvrir les modifications",
             searchPlaceholder: 'Rechercher des fichiers…',

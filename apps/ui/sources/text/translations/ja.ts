@@ -7763,6 +7763,8 @@ localTailscale: {
   },
 
   files: {
+      changedFilesDirectoryFileCount: ({ count }: { count: number }) => `${count} 件のファイル`,
+      changedFilesLoadMore: 'さらにファイルを読み込む',
             revealInFiles: "ファイルで表示",
             openChanges: "変更を開く",
     searchPlaceholder: "ファイルを検索...",

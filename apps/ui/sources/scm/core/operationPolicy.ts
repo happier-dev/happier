@@ -225,6 +225,15 @@ function hasSelectedPendingChanges(
         return null;
     }
 
+    // Presentation gate: with omitted or truncated entries the scan cannot
+    // prove absence — return unknown (the caller falls back to the truthful
+    // totals) instead of claiming "no selected changes" from an entries array
+    // that was never shipped.
+    const presentation = snapshot.entriesPresentation;
+    if (presentation !== undefined && presentation !== 'complete') {
+        return null;
+    }
+
     return snapshot.entries.some((entry) =>
         selectedScopes.some((scopePath) =>
             scmPathMatchesScopePath({ changedPath: entry.path, scopePath }),

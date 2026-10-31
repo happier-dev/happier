@@ -1,4 +1,4 @@
-import type { ScmEntryKind, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { ScmEntryKind, ScmWorkingEntry, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 export type ScmTreeBadge = Readonly<{
     kindLetter: string;
@@ -87,6 +87,38 @@ export function buildScmTreeBadgeSignature(snapshot: ScmWorkingSnapshot | null |
         ].join('\u0001'))
         .sort()
         .join('\u0002');
+}
+
+/**
+ * Resolves the snapshot a per-node badge index may be built from.
+ *
+ * Badges derive from `snapshot.entries`, so under the summary/detail delivery
+ * split a summary poll carries no entry rows and would blank every change
+ * badge in the repository browser. The demand-loaded entries window (mounted
+ * by the open surface) is the live source for those rows, so it becomes the
+ * badge source whenever the snapshot no longer carries them.
+ *
+ * A complete snapshot is returned by identity: nothing reindexes and nothing
+ * re-subscribes on poll ticks. Whatever the window delivers is never reported
+ * as complete — the window pages, so the derived presentation stays
+ * `'truncated'` and the downstream presentation gates stay conservatively
+ * closed.
+ */
+export function resolveScmTreeBadgeSourceSnapshot(input: {
+    snapshot: ScmWorkingSnapshot | null;
+    windowEntries: readonly ScmWorkingEntry[];
+}): ScmWorkingSnapshot | null {
+    const { snapshot, windowEntries } = input;
+    if (!snapshot) return null;
+    if (snapshot.entriesPresentation === undefined || snapshot.entriesPresentation === 'complete') {
+        return snapshot;
+    }
+    if (windowEntries.length === 0) return snapshot;
+    return {
+        ...snapshot,
+        entries: [...windowEntries],
+        entriesPresentation: 'truncated',
+    };
 }
 
 export function createScmTreeBadgeIndex(snapshot: ScmWorkingSnapshot | null | undefined): ScmTreeBadgeIndex {

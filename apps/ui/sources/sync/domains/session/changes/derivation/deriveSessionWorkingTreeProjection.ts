@@ -62,6 +62,9 @@ export function deriveSessionWorkingTreeProjection(params: Readonly<{
             stashCount: params.snapshot.stashCount ?? 0,
             hasConflicts: params.snapshot.hasConflicts,
             entries: params.snapshot.entries,
+            ...(params.snapshot.entriesPresentation === undefined
+                ? {}
+                : { entriesPresentation: params.snapshot.entriesPresentation }),
             totals: {
                 includedFiles: params.snapshot.totals.includedFiles,
                 pendingFiles: params.snapshot.totals.pendingFiles,
@@ -70,6 +73,9 @@ export function deriveSessionWorkingTreeProjection(params: Readonly<{
                 includedRemoved: params.snapshot.totals.includedRemoved,
                 pendingAdded: params.snapshot.totals.pendingAdded,
                 pendingRemoved: params.snapshot.totals.pendingRemoved,
+                ...(params.snapshot.totals.changedFiles === undefined
+                    ? {}
+                    : { changedFiles: params.snapshot.totals.changedFiles }),
             },
         }
         : null;

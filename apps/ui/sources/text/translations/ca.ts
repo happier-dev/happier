@@ -7059,6 +7059,8 @@ deps: {
     },
 
       files: {
+          changedFilesDirectoryFileCount: ({ count }: { count: number }) => (count === 1 ? '1 fitxer' : `${count} fitxers`),
+          changedFilesLoadMore: 'Carrega més fitxers',
             revealInFiles: "Mostra a Fitxers",
             openChanges: "Obre els canvis",
           searchPlaceholder: 'Cerca fitxers...',

@@ -88,6 +88,91 @@ describe('buildScmStatusSummaryFromSnapshot', () => {
         });
     });
 
+    it('prefers totals.changedFiles and never claims "no changes" from an omitted entries array', () => {
+        const summary = buildScmStatusSummaryFromSnapshot(
+            buildSnapshot({
+                entries: [],
+                entriesPresentation: 'omitted',
+                totals: {
+                    includedFiles: 0,
+                    pendingFiles: 0,
+                    untrackedFiles: 30000,
+                    includedAdded: 0,
+                    includedRemoved: 0,
+                    pendingAdded: 0,
+                    pendingRemoved: 0,
+                    changedFiles: 30000,
+                },
+            })
+        );
+
+        expect(summary?.changedFiles).toBe(30000);
+        expect(summary?.hasAnyChanges).toBe(true);
+    });
+
+    it('falls back to entries.length and then the totals sum in the historical order', () => {
+        const withEntries = buildScmStatusSummaryFromSnapshot(
+            buildSnapshot({
+                entries: [
+                    { path: 'a.txt', previousPath: null, kind: 'modified', includeStatus: 'M', pendingStatus: 'M', hasIncludedDelta: true, hasPendingDelta: true, stats: { includedAdded: 1, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 0, isBinary: false } },
+                ],
+                totals: {
+                    includedFiles: 1,
+                    pendingFiles: 1,
+                    untrackedFiles: 0,
+                    includedAdded: 1,
+                    includedRemoved: 0,
+                    pendingAdded: 1,
+                    pendingRemoved: 0,
+                },
+            })
+        );
+        expect(withEntries?.changedFiles).toBe(1);
+
+        const omittedWithoutServerCount = buildScmStatusSummaryFromSnapshot(
+            buildSnapshot({
+                entries: [],
+                entriesPresentation: 'omitted',
+                totals: {
+                    includedFiles: 2,
+                    pendingFiles: 3,
+                    untrackedFiles: 4,
+                    includedAdded: 0,
+                    includedRemoved: 0,
+                    pendingAdded: 0,
+                    pendingRemoved: 0,
+                },
+            })
+        );
+        expect(omittedWithoutServerCount?.changedFiles).toBe(9);
+        expect(omittedWithoutServerCount?.hasAnyChanges).toBe(true);
+    });
+
+    it('prefers totals.changedFiles over entries.length when collapsed entries undercount', () => {
+        const summary = buildScmStatusSummaryFromSnapshot(
+            buildSnapshot({
+                entries: [
+                    { path: 'D/', previousPath: null, kind: 'untracked', includeStatus: '?', pendingStatus: '?', hasIncludedDelta: false, hasPendingDelta: true, stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0, isBinary: false }, isDirectory: true, untrackedFileCount: 30000 },
+                    { path: 'loose.ts', previousPath: null, kind: 'untracked', includeStatus: '?', pendingStatus: '?', hasIncludedDelta: false, hasPendingDelta: true, stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0, isBinary: false } },
+                ],
+                totals: {
+                    includedFiles: 0,
+                    pendingFiles: 0,
+                    untrackedFiles: 30001,
+                    includedAdded: 0,
+                    includedRemoved: 0,
+                    pendingAdded: 0,
+                    pendingRemoved: 0,
+                    changedFiles: 30001,
+                },
+            })
+        );
+
+        // entries.length (2 collapsed rows) would undercount the real file count.
+        expect(summary?.changedFiles).toBe(30001);
+        expect(summary?.hasAnyChanges).toBe(true);
+    });
+
     it('handles detached head without changes', () => {
         const summary = buildScmStatusSummaryFromSnapshot(
             buildSnapshot({

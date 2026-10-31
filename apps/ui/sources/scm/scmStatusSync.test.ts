@@ -118,6 +118,82 @@ describe('collectChangedPaths', () => {
 
         expect(collectChangedPaths(before, after).sort()).toEqual(['a.ts', 'new.ts', 'old.ts']);
     });
+
+    it('skips the diff when the next snapshot omits its entries (no fabricated removals)', () => {
+        const before = makeSnapshot([
+            {
+                path: 'a.ts',
+                previousPath: null,
+                kind: 'modified',
+                includeStatus: 'M',
+                pendingStatus: 'M',
+                hasIncludedDelta: true,
+                hasPendingDelta: true,
+                stats: {
+                    includedAdded: 1,
+                    includedRemoved: 0,
+                    pendingAdded: 2,
+                    pendingRemoved: 0,
+                    isBinary: false,
+                },
+            },
+        ]);
+        const summary = makeSnapshot([]);
+        summary.entriesPresentation = 'omitted';
+
+        // A summary's `entries: []` is evidence of absence, not absence of
+        // evidence — diffing it would report every previous path as removed.
+        expect(collectChangedPaths(before, summary)).toEqual([]);
+        expect(collectChangedPaths(summary, summary)).toEqual([]);
+    });
+
+    it('skips the diff when a previous snapshot is only a truncated prefix', () => {
+        const truncated = makeSnapshot([
+            {
+                path: 'a.ts',
+                previousPath: null,
+                kind: 'modified',
+                includeStatus: 'M',
+                pendingStatus: 'M',
+                hasIncludedDelta: true,
+                hasPendingDelta: true,
+                stats: {
+                    includedAdded: 1,
+                    includedRemoved: 0,
+                    pendingAdded: 2,
+                    pendingRemoved: 0,
+                    isBinary: false,
+                },
+            },
+        ]);
+        truncated.entriesPresentation = 'truncated';
+        const next = makeSnapshot([]);
+
+        expect(collectChangedPaths(truncated, next)).toEqual([]);
+    });
+
+    it('still attributes every path on the first observation (no previous snapshot)', () => {
+        const next = makeSnapshot([
+            {
+                path: 'a.ts',
+                previousPath: null,
+                kind: 'modified',
+                includeStatus: 'M',
+                pendingStatus: 'M',
+                hasIncludedDelta: true,
+                hasPendingDelta: true,
+                stats: {
+                    includedAdded: 1,
+                    includedRemoved: 0,
+                    pendingAdded: 2,
+                    pendingRemoved: 0,
+                    isBinary: false,
+                },
+            },
+        ]);
+
+        expect(collectChangedPaths(null, next)).toEqual(['a.ts']);
+    });
 });
 
 describe('shouldAttributeChangedPaths', () => {

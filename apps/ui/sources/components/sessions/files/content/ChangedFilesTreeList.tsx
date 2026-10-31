@@ -5,11 +5,13 @@ import { Item } from '@/components/ui/lists/Item';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { ScmWorkingSnapshot, ScmWorkingEntry } from '@/sync/domains/state/storageTypes';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
+import type { ScmStatusEntriesWindowState } from '@/scm/entries/scmStatusEntriesWindow';
 import { buildChangedFilesOutlineTree, type ChangedFilesOutlineNode } from '@/components/sessions/files/repositoryTree/buildChangedFilesOutlineTree';
 import { useScmTreeBadgeIndex } from '@/components/sessions/files/repositoryTree/useScmTreeBadgeIndex';
 import { Icon } from '@/components/ui/icons/Icon';
+import { t } from '@/text';
 
 export type ChangedFilesTreeListProps = Readonly<{
     theme: any;
@@ -17,6 +19,15 @@ export type ChangedFilesTreeListProps = Readonly<{
     searchQuery: string;
     onOpenFile: (fullPath: string) => void;
     onOpenFilePinned?: (fullPath: string) => void;
+    /**
+     * Bounded entries window state (plan unit 6). When present, rows render
+     * from the window (collapsed directory rows + loose files) or from its
+     * snapshot fallback instead of the snapshot's entries array.
+     */
+    entriesWindow?: ScmStatusEntriesWindowState | null;
+    onExpandDirectory?: (directoryPath: string) => void;
+    onCollapseDirectory?: (directoryPath: string) => void;
+    onLoadMoreExpanded?: (directoryPath: string) => void;
     onLayout?: ScrollViewProps['onLayout'];
     onContentSizeChange?: ScrollViewProps['onContentSizeChange'];
     onScroll?: ScrollViewProps['onScroll'];
@@ -24,8 +35,10 @@ export type ChangedFilesTreeListProps = Readonly<{
 }>;
 
 function entryToFileStatus(entry: any): ScmFileStatus {
-    const segments = String(entry.path ?? '').split('/');
-    const fileName = segments[segments.length - 1] || String(entry.path ?? '');
+    const isDirectory = entry.isDirectory === true;
+    const displayPath = isDirectory && String(entry.path).endsWith('/') ? String(entry.path).slice(0, -1) : String(entry.path);
+    const segments = displayPath.split('/');
+    const fileName = segments[segments.length - 1] || displayPath;
     const filePath = segments.slice(0, -1).join('/');
     const preferIncluded = entry.hasIncludedDelta === true && entry.hasPendingDelta !== true;
     return {
@@ -40,35 +53,138 @@ function entryToFileStatus(entry: any): ScmFileStatus {
         oldPath: entry.previousPath ?? undefined,
         isBinary: entry.stats?.isBinary ?? undefined,
         isComplete: entry.stats?.isComplete,
+        ...(isDirectory ? { isDirectory: true } : {}),
+        ...(entry.untrackedFileCount === undefined ? {} : { untrackedFileCount: entry.untrackedFileCount }),
     };
 }
 
-type FlattenedNode =
-    | (ChangedFilesOutlineNode & { kind: 'dir'; depth: number })
-    | (ChangedFilesOutlineNode & { kind: 'file'; depth: number });
+type CollapsedDirectoryInfo = Readonly<{
+    entryPath: string;
+    untrackedFileCount?: number;
+}>;
 
-function flattenTree(nodes: ChangedFilesOutlineNode[], depth: number, expanded: ReadonlySet<string>): FlattenedNode[] {
+type FlattenedNode =
+    | (ChangedFilesOutlineNode & { kind: 'dir'; depth: number; collapsedDirectory?: CollapsedDirectoryInfo })
+    | (ChangedFilesOutlineNode & { kind: 'file'; depth: number })
+    | { kind: 'loadMore'; directoryPath: string; depth: number };
+
+function mergeCollapsedDirectoryEntries(
+    nodes: ChangedFilesOutlineNode[],
+    directoryEntries: readonly ScmWorkingEntry[]
+): ChangedFilesOutlineNode[] {
+    const merged = [...nodes];
+    for (const entry of directoryEntries) {
+        const displayPath = entry.path.endsWith('/') ? entry.path.slice(0, -1) : entry.path;
+        const parts = displayPath.split('/').filter(Boolean);
+        if (parts.length === 0) continue;
+
+        let level = merged;
+        let fullPath = '';
+        for (let index = 0; index < parts.length; index += 1) {
+            const part = parts[index]!;
+            fullPath = fullPath ? `${fullPath}/${part}` : part;
+            const isLeaf = index === parts.length - 1;
+            let node = level.find((candidate) => candidate.kind === 'dir' && candidate.name === part && candidate.fullPath === fullPath) as
+                | (ChangedFilesOutlineNode & { kind: 'dir' })
+                | undefined;
+            if (!node) {
+                node = { kind: 'dir', name: part, fullPath, children: [] };
+                level.push(node);
+            }
+            if (isLeaf) {
+                (node as ChangedFilesOutlineNode & { kind: 'dir'; collapsedDirectory?: CollapsedDirectoryInfo }).collapsedDirectory = {
+                    entryPath: entry.path,
+                    ...(entry.untrackedFileCount === undefined ? {} : { untrackedFileCount: entry.untrackedFileCount }),
+                };
+            }
+            level = node.children;
+        }
+    }
+    return merged;
+}
+
+function flattenTree(
+    nodes: ChangedFilesOutlineNode[],
+    depth: number,
+    expanded: ReadonlySet<string>,
+    expansions: ReadonlyMap<string, { entries: readonly any[]; hasMore: boolean }> | null
+): FlattenedNode[] {
     const out: FlattenedNode[] = [];
     for (const node of nodes) {
         if (node.kind === 'file') {
             out.push({ ...node, depth });
             continue;
         }
-        out.push({ ...node, depth });
-        if (expanded.has(node.fullPath)) {
-            out.push(...flattenTree(node.children, depth + 1, expanded));
+        const collapsed = (node as ChangedFilesOutlineNode & { kind: 'dir'; collapsedDirectory?: CollapsedDirectoryInfo }).collapsedDirectory;
+        out.push({ ...node, depth, ...(collapsed ? { collapsedDirectory: collapsed } : {}) });
+        const isExpanded = expanded.has(node.fullPath) || (collapsed !== undefined && expansions?.has(collapsed.entryPath));
+        if (!isExpanded) continue;
+
+        const collapsedEntryPath = collapsed?.entryPath;
+        if (collapsedEntryPath !== undefined && expansions) {
+            const expansion = expansions.get(collapsedEntryPath);
+            if (expansion) {
+                for (const entry of expansion.entries) {
+                    const file = entryToFileStatus(entry);
+                    const segments = file.fullPath.split('/');
+                    out.push({
+                        kind: 'file',
+                        name: segments[segments.length - 1] || file.fullPath,
+                        fullPath: file.fullPath,
+                        file,
+                        depth: depth + 1,
+                    });
+                }
+                if (expansion.hasMore) {
+                    out.push({ kind: 'loadMore', directoryPath: collapsedEntryPath, depth: depth + 1 });
+                }
+            }
+        } else {
+            out.push(...flattenTree(node.children, depth + 1, expanded, expansions));
         }
     }
     return out;
 }
 
-export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps) => {
-    const changedFiles = React.useMemo(() => {
-        return (props.snapshot.entries ?? []).map(entryToFileStatus);
-    }, [props.snapshot.entries]);
+/**
+ * The one owner of "which rows does the changed-files surface render": the
+ * demand-loaded entries window when it holds rows, its snapshot fallback, or
+ * the snapshot's own entries for a complete (legacy/fallback) delivery.
+ * Consumers that need to reason about the row set (e.g. whether collapsed
+ * directory rows are present) must ask this function rather than re-deriving
+ * the precedence.
+ */
+export function resolveChangedFilesRowSource(input: {
+    entriesWindow?: ScmStatusEntriesWindowState | null;
+    snapshot: ScmWorkingSnapshot | null | undefined;
+}): readonly ScmWorkingEntry[] {
+    if (input.entriesWindow?.mode === 'window') return input.entriesWindow.entries ?? [];
+    if (input.entriesWindow?.mode === 'snapshot-fallback') return input.entriesWindow.fallbackEntries ?? [];
+    return input.snapshot?.entries ?? [];
+}
 
-    const tree = React.useMemo(() => buildChangedFilesOutlineTree(changedFiles), [changedFiles]);
+export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps) => {
+    const sourceEntries = resolveChangedFilesRowSource({
+        entriesWindow: props.entriesWindow ?? null,
+        snapshot: props.snapshot,
+    });
+
+    const changedFiles = React.useMemo(() => {
+        return sourceEntries
+            .filter((entry) => entry.isDirectory !== true)
+            .map(entryToFileStatus);
+    }, [sourceEntries]);
+
+    const directoryEntries = React.useMemo(() => {
+        return sourceEntries.filter((entry) => entry.isDirectory === true);
+    }, [sourceEntries]);
+
     const [expandedDirs, setExpandedDirs] = React.useState<Set<string>>(() => new Set());
+
+    const tree = React.useMemo(
+        () => mergeCollapsedDirectoryEntries(buildChangedFilesOutlineTree(changedFiles), directoryEntries),
+        [changedFiles, directoryEntries]
+    );
     const badgeIndex = useScmTreeBadgeIndex(props.snapshot);
 
     const filteredQuery = props.searchQuery.trim().toLowerCase();
@@ -80,14 +196,21 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
         return matches;
     }, [changedFiles, filteredQuery]);
 
-    const toggleDir = React.useCallback((fullPath: string) => {
+    const expansions = props.entriesWindow?.expansions ?? null;
+
+    const toggleDir = React.useCallback((fullPath: string, collapsed?: CollapsedDirectoryInfo) => {
         setExpandedDirs((prev) => {
             const next = new Set(prev);
-            if (next.has(fullPath)) next.delete(fullPath);
-            else next.add(fullPath);
+            if (next.has(fullPath)) {
+                next.delete(fullPath);
+                if (collapsed) props.onCollapseDirectory?.(collapsed.entryPath);
+            } else {
+                next.add(fullPath);
+                if (collapsed) props.onExpandDirectory?.(collapsed.entryPath);
+            }
             return next;
         });
-    }, []);
+    }, [props.onCollapseDirectory, props.onExpandDirectory]);
 
     const nodesToRender: FlattenedNode[] = React.useMemo(() => {
         if (filteredNodes) {
@@ -99,13 +222,15 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
                 depth: 0,
             }));
         }
-        return flattenTree(tree, 0, expandedDirs);
-    }, [expandedDirs, filteredNodes, tree]);
+        return flattenTree(tree, 0, expandedDirs, expansions);
+    }, [expandedDirs, expansions, filteredNodes, tree]);
 
     return (
         <FlatList
             data={nodesToRender}
-            keyExtractor={(node) => `${node.kind}:${node.fullPath}`}
+            keyExtractor={(node) => (node.kind === 'loadMore'
+                ? `loadMore:${node.directoryPath}`
+                : `${node.kind}:${node.fullPath}`)}
             style={{ flex: 1, minHeight: 0 }}
             contentContainerStyle={{ paddingBottom: 20 }}
             renderItem={({ item: node, index }) => {
@@ -114,8 +239,18 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
                 const showDivider = index < nodesToRender.length - 1;
 
                 if (node.kind === 'dir') {
+                    const collapsed = node.collapsedDirectory;
                     const badge = badgeIndex?.getDirectoryBadge(node.fullPath) ?? null;
-                    const rightElement = badge ? (
+                    const countLabel = collapsed?.untrackedFileCount !== undefined
+                        ? t('files.changedFilesDirectoryFileCount', { count: collapsed.untrackedFileCount })
+                        : null;
+                    const rightElement = countLabel ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+                            <Text style={{ fontSize: 12, color: props.theme.colors.state.neutral.foreground, ...Typography.mono('semiBold') }}>
+                                {countLabel}
+                            </Text>
+                        </View>
+                    ) : badge ? (
                         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
                             <Text style={{ fontSize: 12, color: props.theme.colors.state.neutral.foreground, ...Typography.mono('semiBold') }}>
                                 {`${badge.kindLetter}${badge.changedCount}`}
@@ -129,7 +264,7 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
                                 <Text
                                     style={{
                                         fontSize: 12,
-                                        color: props.theme.colors.state.danger.foreground ?? props.theme.colors.state.danger.foreground ?? props.theme.colors.state.neutral.foreground,
+                                        color: props.theme.colors.state.danger.foreground ?? props.theme.colors.state.neutral.foreground,
                                         ...Typography.mono('semiBold'),
                                     }}
                                 >
@@ -147,7 +282,23 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
                             density="tight"
                             rightElement={rightElement}
                             showChevron={false}
-                            onPress={() => toggleDir(node.fullPath)}
+                            onPress={() => toggleDir(node.fullPath, collapsed)}
+                            showDivider={showDivider}
+                            style={{
+                                paddingLeft,
+                                paddingRight: 8,
+                            }}
+                        />
+                    );
+                }
+
+                if (node.kind === 'loadMore') {
+                    return (
+                        <Item
+                            title={t('files.changedFilesLoadMore')}
+                            density="tight"
+                            showChevron={false}
+                            onPress={() => props.onLoadMoreExpanded?.(node.directoryPath)}
                             showDivider={showDivider}
                             style={{
                                 paddingLeft,
@@ -172,7 +323,7 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
                             <Text
                                 style={{
                                     fontSize: 12,
-                                    color: props.theme.colors.state.danger.foreground ?? props.theme.colors.state.danger.foreground ?? props.theme.colors.state.neutral.foreground,
+                                    color: props.theme.colors.state.danger.foreground ?? props.theme.colors.state.neutral.foreground,
                                     ...Typography.mono('semiBold'),
                                 }}
                             >

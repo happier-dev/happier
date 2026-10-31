@@ -6316,6 +6316,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     files: {
+        changedFilesDirectoryFileCount: ({ count }: { count: number }) => `${count} 個檔案`,
+        changedFilesLoadMore: '載入更多檔案',
             revealInFiles: "在檔案中顯示",
             openChanges: "開啟變更",
         searchPlaceholder: '搜尋檔案...',

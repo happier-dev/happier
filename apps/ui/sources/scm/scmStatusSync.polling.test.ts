@@ -5,6 +5,10 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 const getStateMock = vi.hoisted(() => vi.fn());
 // The sync publishes through the batched store action; forward it to the per-action
 // spies so tests keep asserting the observable publish behavior per session.
+// The prune gate mirrors the store's canonical behavior: touched-path and
+// commit-selection pruning runs ONLY when the snapshot carries the complete
+// entry set — a summary's `entries: []` is evidence of absence, not absence
+// of evidence.
 const withBatchedScmPublish = vi.hoisted(() => (state: any) => {
     if (!state || state.publishSessionProjectScmSnapshots) return state;
     state.publishSessionProjectScmSnapshots = (publishes: ReadonlyArray<{ sessionId: string; snapshot: any; status: unknown }>) => {
@@ -14,10 +18,14 @@ const withBatchedScmPublish = vi.hoisted(() => (state: any) => {
                 state.updateSessionProjectScmSnapshotError(sessionId, null);
             }
             state.applyScmStatus(sessionId, status);
-            const activePaths = new Set((snapshot.entries ?? []).map((entry: any) => entry.path));
-            state.pruneSessionProjectScmTouchedPaths(sessionId, activePaths);
-            state.pruneSessionProjectScmCommitSelectionPaths(sessionId, activePaths);
-            state.pruneSessionProjectScmCommitSelectionPatches(sessionId, activePaths);
+            const presentation = snapshot.entriesPresentation;
+            const entriesAreComplete = presentation === undefined || presentation === 'complete';
+            if (entriesAreComplete) {
+                const activePaths = new Set((snapshot.entries ?? []).map((entry: any) => entry.path));
+                state.pruneSessionProjectScmTouchedPaths(sessionId, activePaths);
+                state.pruneSessionProjectScmCommitSelectionPaths(sessionId, activePaths);
+                state.pruneSessionProjectScmCommitSelectionPatches(sessionId, activePaths);
+            }
         }
     };
     return state;
@@ -28,6 +36,7 @@ const updateSnapshotErrorMock = vi.hoisted(() => vi.fn());
 const pruneCommitSelectionPathsMock = vi.hoisted(() => vi.fn());
 const pruneTouchedPathsMock = vi.hoisted(() => vi.fn());
 const pruneCommitSelectionPatchesMock = vi.hoisted(() => vi.fn());
+const markTouchedPathsMock = vi.hoisted(() => vi.fn());
 const getSnapshotErrorMock = vi.hoisted(() => vi.fn(() => null));
 const clearSearchCacheForProjectMock = vi.hoisted(() => vi.fn(async () => {}));
 
@@ -78,12 +87,44 @@ describe('ScmStatusSync polling', () => {
     pruneCommitSelectionPathsMock.mockReset();
     pruneTouchedPathsMock.mockReset();
     pruneCommitSelectionPatchesMock.mockReset();
+    markTouchedPathsMock.mockReset();
     fetchSnapshotForSessionMock.mockReset();
     getSnapshotErrorMock.mockReset();
     clearSearchCacheForProjectMock.mockClear();
   });
 
-  function buildRepoSnapshot(params: { fetchedAt: number; head?: string }) {
+  function buildRepoSnapshot(params: { fetchedAt: number; head?: string; pendingFiles?: number }) {
+    return buildSummaryShapeSnapshot({ fetchedAt: params.fetchedAt, head: params.head, pendingFiles: params.pendingFiles });
+  }
+
+  /** Legacy complete-entry snapshot (pre-split shape) used to seed the entries-carrying pin. */
+  function buildEntriesCarryingSnapshot(params: { fetchedAt: number; pendingFiles?: number }) {
+    const snapshot = buildSummaryShapeSnapshot({ fetchedAt: params.fetchedAt, pendingFiles: params.pendingFiles });
+    snapshot.entriesPresentation = 'complete';
+    snapshot.entries = [
+      {
+        path: 'src/a.ts',
+        previousPath: null,
+        kind: 'modified',
+        includeStatus: 'excluded',
+        pendingStatus: 'modified',
+        hasIncludedDelta: false,
+        hasPendingDelta: true,
+        stats: {
+          includedAdded: 0,
+          includedRemoved: 0,
+          pendingAdded: 1,
+          pendingRemoved: 1,
+          isBinary: false,
+        },
+      },
+    ];
+    return snapshot;
+  }
+
+  /** New-daemon summary snapshot: totals carry the truth, entries are omitted. */
+  function buildSummaryShapeSnapshot(params: { fetchedAt: number; head?: string; pendingFiles?: number }) {
+    const pendingFiles = params.pendingFiles ?? 1;
     return {
       projectKey: 'machine-a:/repo',
       fetchedAt: params.fetchedAt,
@@ -92,33 +133,18 @@ describe('ScmStatusSync polling', () => {
       branch: { head: params.head ?? 'main', upstream: null, ahead: 0, behind: 0, detached: false },
       stashCount: 0,
       hasConflicts: false,
-      entries: [
-        {
-          path: 'src/a.ts',
-          previousPath: null,
-          kind: 'modified',
-          includeStatus: 'excluded',
-          pendingStatus: 'modified',
-          hasIncludedDelta: false,
-          hasPendingDelta: true,
-          stats: {
-            includedAdded: 0,
-            includedRemoved: 0,
-            pendingAdded: 1,
-            pendingRemoved: 1,
-            isBinary: false,
-          },
-        },
-      ],
+      entries: [],
       totals: {
         includedFiles: 0,
-        pendingFiles: 1,
+        pendingFiles,
         untrackedFiles: 0,
         includedAdded: 0,
         includedRemoved: 0,
         pendingAdded: 1,
         pendingRemoved: 1,
+        changedFiles: pendingFiles,
       },
+      entriesPresentation: 'omitted',
     } as any;
   }
 
@@ -560,5 +586,147 @@ describe('ScmStatusSync polling', () => {
     // User refresh clears the suspension and retries.
     await syncer.invalidateFromUserAndAwait('s1');
     expect(fetchSnapshotForSessionMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('publishes summary snapshots and skips pruning while entries are omitted', async () => {
+    getStateMock.mockReturnValue({
+      sessions: {
+        s1: { id: 's1', metadata: { machineId: 'machine-a', path: '/repo' } },
+      },
+      applyScmStatus: applyScmStatusMock,
+      updateSessionProjectScmSnapshot: updateSnapshotMock,
+      updateSessionProjectScmSnapshotError: updateSnapshotErrorMock,
+      getSessionProjectScmSnapshotError: getSnapshotErrorMock,
+      pruneSessionProjectScmTouchedPaths: pruneTouchedPathsMock,
+      pruneSessionProjectScmCommitSelectionPaths: pruneCommitSelectionPathsMock,
+      pruneSessionProjectScmCommitSelectionPatches: pruneCommitSelectionPatchesMock,
+      markSessionProjectScmTouchedPaths: markTouchedPathsMock,
+    });
+
+    fetchSnapshotForSessionMock.mockResolvedValueOnce(buildRepoSnapshot({ fetchedAt: 100 }));
+
+    const { ScmStatusSync } = await import('./scmStatusSync');
+
+    const syncer = new ScmStatusSync();
+    await syncer.getSync('s1').invalidateAndAwait();
+
+    expect(updateSnapshotMock).toHaveBeenCalledTimes(1);
+    const published = updateSnapshotMock.mock.calls[0]?.[1];
+    expect(published?.entriesPresentation).toBe('omitted');
+    expect(published?.entries).toEqual([]);
+    // A summary's empty entries array must never reach the prune path.
+    expect(pruneTouchedPathsMock).not.toHaveBeenCalled();
+    expect(pruneCommitSelectionPathsMock).not.toHaveBeenCalled();
+    expect(pruneCommitSelectionPatchesMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the entries-carrying pin so summary polls with unchanged totals never refetch for attribution', async () => {
+    getStateMock.mockReturnValue({
+      sessions: {
+        s1: { id: 's1', metadata: { machineId: 'machine-a', path: '/repo' } },
+      },
+      applyScmStatus: applyScmStatusMock,
+      updateSessionProjectScmSnapshot: updateSnapshotMock,
+      updateSessionProjectScmSnapshotError: updateSnapshotErrorMock,
+      getSessionProjectScmSnapshotError: getSnapshotErrorMock,
+      pruneSessionProjectScmTouchedPaths: pruneTouchedPathsMock,
+      pruneSessionProjectScmCommitSelectionPaths: pruneCommitSelectionPathsMock,
+      pruneSessionProjectScmCommitSelectionPatches: pruneCommitSelectionPatchesMock,
+      markSessionProjectScmTouchedPaths: markTouchedPathsMock,
+    });
+
+    fetchSnapshotForSessionMock
+      .mockResolvedValueOnce(buildEntriesCarryingSnapshot({ fetchedAt: 100 }))
+      .mockResolvedValueOnce(buildRepoSnapshot({ fetchedAt: 200 }));
+
+    const { ScmStatusSync } = await import('./scmStatusSync');
+
+    const syncer = new ScmStatusSync();
+    await syncer.getSync('s1').invalidateAndAwait();
+
+    await syncer.invalidateFromMutationAndAwait('s1');
+
+    // Poll 1 (entries-carrying) + poll 2 (summary) only. A summary snapshot
+    // must not overwrite the entries-carrying pin — otherwise its totals would
+    // look like a delta and trigger a spurious attribution refetch.
+    expect(fetchSnapshotForSessionMock).toHaveBeenCalledTimes(2);
+    expect(fetchSnapshotForSessionMock).toHaveBeenNthCalledWith(1, 's1');
+    expect(fetchSnapshotForSessionMock).toHaveBeenNthCalledWith(2, 's1');
+    expect(markTouchedPathsMock).not.toHaveBeenCalled();
+  });
+
+  it('performs exactly one entries-carrying refetch when totals change inside a mutation window', async () => {
+    getStateMock.mockReturnValue({
+      sessions: {
+        s1: { id: 's1', metadata: { machineId: 'machine-a', path: '/repo' } },
+      },
+      applyScmStatus: applyScmStatusMock,
+      updateSessionProjectScmSnapshot: updateSnapshotMock,
+      updateSessionProjectScmSnapshotError: updateSnapshotErrorMock,
+      getSessionProjectScmSnapshotError: getSnapshotErrorMock,
+      pruneSessionProjectScmTouchedPaths: pruneTouchedPathsMock,
+      pruneSessionProjectScmCommitSelectionPaths: pruneCommitSelectionPathsMock,
+      pruneSessionProjectScmCommitSelectionPatches: pruneCommitSelectionPatchesMock,
+      markSessionProjectScmTouchedPaths: markTouchedPathsMock,
+    });
+
+    const refetched = buildEntriesCarryingSnapshot({ fetchedAt: 300, pendingFiles: 2 });
+    refetched.entries = [
+      {
+        ...refetched.entries[0],
+        stats: {
+          ...refetched.entries[0].stats,
+          pendingAdded: 5,
+          pendingRemoved: 2,
+        },
+      },
+      {
+        path: 'src/b.ts',
+        previousPath: null,
+        kind: 'added',
+        includeStatus: 'A',
+        pendingStatus: ' ',
+        hasIncludedDelta: true,
+        hasPendingDelta: false,
+        stats: {
+          includedAdded: 3,
+          includedRemoved: 0,
+          pendingAdded: 0,
+          pendingRemoved: 0,
+          isBinary: false,
+        },
+      },
+    ];
+
+    fetchSnapshotForSessionMock
+      .mockResolvedValueOnce(buildEntriesCarryingSnapshot({ fetchedAt: 100 }))
+      // Summary poll inside a mutation window with UNCHANGED totals: no refetch.
+      .mockResolvedValueOnce(buildRepoSnapshot({ fetchedAt: 200 }))
+      // Summary poll inside a fresh mutation window with a totals DELTA.
+      .mockResolvedValueOnce(buildRepoSnapshot({ fetchedAt: 300, pendingFiles: 2 }))
+      // The one entries-carrying attribution refetch.
+      .mockResolvedValueOnce(refetched);
+
+    const { ScmStatusSync } = await import('./scmStatusSync');
+
+    const syncer = new ScmStatusSync();
+    await syncer.getSync('s1').invalidateAndAwait();
+    await syncer.invalidateFromMutationAndAwait('s1');
+    expect(fetchSnapshotForSessionMock).toHaveBeenCalledTimes(2);
+    expect(markTouchedPathsMock).not.toHaveBeenCalled();
+
+    await syncer.invalidateFromMutationAndAwait('s1');
+
+    expect(fetchSnapshotForSessionMock).toHaveBeenCalledTimes(4);
+    expect(fetchSnapshotForSessionMock).toHaveBeenNthCalledWith(3, 's1');
+    expect(fetchSnapshotForSessionMock).toHaveBeenNthCalledWith(4, 's1', {
+      includeEntries: true,
+      untrackedFiles: 'normal',
+    });
+    // The marked paths come from the pinned-vs-refetched entry diff — never
+    // from the summary's omitted entries (which would fabricate removals).
+    expect(markTouchedPathsMock).toHaveBeenCalledTimes(1);
+    expect(markTouchedPathsMock.mock.calls[0]?.[0]).toBe('s1');
+    expect([...markTouchedPathsMock.mock.calls[0]?.[1]].sort()).toEqual(['src/a.ts', 'src/b.ts']);
   });
 });

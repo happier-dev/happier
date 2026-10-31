@@ -7093,6 +7093,8 @@ export const en = {
     },
 
         files: {
+            changedFilesDirectoryFileCount: ({ count }: { count: number }) => (count === 1 ? '1 file' : `${count} files`),
+            changedFilesLoadMore: 'Load more files',
             revealInFiles: "Reveal in Files",
             openChanges: "Open Changes",
             searchPlaceholder: 'Search files...',

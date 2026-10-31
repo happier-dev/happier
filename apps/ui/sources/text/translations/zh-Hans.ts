@@ -7275,6 +7275,8 @@ export const zhHans: TranslationStructure = {
   },
 
   files: {
+      changedFilesDirectoryFileCount: ({ count }: { count: number }) => `${count} 个文件`,
+      changedFilesLoadMore: '加载更多文件',
             revealInFiles: "在文件中显示",
             openChanges: "打开更改",
     searchPlaceholder: "搜索文件...",

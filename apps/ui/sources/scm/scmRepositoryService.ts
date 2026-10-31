@@ -36,6 +36,57 @@ type RepoSnapshotRequestContext = Readonly<{
     includeWorktreeStatus: boolean;
 }>;
 
+/**
+ * Entry-delivery options for a snapshot fetch.
+ *
+ * Default (no options) = the summary poll shape:
+ * `{ includeEntries: false, untrackedFiles: 'normal' }` — totals and non-entry
+ * facts only, per the delivery-follows-consumption split. Entry rows load on
+ * demand (Files surface window, attribution refetch) via explicit options:
+ *
+ *  - `{ includeEntries: true, untrackedFiles: 'normal' }` — collapsed rows
+ *    (directory entries + loose files); the attribution diff shape.
+ *  - `{ includeEntries: true, untrackedFiles: 'all' }` — today's per-file UX;
+ *    the fallback shape when the paged entries RPC is unsupported (old daemon,
+ *    sapling backend).
+ *
+ * Old daemons strip the unknown request fields and return today's exact
+ * full-entry response, so every shape degrades safely.
+ */
+export type ScmSnapshotFetchOptions = Readonly<{
+    includeEntries?: boolean;
+    untrackedFiles?: 'normal' | 'all';
+}>;
+
+const SUMMARY_SCM_STATUS_REQUEST_FIELDS = Object.freeze({
+    includeEntries: false,
+    untrackedFiles: 'normal',
+} as const);
+
+function buildScmStatusRequestFields(options?: ScmSnapshotFetchOptions): {
+    includeEntries: boolean;
+    untrackedFiles: 'normal' | 'all';
+} {
+    if (options?.includeEntries === true) {
+        return {
+            includeEntries: true,
+            untrackedFiles: options.untrackedFiles ?? 'normal',
+        };
+    }
+    return { ...SUMMARY_SCM_STATUS_REQUEST_FIELDS };
+}
+
+function scmStatusRequestCacheNamespaceSuffix(options?: ScmSnapshotFetchOptions): string {
+    // Entry-carrying fetches have a different response shape than summary
+    // fetches for the same repo identity; they must never dedupe against each
+    // other in flight or collide in the snapshot cache. Summary stays on the
+    // bare identity key so every existing readCached consumer keeps working.
+    if (options?.includeEntries === true) {
+        return `::entries=${options.untrackedFiles ?? 'normal'}`;
+    }
+    return '';
+}
+
 function splitNormalizedPathSegments(path: string): readonly string[] {
     const normalized = normalizeFileSystemPath(path);
     if (!normalized) return [];
@@ -171,19 +222,30 @@ function normalizeScmSnapshotResponseOrThrow(input: {
 }
 
 export function snapshotToScmStatus(snapshot: UiScmWorkingSnapshot): ScmStatus {
-    const modifiedCount = snapshot.entries.filter((entry) => entry.kind !== 'untracked').length;
-    const untrackedCount = snapshot.entries.filter((entry) => entry.kind === 'untracked').length;
-    const includedCount = snapshot.totals.includedFiles;
-    const includedLinesAdded = snapshot.totals.includedAdded;
-    const includedLinesRemoved = snapshot.totals.includedRemoved;
-    const pendingLinesAdded = snapshot.totals.pendingAdded;
-    const pendingLinesRemoved = snapshot.totals.pendingRemoved;
+    // Totals-first: totals are computed by the backend from the FULL entry set
+    // before any bounding or collapsing, so they stay truthful in every
+    // delivery mode (T2). No consumer may claim "no changes" or "N changes"
+    // from an omitted or truncated entries array.
+    const totals = snapshot.totals;
+    const totalsChangedFiles = totals.changedFiles;
+    const untrackedCount = totals.untrackedFiles;
+    const modifiedCount = totalsChangedFiles !== undefined
+        ? Math.max(0, totalsChangedFiles - untrackedCount)
+        : snapshot.entries.filter((entry) => entry.kind !== 'untracked').length;
+    const isDirty = totalsChangedFiles !== undefined
+        ? totalsChangedFiles > 0
+        : totals.includedFiles + totals.pendingFiles + untrackedCount > 0;
+    const includedCount = totals.includedFiles;
+    const includedLinesAdded = totals.includedAdded;
+    const includedLinesRemoved = totals.includedRemoved;
+    const pendingLinesAdded = totals.pendingAdded;
+    const pendingLinesRemoved = totals.pendingRemoved;
     const linesAdded = includedLinesAdded + pendingLinesAdded;
     const linesRemoved = includedLinesRemoved + pendingLinesRemoved;
 
     return {
         branch: snapshot.branch.head,
-        isDirty: snapshot.entries.length > 0,
+        isDirty,
         modifiedCount,
         untrackedCount,
         includedCount,
@@ -195,7 +257,7 @@ export function snapshotToScmStatus(snapshot: UiScmWorkingSnapshot): ScmStatus {
         linesAdded,
         linesRemoved,
         linesChanged: linesAdded + linesRemoved,
-        ...(snapshot.totals.isComplete === undefined ? {} : { isComplete: snapshot.totals.isComplete }),
+        ...(totals.isComplete === undefined ? {} : { isComplete: totals.isComplete }),
         upstreamBranch: snapshot.branch.upstream,
         aheadCount: snapshot.branch.ahead,
         behindCount: snapshot.branch.behind,
@@ -347,6 +409,11 @@ export class ScmRepositoryService {
         let bestMatchKey: string | null = null;
         let bestMatchRootLen = -1;
         for (const [candidateKey, candidateSnapshot] of this.repoSnapshotCache) {
+            if (candidateKey.includes('::entries=')) {
+                // Entry-shape variants are fetch-shape cache artifacts, never a
+                // summary reader's snapshot; do not alias readers onto them.
+                continue;
+            }
             if (!candidateKey.startsWith(`${input.machineId}:`)) {
                 continue;
             }
@@ -502,19 +569,21 @@ export class ScmRepositoryService {
         }
     }
 
-    async fetchSnapshotForSession(sessionId: string): Promise<UiScmWorkingSnapshot | null> {
+    async fetchSnapshotForSession(sessionId: string, options?: ScmSnapshotFetchOptions): Promise<UiScmWorkingSnapshot | null> {
         const request = resolveRepoScmSessionRequest({ sessionId });
         if (!request) {
             return null;
         }
 
-        return await this.fetchSnapshotForRepoIdentity(request.repoIdentityKey, async () => {
+        const requestFields = buildScmStatusRequestFields(options);
+        const cacheSuffix = scmStatusRequestCacheNamespaceSuffix(options);
+        return await this.fetchSnapshotForRepoIdentity(`${request.repoIdentityKey}${cacheSuffix}`, async () => {
             const fetchedAt = Date.now();
 
             // Session SCM RPC runs within the session working directory already. Passing an absolute
             // `cwd` is both redundant and brittle (tilde paths, symlink differences, etc.) because
             // the CLI security layer resolves `cwd` relative to the working directory.
-            const response = await sessionScmStatusSnapshot(sessionId, {});
+            const response = await sessionScmStatusSnapshot(sessionId, requestFields);
             const projectKey = resolveCanonicalScmProjectKey({
                 fallbackProjectKey: request.repoIdentityKey,
                 machineId: request.machineId,
@@ -526,33 +595,47 @@ export class ScmRepositoryService {
                 fetchedAt,
                 emptyRootPath: null,
             });
-        }, { requestContext: request.machineId
-            ? {
-                machineId: request.machineId,
-                resolvedPath: request.resolvedPath,
-                includeWorktreeStatus: false,
-            }
-            : undefined,
+        }, {
+            // Entry-carrying fetches are response-shape artifacts of THIS request;
+            // keep them under the request-shape key and never alias or canonicalize
+            // them onto the bare projectKey slot summary readers read.
+            ...(cacheSuffix
+                ? { canonicalIdentityKeyOverride: () => `${request.repoIdentityKey}${cacheSuffix}` }
+                : {}),
+            requestContext: request.machineId
+                ? {
+                    machineId: request.machineId,
+                    resolvedPath: request.resolvedPath,
+                    includeWorktreeStatus: false,
+                }
+                : undefined,
         });
     }
 
-    async fetchSnapshotForMachinePath(input: Readonly<{
-        machineId: string;
-        path: string;
-        includeWorktreeStatus?: boolean;
-    }>): Promise<UiScmWorkingSnapshot | null> {
+    async fetchSnapshotForMachinePath(
+        input: Readonly<{
+            machineId: string;
+            path: string;
+            includeWorktreeStatus?: boolean;
+        }>,
+        options?: ScmSnapshotFetchOptions
+    ): Promise<UiScmWorkingSnapshot | null> {
         const request = resolveRepoScmMachinePathRequest(input);
         if (!request) {
             return null;
         }
         const includeWorktreeStatus = input.includeWorktreeStatus === true;
-        const cacheNamespaceKey = this.applyStatusCacheNamespace(request.repoIdentityKey, includeWorktreeStatus);
-        return await this.fetchSnapshotForRepoIdentity(cacheNamespaceKey, async () => {
+        const requestFields = {
+            cwd: request.resolvedPath,
+            ...(includeWorktreeStatus ? { includeWorktreeStatus: true } : {}),
+            ...buildScmStatusRequestFields(options),
+        };
+        const cacheSuffix = scmStatusRequestCacheNamespaceSuffix(options);
+        const baseCacheKey = this.applyStatusCacheNamespace(request.repoIdentityKey, includeWorktreeStatus);
+        const cacheKey = `${baseCacheKey}${cacheSuffix}`;
+        return await this.fetchSnapshotForRepoIdentity(cacheKey, async () => {
             const fetchedAt = Date.now();
-            const response = await machineScmStatusSnapshot(request.machineId, {
-                cwd: request.resolvedPath,
-                ...(includeWorktreeStatus ? { includeWorktreeStatus: true } : {}),
-            });
+            const response = await machineScmStatusSnapshot(request.machineId, requestFields);
             const projectKey = resolveCanonicalScmProjectKey({
                 fallbackProjectKey: request.repoIdentityKey,
                 machineId: request.machineId,
@@ -564,9 +647,15 @@ export class ScmRepositoryService {
                 fetchedAt,
                 emptyRootPath: request.resolvedPath,
             });
-        }, { canonicalIdentityKeyOverride: includeWorktreeStatus
-            ? (snapshot) => this.applyStatusCacheNamespace(snapshot?.projectKey ?? request.repoIdentityKey, true)
-            : undefined,
+        }, {
+            canonicalIdentityKeyOverride: (snapshot) => {
+                if (cacheSuffix) {
+                    return `${baseCacheKey}${cacheSuffix}`;
+                }
+                return includeWorktreeStatus
+                    ? this.applyStatusCacheNamespace(snapshot?.projectKey || request.repoIdentityKey, true)
+                    : (snapshot?.projectKey || request.repoIdentityKey);
+            },
             requestContext: {
                 machineId: request.machineId,
                 resolvedPath: request.resolvedPath,

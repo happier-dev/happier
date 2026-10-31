@@ -7061,6 +7061,8 @@ export const de: TranslationStructure = {
     },
 
         files: {
+            changedFilesDirectoryFileCount: ({ count }: { count: number }) => (count === 1 ? '1 Datei' : `${count} Dateien`),
+            changedFilesLoadMore: 'Weitere Dateien laden',
             revealInFiles: "In Dateien anzeigen",
             openChanges: "Änderungen öffnen",
             searchPlaceholder: 'Dateien suchen…',

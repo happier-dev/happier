@@ -18,6 +18,14 @@ export interface ScmFileStatus {
     oldPath?: string;
     isBinary?: boolean;
     isComplete?: boolean;
+    /**
+     * True on a collapsed untracked-directory row (opt-in `'normal'`-mode
+     * snapshots). Directory rows are non-actionable for per-file operations
+     * (diff/discard act on file paths) — see isDirectoryLikeScmFileStatus.
+     */
+    isDirectory?: boolean;
+    /** Untracked FILE count under a collapsed directory row. */
+    untrackedFileCount?: number;
 }
 
 export interface ScmStatusFiles {
@@ -36,8 +44,13 @@ export interface ScmStatusFiles {
 const snapshotStatusFilesCache = new WeakMap<ScmWorkingSnapshot, ScmStatusFiles>();
 
 function toFileStatus(entry: ScmWorkingEntry, isIncluded: boolean): ScmFileStatus {
-    const segments = entry.path.split('/');
-    const fileName = segments[segments.length - 1] || entry.path;
+    // Collapsed directory entries carry their own name; do not run them
+    // through the file-segment split (a 'D/' path would render as name 'D/'
+    // inside folder 'D' — malformed).
+    const isDirectory = entry.isDirectory === true;
+    const displayPath = isDirectory && entry.path.endsWith('/') ? entry.path.slice(0, -1) : entry.path;
+    const segments = displayPath.split('/');
+    const fileName = segments[segments.length - 1] || displayPath;
     const filePath = segments.slice(0, -1).join('/');
 
     return {
@@ -52,22 +65,21 @@ function toFileStatus(entry: ScmWorkingEntry, isIncluded: boolean): ScmFileStatu
         oldPath: entry.previousPath ?? undefined,
         isBinary: entry.stats.isBinary,
         ...(entry.stats.isComplete === undefined ? {} : { isComplete: entry.stats.isComplete }),
+        ...(isDirectory ? { isDirectory: true } : {}),
+        ...(entry.untrackedFileCount === undefined ? {} : { untrackedFileCount: entry.untrackedFileCount }),
     };
 }
 
-export function snapshotToScmStatusFiles(snapshot: ScmWorkingSnapshot): ScmStatusFiles {
-    const cached = snapshotStatusFilesCache.get(snapshot);
-    if (cached) return cached;
-
-    const includedFiles = snapshot.entries
+function buildScmStatusFiles(entries: readonly ScmWorkingEntry[], snapshot: ScmWorkingSnapshot): ScmStatusFiles {
+    const includedFiles = entries
         .filter((entry) => entry.hasIncludedDelta)
         .map((entry) => toFileStatus(entry, true));
 
-    const pendingFiles = snapshot.entries
+    const pendingFiles = entries
         .filter((entry) => entry.hasPendingDelta)
         .map((entry) => toFileStatus(entry, false));
 
-    const result: ScmStatusFiles = {
+    return {
         includedFiles,
         pendingFiles,
         changeSetModel: snapshot.capabilities?.changeSetModel ?? 'index',
@@ -79,7 +91,22 @@ export function snapshotToScmStatusFiles(snapshot: ScmWorkingSnapshot): ScmStatu
         totalIncluded: includedFiles.length,
         totalPending: pendingFiles.length,
     };
+}
 
+/**
+ * Row projection from an EXPLICIT entry list — the Files surface's bounded
+ * entries window (or a snapshot's fallback rows). Same projection owner as
+ * `snapshotToScmStatusFiles`; only the entry source differs.
+ */
+export function buildScmStatusFilesFromEntries(entries: readonly ScmWorkingEntry[], snapshot: ScmWorkingSnapshot): ScmStatusFiles {
+    return buildScmStatusFiles(entries, snapshot);
+}
+
+export function snapshotToScmStatusFiles(snapshot: ScmWorkingSnapshot): ScmStatusFiles {
+    const cached = snapshotStatusFilesCache.get(snapshot);
+    if (cached) return cached;
+
+    const result = buildScmStatusFiles(snapshot.entries, snapshot);
     snapshotStatusFilesCache.set(snapshot, result);
     return result;
 }
