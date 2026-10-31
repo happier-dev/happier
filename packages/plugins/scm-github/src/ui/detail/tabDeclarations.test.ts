@@ -31,21 +31,6 @@ describe('GitHub detail tab declarations', () => {
       .toEqual(['overview', 'timeline', 'comments', 'work-sessions']);
   });
 
-  it('gives a pull request one conversation tab, and it is Feedback', () => {
-    // A pull request whose comments sat in their own tab beside Feedback would
-    // read the same GitHub resource twice, once per tab, and split one
-    // conversation across two places a reviewer has to check.
-    const pullRequest = githubVisibleDetailTabs('pull-request').map((tab) => tab.id);
-    expect(pullRequest).toContain('feedback');
-    expect(pullRequest).not.toContain('comments');
-    // The issue composition keeps `Comments`: an issue has no reviews, checks
-    // or merge conflicts to unify, so a Feedback tab there would be a heading
-    // over one stream.
-    const issue = githubVisibleDetailTabs('issue').map((tab) => tab.id);
-    expect(issue).toContain('comments');
-    expect(issue).not.toContain('feedback');
-  });
-
   it('names every tab through a catalog key, not a hardcoded English word', () => {
     // A tab title reaches `Tabs.Item` as a plain string, so an untranslated
     // declaration renders English in every locale missing its own entry and

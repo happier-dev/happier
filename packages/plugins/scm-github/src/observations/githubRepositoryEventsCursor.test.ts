@@ -35,7 +35,8 @@ describe('GitHub repository-events checkpoint', () => {
       observedAtMs: 2_000,
       etag: 'current-page-set',
       maxEntries: 10,
-      events: [{ eventId: '4', createdAtMs: 1_900, observation: { kind: 'push', id: '4' } }, {
+      events: [{ eventId: '5', createdAtMs: 1_950, observation: { kind: 'push', id: '5' } }, {
+        eventId: '4', createdAtMs: 1_900, observation: { kind: 'push', id: '4' } }, {
         eventId: '3', createdAtMs: 1_800, observation: null,
       }, {
         eventId: '2', createdAtMs: 900, observation: { kind: 'push', id: '2' } }, {
@@ -45,12 +46,12 @@ describe('GitHub repository-events checkpoint', () => {
 
     expect(result).toEqual({
       kind: 'observations',
-      observations: [{ kind: 'push', id: '4' }],
+      observations: [{ kind: 'push', id: '4' }, { kind: 'push', id: '5' }],
       checkpoint: {
         v: 1,
         observationStartsAtMs: 1_000,
         observedAtMs: 2_000,
-        seenEventIds: ['1', '2', '3', '4'],
+        seenEventIds: ['1', '2', '3', '4', '5'],
         etag: 'current-page-set',
       },
     });

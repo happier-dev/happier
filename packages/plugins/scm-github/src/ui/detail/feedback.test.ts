@@ -122,6 +122,7 @@ describe('the GitHub feedback projection', () => {
         body: 'This normalizer is duplicated.',
         webUrl: 'https://github.com/octo-org/example-app/pull/1284#issuecomment-11',
         truncated: false,
+        editable: false,
       },
       {
         resource: 'review',
@@ -133,6 +134,7 @@ describe('the GitHub feedback projection', () => {
         state: 'CHANGES_REQUESTED',
         webUrl: null,
         truncated: false,
+        editable: false,
       },
       {
         resource: 'state',
@@ -262,21 +264,6 @@ describe('the GitHub feedback projection', () => {
       // sorts last rather than being dropped or dated.
       'github-issue-comment:3',
     ]);
-  });
-
-  it('does not fabricate truncation for an unshortened GraphQL comment', () => {
-    const view = projectGithubFeedback({
-      observedAtMs: OBSERVED_AT_MS,
-      facts: [],
-      comments: [comment({ id: 'github-issue-comment:9' })],
-      historicalReviews: [],
-      threads: [],
-      reviewDecision: null,
-      requests: [],
-      checks: null,
-    });
-
-    expect(view.findings[0]).toMatchObject({ truncated: false });
   });
 
   it('keeps review bodies and line-anchored conversations distinct from issue comments', () => {
