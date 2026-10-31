@@ -17,7 +17,7 @@ test('stack path overrides expand ~/ against the provided HOME env', () => {
   };
 
   assert.equal(getHappyStacksHomeDir(env), '/scoped/home/.happier-stack-custom');
-  assert.equal(getWorkspaceDir('/tmp/root', env), '/scoped/home/.happier-stack-custom/workspace');
+  assert.equal(getWorkspaceDir('/tmp/root', env), join('/scoped/home/.happier-stack-custom', 'workspace'));
   assert.equal(getStacksStorageRoot(env), '/scoped/home/.happier/stacks-custom');
 });
 

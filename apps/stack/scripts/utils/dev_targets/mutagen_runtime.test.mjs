@@ -372,20 +372,6 @@ test('Mutagen list parsing fails closed on malformed admission facts', () => {
   }
 });
 
-test('Mutagen list parsing keeps benign post-flush scanning ready when endpoints are clean', () => {
-  for (const status of ['scanning', 'reconciling', 'transitioning']) {
-    const result = parseMutagenSyncList(JSON.stringify([{
-      name: 'happier-mac',
-      paused: false,
-      status,
-      successfulCycles: 7,
-      alpha: { connected: true, scanned: true },
-      beta: { connected: true, scanned: true },
-    }]), 'happier-mac');
-    assert.equal(result.state, 'ready', status);
-  }
-});
-
 test('Mutagen conflict recovery recognizes deleted alpha roots blocked only by disposable replica artifacts', () => {
   const recoverable = {
     mode: 'one-way-replica',

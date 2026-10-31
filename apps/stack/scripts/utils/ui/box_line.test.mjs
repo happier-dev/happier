@@ -12,9 +12,10 @@ test('formatBoxLine strips ansi and pads when allowAnsi=false', () => {
 
 test('formatBoxLine preserves ansi and pads/clips by visible width when allowAnsi=true', () => {
   const s = '\x1b[1;31mRED\x1b[0m!';
-  const out = formatBoxLine({ text: s, width: 4, allowAnsi: true });
-  assert.ok(out.includes('\x1b['), 'expected ansi to be preserved');
-  assert.equal(stripAnsi(out).length, 4);
-  assert.equal(stripAnsi(out), 'RED!');
+  for (const [width, expected] of [[2, 'RE'], [4, 'RED!'], [6, 'RED!  ']]) {
+    const out = formatBoxLine({ text: s, width, allowAnsi: true });
+    assert.ok(out.includes('\x1b['), 'expected ansi to be preserved');
+    assert.equal(stripAnsi(out), expected);
+  }
 });
 

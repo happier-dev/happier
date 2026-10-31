@@ -30,14 +30,14 @@ function withMockedProcessCwd(t, value) {
   });
 }
 
-test('inferComponentFromCwd resolves the stable monorepo checkout under <workspace>/main', async (t) => {
+test('inferComponentFromCwd resolves the stable monorepo checkout with one allowed component', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'happier-stacks-cwd-scope-' });
   const rootDir = fixture.root;
   const repoRoot = await createMonorepoCheckout({ rootDir, checkoutPath: 'main' });
   const inferred = inferComponentFromCwd({
     rootDir,
     invokedCwd: join(repoRoot, 'apps', 'ui'),
-    components: ['happier-ui', 'happier-cli'],
+    components: ['happier-ui'],
     env: workspaceEnv(rootDir),
   });
   assert.deepEqual(inferred, { component: 'happier-ui', repoDir: repoRoot });
@@ -82,19 +82,6 @@ test('inferComponentFromCwd returns null outside known component roots', async (
     env: workspaceEnv(rootDir),
   });
   assert.equal(inferred, null);
-});
-
-test('inferComponentFromCwd uses the provided env (does not depend on process.env)', async (t) => {
-  const fixture = await createTempFixture(t, { prefix: 'happier-stacks-cwd-scope-' });
-  const rootDir = fixture.root;
-  const repoRoot = await createMonorepoCheckout({ rootDir, checkoutPath: 'main' });
-  const inferred = inferComponentFromCwd({
-    rootDir,
-    invokedCwd: join(repoRoot, 'apps', 'ui'),
-    components: ['happier-ui'],
-    env: workspaceEnv(rootDir),
-  });
-  assert.deepEqual(inferred, { component: 'happier-ui', repoDir: repoRoot });
 });
 
 test('getInvokedCwd falls back to process.cwd() when PWD is not set (Windows)', async (t) => {

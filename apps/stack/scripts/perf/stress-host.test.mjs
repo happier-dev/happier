@@ -19,11 +19,16 @@ test('isolated stress observation uses real container identity and physical SQL 
 });
 
 test('an isolated observer refuses foreign or stopped containers instead of certifying them', async () => {
-  await assert.rejects(createStressHostObserver({
-    context: { composeProjectName: 'happier-stress-perf-test', uiDir: '/export', containers: [{ id: 'owned-api', service: 'api' }], postgresContainerId: 'owned-postgres' },
-    inspect: async () => [{ Id: 'owned-api', Image: 'sha256:image', Config: { Labels: { 'com.docker.compose.project': 'other-project' } }, State: { Running: true } }],
-    sqlStatements: async () => 0,
-  }), /ownership/);
+  for (const [project, running] of [
+    ['other-project', true],
+    ['happier-stress-perf-test', false],
+  ]) {
+    await assert.rejects(createStressHostObserver({
+      context: { composeProjectName: 'happier-stress-perf-test', uiDir: '/export', containers: [{ id: 'owned-api', service: 'api', image: 'sha256:image' }], postgresContainerId: 'owned-postgres' },
+      inspect: async () => [{ Id: 'owned-api', Image: 'sha256:image', Config: { Labels: { 'com.docker.compose.project': project } }, State: { Running: running } }],
+      sqlStatements: async () => 0,
+    }), /ownership/);
+  }
 });
 
 test('a replaced image cannot masquerade as the source selected before the measurement', async () => {

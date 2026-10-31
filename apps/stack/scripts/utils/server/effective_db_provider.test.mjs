@@ -66,6 +66,12 @@ test('applyEffectiveDbProviderEnv materializes the canonical provider and reject
     serverComponentName: 'happier-server',
     env: { HAPPIER_DB_PROVIDER: 'sqlite' },
   }), 'sqlite');
+  const invalidEnv = { HAPPIER_DB_PROVIDER: 'unsupported' };
+  assert.throws(() => applyEffectiveDbProviderEnv({
+    serverComponentName: 'happier-server',
+    env: invalidEnv,
+  }), /Unsupported DB provider/);
+  assert.deepEqual(invalidEnv, { HAPPIER_DB_PROVIDER: 'unsupported' });
 });
 
 test('provider transition preserves compatible providers and exact MySQL authority', () => {
@@ -155,8 +161,13 @@ test('managed Postgres authority requires the exact canonical local credential a
     databaseUrl: 'postgresql://handy:secret@127.0.0.1:5439/handy',
     env,
   }), true);
-  assert.equal(isCanonicalManagedPostgresAuthority({
-    databaseUrl: 'postgresql://operator:secret@db.example/happier',
-    env,
-  }), false);
+  for (const databaseUrl of [
+    'postgresql://operator:secret@127.0.0.1:5439/handy',
+    'postgresql://handy:different@127.0.0.1:5439/handy',
+    'postgresql://handy:secret@127.0.0.1:5439/other',
+    'postgresql://handy:secret@127.0.0.1:5440/handy',
+    'postgresql://handy:secret@db.example:5439/handy',
+  ]) {
+    assert.equal(isCanonicalManagedPostgresAuthority({ databaseUrl, env }), false, databaseUrl);
+  }
 });

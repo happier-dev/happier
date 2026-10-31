@@ -100,6 +100,10 @@ test('ensureDevCheckout prefers upstream/dev when upstream is pushable', async (
   const res = await ensureDevCheckout({ rootDir: fixture.stackRootDir, env });
   assert.equal(res.ok, true);
   assert.equal(res.trackingRemote, 'upstream');
+
+  const devDir = join(fixture.workspaceDir, 'dev');
+  const { stdout } = await runCapture('git', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { cwd: devDir });
+  assert.equal(stdout.trim(), 'upstream/dev');
 });
 
 test('ensureDevCheckout uses origin/dev when upstream is not pushable (fork workflow)', async (t) => {

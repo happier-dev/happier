@@ -118,26 +118,6 @@ test('a reused PID is reclaimable only with a local mismatching birth witness', 
   assert.deepEqual(await readdir(join(root, 'dist')), ['marker.txt']);
 });
 
-test('buildIntoTempThenReplace preserves existing dir when build fails', async (t) => {
-  const root = await withTempRoot(t);
-  const outDir = join(root, 'ui');
-  await mkdir(outDir, { recursive: true });
-  await writeFile(join(outDir, 'marker.txt'), 'old\n', 'utf-8');
-
-  await assert.rejects(
-    async () => {
-      await buildIntoTempThenReplace(outDir, async (tmp) => {
-        await writeFile(join(tmp, 'marker.txt'), 'new\n', 'utf-8');
-        throw new Error('boom');
-      });
-    },
-    /boom/
-  );
-
-  const after = await readFile(join(outDir, 'marker.txt'), 'utf-8');
-  assert.equal(after, 'old\n');
-});
-
 test('buildIntoTempThenReplace leaves the live dir in place when staged build fails', async (t) => {
   const root = await withTempRoot(t);
   const outDir = join(root, 'ui');

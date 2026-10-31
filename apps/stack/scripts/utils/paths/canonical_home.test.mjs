@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 import { expandHome, getCanonicalHomeDirFromEnv, getCanonicalHomeEnvPathFromEnv } from './canonical_home.mjs';
 
@@ -24,7 +25,7 @@ test('getCanonicalHomeDirFromEnv expands override and defaults to ~/.happier-sta
     getCanonicalHomeDirFromEnv({ HOME: '/scoped/home', HAPPIER_STACK_CANONICAL_HOME_DIR: '~/custom-home' }),
     '/scoped/home/custom-home',
   );
-  assert.equal(getCanonicalHomeDirFromEnv({}), `${homedir()}/.happier-stack`);
+  assert.equal(getCanonicalHomeDirFromEnv({}), join(homedir(), '.happier-stack'));
 });
 
 test('getCanonicalHomeEnvPathFromEnv resolves .env under canonical home', () => {
@@ -32,5 +33,5 @@ test('getCanonicalHomeEnvPathFromEnv resolves .env under canonical home', () => 
     HOME: '/scoped/home',
     HAPPIER_STACK_CANONICAL_HOME_DIR: '~/custom-home',
   });
-  assert.equal(envPath, '/scoped/home/custom-home/.env');
+  assert.equal(envPath, join('/scoped/home/custom-home', '.env'));
 });

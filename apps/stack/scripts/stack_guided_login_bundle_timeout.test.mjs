@@ -7,33 +7,6 @@ import { tmpdir } from 'node:os';
 
 import { assertExpoWebappBundlesOrThrow } from './utils/auth/stack_guided_login.mjs';
 
-async function createFakeMetroServer() {
-  const server = createServer((req, res) => {
-    if (req.url === '/') {
-      res.statusCode = 200;
-      res.setHeader('content-type', 'text/html; charset=utf-8');
-      res.end('<html><head></head><body><script src="/bundle.js"></script></body></html>');
-      return;
-    }
-    if (req.url === '/bundle.js') {
-      res.statusCode = 404;
-      res.setHeader('content-type', 'text/plain; charset=utf-8');
-      res.end('not ready');
-      return;
-    }
-    res.statusCode = 404;
-    res.end('no');
-  });
-
-  await new Promise((resolvePromise, rejectPromise) => {
-    server.once('error', rejectPromise);
-    server.listen(0, '127.0.0.1', resolvePromise);
-  });
-  const port = server.address()?.port;
-  assert.ok(Number.isFinite(port) && port > 0, `expected listening port, got ${String(port)}`);
-  return { server, port };
-}
-
 async function createResolverErrorMetroServer() {
   const server = createServer((req, res) => {
     if (req.url === '/') {
@@ -64,39 +37,29 @@ async function createResolverErrorMetroServer() {
   return { server, port };
 }
 
-test('assertExpoWebappBundlesOrThrow supports a configurable timeoutMs', async (t) => {
-  let metro;
-  try {
-    try {
-      metro = await createFakeMetroServer();
-    } catch (e) {
-      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
-        t.skip('sandbox disallows binding localhost test server (EPERM)');
-        return;
-      }
-      throw e;
+test('assertExpoWebappBundlesOrThrow honors the caller deadline before a later ready response', async (t) => {
+  const timeoutMs = 250;
+  let now = 0;
+  let pending = true;
+  // Only the clock and HTTP transport are substituted; the readiness loop is real.
+  t.mock.method(Date, 'now', () => now);
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (pending) {
+      pending = false;
+      now += timeoutMs;
+      return new Response('not ready', { status: 404 });
     }
+    return new Response(String(url).endsWith('/')
+      ? '<html><body><script src="/bundle.js"></script></body></html>'
+      : 'console.log("ready")');
+  });
 
-    await assert.rejects(
-      async () => {
-        await assertExpoWebappBundlesOrThrow({
-          rootDir: process.cwd(),
-          stackName: 'main',
-          webappUrl: `http://127.0.0.1:${metro.port}`,
-          timeoutMs: 1,
-        });
-      },
-      (err) => {
-        assert.ok(err instanceof Error);
-        assert.match(err.message, /bundle/i);
-        return true;
-      }
-    );
-  } finally {
-    if (metro?.server) {
-      await new Promise((resolvePromise) => metro.server.close(resolvePromise));
-    }
-  }
+  await assert.rejects(assertExpoWebappBundlesOrThrow({
+    rootDir: process.cwd(),
+    stackName: 'main',
+    webappUrl: 'http://127.0.0.1:8081',
+    timeoutMs,
+  }), /bundle not loadable/);
 });
 
 test('assertExpoWebappBundlesOrThrow surfaces the symlink remediation hint for symlinked node_modules', async (t) => {

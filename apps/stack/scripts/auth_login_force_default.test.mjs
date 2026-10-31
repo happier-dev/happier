@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { createAuthStackFixture, getStackRootFromMeta, hstackBinPath, runNodeCapture } from './testkit/auth_testkit.mjs';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
@@ -71,9 +72,9 @@ test('hstack auth login --force keeps credentials when guided startup is decline
   const rootDir = getStackRootFromMeta(import.meta.url);
   const fixture = await createAuthStackFixture({
     prefix: 'hstack-auth-force-decline-',
-    stackEnvLines: BASE_ENV_LINES,
+    stackEnvLines: [...BASE_ENV_LINES, 'HAPPIER_STACK_TEST_TTY=1', 'HAPPIER_STACK_NON_INTERACTIVE=0'],
   });
-  const cliHomeDir = `${fixture.tmpDir}/cli-home`;
+  const cliHomeDir = join(fixture.storageDir, 'main', 'cli');
   const internalServerUrl = 'http://127.0.0.1:4102';
 
   try {
@@ -82,22 +83,20 @@ test('hstack auth login --force keeps credentials when guided startup is decline
       serverUrl: internalServerUrl,
       env: fixture.buildEnv(),
     });
-    await mkdir(`${cliHomeDir}/servers/${credentialPaths.activeServerId}`, { recursive: true });
+    await mkdir(join(cliHomeDir, 'servers', credentialPaths.activeServerId), { recursive: true });
     await writeFile(credentialPaths.serverScopedPath, 'keep-me\n', 'utf-8');
 
     const res = await runNodeCapture(
       [hstackBinPath(rootDir), 'auth', 'login', '--force', '--method', 'web'],
       {
         cwd: rootDir,
-        env: fixture.buildEnv({
-          HAPPIER_HOME_DIR: cliHomeDir,
-          HAPPIER_STACK_TEST_TTY: '1',
-        }),
+        env: fixture.buildEnv(),
         input: 'n\n',
       },
     );
 
     assert.notStrictEqual(res.code, 0, `expected non-zero exit when guided startup is declined\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.match(res.stderr, /cannot run guided login because the stack is not running\./);
     const remaining = await readFile(credentialPaths.serverScopedPath, 'utf-8');
     assert.equal(remaining, 'keep-me\n');
   } finally {
