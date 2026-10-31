@@ -33,7 +33,10 @@ import {
 import {
     resolveTranscriptViewportAnchorIndex,
 } from '@/components/sessions/transcript/viewport/entryRestore/transcriptViewportAnchorResolution';
-import type { SessionOpenLatch } from '@/components/sessions/transcript/viewport/sessionOpen/sessionOpenLatch';
+import {
+    isBottomEntryInitialFillSufficient,
+    type SessionOpenLatch,
+} from '@/components/sessions/transcript/viewport/sessionOpen/sessionOpenLatch';
 import { resolveSessionOpenWebInitialPinRetryPlan } from '@/components/sessions/transcript/viewport/sessionOpen/webInitialPinRetryPlan';
 import type {
     SessionOpenArmResetPlan,
@@ -161,6 +164,8 @@ type TranscriptEntryHostDeps = Readonly<{
     isLoaded: boolean;
     isScrollable(): boolean;
     isViewportAnchorSeqLoaded(seq: number, items: readonly ChatTranscriptListItem[]): boolean;
+    /** The older pager's own prefetch-threshold answer for the current physical viewport. */
+    isViewportNearOlderEdge(): boolean;
     jumpToSeq: number | null | undefined;
     jumpToSeqActiveRef: MutableRef<boolean>;
     lastScrollOffsetForIntentRef: MutableRef<number | null>;
@@ -1239,6 +1244,12 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
         if (deps.sessionOpenLatch.initialFillStatus() !== 'idle') return;
         if (deps.listLayoutHeight <= 0) return;
         if (!deps.sessionOpenLatch.markInitialFillInProgress(deps.sessionId)) return;
+        // The latch requests a bottom-entry fill under this same rule, so the loops stop where
+        // it would have settled without one. `isNearOlderEdge` is only measured on web.
+        const isInitialFillSufficient = () => isBottomEntryInitialFillSufficient({
+            isNearOlderEdge: deps.isViewportNearOlderEdge(),
+            isScrollable: deps.isScrollable(),
+        });
         const entersAtBottom = deps.sessionEntryViewportRef.current?.shouldFollowBottom !== false;
         if (Platform.OS === 'web') {
             // Web can paint the newest transcript immediately: keeping historical loads
@@ -1260,9 +1271,17 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
             // raw events that add zero main-lane height — would therefore paint underfilled
             // and never backfill, because there is nothing to scroll.
             //
-            // So keep filling to scrollability, but do it AFTER settlement and with the
-            // prepend viewport preserved: the reader already has an interactive session and
-            // older rows land above their view instead of moving it.
+            // So keep filling, but do it AFTER settlement and with the prepend viewport
+            // preserved: the reader already has an interactive session and older rows land
+            // above their view instead of moving it.
+            //
+            // Scrollability alone is not sufficiency. The pager arms only on a live threshold
+            // ENTER, and a reader who opens already inside its prefetch threshold never
+            // enters it: their first upward gesture clamps at the loaded top before any older
+            // page exists, and the late prepend then keeps them near the tail (live
+            // 2026-10-31: a 12-message first page painted 911px in a 671px viewport). So the
+            // fill runs until the pager's own threshold predicate says the reader is clear of
+            // the older edge.
             // Bottom entries only. An ANCHORED entry is owned by entry restore, which
             // materializes its anchor with its own `loadOlder({ preservePrependViewport: false })`
             // behind `anchorLookupInFlightRef`. Running this fill alongside it put two
@@ -1294,7 +1313,7 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
                 let transientRetries = 0;
                 let contentHeightBaselinePx = deps.listContentHeightRef.current;
                 while (!webFillSignal.aborted) {
-                    if (deps.isScrollable() && deps.committedMessagesCount > 0) break;
+                    if (isInitialFillSufficient() && deps.committedMessagesCount > 0) break;
                     if (loadsWithoutProgress >= maxNoProgressLoads) break;
                     if (Date.now() >= absoluteFillDeadlineMs) break;
                     const result = await deps.loadOlder({ preservePrependViewport: true, showLoadingIndicator: false });
@@ -1368,7 +1387,7 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
             try {
                 while (true) {
                     if (signal.aborted) return;
-                    if (deps.isScrollable() && deps.committedMessagesCount > 0) break;
+                    if (isInitialFillSufficient() && deps.committedMessagesCount > 0) break;
                     if (deps.entrySliceWindowRef.current?.sessionId === deps.sessionId) break;
                     if (Date.now() - lastDisplayableProgressAtMs >= budgetMs) break;
                     if (Date.now() >= absoluteFillDeadlineMs) break;
@@ -1410,6 +1429,7 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
         deps.initialBottomPositionOwner,
         deps.isLoaded,
         deps.isScrollable,
+        deps.isViewportNearOlderEdge,
         deps.jumpToSeq,
         deps.listContentHeight,
         deps.listContentHeightRef,
@@ -1436,6 +1456,7 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
             contentHeight: deps.listContentHeight,
             hasEntrySliceWindow: deps.entrySliceWindowRef.current?.sessionId === deps.sessionId,
             isLoaded: deps.isLoaded,
+            isNearOlderEdge: deps.isViewportNearOlderEdge(),
             isScrollable: deps.isScrollable(),
             itemCount: deps.displayItemsLength,
             layoutHeight: deps.listLayoutHeight,

@@ -394,6 +394,7 @@ export function useTranscriptSessionEntryLifecycle(
             contentHeight: deps.listContentHeightRef.current,
             hasEntrySliceWindow: deps.entrySliceWindowRef.current?.sessionId === deps.sessionId,
             isLoaded: deps.isLoaded,
+            isNearOlderEdge: false,
             isScrollable: false,
             itemCount: deps.getItemCount(),
             layoutHeight: deps.listLayoutHeightRef.current,
