@@ -1950,13 +1950,14 @@ alone does not prove that a hook was authenticated or processed successfully.
 
 `backends/codex/utils/permissionModePolicy.ts` owns approval and sandbox policy.
 Native profile selection and the legacy wire adapter derive from that same owner.
-Codex 0.166 accepts `permissions` as a profile-id string: `:read-only`,
-`:workspace`, or `:danger-full-access`. Read-only requests keep approval policy
-`never` and network access restricted for sandboxed commands; the legacy
-`readOnly` turn policy also sets `networkAccess: false`. Native profile support and the managed-policy scalar
-approval fallback are independent: falling back from granular Auto approvals
-preserves an accepted native profile. These are development-source corrections,
-not a claim about released CLI availability.
+Codex 0.166 accepts `permissions` as a profile-id string. Read-only and full-access
+requests use `:read-only` and `:danger-full-access`, respectively. Workspace policies
+use the existing legacy adapter because the native `:workspace` defaults do not
+preserve their explicit network and writable-root settings. Read-only requests keep
+approval policy `never` and network access restricted for sandboxed commands; the
+legacy `readOnly` turn policy also sets `networkAccess: false`. Native profile
+support and the managed-policy scalar approval fallback remain independent.
+These are development-source corrections, not a claim about released CLI availability.
 
 ### Control server (local IPC)
 
