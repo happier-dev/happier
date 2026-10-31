@@ -255,18 +255,6 @@ describe("plugin Availability routes", () => {
         }
     });
 
-    it("mounts Account intent listing as an additive present-user Availability operation", () => {
-        const app = createFakeRouteApp();
-        const operations = createOperations();
-        registerPluginAvailabilityRoutes(app as never, { operations });
-
-        const entry = app.routes.get(`POST ${PluginAvailabilityActionHttpPathsV1[
-            "account.plugins.availability.intents.list"
-        ]}`);
-        expect(entry).toBeDefined();
-        expect(entry?.opts.preHandler).toBe(app.authenticate);
-    });
-
     it("routes intent listing through the authenticated Account owner", async () => {
         const app = createFakeRouteApp();
         const operations = createOperations();

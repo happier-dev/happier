@@ -1,4 +1,4 @@
-import { createPrivateKey } from "node:crypto";
+import { createPublicKey, verify } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { LiveActivityRemoteUpdateRequestV1 } from "@happier-dev/protocol";
 
@@ -49,7 +49,11 @@ describe("direct APNs Live Activity JWT signing", () => {
             iat: 1_800_000_000,
         });
         expect(Buffer.from(signatureRaw!, "base64url")).toHaveLength(64);
-        expect(createPrivateKey(p8).asymmetricKeyType).toBe("ec");
+        const verificationKey = { key: createPublicKey(p8), dsaEncoding: "ieee-p1363" as const };
+        const signature = Buffer.from(signatureRaw!, "base64url");
+        expect(verify("SHA256", Buffer.from(`${headerRaw}.${payloadRaw}`), verificationKey, signature)).toBe(true);
+        const alteredPayload = Buffer.from(JSON.stringify({ iss: "TEAMID1234", iat: 1_800_000_001 })).toString("base64url");
+        expect(verify("SHA256", Buffer.from(`${headerRaw}.${alteredPayload}`), verificationKey, signature)).toBe(false);
     });
 
     it("rotates token-auth JWTs by issued-at time without exposing private key material", async () => {
@@ -71,9 +75,17 @@ describe("direct APNs Live Activity JWT signing", () => {
             issuedAtEpochSeconds: 1_800_003_000,
         });
 
-        expect(first).not.toBe(second);
+        for (const [jwt, issuedAt] of [[first, 1_800_000_000], [second, 1_800_003_000]] as const) {
+            const [header, payload, signature] = jwt.split(".");
+            expect(JSON.parse(Buffer.from(payload!, "base64url").toString("utf8"))).toEqual({
+                iss: "TEAMID1234",
+                iat: issuedAt,
+            });
+            expect(verify("SHA256", Buffer.from(`${header}.${payload}`), {
+                key: createPublicKey(privateKeyPem), dsaEncoding: "ieee-p1363",
+            }, Buffer.from(signature!, "base64url"))).toBe(true);
+        }
         expect(JSON.stringify([first, second])).not.toContain(privateKeyPem);
-        expect(createPrivateKey(privateKeyPem).asymmetricKeyType).toBe("ec");
     });
 
     it("builds APNs trace metadata from the server send time", async () => {

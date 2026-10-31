@@ -13,7 +13,6 @@ import {
     hashPasswordMaterial,
     passwordHashAdmission,
     performDummyPasswordWork,
-    setPasswordHashAdmissionForTesting,
     verifyPasswordMaterial,
     PASSWORD_HASH_WRITER_PARAMETERS_V1,
 } from './passwordMaterialVerifier';
@@ -166,22 +165,17 @@ describe('password hash admission', () => {
     });
 
     it('routes real and dummy password work through the same shared bound', async () => {
-        const admission = createPasswordHashAdmission({ maxConcurrent: 1, maxQueued: 8 });
-        setPasswordHashAdmissionForTesting(admission);
-        try {
-            expect(passwordHashAdmission()).toBe(admission);
-            const pending = [
-                hashPasswordMaterial(utf8(PASSWORD)),
-                performDummyPasswordWork(),
-                performDummyPasswordWork(),
-            ];
-            // Dummy work must contend for the same slots; otherwise a flood of
-            // unknown-Account attempts walks straight past load shedding.
-            expect(admission.inspect().active + admission.inspect().queued).toBe(3);
-            await Promise.all(pending);
-            expect(admission.inspect()).toEqual({ active: 0, queued: 0 });
-        } finally {
-            setPasswordHashAdmissionForTesting(null);
-        }
+        const admission = passwordHashAdmission();
+        const pending = [
+            hashPasswordMaterial(utf8(PASSWORD)),
+            performDummyPasswordWork(),
+            performDummyPasswordWork(),
+        ];
+        // Dummy work must contend for the same slots; otherwise a flood of
+        // unknown-Account attempts walks straight past load shedding.
+        const admitted = admission.inspect().active + admission.inspect().queued;
+        await Promise.all(pending);
+        expect(admitted).toBe(3);
+        expect(admission.inspect()).toEqual({ active: 0, queued: 0 });
     });
 });

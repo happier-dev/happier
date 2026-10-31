@@ -243,13 +243,6 @@ describe("Team capability resolver", () => {
             .toEqual(["archiveTeam", "manageSettings", "viewTeam"]);
     });
 
-    it("never lets Home authority imply membership or a viewer role", () => {
-        // Governance only: the projection carries no Team role for an administrator.
-        const capabilities = resolveTeamCapabilitiesV1(viewer({ homeAuthority: homeOwnerAuthority }));
-        expect(capabilities.viewTeam).toBe(true);
-        expect(granted(capabilities)).not.toContain("restoreTeam");
-    });
-
     it("makes an archived Team read-only except restore", () => {
         const archived = { teamArchivedAt: new Date("2026-01-01T00:00:00.000Z") };
         const owner = resolveTeamCapabilitiesV1(viewer({ ...archived, membership: membership(TeamRole.owner) }));

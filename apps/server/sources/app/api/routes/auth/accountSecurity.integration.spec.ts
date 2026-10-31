@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { emailPasswordAuthMethodModule } from "@/app/auth/methods/modules/emailPasswordAuthMethodModule";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
-import { hashPasswordMaterial, setPasswordHashAdmissionForTesting, verifyPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifier";
+import { hashPasswordMaterial, passwordHashAdmission, verifyPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifier";
 import { parseAccountPasswordCredentialV1, type E2eeAccountPasswordCredentialV1 } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
@@ -20,7 +20,6 @@ import { createMtlsClaimCode } from "@/app/auth/providers/mtls/mtlsClaimCode";
 import { HOME_GOVERNANCE_POLICY_ID } from "@/app/home/governance/governancePolicy";
 import { setTeamPolicyInTx } from "@/app/teams/policy";
 import { registerAuthEntryRoute } from "./registerAuthEntryRoute";
-import { createPasswordHashAdmission } from "@/app/auth/password/passwordHashAdmission";
 import { ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1, NATIVE_AUTH_PASSWORD_RESET_SUBMIT_PATH_V1 } from "@happier-dev/protocol";
 
 describe("Account Security native password lifecycle", () => {
@@ -41,16 +40,15 @@ describe("Account Security native password lifecycle", () => {
     it("maps real password-hash admission pressure to a retryable failure after reading the Home settings", async () => {
         const account = await db.account.create({ data: { publicKey: crypto.randomUUID() } });
         const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
-        const admission = createPasswordHashAdmission({ maxConcurrent: 1, maxQueued: 0 });
-        setPasswordHashAdmissionForTesting(admission);
+        const admission = passwordHashAdmission();
         let releaseSlot = () => {};
-        const holder = admission.run(() => new Promise<void>((resolve) => { releaseSlot = resolve; }));
-        await new Promise((resolve) => setImmediate(resolve));
+        const held = new Promise<void>((resolve) => { releaseSlot = resolve; });
         const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler);
         app.setSerializerCompiler(serializerCompiler);
         enableAuthentication(app);
         registerAccountSecurityRoutes(app);
+        const holders = Array.from({ length: admission.maxConcurrent + admission.maxQueued }, () => admission.run(() => held));
         try {
             const response = await app.inject({ method: "POST", url: ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1,
                 headers: { authorization: `Bearer ${token}` }, payload: {
@@ -61,8 +59,7 @@ describe("Account Security native password lifecycle", () => {
             expect(response.json()).toEqual({ error: "password_hash_overloaded" });
         } finally {
             releaseSlot();
-            await holder;
-            setPasswordHashAdmissionForTesting(null);
+            await Promise.all(holders);
             await app.close();
         }
     });

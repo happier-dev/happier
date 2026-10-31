@@ -297,14 +297,16 @@ describe("Review Comment Account-encryption migration owner", () => {
         expect(store.rewriteEventSensitiveEnvelope).not.toHaveBeenCalled();
     });
 
-    it("enforces target mode and exact source envelope bytes before rewrite", async () => {
+    it.each(["source", "target"] as const)("rejects an invalid %s envelope independently before rewrite", async (invalid) => {
         const row = storedComment({ commentId: "comment-1" });
-        const item = migrationItem(row, {
+        const item = migrationItem(row, invalid === "source" ? {
             expectedSensitiveSource: {
                 v: 1,
                 layout: "canonical_v1",
-                envelope: plain({ different: true }),
+                // Keep the source mode valid so only the exact-byte comparison can reject it.
+                envelope: { t: "encrypted", c: "different-source" },
             },
+        } : {
             targetSensitiveEnvelope: { t: "encrypted", c: "opaque" },
         });
         const store = persistence([row]);
@@ -317,6 +319,7 @@ describe("Review Comment Account-encryption migration owner", () => {
         })).rejects.toThrow("review_comment_migration_envelope_mismatch");
 
         expect(store.rewriteCommentSensitiveEnvelope).not.toHaveBeenCalled();
+        expect(store.rewriteEventSensitiveEnvelope).not.toHaveBeenCalled();
     });
 
     it("matches exact post-state without performing a rewrite", async () => {

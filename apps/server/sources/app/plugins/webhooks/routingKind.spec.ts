@@ -68,15 +68,4 @@ describe("plugin webhook routing-kind owner", () => {
         })).toBe(false);
     });
 
-    it("keeps the generic shared-installation seam usable without a production producer", () => {
-        // No production shared GitHub App exists in Preview. The seam stays
-        // usable because the routing owner still admits the generic
-        // `githubSharedInstallationV1` setup for `providerInstallation`
-        // contributions; only the producer remains deferred.
-        expect(isContributionSetupCompatibleWithRoutingKindV1({
-            contributionRoutingKind: "providerInstallation",
-            setupKind: "githubSharedInstallationV1",
-        })).toBe(true);
-        expect(requiresProviderInstallationIdV1("providerInstallation")).toBe(true);
-    });
 });

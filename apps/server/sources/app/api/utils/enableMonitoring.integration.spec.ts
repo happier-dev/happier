@@ -26,22 +26,6 @@ describe('enableMonitoring', () => {
         await harness?.close().catch(() => {});
     });
 
-    it('reports service as happier-server in liveness response for /health', async () => {
-        const app = createMonitoringApp();
-
-        try {
-            enableMonitoring(app);
-            await app.ready();
-
-            const res = await app.inject({ method: 'GET', url: '/health' });
-            expect(res.statusCode).toBe(200);
-            const body = res.json() as { service?: string };
-            expect(body.service).toBe('happier-server');
-        } finally {
-            await app.close().catch(() => {});
-        }
-    });
-
     it('returns the full healthy liveness response body shape from /health', async () => {
         const app = createMonitoringApp();
 

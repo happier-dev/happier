@@ -31,23 +31,31 @@ describe("review comment snapshot validation", () => {
         })).not.toThrow();
     });
 
-    it("rejects forged hash and bidi metadata", () => {
-        expect(() => validateReviewCommentSnapshot({
-            kind: "text",
+    it.each([
+        { field: "selectedLinesHash", override: { selectedLinesHash: "sha256:wrong" }, error: /selectedLinesHash/ },
+        { field: "contextWindowHash", override: { contextWindowHash: "sha256:wrong" }, error: /contextWindowHash/ },
+        { field: "hasBidiControls", override: { hasBidiControls: false }, error: /bidi/ },
+    ])("rejects forged $field independently", ({ override, error }) => {
+        const lines = {
             selectedLines: ["const hidden = \"\u202Etxt\";"],
             beforeContext: [],
             afterContext: [],
-            selectedLinesHash: "sha256:wrong",
-            contextWindowHash: "sha256:wrong",
+        };
+        const snapshot = {
+            kind: "text" as const,
+            ...lines,
+            ...buildReviewCommentTextSnapshotHashes(lines),
             capturedAt: 1,
             fileLength: 1,
-            source: "workingTree",
+            source: "workingTree" as const,
             isUncommitted: true,
             isUntracked: false,
             truncated: false,
-            hasBidiControls: false,
+            hasBidiControls: true,
             likelyMinified: false,
-        })).toThrow(/hash|bidi/i);
+        };
+        expect(() => validateReviewCommentSnapshot(snapshot)).not.toThrow();
+        expect(() => validateReviewCommentSnapshot({ ...snapshot, ...override })).toThrow(error);
     });
 
     it("accepts complete valid snapshots above the former line and byte cutoffs", () => {

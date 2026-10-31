@@ -72,6 +72,7 @@ describe("createPluginWebhookStoredEnvelopeV1", () => {
         expect(result.ok).toBe(true);
         if (!result.ok) return;
         const envelope = JSON.parse(new TextDecoder().decode(result.canonicalEnvelopeBytes));
+        expect(envelope.t).toBe("encrypted");
         if (envelope.t !== "encrypted") return;
         expect(result.encryption).toMatchObject({
             mode: "e2ee",

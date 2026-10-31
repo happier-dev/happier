@@ -1,21 +1,17 @@
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { acceptPasswordTextV1, encodePasswordCredentialFieldV1, NativeEmailPasswordPreloginResponseV1Schema,
     PASSWORD_ENVELOPE_SUPPORTED_WRITER_PROFILES_V1 } from "@happier-dev/protocol";
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { emailPasswordAuthMethodModule } from "@/app/auth/methods/modules/emailPasswordAuthMethodModule";
-import { hashPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifier";
+import { hashPasswordMaterial, passwordHashAdmission } from "@/app/auth/password/passwordMaterialVerifier";
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { resolveEffectiveHomeAuthMethods } from "@/app/auth/methods/effectiveHomeAuthMethods";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
-import {
-    setPasswordHashAdmissionForTesting,
-} from "@/app/auth/password/passwordMaterialVerifier";
-import type { PasswordHashAdmission } from "@/app/auth/password/passwordHashAdmission";
 
 describe("native password authentication through the registered method", () => {
     let harness: LightSqliteHarness;
@@ -286,25 +282,14 @@ describe("native password authentication through the registered method", () => {
 
         let releasePasswordWork = () => {};
         const passwordWorkGate = new Promise<void>((resolve) => { releasePasswordWork = resolve; });
-        let observePasswordWork = () => {};
-        const passwordWorkStarted = new Promise<void>((resolve) => { observePasswordWork = resolve; });
-        const admission: PasswordHashAdmission = {
-            maxConcurrent: 1,
-            maxQueued: 0,
-            inspect: () => ({ active: 1, queued: 0 }),
-            run: async <T>(work: () => Promise<T>): Promise<T> => {
-                observePasswordWork();
-                await passwordWorkGate;
-                return await work();
-            },
-        };
+        const admission = passwordHashAdmission();
         const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler);
         app.setSerializerCompiler(serializerCompiler);
         enableAuthentication(app);
         emailPasswordAuthMethodModule.registerRoutes(app);
         await app.ready();
-        setPasswordHashAdmissionForTesting(admission);
+        const holders = Array.from({ length: admission.maxConcurrent }, () => admission.run(() => passwordWorkGate));
         try {
             const pending = app.inject({
                 method: "POST",
@@ -315,7 +300,7 @@ describe("native password authentication through the registered method", () => {
                     authKey: encodePasswordCredentialFieldV1(authKey),
                 },
             });
-            await passwordWorkStarted;
+            await vi.waitFor(() => expect(admission.inspect().queued).toBe(1));
             await db.homeGovernancePolicy.create({
                 data: {
                     id: "home",
@@ -333,7 +318,7 @@ describe("native password authentication through the registered method", () => {
             })).toBe(0);
         } finally {
             releasePasswordWork();
-            setPasswordHashAdmissionForTesting(null);
+            await Promise.all(holders);
             await db.homeGovernancePolicy.deleteMany({});
             await app.close();
         }

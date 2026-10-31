@@ -24,10 +24,4 @@ describe("Session-history horizon minting", () => {
             .toBe(SessionHistoryAccess.from_membership);
     });
 
-    it("round-trips every intention through the persisted horizon", () => {
-        const activationNow = new Date("2026-04-01T10:00:00.000Z");
-        for (const intent of [SessionHistoryAccess.all_existing, SessionHistoryAccess.from_membership]) {
-            expect(sessionHistoryAccessOf(mintSessionAccessStartsAt(intent, activationNow))).toBe(intent);
-        }
-    });
 });

@@ -902,7 +902,11 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
                     accountId: owner.id,
                     tag: `e2ee-publication-failure-${entry}`,
                     accountEncryptionMode: "e2ee",
-                    dataEncryptionKey: Buffer.from(tweetnacl.randomBytes(32)).toString("base64"),
+                    dataEncryptionKey: encodeBase64(new Uint8Array(sealEncryptedDataKeyEnvelopeV1({
+                        dataKey: tweetnacl.randomBytes(32),
+                        recipientPublicKey: content.publicKey,
+                        randomBytes: tweetnacl.randomBytes,
+                    }))),
                 });
                 await expect(inTx(async (tx) => {
                     if (entry === "ordinary") return await createOrRejoinLayout1SessionByTagInTx(tx, input);
@@ -910,7 +914,7 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
                         prepared: input,
                         sessionId: "reserved-e2ee-publication-failure",
                     });
-                })).rejects.toThrow();
+                })).rejects.toMatchObject({ code: "P2003", meta: { modelName: "AccountChange" } });
                 await expect(db.session.count({ where: { accountId: owner.id } })).resolves.toBe(0);
                 await expect(db.sessionDataKeyEnvelope.count({
                     where: { recipientAccountId: owner.id },

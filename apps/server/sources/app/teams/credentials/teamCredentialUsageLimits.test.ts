@@ -15,10 +15,10 @@ const event = (overrides: Partial<TeamCredentialUsageLimitEvent> = {}): TeamCred
 describe('Team credential usage limits', () => {
     it('uses Monday-start UTC windows and denies at the recorded ceiling', () => {
         const result = evaluateTeamCredentialUsageLimits({ limits: [limit()], events: [event(), event({ id: 'event-2' })], actorAccountId: 'member-1', now });
-        expect(result.ok).toBe(false);
-        if (!result.ok && 'denied' in result) {
-            expect(result.denied.resetsAt.toISOString()).toBe('2026-09-14T00:00:00.000Z');
-        }
+        expect(result).toMatchObject({
+            ok: false,
+            denied: { limitId: 'limit-1', recorded: 2, maximum: 2, resetsAt: new Date('2026-09-14T00:00:00.000Z') },
+        });
     });
 
     it('applies resource, member and Group ceilings together', () => {
@@ -34,11 +34,11 @@ describe('Team credential usage limits', () => {
             ],
             actorAccountId: 'member-1', currentGroupIds: ['group-1'], now,
         });
-        expect(result.ok).toBe(false);
-        if (!result.ok && 'denied' in result) {
-            expect(result.denied.limitId).toBe('group');
-            expect(result.applied.map((decision) => decision.limitId)).toEqual(['resource', 'member', 'group']);
-        }
+        expect(result).toMatchObject({
+            ok: false,
+            denied: { limitId: 'group' },
+            applied: [{ limitId: 'resource' }, { limitId: 'member' }, { limitId: 'group' }],
+        });
     });
 
     it('uses the latest reset among every exhausted applicable limit', () => {
@@ -51,12 +51,11 @@ describe('Team credential usage limits', () => {
             actorAccountId: 'member-1',
             now,
         });
-        expect(result.ok).toBe(false);
-        if (!result.ok && 'denied' in result) {
-            expect(result.denied.limitId).toBe('monthly');
-            expect(result.denied.resetsAt.toISOString()).toBe('2026-10-01T00:00:00.000Z');
-            expect(result.applied).toHaveLength(2);
-        }
+        expect(result).toMatchObject({
+            ok: false,
+            denied: { limitId: 'monthly', resetsAt: new Date('2026-10-01T00:00:00.000Z') },
+            applied: [{ limitId: 'daily' }, { limitId: 'monthly' }],
+        });
     });
 
     it('does not reinterpret the request-count admission fact as missing terminal cost', () => {

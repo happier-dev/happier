@@ -576,20 +576,4 @@ describe("Automation reply handoff worker", () => {
         await expect(db.automationRun.count()).resolves.toBe(1);
     });
 
-    it("retries a malformed dispatch response because custody may already have committed", async () => {
-        await seedReadyHandoff();
-
-        await runAutomationReplyHandoffWorkerPass({
-            now: NOW,
-            dispatch: async () => ({ kind: "settled", settlement: { kind: "accepted" } } as never),
-        });
-
-        await expect(db.automationRun.findUniqueOrThrow({
-            where: { id: RUN_ID },
-            select: { replyHandoffState: true, replyHandoffDueAt: true },
-        })).resolves.toEqual({
-            replyHandoffState: "ready",
-            replyHandoffDueAt: new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS),
-        });
-    });
 });

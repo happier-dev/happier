@@ -384,7 +384,7 @@ describe("usageQueryService scoped aggregation", () => {
         expect(result.breakdowns?.machine?.map((entry) => [entry.key, entry.tokens.total])).toEqual([["machine-one", 30], ["unknown", 10]]);
         expect(result.coverage?.status).not.toBe("complete");
         const filtered = await querySession(owner.accountId, owner.sessionId, { filters: { sessionIds: [owner.sessionId], sources: ["runtime"] } });
-        expect(filtered.totals.tokens.total).toBeLessThanOrEqual(40);
+        expect(filtered.totals.tokens.total).toBe(40);
     });
 
     it("returns separate cost facts and explicit unpriced/ranked coverage rather than a blended price", async () => {
@@ -414,20 +414,6 @@ describe("usageQueryService scoped aggregation", () => {
         const result = await querySession(owner.accountId, owner.sessionId);
 
         expect(result.totals.tokens.total).toBe(100);
-    });
-
-    it("uses only the latest cumulative snapshot", async () => {
-        const owner = await createUsageOwner("cumulative");
-        await db.usageEvent.createMany({
-            data: [
-                buildUsageEvent({ ...owner, observedAt: "2026-07-01T10:00:00.000Z", scope: "session_cumulative", totalTokens: 100 }),
-                buildUsageEvent({ ...owner, observedAt: "2026-07-01T10:05:00.000Z", scope: "session_cumulative", totalTokens: 140 }),
-            ],
-        });
-
-        const result = await querySession(owner.accountId, owner.sessionId);
-
-        expect(result.totals.tokens.total).toBe(140);
     });
 
     it("returns the latest context values on each session breakdown row", async () => {
@@ -607,6 +593,7 @@ describe("usageQueryService scoped aggregation", () => {
 
         const result = await querySession(owner.accountId, owner.sessionId);
 
+        expect(result.totals.tokens.total).toBe(140);
         expect(result.series?.map((bucket) => bucket.tokens.total)).toEqual([100, 40]);
         expect(result.series?.reduce((sum, bucket) => sum + bucket.tokens.total, 0)).toBe(140);
     });
@@ -700,7 +687,9 @@ describe("usageQueryService scoped aggregation", () => {
                 includeModelTimeline: true,
             });
 
-            expect(result.series?.[0]?.bucketStartMs).toBe(result.modelTimeline?.[0]?.bucketStartMs);
+            const bucketStartMs = Date.UTC(2026, 6, 1);
+            expect(result.series).toMatchObject([{ bucketStartMs, tokens: { total: 10 } }]);
+            expect(result.modelTimeline).toMatchObject([{ bucketStartMs, leaders: [{ tokens: { total: 10 } }] }]);
         } finally {
             process.env.TZ = previousTimeZone;
         }

@@ -251,17 +251,19 @@ describe('durable subagent custody on SQLite', () => {
         });
         const scope = custodyScope();
         const sharedIdentity = `shared-id-${randomUUID()}`;
-        const ownerWrite = request(session.id, { scope, subagentId: sharedIdentity, operationId: 'same-operation' });
-        const participantWrite = request(session.id, { scope, subagentId: sharedIdentity, operationId: 'same-operation' });
+        const ownerWrite = request(session.id, { scope, subagentId: sharedIdentity, operationId: 'same-operation',
+            groupId: 'owner-group', status: 'running' });
+        const participantWrite = request(session.id, { scope, subagentId: sharedIdentity, operationId: 'same-operation',
+            groupId: 'participant-group', status: 'completed' });
 
         await expect(mutateSessionSubagentCustody({ actorUserId: owner.id, authentication, sessionId: session.id, request: ownerWrite }))
             .resolves.toMatchObject({ ok: true, replayed: false });
         await expect(mutateSessionSubagentCustody({ actorUserId: participant.id, authentication, sessionId: session.id, request: participantWrite }))
             .resolves.toMatchObject({ ok: true, replayed: false });
         await expect(listSessionSubagentCustody({ actorUserId: owner.id, authentication, sessionId: session.id, query: { ...scope, custodyKey: ownerWrite.custodyKey } }))
-            .resolves.toMatchObject({ ok: true, records: [{ subagentId: sharedIdentity }] });
+            .resolves.toMatchObject({ ok: true, records: [{ subagentId: sharedIdentity, groupId: 'owner-group', status: 'running' }] });
         await expect(listSessionSubagentCustody({ actorUserId: participant.id, authentication, sessionId: session.id, query: { ...scope, custodyKey: ownerWrite.custodyKey } }))
-            .resolves.toMatchObject({ ok: true, records: [{ subagentId: sharedIdentity }] });
+            .resolves.toMatchObject({ ok: true, records: [{ subagentId: sharedIdentity, groupId: 'participant-group', status: 'completed' }] });
         await expect(mutateSessionSubagentCustody({ actorUserId: outsider.id, authentication, sessionId: session.id, request: request(session.id, { scope }) }))
             .resolves.toEqual({ ok: false, error: 'session-not-found' });
         await expect(db.sessionSubagentCustody.groupBy({ by: ['accountId'], where: { sessionId: session.id }, _count: true }))

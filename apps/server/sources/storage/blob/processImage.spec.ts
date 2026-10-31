@@ -1,6 +1,6 @@
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { IMAGE_MAX_DECODE_PIXELS, processImage, tryProcessImage } from "./processImage";
+import { processImage, tryProcessImage } from "./processImage";
 
 async function jpeg(width: number, height: number): Promise<Buffer> {
     return sharp({ create: { width, height, channels: 3, background: { r: 255, g: 0, b: 0 } } })
@@ -45,9 +45,17 @@ describe("processImage publication contract", () => {
     });
 
     it("fits a square logo by cropping rather than distorting or upscaling", async () => {
-        const wide = await processImage(await jpeg(1600, 800), { fit: "cover", maxEdge: 512 });
+        const center = await sharp({ create: { width: 800, height: 800, channels: 3, background: "#00ff00" } }).png().toBuffer();
+        const source = await sharp({ create: { width: 1600, height: 800, channels: 3, background: "#ff0000" } })
+            .composite([{ input: center, left: 400, top: 0 }]).png().toBuffer();
+        const wide = await processImage(source, { fit: "cover", maxEdge: 512 });
         expect(wide.width).toBe(512);
         expect(wide.height).toBe(512);
+        // Stretching the whole source would leave red at this point; a centered crop is green.
+        const pixel = await sharp(wide.bytes).extract({ left: 32, top: 256, width: 1, height: 1 }).raw().toBuffer();
+        expect(pixel[0]).toBeLessThanOrEqual(5);
+        expect(pixel[1]).toBeGreaterThanOrEqual(250);
+        expect(pixel[2]).toBeLessThanOrEqual(5);
 
         const small = await processImage(await jpeg(300, 120), { fit: "cover", maxEdge: 512 });
         expect(small.width).toBe(120);
@@ -186,17 +194,19 @@ describe("processImage publication contract", () => {
         expect((await sharp(result.bytes).metadata()).width).toBe(300);
     });
 
-    it("rejects a decompression-bomb-shaped input before allocating its pixels", async () => {
-        // A uniform 12000×12000 PNG is a few hundred kilobytes on the wire and
-        // 576 MB of raw RGBA in memory: only the pixel bound stops it.
+    it("enforces the default decode budget and caller overrides while accepting the boundary", async () => {
+        // 4096² RGBA pixels occupy the documented 64 MiB default working set.
+        const atBudget = await jpeg(4096, 4096);
+        await expect(tryProcessImage(atBudget)).resolves.toMatchObject({
+            ok: true, image: { width: 512, height: 512 },
+        });
+        // Uniform PNG compression keeps the submitted bytes small even just above that budget.
         const bomb = await sharp({
-            create: { width: 12_000, height: 12_000, channels: 3, background: { r: 1, g: 2, b: 3 } },
+            create: { width: 4096, height: 4097, channels: 3, background: { r: 1, g: 2, b: 3 } },
         }).png({ compressionLevel: 9 }).toBuffer();
-        expect(bomb.length).toBeLessThan(IMAGE_MAX_DECODE_PIXELS);
-
-        const result = await tryProcessImage(bomb, { fit: "cover", maxEdge: 512, maxInputPixels: 4_000_000 });
-
-        expect(result).toEqual({ ok: false, reason: "too_many_pixels" });
+        await expect(tryProcessImage(bomb)).resolves.toEqual({ ok: false, reason: "too_many_pixels" });
+        await expect(tryProcessImage(atBudget, { maxInputPixels: 4_000_000 }))
+            .resolves.toEqual({ ok: false, reason: "too_many_pixels" });
     });
 
     it("rejects an unsupported format and undecodable bytes with typed results", async () => {
@@ -212,7 +222,4 @@ describe("processImage publication contract", () => {
         await expect(processImage(Buffer.from("not an image at all"))).rejects.toThrow();
     });
 
-    it("names the decode budget as raw RGBA working memory", () => {
-        expect(IMAGE_MAX_DECODE_PIXELS * 4).toBe(64 * 1024 * 1024);
-    });
 });
