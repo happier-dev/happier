@@ -95,7 +95,9 @@ export function useNewSessionPermissionModeState(params: Readonly<{
         ? params.profileMap.get(params.selectedProfileId) ?? getBuiltInProfile(params.selectedProfileId) ?? null
         : null;
     const currentDefaultsRef = React.useRef({ selectedProfile, resolveDefaultPermissionMode });
-    currentDefaultsRef.current = { selectedProfile, resolveDefaultPermissionMode };
+    React.useEffect(() => {
+        currentDefaultsRef.current = { selectedProfile, resolveDefaultPermissionMode };
+    }, [selectedProfile, resolveDefaultPermissionMode]);
     const targetKey = buildBackendTargetKey(params.backendTarget);
     const previousScopeRef = React.useRef({ profileId: params.selectedProfileId, targetKey });
 

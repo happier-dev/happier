@@ -2251,6 +2251,48 @@ describe('useNewSessionScreenModel (installables)', () => {
         await flushHookEffects(initialHookFlushOptions);
         expect(hook.getCurrent().simpleProps.permissionMode).toBe('yolo');
     });
+
+    it('does not use permission defaults from an abandoned suspended render', async () => {
+        const { useNewSessionPermissionModeState } = await import('./screenModel/useNewSessionPermissionModeState');
+        const baseProfile = await configureDefaultProfile({ currentCompatible: true, defaultTargetKey: 'agent:codex' });
+        const committedProfile = { ...baseProfile, defaultPermissionModeByTargetKey: { 'agent:codex': 'read-only' } as const };
+        const uncommittedProfile = { ...committedProfile, defaultPermissionModeByTargetKey: { 'agent:codex': 'yolo' } as const };
+        const blocked = new Promise<void>(() => {});
+        type PermissionProps = Readonly<{
+            selectedProfileId: string | null;
+            profileMap: ReadonlyMap<string, AIBackendProfile>;
+            suspend: boolean;
+        }>;
+        const initialProps: PermissionProps = {
+            selectedProfileId: null, profileMap: new Map([[committedProfile.id, committedProfile]]), suspend: false,
+        };
+        const hook = await renderHook((props: PermissionProps) => {
+            const state = useNewSessionPermissionModeState({
+                agentType: 'codex', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null,
+                selectedProfileId: props.selectedProfileId, profileMap: props.profileMap,
+                enabledAgentIds: ['codex'], sessionDefaultPermissionModeByTargetKey: {},
+            });
+            if (props.suspend) throw blocked;
+            return state;
+        }, {
+            initialProps,
+            wrapper: ({ children }) => <React.Suspense fallback={null}>{children}</React.Suspense>,
+        });
+        const committedProps: PermissionProps = { ...initialProps, selectedProfileId: committedProfile.id };
+        await hook.rerender(committedProps);
+        await hook.rerender({
+            ...committedProps, profileMap: new Map([[uncommittedProfile.id, uncommittedProfile]]), suspend: true,
+        });
+        await act(async () => {
+            for (const task of interactionTasks.splice(0)) {
+                if (!task.cancelled) task.run();
+            }
+        });
+        await hook.rerender(committedProps);
+        expect(hook.getCurrent().permissionMode).toBe('read-only');
+    });
+
     it.each([
         { source: 'temp', mode: 'read-only', expected: 'read-only' },
         { source: 'temp', mode: 'default', expected: 'default' },
