@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -101,7 +101,7 @@ describe('getGitSnapshot — worktree status enrichment wiring', () => {
         expect.soft(response.snapshot?.totals).toMatchObject({ isComplete: false });
     });
 
-    it('uses porcelain untracked paths without a second repository enumeration', async () => {
+    it("'all' mode (default) uses porcelain untracked paths without a second repository enumeration", async () => {
         const repoRoot = await initRepoWithCommit('git-snap-enumeration-');
         cleanups.push(() => rm(repoRoot, { recursive: true, force: true }));
         await writeFile(join(repoRoot, 'new.txt'), 'hello');
@@ -110,6 +110,101 @@ describe('getGitSnapshot — worktree status enrichment wiring', () => {
             const response = await getGitSnapshot({ context: buildContext(repoRoot) });
             expect(response.snapshot?.entries.find((entry) => entry.path === 'new.txt')?.stats.pendingAdded).toBe(1);
             expect(command.mock.calls.filter(([input]) => input.args[0] === 'ls-files')).toHaveLength(0);
+
+            // Explicit 'all' keeps the same single-enumeration contract.
+            const explicitAll = await getGitSnapshot({
+                context: buildContext(repoRoot),
+                request: { untrackedFiles: 'all' },
+            });
+            expect(explicitAll.snapshot?.totals).toMatchObject({ untrackedFiles: 1 });
+            expect(command.mock.calls.filter(([input]) => input.args[0] === 'ls-files')).toHaveLength(0);
+        } finally {
+            command.mockRestore();
+        }
+    });
+
+    it("'normal' mode collapses a fully-untracked directory into one entry with truthful file totals", async () => {
+        const repoRoot = await initRepoWithCommit('git-snap-normal-');
+        cleanups.push(() => rm(repoRoot, { recursive: true, force: true }));
+        await mkdir(join(repoRoot, 'D'), { recursive: true });
+        await writeFile(join(repoRoot, 'D', 'one.txt'), '1\n');
+        await writeFile(join(repoRoot, 'D', 'two.txt'), '2\n');
+        await writeFile(join(repoRoot, 'D', 'three.txt'), '3\n');
+        const command = vi.spyOn(scmRuntime, 'runScmCommand');
+        try {
+            const response = await getGitSnapshot({
+                context: buildContext(repoRoot),
+                request: { untrackedFiles: 'normal' },
+            });
+            expect(response.success).toBe(true);
+            const snapshot = response.snapshot!;
+            const dirEntries = snapshot.entries.filter((entry) => entry.isDirectory === true);
+            expect(dirEntries).toHaveLength(1);
+            expect(dirEntries[0]).toMatchObject({
+                path: 'D/',
+                kind: 'untracked',
+                isDirectory: true,
+                untrackedFileCount: 3,
+            });
+            // Per-file rows for a collapsed directory are never shipped in the snapshot.
+            expect(snapshot.entries.some((entry) => entry.path === 'D/one.txt')).toBe(false);
+            expect(snapshot.entries.some((entry) => entry.path === 'D/two.txt')).toBe(false);
+            expect(snapshot.entries.some((entry) => entry.path === 'D/three.txt')).toBe(false);
+            // T2: totals keep file semantics — 3 untracked FILES, 3 changed files.
+            expect(snapshot.totals).toMatchObject({ untrackedFiles: 3, changedFiles: 3 });
+            // Exactly one additional bounded enumeration command in 'normal' mode.
+            expect(command.mock.calls.filter(([input]) => input.args[0] === 'ls-files')).toHaveLength(1);
+        } finally {
+            command.mockRestore();
+        }
+    });
+
+    it("'normal' mode keeps loose untracked files as individual file entries", async () => {
+        const repoRoot = await initRepoWithCommit('git-snap-normal-loose-');
+        cleanups.push(() => rm(repoRoot, { recursive: true, force: true }));
+        await mkdir(join(repoRoot, 'D'), { recursive: true });
+        await writeFile(join(repoRoot, 'D', 'one.txt'), '1\n');
+        await writeFile(join(repoRoot, 'loose.txt'), 'loose\n');
+        const response = await getGitSnapshot({
+            context: buildContext(repoRoot),
+            request: { untrackedFiles: 'normal' },
+        });
+        expect(response.success).toBe(true);
+        const entries = response.snapshot!.entries;
+        const loose = entries.find((entry) => entry.path === 'loose.txt');
+        expect(loose).toMatchObject({ kind: 'untracked' });
+        expect(loose?.isDirectory).toBeUndefined();
+        expect(loose?.untrackedFileCount).toBeUndefined();
+        expect(response.snapshot!.totals).toMatchObject({ untrackedFiles: 2, changedFiles: 2 });
+    });
+
+    it("'normal' mode degrades honestly when the untracked count enumeration fails", async () => {
+        const repoRoot = await initRepoWithCommit('git-snap-normal-degraded-');
+        cleanups.push(() => rm(repoRoot, { recursive: true, force: true }));
+        await mkdir(join(repoRoot, 'D'), { recursive: true });
+        await writeFile(join(repoRoot, 'D', 'one.txt'), '1\n');
+        await writeFile(join(repoRoot, 'D', 'two.txt'), '2\n');
+        await writeFile(join(repoRoot, 'D', 'three.txt'), '3\n');
+        const originalCommand = scmRuntime.runScmCommand;
+        const command = vi.spyOn(scmRuntime, 'runScmCommand').mockImplementation((input) => {
+            if (input.args[0] === 'ls-files') {
+                return Promise.resolve({ success: false, stdout: '', stderr: 'ls-files failed', exitCode: 1 });
+            }
+            return originalCommand(input);
+        });
+        try {
+            const response = await getGitSnapshot({
+                context: buildContext(repoRoot),
+                request: { untrackedFiles: 'normal' },
+            });
+            expect(response.success).toBe(true);
+            const snapshot = response.snapshot!;
+            const dirEntry = snapshot.entries.find((entry) => entry.isDirectory === true);
+            expect(dirEntry?.path).toBe('D/');
+            // Degraded: directory rows lack the count, totals fall back to
+            // entry-derived counts, and the incompleteness is observable.
+            expect(dirEntry?.untrackedFileCount).toBeUndefined();
+            expect(snapshot.totals).toMatchObject({ untrackedFiles: 1, changedFiles: 1, isComplete: false });
         } finally {
             command.mockRestore();
         }

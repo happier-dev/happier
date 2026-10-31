@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
+import { SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES, createGitScmCapabilities, type ScmWorkingEntry, type ScmWorkingSnapshot } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
 
 const { runScmProvisioningRouteMock, runScmRouteMock } = vi.hoisted(() => ({
   runScmProvisioningRouteMock: vi.fn(),
@@ -167,5 +169,165 @@ describe('registerScmHandlers status snapshot coalescing', () => {
       { cwd: '.' },
       { route: 1, provisioning: 1 },
     );
+  });
+});
+
+describe('registerScmHandlers status snapshot entry budget and delivery facts', () => {
+  afterEach(() => {
+    vi.resetModules();
+    runScmProvisioningRouteMock.mockReset();
+    runScmRouteMock.mockReset();
+  });
+
+  const registerHandlers = async (): Promise<Map<string, RpcHandler>> => {
+    const handlers = new Map<string, RpcHandler>();
+    const registrar: RpcHandlerRegistrar = {
+      registerHandler(method, handler) {
+        handlers.set(method, handler);
+      },
+    };
+    const { registerScmHandlers } = await import('./scm');
+    registerScmHandlers(registrar, '/workspace');
+    return handlers;
+  };
+
+  const buildEntry = (path: string): ScmWorkingEntry => ({
+    path,
+    previousPath: null,
+    kind: 'untracked',
+    includeStatus: '?',
+    pendingStatus: '?',
+    hasIncludedDelta: false,
+    hasPendingDelta: true,
+    stats: {
+      includedAdded: 0,
+      includedRemoved: 0,
+      pendingAdded: 0,
+      pendingRemoved: 0,
+      isBinary: false,
+    },
+  });
+
+  const buildSnapshotResponse = (entries: ScmWorkingEntry[]) => ({
+    success: true,
+      snapshot: {
+      projectKey: 'test:/repo',
+      fetchedAt: 1,
+      repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [], remotes: [] },
+      capabilities: createGitScmCapabilities(),
+      branch: { head: null, upstream: null, ahead: 0, behind: 0, detached: true },
+      hasConflicts: false,
+      entries,
+      totals: {
+        includedFiles: 0,
+        pendingFiles: entries.length,
+        untrackedFiles: entries.length,
+        includedAdded: 0,
+        includedRemoved: 0,
+        pendingAdded: 0,
+        pendingRemoved: 0,
+      },
+    } satisfies ScmWorkingSnapshot,
+  });
+
+  const serializedSize = (entry: ScmWorkingEntry): number =>
+    estimateJsonUtf8BytesBounded(entry, SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES);
+
+  it('keeps distinct snapshot cache entries for the new request fields', async () => {
+    const handlers = await registerHandlers();
+    const handler = handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT);
+    expect(handler).toBeTypeOf('function');
+    if (!handler) throw new Error('SCM status handler was not registered');
+
+    const responsesByShape = new Map<string, unknown>([
+      ['all-entries', buildSnapshotResponse([buildEntry('a.txt')])],
+      ['normal-entries', buildSnapshotResponse([buildEntry('D/'), buildEntry('b.txt')])],
+      ['all-summary', { ...buildSnapshotResponse([buildEntry('a.txt')]), summaryOnly: true }],
+    ]);
+    runScmRouteMock.mockImplementation(({ request }: { request?: Record<string, unknown> }) => {
+      const key = [
+        request?.untrackedFiles ?? 'all',
+        request?.includeEntries === undefined ? 'entries' : (request.includeEntries ? 'entries' : 'summary'),
+      ].join('-');
+      return Promise.resolve(responsesByShape.get(key));
+    });
+    // Same cwd, four different new-field shapes → four distinct runs.
+    const allEntries = await handler({ cwd: '.' });
+    const normalEntries = await handler({ cwd: '.', untrackedFiles: 'normal' });
+    const summary = await handler({ cwd: '.', includeEntries: false });
+    const explicitAll = await handler({ cwd: '.', untrackedFiles: 'all' });
+    expect(runScmRouteMock).toHaveBeenCalledTimes(4);
+    expect(allEntries).not.toBe(normalEntries);
+    expect(allEntries).not.toBe(summary);
+    // 'all' explicit and default share the same cache entry.
+    const again = await handler({ cwd: '.', untrackedFiles: 'all' });
+    expect(again).toBe(explicitAll);
+    expect(runScmRouteMock).toHaveBeenCalledTimes(4);
+    // Cached replies keep their own shape (no wrong-shape cache hits).
+    expect(normalEntries).toMatchObject({ snapshot: { entries: [{ path: 'D/' }, { path: 'b.txt' }] } });
+    expect(summary).toMatchObject({ summaryOnly: true });
+  });
+
+  it('truncates entries by serialized bytes and never ships a partial entry', async () => {
+    const handlers = await registerHandlers();
+    const handler = handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT);
+    if (!handler) throw new Error('SCM status handler was not registered');
+
+    // ~60KB per entry → ~80 entries ≈ 4.8MB, deterministically over the budget.
+    const longPath = 'x'.repeat(60_000);
+    const mockEntries = Array.from({ length: 80 }, (_, index) => buildEntry(`${longPath}-${index}.txt`));
+    runScmRouteMock.mockResolvedValue(buildSnapshotResponse(mockEntries));
+
+    const response = await handler({ cwd: '.' });
+    const snapshot = (response as { snapshot?: ScmWorkingSnapshot }).snapshot;
+    expect(snapshot?.entriesPresentation).toBe('truncated');
+    const shipped = snapshot?.entries ?? [];
+    expect(shipped.length).toBeGreaterThan(0);
+    expect(shipped.length).toBeLessThan(mockEntries.length);
+
+    // Every shipped entry is whole: the cumulative serialized size (with
+    // array separators) stays within the budget.
+    let cumulative = 0;
+    for (let index = 0; index < shipped.length; index += 1) {
+      cumulative += (index > 0 ? 1 : 0) + serializedSize(shipped[index]!);
+    }
+    expect(cumulative).toBeLessThanOrEqual(SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES);
+
+    // The first dropped entry would have exceeded the budget.
+    const firstDropped = mockEntries[shipped.length]!;
+    expect(cumulative + 1 + serializedSize(firstDropped)).toBeGreaterThan(SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES);
+
+    // Totals are backend truth from the full set — never recomputed down.
+    expect(snapshot?.totals).toMatchObject({ untrackedFiles: mockEntries.length, pendingFiles: mockEntries.length });
+    // Shipped entries are the untouched prefix of the backend's entries.
+    expect(shipped.map((entry) => entry.path)).toEqual(mockEntries.slice(0, shipped.length).map((entry) => entry.path));
+  });
+
+  it('terminates as an empty prefix when the first entry alone exceeds the budget', async () => {
+    const handlers = await registerHandlers();
+    const handler = handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT);
+    if (!handler) throw new Error('SCM status handler was not registered');
+
+    const hugeEntry = buildEntry(`${'y'.repeat(4_300_000)}.txt`);
+    runScmRouteMock.mockResolvedValue(buildSnapshotResponse([hugeEntry, buildEntry('b.txt')]));
+
+    const response = await handler({ cwd: '.' });
+    const snapshot = (response as { snapshot?: ScmWorkingSnapshot }).snapshot;
+    expect(snapshot?.entriesPresentation).toBe('truncated');
+    expect(snapshot?.entries).toEqual([]);
+    expect(snapshot?.totals).toMatchObject({ untrackedFiles: 2, pendingFiles: 2 });
+  });
+
+  it('omits entries when the request asks for a summary but keeps totals intact', async () => {
+    const handlers = await registerHandlers();
+    const handler = handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT);
+    if (!handler) throw new Error('SCM status handler was not registered');
+
+    runScmRouteMock.mockResolvedValue(buildSnapshotResponse([buildEntry('a.txt'), buildEntry('b.txt')]));
+    const response = await handler({ cwd: '.', includeEntries: false });
+    const snapshot = (response as { snapshot?: ScmWorkingSnapshot }).snapshot;
+    expect(snapshot?.entries).toEqual([]);
+    expect(snapshot?.entriesPresentation).toBe('omitted');
+    expect(snapshot?.totals).toMatchObject({ untrackedFiles: 2, pendingFiles: 2 });
   });
 });

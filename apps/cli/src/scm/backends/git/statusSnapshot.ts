@@ -148,6 +148,15 @@ export function buildGitSnapshot(input: {
     includedNumStatSuccess?: boolean;
     pendingNumStatSuccess?: boolean;
     untrackedStatsByPath?: Record<string, { pendingAdded: number; isBinary: boolean }>;
+    /**
+     * 'normal'-mode only: truthful untracked-FILE facts from the bounded
+     * `git ls-files --others` enumeration. Absent ('all' mode, or enumeration
+     * failure) → totals fall back to entry-derived counts.
+     */
+    untrackedEnumeration?: {
+        totalFileCount: number;
+        fileCountByDirectoryPath: ReadonlyMap<string, number>;
+    };
     worktreesOutput?: string;
     remotesOutput?: string;
     remoteHeadRefsOutput?: string;
@@ -190,6 +199,12 @@ export function buildGitSnapshot(input: {
     for (const path of parsedStatus.notAdded) {
         if (entries.has(path)) continue;
         const untrackedStats = input.untrackedStatsByPath?.[path] ?? null;
+        // git -unormal reports collapsed untracked directories with a trailing
+        // separator ('? D/'); in 'all' mode every notAdded path is a file.
+        const isCollapsedDirectory = path.endsWith('/');
+        const untrackedFileCount = isCollapsedDirectory
+            ? input.untrackedEnumeration?.fileCountByDirectoryPath.get(path)
+            : undefined;
         entries.set(path, {
             path,
             previousPath: null,
@@ -206,6 +221,8 @@ export function buildGitSnapshot(input: {
                 isBinary: untrackedStats ? Boolean(untrackedStats.isBinary) : false,
                 ...(untrackedStats ? {} : { isComplete: false }),
             },
+            ...(isCollapsedDirectory ? { isDirectory: true } : {}),
+            ...(typeof untrackedFileCount === 'number' ? { untrackedFileCount } : {}),
         });
     }
 
@@ -272,6 +289,27 @@ export function buildGitSnapshot(input: {
         return cached?.kind === 'success' ? (cached.pullRequests[0] ?? null) : null;
     })();
 
+    // T2: totals keep FILE semantics in every mode. With collapsed directory
+    // entries present, entries.length and the entry-derived untracked count
+    // both undercount — corrected from the enumeration; when the enumeration
+    // (or any per-directory count) is missing, fall back to entry-derived
+    // counts and let the existing isComplete/stats.isComplete flags carry the
+    // incompleteness. 'all' mode has no collapsed entries, so both values are
+    // exactly today's entry-derived counts.
+    const collapsedDirectoryEntries = sortedEntries.filter((entry) => entry.isDirectory === true);
+    const collapsedFileCount = collapsedDirectoryEntries.reduce(
+        (acc, entry) => acc + (typeof entry.untrackedFileCount === 'number' ? entry.untrackedFileCount : 0),
+        0,
+    );
+    const collapsedCountsAreComplete = collapsedDirectoryEntries.length > 0
+        && collapsedDirectoryEntries.every((entry) => typeof entry.untrackedFileCount === 'number');
+    const changedFileTotal = collapsedCountsAreComplete
+        ? sortedEntries.length - collapsedDirectoryEntries.length + collapsedFileCount
+        : sortedEntries.length;
+    const untrackedFileTotal = input.untrackedEnumeration
+        ? input.untrackedEnumeration.totalFileCount
+        : sortedEntries.filter((entry) => entry.kind === 'untracked').length;
+
     return {
         projectKey: input.projectKey,
         fetchedAt: input.fetchedAt,
@@ -302,7 +340,8 @@ export function buildGitSnapshot(input: {
             ...(sortedEntries.some((entry) => entry.stats.isComplete === false) ? { isComplete: false } : {}),
             includedFiles: sortedEntries.filter((entry) => entry.hasIncludedDelta).length,
             pendingFiles: sortedEntries.filter((entry) => entry.hasPendingDelta).length,
-            untrackedFiles: sortedEntries.filter((entry) => entry.kind === 'untracked').length,
+            untrackedFiles: untrackedFileTotal,
+            changedFiles: changedFileTotal,
             includedAdded: sortedEntries.reduce((acc, entry) => acc + entry.stats.includedAdded, 0),
             includedRemoved: sortedEntries.reduce((acc, entry) => acc + entry.stats.includedRemoved, 0),
             pendingAdded: sortedEntries.reduce((acc, entry) => acc + entry.stats.pendingAdded, 0),

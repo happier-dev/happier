@@ -133,6 +133,7 @@ export const RPC_METHODS = {
   SESSION_LOG_TAIL: 'session.log.tail',
   SCM_BACKEND_DESCRIBE: 'scm.backend.describe',
   SCM_STATUS_SNAPSHOT: 'scm.status.snapshot',
+  SCM_STATUS_ENTRIES: 'scm.status.entries',
   SCM_DIFF_FILE: 'scm.diff.file',
   SCM_DIFF_COMMIT: 'scm.diff.commit',
   SCM_CHANGE_INCLUDE: 'scm.change.include',

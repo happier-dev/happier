@@ -147,6 +147,19 @@ export const ScmWorkingEntrySchema = lazySchema(() => z.object({
   hasIncludedDelta: z.boolean(),
   hasPendingDelta: z.boolean(),
   stats: ScmPathStatsSchema,
+  /**
+   * True on a collapsed untracked-directory entry (opt-in
+   * `untrackedFiles: 'normal'` snapshots only). Optional so pre-flag snapshots
+   * and per-file entries stay byte-identical to the legacy shape; consumers
+   * must treat a directory row as non-actionable for per-file operations
+   * (diff/discard act on file paths).
+   */
+  isDirectory: z.boolean().optional(),
+  /**
+   * Untracked FILE count under a collapsed directory entry. Present only on
+   * `isDirectory` entries, and only when the count enumeration succeeded.
+   */
+  untrackedFileCount: z.number().int().nonnegative().optional(),
 }));
 export type ScmWorkingEntry = z.infer<typeof ScmWorkingEntrySchema>;
 
@@ -209,6 +222,15 @@ export const ScmWorkingSnapshotSchema = lazySchema(() => z.object({
   pullRequest: ScmPullRequestSummarySchema.nullable().optional(),
   hasConflicts: z.boolean(),
   entries: z.array(ScmWorkingEntrySchema),
+  /**
+   * Entry-list delivery facts. Absent = `'complete'` (legacy: every entry the
+   * backend produced is shipped). `'truncated'` = the shipped entries are a
+   * whole-entry prefix of the full set (the shared serialized-entry byte
+   * budget fired); `'omitted'` = entries deliberately not shipped
+   * (`includeEntries: false`). Orthogonal to `totals.isComplete`, which tracks
+   * line-stat completeness, not entry-list completeness.
+   */
+  entriesPresentation: z.enum(['complete', 'truncated', 'omitted']).optional(),
   totals: z.object({
     includedFiles: z.number().int().nonnegative(),
     pendingFiles: z.number().int().nonnegative(),
@@ -218,6 +240,15 @@ export const ScmWorkingSnapshotSchema = lazySchema(() => z.object({
     pendingAdded: z.number().int().nonnegative(),
     pendingRemoved: z.number().int().nonnegative(),
     isComplete: z.boolean().optional(),
+    /**
+     * Server-derived deduplicated changed-FILE count (what `entries.length`
+     * means today), computed from the full entry set before any bounding or
+     * collapsing and never recomputed after. Needed because collapsed
+     * directory entries make `entries.length` undercount and
+     * `includedFiles + pendingFiles + untrackedFiles` double-counts partially
+     * staged files.
+     */
+    changedFiles: z.number().int().nonnegative().optional(),
   }),
 }));
 export type ScmWorkingSnapshot = z.infer<typeof ScmWorkingSnapshotSchema>;
@@ -251,6 +282,21 @@ export const ScmStatusSnapshotRequestSchema = lazySchema(() => ScmRequestBaseSch
    * intentionally want a single round-trip (and accept the latency).
    */
   includeWorktreeStatus: z.boolean().optional(),
+  /**
+   * Untracked-tree enumeration mode. Default `'all'` = today exactly: one
+   * entry per untracked file. `'normal'` collapses fully-untracked
+   * directories (git's `-unormal` semantics) into single entries carrying
+   * `isDirectory` + `untrackedFileCount`. Deliberately opt-in: collapsed
+   * directory rows must never reach clients that did not ask for them.
+   */
+  untrackedFiles: z.enum(['normal', 'all']).optional(),
+  /**
+   * Entry delivery switch. Default `true` = today exactly (entries shipped).
+   * `false` → the response ships `entries: []` with
+   * `entriesPresentation: 'omitted'`; totals and every non-entry fact stay
+   * computed from the full working set.
+   */
+  includeEntries: z.boolean().optional(),
 }));
 export type ScmStatusSnapshotRequest = z.infer<typeof ScmStatusSnapshotRequestSchema>;
 
@@ -300,6 +346,30 @@ export type ScmStatusSnapshotRequest = z.infer<typeof ScmStatusSnapshotRequestSc
  */
 export const SCM_WORKTREES_ENRICHMENT_MAX_PATHS = 64;
 
+/**
+ * Shared serialized-entry byte budget for `scm.status.snapshot` replies,
+ * enforced once at the daemon status handler after the backend computed
+ * truthful totals from its full entry set. Serialized bytes, not an entry
+ * count, because the protected resource is one relay frame and per-entry
+ * serialized size varies roughly 10× with path length and stat payload.
+ *
+ * Derivation: the relay frame failure bracket is operator-bracketed at
+ * ~12–14MB (~11.03MB observed working). The worst-case full reply — budgeted
+ * entries plus the small non-entries remainder, envelope and encryption
+ * expansion (≈4.3MB total) — stays ~3× under even the conservative 12MB floor
+ * bracket. At the observed ~530 B/entry the budget first truncates near
+ * ~7,900 entries, far above ordinary working sets. Re-derive if a live
+ * measurement shows a materially different frame cap.
+ */
+export const SCM_STATUS_SNAPSHOT_MAX_ENTRY_BYTES = 4_194_304;
+
+/**
+ * Page ceiling (`limit` max) for the paged `scm.status.entries` RPC. This is
+ * a UX batch size, not the frame budget's owner: even multi-KB-path entries
+ * keep a 500-entry page far below the empirical relay-frame floor.
+ */
+export const SCM_STATUS_ENTRIES_MAX_PAGE = 500;
+
 export const ScmWorktreesEnrichmentRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   worktreePaths: z
     .array(z.string().min(1))
@@ -330,6 +400,42 @@ export const ScmStatusSnapshotResponseSchema = lazySchema(() => z.object({
   errorCode: ScmOperationErrorCodeSchema.optional(),
 }));
 export type ScmStatusSnapshotResponse = z.infer<typeof ScmStatusSnapshotResponseSchema>;
+
+export const ScmStatusEntriesAreaSchema = lazySchema(() => z.enum(['all', 'included', 'pending']));
+export type ScmStatusEntriesArea = z.infer<typeof ScmStatusEntriesAreaSchema>;
+
+export const ScmStatusEntriesRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
+  /**
+   * Exclusive cursor: the first entry of the page is the first entry whose
+   * path compares strictly greater than `afterPath` in this RPC's
+   * deterministic code-point total order (NOT `localeCompare`, which is
+   * locale-dependent). `nextCursor` from a prior page feeds straight back in.
+   */
+  afterPath: z.string().optional(),
+  /** Page size; defaults to {@link SCM_STATUS_ENTRIES_MAX_PAGE}. */
+  limit: z.number().int().min(1).max(SCM_STATUS_ENTRIES_MAX_PAGE).optional(),
+  /** Entry filter; default `'all'`. */
+  area: ScmStatusEntriesAreaSchema.optional(),
+  /**
+   * Return only the file entries under one collapsed directory (the
+   * snapshot's `isDirectory` entry path, with or without its trailing
+   * separator).
+   */
+  expandPath: z.string().optional(),
+}));
+export type ScmStatusEntriesRequest = z.infer<typeof ScmStatusEntriesRequestSchema>;
+
+export const ScmStatusEntriesResponseSchema = lazySchema(() => z.object({
+  success: z.boolean(),
+  entries: z.array(ScmWorkingEntrySchema),
+  /** Present when `hasMore`: the exclusive cursor for the next page. */
+  nextCursor: z.string().optional(),
+  hasMore: z.boolean(),
+  fetchedAt: z.number().int(),
+  error: z.string().optional(),
+  errorCode: ScmOperationErrorCodeSchema.optional(),
+}));
+export type ScmStatusEntriesResponse = z.infer<typeof ScmStatusEntriesResponseSchema>;
 
 export const ScmDiffFileRequestSchema = lazySchema(() => ScmRequestBaseSchema.extend({
   path: z.string(),

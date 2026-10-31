@@ -4,12 +4,14 @@ import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { RpcRequest } from '@/api/rpc/types';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
+import type { ScmBackendRegistry } from '@/scm/registry';
 import type { ScmConnectedAccountCredentialResolver } from '@/scm/types';
 
 export function createTestRpcManager(params?: {
     scopePrefix?: string;
     workingDirectory?: string;
     connectedAccounts?: ScmConnectedAccountCredentialResolver;
+    registry?: ScmBackendRegistry;
 }) {
     const encryptionKey = new Uint8Array(32).fill(7);
     const encryptionVariant = 'legacy' as const;
@@ -25,6 +27,7 @@ export function createTestRpcManager(params?: {
 
     registerScmHandlers(manager, workingDirectory, {
         ...(params?.connectedAccounts ? { connectedAccounts: params.connectedAccounts } : {}),
+        ...(params?.registry ? { registry: params.registry } : {}),
     });
 
     async function call<TResponse, TRequest>(method: string, request: TRequest): Promise<TResponse> {
