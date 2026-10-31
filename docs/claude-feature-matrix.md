@@ -284,6 +284,11 @@ The native screen parser separates the preview column from option labels and
 records the actual freeform row. The existing answer driver refuses terminal
 notes or an active notes editor before navigation or submission; notes are
 annotations on a choice and are never converted into freeform answers.
+Long reviews may clip earlier questions above the viewport. The same parser
+recognizes complete visible entries as a suffix of the hook-owned questions;
+the answer driver submits only after visiting every question page and matching
+the visible answers. Complete reviews still require every answer. A confirmation
+with no complete question visible remains unrecognized.
 
 | Feature | Status | Exact source files | Current behavior / special cases | Unified architecture migration notes |
 | --- | --- | --- | --- | --- |
