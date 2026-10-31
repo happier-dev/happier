@@ -4,7 +4,11 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import {
+    getProfileDefaultBackendTarget,
+    isProfileCompatibleWithBackendTarget,
+    type AIBackendProfile,
+} from '@/sync/domains/profiles/profileCompatibility';
 import { type SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { normalizeProfileDefaultPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType, normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
@@ -267,13 +271,13 @@ export function ProfileEditForm({
             const next = { ...prev };
             for (const entry of resolvedBackendEntries) {
                 if (typeof next[entry.targetKey] !== 'boolean') {
-                    next[entry.targetKey] = profile.isBuiltIn ? false : entry.family === 'builtInAgent';
+                    next[entry.targetKey] = isProfileCompatibleWithResolvedBackendEntry(profile, entry);
                     changed = true;
                 }
             }
             return changed ? next : prev;
         });
-    }, [profile.isBuiltIn, resolvedBackendEntries]);
+    }, [profile, resolvedBackendEntries]);
 
     const [authMode, setAuthMode] = React.useState<AIBackendProfile['authMode']>(profile.authMode);
     const [requiresMachineLogin, setRequiresMachineLogin] = React.useState<AIBackendProfile['requiresMachineLogin']>(profile.requiresMachineLogin);
@@ -664,15 +668,23 @@ export function ProfileEditForm({
                 delete defaultPersistenceModeByTargetKey[entry.targetKey];
             }
         }
-        const compatibilityByTargetKey = stripLegacyProviderSentinelTargetKeys(
-            stripUndefinedRecordValues(
+        const compatibilityByTargetKey = stripUndefinedRecordValues(
+            stripLegacyProviderSentinelTargetKeys(
                 (profileBase.compatibilityByTargetKey as Record<string, boolean | undefined>) ?? {},
+                resolvedBackendEntries,
             ),
-            resolvedBackendEntries,
         );
         for (const entry of resolvedBackendEntries) {
             compatibilityByTargetKey[entry.targetKey] = compatibilityByTargetKeyState[entry.targetKey] === true;
         }
+        const defaultBackendTarget = getProfileDefaultBackendTarget({
+            defaultBackendTargetKey: defaultBackendTargetKey ?? undefined,
+        });
+        const isDefaultBackendCompatible = defaultBackendTarget !== null && isProfileCompatibleWithBackendTarget({
+            compatibilityByTargetKey,
+            compatibility: {},
+            isBuiltIn: profile.isBuiltIn,
+        }, defaultBackendTarget);
 
         const persistedAuthMode = effectiveAuthMode;
         return onSave({
@@ -693,8 +705,8 @@ export function ProfileEditForm({
             defaultPersistenceModeByAgent: {},
             compatibilityByTargetKey,
             compatibility: {},
-            defaultBackendTargetKey: defaultBackendTargetKey && compatibilityByTargetKeyState[defaultBackendTargetKey] === true
-                ? defaultBackendTargetKey
+            defaultBackendTargetKey: isDefaultBackendCompatible
+                ? defaultBackendTargetKey ?? undefined
                 : undefined,
             codingPromptBehaviorV1: sessionTitleUpdatesOverride || responseOptionsOverride
                 ? {
@@ -920,7 +932,7 @@ export function ProfileEditForm({
 
             {(() => {
                 const compatibleEntries = resolvedBackendEntries.filter((entry) => compatibilityByTargetKeyState[entry.targetKey] === true);
-                if (compatibleEntries.length < 2) return null;
+                if (compatibleEntries.length === 0) return null;
                 const selectedEntry = compatibleEntries.find((entry) => entry.targetKey === defaultBackendTargetKey) ?? null;
                 return (
                     <ItemGroup
@@ -940,6 +952,7 @@ export function ProfileEditForm({
                             selectedId={defaultBackendTargetKey ?? '__none__'}
                             trigger={({ toggle }) => (
                                 <Item
+                                    testID="profile-default-backend-trigger"
                                     title={selectedEntry ? selectedEntry.title : t('profiles.defaultBackend.noneTitle')}
                                     subtitle={selectedEntry
                                         ? t('profiles.defaultBackend.selectedSubtitle')
@@ -962,6 +975,7 @@ export function ProfileEditForm({
                             items={[
                                 {
                                     id: '__none__',
+                                    testID: 'profile-default-backend-none',
                                     title: t('profiles.defaultBackend.noneTitle'),
                                     subtitle: t('profiles.defaultBackend.noneSubtitle'),
                                     icon: (
@@ -972,6 +986,7 @@ export function ProfileEditForm({
                                 },
                                 ...compatibleEntries.map((entry) => ({
                                     id: entry.targetKey,
+                                    testID: `profile-default-backend-${entry.targetKey}`,
                                     title: entry.title,
                                     subtitle: entry.subtitle ?? undefined,
                                     icon: (
@@ -1235,6 +1250,7 @@ export function ProfileEditForm({
                     </View>
                     <View style={{ flex: 1 }}>
                         <Pressable
+                            testID="profile-save"
                             onPress={handleSave}
                             style={({ pressed }) => ({
                                 backgroundColor: theme.colors.button.primary.background,

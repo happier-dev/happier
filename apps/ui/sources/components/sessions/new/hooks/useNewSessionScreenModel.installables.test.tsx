@@ -1,14 +1,16 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildBackendTargetKey, type AcpCatalogSettingsV1 } from '@happier-dev/protocol';
+import { AcpCatalogSettingsV1Schema, buildBackendTargetKey, type AcpCatalogSettingsV1 } from '@happier-dev/protocol';
 import {
     flushHookEffects,
     renderHook,
     renderScreen,
 } from '@/dev/testkit';
 import { storage as storageStore } from '@/sync/domains/state/storageStore';
-import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import type { AIBackendProfile, ProfileCompatibilitySummary } from '@/sync/domains/profiles/profileCompatibility';
+import type { AgentId } from '@/agents/catalog/catalog';
+import type { NewSessionData } from '@/utils/sessions/tempDataStore';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import { buildNewSessionAuthoringDraftFromPersistedDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import {
@@ -98,7 +100,7 @@ const preflightConfigOptionsByTargetKeyState = vi.hoisted(() => ({
 }));
 
 const profileCompatibilityState = vi.hoisted(() => ({
-    isProfileCompatibleWithAgent: (((_profile: any, _agentId: string) => true) as (profile: any, agentId: string) => boolean),
+    isProfileCompatibleWithAgent: (_profile: ProfileCompatibilitySummary, _agentId: AgentId): boolean => true,
     isProfileCompatibleWithBackendTarget: (((_profile: any, _target: any) => true) as (profile: any, target: any) => boolean),
     isProfileCompatibleWithAnyAgent: (((_profile: any, _agentIds: readonly string[]) => true) as (profile: any, agentIds: readonly string[]) => boolean),
     getProfileSupportedAgentIds: (((_profile: any) => [] as string[]) as (profile: any) => string[]),
@@ -123,6 +125,7 @@ const testSettingsDefaults = vi.hoisted(() => ({
     favoriteMachines: [],
     favoriteProfiles: [],
     profiles: [] as AIBackendProfile[],
+    lastUsedProfile: null as string | null,
     secrets: [],
     secretBindingsByProfileId: {},
     serverSelectionGroups: [],
@@ -150,6 +153,8 @@ const settingsState = vi.hoisted(() => ({
 const settingsRuntimeState = vi.hoisted(() => ({
     current: settingsState as typeof settingsState | undefined,
 }));
+const routeParamsState = vi.hoisted(() => ({} as Record<string, string>));
+const tempSessionDataState = vi.hoisted(() => ({ value: null as NewSessionData | null }));
 
 const machineState = vi.hoisted(() => ({
     value: [
@@ -311,8 +316,8 @@ installNewSessionScreenModelCommonModuleMocks({
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const expoRouterMock = createExpoRouterMock({
             router: { push: vi.fn(), replace: vi.fn(), back: vi.fn(), setParams: vi.fn() },
-            params: {},
-            navigation: {},
+            params: routeParamsState,
+            navigation: { setParams: vi.fn(), dispatch: vi.fn() },
             pathname: '/new',
         });
         return expoRouterMock.module;
@@ -467,7 +472,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 }));
 
 vi.mock('@/utils/sessions/tempDataStore', () => ({
-    getTempData: () => null,
+    getTempData: () => tempSessionDataState.value,
 }));
 
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
@@ -521,7 +526,7 @@ vi.mock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) =
     return {
         ...actual,
         getProfileEnvironmentVariables: () => [],
-        isProfileCompatibleWithAgent: (profile: any, agentId: string) =>
+        isProfileCompatibleWithAgent: (profile: ProfileCompatibilitySummary, agentId: AgentId) =>
             profileCompatibilityState.isProfileCompatibleWithAgent(profile, agentId),
         isProfileCompatibleWithBackendTarget: (profile: any, target: any) =>
             profileCompatibilityState.isProfileCompatibleWithBackendTarget(profile, target),
@@ -663,6 +668,8 @@ const useNewSessionScreenModelModulePromise = import('./useNewSessionScreenModel
 
 describe('useNewSessionScreenModel (installables)', () => {
     beforeEach(() => {
+        for (const key of Object.keys(routeParamsState)) delete routeParamsState[key];
+        tempSessionDataState.value = null;
         applySettingsMock.mockClear();
         modalShowMock.mockClear();
         modalAlertMock.mockClear();
@@ -675,6 +682,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         settingsState.newSessionDefaultPersistenceModeByTargetKeyV1 = {};
         settingsState.useProfiles = false;
         settingsState.profiles = [];
+        settingsState.lastUsedProfile = null;
         settingsState.codexBackendMode = 'acp';
         settingsState.sessionWindowsRemoteSessionLaunchMode = 'hidden';
         settingsState.lastUsedAgent = 'codex';
@@ -1421,7 +1429,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(model?.simpleProps?.agentLabel).toBe('agentInput.agent.claude');
     });
 
-    it('switches to a configured ACP backend when the selected profile is only compatible with that backend target', async () => {
+    it('preserves a restored backend when its selected profile is incompatible', async () => {
         settingsState.useProfiles = true;
         settingsState.lastUsedAgent = 'claude';
         settingsState.acpCatalogSettingsV1 = {
@@ -1482,8 +1490,8 @@ describe('useNewSessionScreenModel (installables)', () => {
         const hook = await renderNewSessionScreenModel();
         let model = hook.getCurrent();
 
-        expect(model?.simpleProps?.agentType).toBe('customAcp');
-        expect(model?.simpleProps?.agentLabel).toBe('Custom Preset');
+        expect(model?.simpleProps?.agentType).toBe('claude');
+        expect(model?.simpleProps?.agentLabel).toBe('agentInput.agent.claude');
         expect(model?.simpleProps?.selectedProfileId).toBe('profile-1');
     });
 
@@ -1988,4 +1996,161 @@ describe('useNewSessionScreenModel (installables)', () => {
         }
     });
 
+    async function configureDefaultProfile(options: { currentCompatible?: boolean; defaultTargetKey?: string | null } = {}) {
+        const actual = await vi.importActual<typeof import('@/sync/domains/profiles/profileCompatibility')>('@/sync/domains/profiles/profileCompatibility');
+        profileCompatibilityState.isProfileCompatibleWithBackendTarget = actual.isProfileCompatibleWithBackendTarget;
+        profileCompatibilityState.isProfileCompatibleWithAgent = actual.isProfileCompatibleWithAgent;
+        settingsState.useProfiles = true;
+        settingsState.lastUsedAgent = 'codex';
+        settingsState.acpCatalogSettingsV1 = AcpCatalogSettingsV1Schema.parse({ v: 2, backends: [{
+            id: 'custom-default', name: 'custom-default', title: 'Default Backend',
+            command: 'custom-acp', args: ['serve'], env: {}, createdAt: 1, updatedAt: 1,
+        }] });
+        const profile = actual.AIBackendProfileSchema.parse({
+            id: 'profile-default', name: 'Default Profile',
+            compatibilityByTargetKey: {
+                'agent:claude': true,
+                'agent:codex': options.currentCompatible ?? false,
+                'acpBackend:custom-default': true,
+            },
+            defaultBackendTargetKey: options.defaultTargetKey === null
+                ? undefined : options.defaultTargetKey ?? 'acpBackend:custom-default',
+            environmentVariables: [], isBuiltIn: false, createdAt: 0, updatedAt: 0, version: '1.0.0',
+        });
+        settingsState.profiles = [profile];
+        enabledAgentIdsState.value = ['claude', 'codex', 'customAcp'];
+        cliAvailabilityState.value = { timestamp: 1, available: { claude: true, codex: false, opencode: null } };
+        return profile;
+    }
+
+    it.each([
+        { currentCompatible: false, defaultTargetKey: 'acpBackend:custom-default', expected: 'customAcp' },
+        { currentCompatible: true, defaultTargetKey: 'acpBackend:custom-default', expected: 'customAcp' },
+        { currentCompatible: true, defaultTargetKey: null, expected: 'codex' },
+        { currentCompatible: false, defaultTargetKey: null, expected: 'claude' },
+        { currentCompatible: false, defaultTargetKey: 'agent:gemini', expected: 'claude' },
+    ])('resolves a fresh profile selection once: %j', async (scenario) => {
+        const profile = await configureDefaultProfile(scenario);
+        settingsState.useEnhancedSessionWizard = true;
+        const hook = await renderNewSessionScreenModel();
+        let model = hook.getCurrent();
+        expect(model.wizardProps.agent.agentType).toBe('codex');
+        applySettingsMock.mockClear();
+        await invokeHookAction(() => model.wizardProps.profiles.onPressProfile(profile));
+        model = hook.getCurrent();
+        expect(model.wizardProps.profiles.selectedProfileId).toBe(profile.id);
+        expect(model.wizardProps.agent.agentType).toBe(scenario.expected);
+        expect(applySettingsMock.mock.calls.some(([patch]) => Object.hasOwn(patch, 'lastUsedBackendTarget'))).toBe(false);
+    });
+
+    it('preserves a manual backend across a same-profile settings refresh', async () => {
+        const profile = await configureDefaultProfile({ currentCompatible: true });
+        persistedDraft.selectedProfileId = profile.id;
+        const hook = await renderNewSessionScreenModel();
+        await invokeHookAction(() => hook.getCurrent().simpleProps.onAgentPickerSelect('agent:claude'));
+        expect(hook.getCurrent().simpleProps.agentType).toBe('claude');
+        settingsState.profiles = [{ ...profile }];
+        await hook.rerender();
+        expect(hook.getCurrent().simpleProps.agentType).toBe('claude');
+    });
+
+    it.each(['route', 'handoff', 'draft'] as const)('preserves an explicit %s backend when the initial profile route is consumed', async (source) => {
+        const profile = await configureDefaultProfile({ currentCompatible: true });
+        routeParamsState.profileId = profile.id;
+        if (source === 'route') routeParamsState.backendTargetKey = 'agent:claude';
+        if (source === 'handoff') {
+            routeParamsState.dataId = 'profile-handoff';
+            tempSessionDataState.value = { backendTarget: { kind: 'builtInAgent', agentId: 'claude' } };
+        }
+        if (source === 'draft') persistedDraft.agentType = 'claude';
+        const hook = await renderNewSessionScreenModel();
+        expect(hook.getCurrent().simpleProps.selectedProfileId).toBe(profile.id);
+        expect(hook.getCurrent().simpleProps.agentType).toBe('claude');
+    });
+
+    it('preserves an authored draft backend when its profile becomes available later', async () => {
+        const profile = await configureDefaultProfile({ currentCompatible: true });
+        settingsState.profiles = [];
+        persistedDraft.selectedProfileId = profile.id;
+        persistedDraft.agentType = 'claude';
+        const hook = await renderNewSessionScreenModel();
+        settingsState.profiles = [profile];
+        await hook.rerender();
+        expect(hook.getCurrent().simpleProps.selectedProfileId).toBe(profile.id);
+        expect(hook.getCurrent().simpleProps.agentType).toBe('claude');
+    });
+
+    it('keeps an available compatible backend when the profile default is logged out', async () => {
+        const profile = await configureDefaultProfile({ currentCompatible: true, defaultTargetKey: 'agent:codex' });
+        persistedDraft.agentType = 'claude';
+        settingsState.useEnhancedSessionWizard = true;
+        cliAvailabilityState.value = {
+            timestamp: 1, available: { claude: true, codex: true, opencode: null },
+            authStatus: { codex: { state: 'logged_out', checkedAt: 1 } },
+        };
+        const hook = await renderNewSessionScreenModel();
+        await invokeHookAction(() => hook.getCurrent().wizardProps.profiles.onPressProfile(profile));
+        expect(hook.getCurrent().wizardProps.agent.agentType).toBe('claude');
+    });
+    it('applies a fresh profile picker route after the initial draft is restored', async () => {
+        const profile = await configureDefaultProfile({ currentCompatible: true });
+        const hook = await renderNewSessionScreenModel();
+        expect(hook.getCurrent().simpleProps.agentType).toBe('codex');
+        routeParamsState.profileId = profile.id;
+        await hook.rerender();
+        expect(hook.getCurrent().simpleProps.selectedProfileId).toBe(profile.id);
+        expect(hook.getCurrent().simpleProps.agentType).toBe('customAcp');
+    });
+    it('preserves an explicit incompatible route backend while its profile hydrates', async () => {
+        const profile = await configureDefaultProfile({ currentCompatible: false });
+        routeParamsState.profileId = profile.id;
+        routeParamsState.backendTargetKey = 'agent:codex';
+        const hook = await renderNewSessionScreenModel();
+        expect(hook.getCurrent().simpleProps.selectedProfileId).toBe(profile.id);
+        expect(hook.getCurrent().simpleProps.agentType).toBe('codex');
+    });
+    it.each([
+        { name: 'available default', currentCompatible: true, defaultTargetKey: 'agent:codex', loggedOut: null, expected: 'codex' },
+        { name: 'logged-out default', currentCompatible: true, defaultTargetKey: 'agent:codex', loggedOut: 'codex', expected: 'claude' },
+        { name: 'compatible remembered backend without default', currentCompatible: true, defaultTargetKey: null, loggedOut: null, expected: 'claude' },
+        { name: 'available fallback for incompatible remembered backend', currentCompatible: false, defaultTargetKey: null, loggedOut: 'claude', expected: 'customAcp' },
+    ] as const)('resolves the initial implicit profile using availability: $name', async (scenario) => {
+        const profile = await configureDefaultProfile(scenario);
+        settingsState.lastUsedProfile = profile.id;
+        settingsState.lastUsedAgent = scenario.currentCompatible ? 'claude' : 'codex';
+        cliAvailabilityState.value = {
+            timestamp: 1, available: { claude: true, codex: true, opencode: null },
+            authStatus: scenario.loggedOut ? { [scenario.loggedOut]: { state: 'logged_out', checkedAt: 1 } } : {},
+        };
+        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+        const hook = await renderHook(() => useNewSessionScreenModel({ draftId: `initial-profile-${scenario.name}` }), {
+            flushOptions: initialHookFlushOptions,
+        });
+        const model = hook.getCurrent();
+        if (model.variant !== 'simple') throw new Error('Expected the simple new-session model');
+        expect(model.simpleProps.selectedProfileId).toBe(profile.id);
+        expect(model.simpleProps.agentType).toBe(scenario.expected);
+        expect(applySettingsMock.mock.calls.some(([patch]) => Object.hasOwn(patch, 'lastUsedBackendTarget'))).toBe(false);
+    });
+    it('reconciles an implicit profile default when auth availability arrives later', async () => {
+        const profile = await configureDefaultProfile({ currentCompatible: true, defaultTargetKey: 'agent:codex' });
+        settingsState.lastUsedProfile = profile.id;
+        settingsState.lastUsedAgent = 'claude';
+        cliAvailabilityState.value = { timestamp: 0, available: { claude: true, codex: true, opencode: null } };
+        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
+        const hook = await renderHook(() => useNewSessionScreenModel({ draftId: 'initial-profile-late-auth' }), {
+            flushOptions: initialHookFlushOptions,
+        });
+        const initial = hook.getCurrent();
+        if (initial.variant !== 'simple') throw new Error('Expected the simple new-session model');
+        expect(initial.simpleProps.agentType).toBe('codex');
+        cliAvailabilityState.value = {
+            timestamp: 1, available: { claude: true, codex: true, opencode: null },
+            authStatus: { codex: { state: 'logged_out', checkedAt: 1 } },
+        };
+        const updated = await hook.rerender();
+        if (updated.variant !== 'simple') throw new Error('Expected the simple new-session model');
+        expect(updated.simpleProps.agentType).toBe('claude');
+        expect(applySettingsMock.mock.calls.some(([patch]) => Object.hasOwn(patch, 'lastUsedBackendTarget'))).toBe(false);
+    });
 });

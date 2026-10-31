@@ -291,3 +291,102 @@ describe('ProfileEditForm backend targets', () => {
         }));
     });
 });
+
+describe('ProfileEditForm default backend preservation', () => {
+    it('clears a hidden backend default denied by the saved compatibility map', async () => {
+        const saveRef = { current: null as null | (() => boolean) };
+        const onSave = vi.fn((_: AIBackendProfile) => true);
+        const { ProfileEditForm } = await loadProfileEditForm();
+        const profile = AIBackendProfileSchema.parse({
+            ...buildProfile(),
+            compatibilityByTargetKey: { 'agent:codex': true, 'agent:gemini': false },
+            defaultBackendTargetKey: 'agent:gemini',
+        });
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile, machineId: null, onSave, onCancel: vi.fn(), saveRef,
+        }));
+        expect(saveRef.current?.()).toBe(true);
+        expect(onSave.mock.calls[0]?.[0].compatibilityByTargetKey['agent:gemini']).toBe(false);
+        expect(onSave.mock.calls[0]?.[0].defaultBackendTargetKey).toBeUndefined();
+    });
+
+    it.each([true, undefined])('preserves a hidden backend default with compatibility %s when saving unrelated content', async (compatibility) => {
+        const saveRef = { current: null as null | (() => boolean) };
+        const onSave = vi.fn((_: AIBackendProfile) => true);
+        const { ProfileEditForm } = await loadProfileEditForm();
+        const original = AIBackendProfileSchema.parse({
+            ...buildProfile(),
+            compatibilityByTargetKey: { 'agent:codex': true, ...(compatibility === undefined ? {} : { 'agent:gemini': compatibility }) },
+            defaultBackendTargetKey: 'agent:gemini',
+        });
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile: original, machineId: null, onSave, onCancel: vi.fn(), saveRef,
+        }));
+        expect(saveRef.current?.()).toBe(true);
+        expect(onSave.mock.calls[0]?.[0].compatibilityByTargetKey['agent:gemini']).toBe(compatibility);
+        expect(onSave.mock.calls[0]?.[0].defaultBackendTargetKey).toBe('agent:gemini');
+    });
+    it('exposes an existing default so it can be cleared with one compatible backend', async () => {
+        const saveRef = { current: null as null | (() => boolean) };
+        const onSave = vi.fn((_: AIBackendProfile) => true);
+        const { ProfileEditForm } = await loadProfileEditForm();
+        const original = AIBackendProfileSchema.parse({
+            ...buildProfile(), defaultBackendTargetKey: 'agent:codex',
+        });
+        const rendered = await renderScreen(React.createElement(ProfileEditForm, {
+            profile: original, machineId: null, onSave, onCancel: vi.fn(), saveRef,
+        }));
+        const defaultPickers = rendered.tree.findAllByType('DropdownMenu').filter((node) =>
+            node.props.items?.some((item: { id: string }) => item.id === '__none__'));
+        expect(defaultPickers.length).toBe(1);
+        await act(async () => { defaultPickers[0]?.props.onSelect('__none__'); });
+        expect(saveRef.current?.()).toBe(true);
+        expect(onSave.mock.calls[0]?.[0].defaultBackendTargetKey).toBeUndefined();
+    });
+});
+
+describe('ProfileEditForm canonical backend compatibility', () => {
+    it('hydrates a late configured backend with canonical compatibility while preserving user edits', async () => {
+        capture.reset();
+        const saveRef = { current: null as null | (() => boolean) };
+        const onSave = vi.fn((_: AIBackendProfile) => true);
+        const { ProfileEditForm } = await loadProfileEditForm();
+        const profile = AIBackendProfileSchema.parse({ ...buildProfile(), compatibility: {} });
+        const props = { profile, machineId: null, onSave, onCancel: vi.fn(), saveRef };
+        const originalCatalog = settingsState.acpCatalogSettingsV1;
+        const rendered = await renderScreen(React.createElement(ProfileEditForm, props));
+
+        try {
+            expect(capture.customBackendPress).toBeTruthy();
+            await act(async () => { capture.customBackendPress?.(); });
+            settingsState.acpCatalogSettingsV1 = {
+                ...originalCatalog,
+                backends: [
+                    ...originalCatalog.backends,
+                    { ...originalCatalog.backends[0]!, id: 'late-backend', name: 'late-backend', title: 'Late Backend' },
+                ],
+            };
+            await act(async () => { rendered.tree.update(React.createElement(ProfileEditForm, props)); });
+
+            expect(saveRef.current?.()).toBe(true);
+            expect(onSave.mock.calls[0]?.[0].compatibilityByTargetKey).toEqual(expect.objectContaining({
+                'acpBackend:custom-backend': false,
+                'acpBackend:late-backend': true,
+            }));
+        } finally {
+            settingsState.acpCatalogSettingsV1 = originalCatalog;
+        }
+    });
+
+    it('preserves canonical compatibility for an unspecified configured backend', async () => {
+        const saveRef = { current: null as null | (() => boolean) };
+        const onSave = vi.fn((_: AIBackendProfile) => true);
+        const { ProfileEditForm } = await loadProfileEditForm();
+        const profile = AIBackendProfileSchema.parse({ ...buildProfile(), compatibility: {} });
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile, machineId: null, onSave, onCancel: vi.fn(), saveRef,
+        }));
+        expect(saveRef.current?.()).toBe(true);
+        expect(onSave.mock.calls[0]?.[0].compatibilityByTargetKey['acpBackend:custom-backend']).toBe(true);
+    });
+});

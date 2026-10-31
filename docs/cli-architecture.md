@@ -202,6 +202,26 @@ flowchart TD
 - Ensures auth and machine setup when needed (`authAndSetupMachineIfNeeded`).
 - Starts the daemon or runs an agent directly based on subcommand/context.
 
+### Profile default backend selection (development)
+
+The optional profile `defaultBackendTargetKey` selects a backend only when the
+invocation has no explicit Agent command or backend target. Profile lookup and
+target compatibility are owned by `packages/protocol/src/profiles`; CLI routing
+uses the existing session argument parser and settled account-settings context.
+Authentication and settings preparation precede custom-profile routing, and the
+selected handler consumes that same preparation. Configured ACP defaults use the
+existing catalog handler and retain their exact backend target for profile
+compatibility, secrets and permission defaults.
+
+The profile editor and runtime delegate compatibility to the protocol owner.
+Exact target keys win over released transport-placeholder keys and legacy Agent
+compatibility. Legacy keys are read compatibility, not a second policy. Missing
+compatibility remains permissive for custom profiles and restrictive for built-ins.
+Older profile readers ignore the new optional default, but an older editor can
+strip it during writeback; this addition does not provide lossless old-editor
+round trips. The successor line translates the preference into its native
+preferred-Agent model rather than adding another default field.
+
 ## Automated session targets and permissions (development)
 
 Action machine discovery reads the authenticated account inventory on the selected

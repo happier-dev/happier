@@ -2,6 +2,7 @@ import type { AIBackendProfile } from './backendProfileSchema.js';
 import {
   BackendTargetKeySchema,
   buildBackendTargetKey,
+  getBackendTargetAgentId,
   parseBackendTargetKey,
   type BackendTargetRefV1,
 } from '../backendTargets/backendTargetRef.js';
@@ -14,10 +15,16 @@ export function isProfileCompatibleWithBackendTarget(
   const explicitByTargetKey = profile.compatibilityByTargetKey?.[targetKey];
   if (typeof explicitByTargetKey === 'boolean') return explicitByTargetKey;
 
-  if (target.kind === 'builtInAgent') {
-    const explicitLegacy = profile.compatibility?.[target.agentId];
-    if (typeof explicitLegacy === 'boolean') return explicitLegacy;
+  const agentId = getBackendTargetAgentId(target);
+  if (target.kind === 'configuredAcpBackend') {
+    // Released profiles may address the transport placeholder before per-backend keys.
+    // Exact backend compatibility above always wins over that predecessor shape.
+    const providerKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId });
+    const providerCompatibility = profile.compatibilityByTargetKey?.[providerKey];
+    if (typeof providerCompatibility === 'boolean') return providerCompatibility;
   }
+  const explicitLegacy = profile.compatibility?.[agentId];
+  if (typeof explicitLegacy === 'boolean') return explicitLegacy;
 
   return profile.isBuiltIn ? false : true;
 }

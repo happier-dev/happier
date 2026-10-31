@@ -151,130 +151,35 @@ const codexEntry: ResolvedBackendCatalogEntry = {
     subtitle: 'codex',
 };
 
-describe('useNewSessionBackendTargetState profile-aware selection', () => {
-    beforeEach(() => {
-        applySettingsMock.mockReset();
-    });
+describe('useNewSessionBackendTargetState authored targets', () => {
+    beforeEach(() => applySettingsMock.mockReset());
 
-    it('uses the profile default backend target over remembered selections', async () => {
-        let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
-        const profile = {
-            compatibilityByTargetKey: { 'agent:claude': true, 'agent:codex': true },
-            compatibility: {},
-            isBuiltIn: false,
-            defaultBackendTargetKey: 'agent:codex',
-        };
-
+    it.each(['routeBackendTarget', 'tempBackendTarget', 'persistedBackendTarget', 'tempAgentType'] as const)('restores %s before remembered preferences', async (source) => {
+        let observed: ReturnType<typeof useNewSessionBackendTargetState> | undefined;
         function Probe() {
             observed = useNewSessionBackendTargetState({
-                entries: [claudeEntry, codexEntry],
-                lastUsedAgent: 'claude',
-                lastUsedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-                profile,
-            } as any);
+                entries: [claudeEntry, codexEntry], lastUsedAgent: 'codex',
+                [source]: source === 'tempAgentType' ? 'claude' : claudeEntry.target,
+            });
             return null;
         }
-
         await renderScreen(React.createElement(Probe));
-
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.backendTarget)
-            .toEqual({ kind: 'builtInAgent', agentId: 'codex' });
-    });
-
-    it('keeps an explicit route target even when the profile default differs', async () => {
-        let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
-        const profile = {
-            compatibilityByTargetKey: { 'agent:claude': true, 'agent:codex': true },
-            compatibility: {},
-            isBuiltIn: false,
-            defaultBackendTargetKey: 'agent:codex',
-        };
-
-        function Probe() {
-            observed = useNewSessionBackendTargetState({
-                entries: [claudeEntry, codexEntry],
-                lastUsedAgent: 'claude',
-                lastUsedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-                routeBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-                profile,
-            } as any);
-            return null;
-        }
-
-        await renderScreen(React.createElement(Probe));
-
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.backendTarget)
-            .toEqual({ kind: 'builtInAgent', agentId: 'claude' });
-    });
-
-    it('falls back to the first profile-compatible entry when the remembered target is not allowed', async () => {
-        let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
-        const profile = {
-            compatibilityByTargetKey: { 'agent:claude': true, 'agent:codex': false },
-            compatibility: {},
-            isBuiltIn: false,
-        };
-
-        function Probe() {
-            observed = useNewSessionBackendTargetState({
-                entries: [claudeEntry, codexEntry],
-                lastUsedAgent: 'codex',
-                lastUsedBackendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-                profile,
-            } as any);
-            return null;
-        }
-
-        await renderScreen(React.createElement(Probe));
-
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.backendTarget)
-            .toEqual({ kind: 'builtInAgent', agentId: 'claude' });
-    });
-
-    it('applies the profile default on profile change without persisting last-used, and keeps the current target when the profile has no default', async () => {
-        let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
-        const claudeOnlyWithDefault = {
-            compatibilityByTargetKey: { 'agent:claude': true, 'agent:codex': false },
-            compatibility: {},
-            isBuiltIn: false,
-            defaultBackendTargetKey: 'agent:claude',
-        };
-        const claudeOnlyWithoutDefault = {
-            compatibilityByTargetKey: { 'agent:claude': true, 'agent:codex': false },
-            compatibility: {},
-            isBuiltIn: false,
-        };
-
-        function Probe(props: { profile?: unknown }) {
-            observed = useNewSessionBackendTargetState({
-                entries: [claudeEntry, codexEntry],
-                lastUsedAgent: 'codex',
-                lastUsedBackendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-                profile: props.profile,
-            } as any);
-            return null;
-        }
-
-        const rendered = await renderScreen(React.createElement(Probe, {}));
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.backendTarget)
-            .toEqual({ kind: 'builtInAgent', agentId: 'codex' });
-
-        act(() => {
-            rendered.tree.update(React.createElement(Probe, { profile: claudeOnlyWithoutDefault }));
-        });
-        // A profile without an explicit default never yanks the current backend selection.
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.backendTarget)
-            .toEqual({ kind: 'builtInAgent', agentId: 'codex' });
-
-        act(() => {
-            rendered.tree.update(React.createElement(Probe, { profile: claudeOnlyWithDefault }));
-        });
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.backendTarget)
-            .toEqual({ kind: 'builtInAgent', agentId: 'claude' });
+        expect(observed?.backendTarget).toEqual(claudeEntry.target);
         expect(applySettingsMock).not.toHaveBeenCalled();
+    });
 
-        act(() => {
-            rendered.tree.unmount();
-        });
+    it('keeps automatic corrections out of last-used settings after a manual choice', async () => {
+        let observed: ReturnType<typeof useNewSessionBackendTargetState> | undefined;
+        function Probe() {
+            observed = useNewSessionBackendTargetState({ entries: [claudeEntry, codexEntry], lastUsedAgent: 'claude' });
+            return null;
+        }
+        await renderScreen(React.createElement(Probe));
+        act(() => observed?.setBackendTarget(codexEntry.target));
+        expect(applySettingsMock).toHaveBeenCalledWith({ lastUsedAgent: 'codex', lastUsedBackendTarget: codexEntry.target });
+        applySettingsMock.mockClear();
+        act(() => observed?.setBackendTargetAutomatically(claudeEntry.target));
+        expect(observed?.backendTarget).toEqual(claudeEntry.target);
+        expect(applySettingsMock).not.toHaveBeenCalled();
     });
 });

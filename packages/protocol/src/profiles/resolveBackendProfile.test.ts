@@ -228,6 +228,19 @@ describe('profiles (protocol)', () => {
     expect(isProfileCompatibleWithAgent({ compatibilityByTargetKey: { 'agent:claude': true }, isBuiltIn: true }, 'claude')).toBe(true);
   });
 
+  it('applies legacy configured-provider compatibility consistently, with exact targets taking precedence', () => {
+    const target = { kind: 'configuredAcpBackend', backendId: 'review' } as const;
+    const legacy = AIBackendProfileSchema.parse({
+      id: 'legacy', name: 'Legacy', compatibilityByTargetKey: { 'agent:customAcp': false },
+      compatibility: { customAcp: true },
+    });
+    expect(isProfileCompatibleWithBackendTarget(legacy, target)).toBe(false);
+    expect(isProfileCompatibleWithBackendTarget({ ...legacy, compatibilityByTargetKey: {} }, target)).toBe(true);
+    expect(isProfileCompatibleWithBackendTarget({
+      ...legacy, compatibilityByTargetKey: { ...legacy.compatibilityByTargetKey, 'acpBackend:review': true },
+    }, target)).toBe(true);
+  });
+
   it('returns required env var names (secret vs config)', async () => {
     const { getRequiredSecretEnvVarNames, getRequiredConfigEnvVarNames, getMissingRequiredConfigEnvVarNames } = await import('./index.js');
 

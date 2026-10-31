@@ -16,6 +16,7 @@ import { type PermissionMode, type ModelMode } from '@/sync/domains/permissions/
 import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import {
     getProfileEnvironmentVariables,
+    getProfileDefaultBackendTarget,
     isProfileCompatibleWithBackendTarget,
     type AIBackendProfile,
 } from '@/sync/domains/profiles/profileCompatibility';
@@ -55,6 +56,7 @@ import { resolveNewSessionCapabilityServerId } from '@/components/sessions/new/m
 import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import {
+    isBackendEntrySelectableForNewSession,
     resolveNextSelectableBackendEntryForNewSession,
 } from '@/components/sessions/new/modules/newSessionAgentSelection';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
@@ -580,7 +582,13 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         return profileMap.get(selectedProfileId) ?? getBuiltInProfile(selectedProfileId) ?? null;
     }, [profileMap, selectedProfileId, useProfiles]);
 
-    const { backendTarget, setBackendTarget, builtInAgentId: agentType } = useNewSessionBackendTargetState({
+    const {
+        backendTarget,
+        setBackendTarget,
+        setBackendTargetAutomatically,
+        hasExplicitBackendTarget,
+        builtInAgentId: agentType,
+    } = useNewSessionBackendTargetState({
         entries: resolvedBackendEntries,
         lastUsedAgent,
         lastUsedBackendTarget,
@@ -588,7 +596,6 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         persistedBackendTarget: hydratedPersistedAuthoringDraft?.backendTarget,
         tempBackendTarget: routeBackendTarget ?? hydratedTempAuthoringDraft?.backendTarget ?? tempSessionData?.backendTarget,
         tempAgentType: hydratedTempAuthoringDraft?.agentId ?? agentTypeParam ?? hydratedPersistedAuthoringDraft?.agentId,
-        profile: selectedProfileForBackendTarget,
     });
     const setAgentType = React.useCallback((next: React.SetStateAction<AgentId>) => {
         setBackendTarget((prevTarget) => {
@@ -1134,14 +1141,14 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
     // Users may resolve secrets for multiple profiles and then switch between them before creating a session.
 
     // On iOS, keep tap handlers extremely light so selection state can commit instantly.
-    // We defer any follow-up adjustments (agent/session-type/permission defaults) until after interactions.
-    const pendingProfileSelectionRef = React.useRef<{ profileId: string; prevProfileId: string | null } | null>(null);
+    // Permission follow-up stays deferred; the effect below owns backend selection.
+    const pendingProfileSelectionRef = React.useRef<{ profileId: string; applyBackendDefault: boolean } | null>(null);
+    const initialProfileIdParamRef = React.useRef(normalizeOptionalParam(profileIdParam));
 
-    const selectProfile = React.useCallback((profileId: string) => {
+    const selectProfile = React.useCallback((profileId: string, applyBackendDefault = true) => {
         prepareSecretPromptForProfileSelection(selectedProfileId);
-        const prevSelectedProfileId = selectedProfileId;
         hasUserTouchedProfileSelectionRef.current = true;
-        pendingProfileSelectionRef.current = { profileId, prevProfileId: prevSelectedProfileId };
+        pendingProfileSelectionRef.current = { profileId, applyBackendDefault };
         setSelectedProfileId(profileId);
     }, [prepareSecretPromptForProfileSelection, selectedProfileId]);
 
@@ -1369,22 +1376,32 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         setSelectedPath,
     ]);
 
-    const resolvePreferredCompatibleProfileBackendEntry = React.useCallback((profile: AIBackendProfile) => {
+    const resolvePreferredCompatibleProfileBackendEntry = React.useCallback((profile: AIBackendProfile, applyDefault: boolean) => {
         const compatibleBackendEntries = getCompatibleProfileBackendEntries(profile);
-        const currentCompatible = compatibleBackendEntries.some((entry) => entry.targetKey === selectedBackendTargetKey);
-
-        if (compatibleBackendEntries.length === 0 || currentCompatible) {
-            return null;
-        }
-
-        return resolveNextSelectableBackendEntryForNewSession({
-            candidateBackendEntries: compatibleBackendEntries,
-            currentTargetKey: selectedBackendTargetKey,
+        if (compatibleBackendEntries.length === 0) return null;
+        const availability = {
             detectionTimestamp: cliAvailability.timestamp,
             availabilityById: cliAvailability.available,
             authStatusById: cliAvailability.authStatus,
             installableDepKeyCountByAgentId,
             selectableWithoutCliByAgentId,
+        };
+        if (applyDefault) {
+            const defaultTarget = getProfileDefaultBackendTarget(profile);
+            const defaultTargetKey = defaultTarget ? buildBackendTargetKey(defaultTarget) : null;
+            const defaultEntry = compatibleBackendEntries.find((entry) => entry.targetKey === defaultTargetKey);
+            if (defaultEntry && isBackendEntrySelectableForNewSession({ ...availability, entry: defaultEntry })) {
+                return defaultEntry.targetKey === selectedBackendTargetKey ? null : defaultEntry;
+            }
+        }
+        const currentEntry = compatibleBackendEntries.find((entry) => entry.targetKey === selectedBackendTargetKey);
+        if (currentEntry && isBackendEntrySelectableForNewSession({ ...availability, entry: currentEntry })) {
+            return null;
+        }
+        return resolveNextSelectableBackendEntryForNewSession({
+            ...availability,
+            candidateBackendEntries: compatibleBackendEntries,
+            currentTargetKey: selectedBackendTargetKey,
         });
     }, [
         cliAvailability.authStatus,
@@ -1396,24 +1413,27 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         selectedBackendTargetKey,
     ]);
 
+    const previousBackendProfileIdRef = React.useRef<string | null>(null);
     React.useEffect(() => {
-        if (!selectedProfileId) return;
+        const profile = selectedProfileForBackendTarget;
+        const profileChanged = previousBackendProfileIdRef.current !== (profile?.id ?? null);
+        previousBackendProfileIdRef.current = profile?.id ?? null;
+        if (!profile) return;
         const pending = pendingProfileSelectionRef.current;
-        if (!pending || pending.profileId !== selectedProfileId) return;
-        pendingProfileSelectionRef.current = null;
+        const pendingSelection = pending?.profileId === profile.id ? pending : null;
+        if (pendingSelection) pendingProfileSelectionRef.current = null;
+
+        // One decision owns both profile defaults and compatibility corrections. Hydration
+        // preserves authored backend choices; a fresh profile selection applies its default.
+        const preserveAuthoredTarget = hasExplicitBackendTarget && pendingSelection?.applyBackendDefault !== true;
+        const nextEntry = preserveAuthoredTarget ? null : resolvePreferredCompatibleProfileBackendEntry(
+            profile,
+            pendingSelection?.applyBackendDefault === true || profileChanged,
+        );
+        if (nextEntry) setBackendTargetAutomatically(nextEntry.target);
+        if (!pendingSelection) return;
 
         InteractionManager.runAfterInteractions(() => {
-            // Ensure nothing changed while we waited.
-            if (selectedProfileId !== pending.profileId) return;
-
-            const profile = profileMap.get(pending.profileId) || getBuiltInProfile(pending.profileId);
-            if (!profile) return;
-
-            const nextEntry = resolvePreferredCompatibleProfileBackendEntry(profile);
-            if (nextEntry) {
-                setBackendTarget(nextEntry.target);
-            }
-
             if (!hasUserSelectedPermissionModeRef.current) {
                 applyPermissionMode(resolveDefaultPermissionMode(profile), 'auto');
             }
@@ -1426,10 +1446,10 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         cliAvailability.timestamp,
         installableDepKeyCountByAgentId,
         selectableWithoutCliByAgentId,
-        profileMap,
+        hasExplicitBackendTarget,
         resolvePreferredCompatibleProfileBackendEntry,
-        selectedProfileId,
-        setBackendTarget,
+        selectedProfileForBackendTarget,
+        setBackendTargetAutomatically,
     ]);
 
     // Keep ProfilesList props stable to avoid rerendering the whole list on
@@ -1498,10 +1518,12 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
                 setSelectedProfileId(null);
             }
         } else if (typeof nextSelectedProfileId === 'string' && !rejectedProfileIdParam) {
-            selectProfile(nextSelectedProfileId);
+            const isInitialRouteSelection = initialProfileIdParamRef.current === nextSelectedProfileId;
+            selectProfile(nextSelectedProfileId, !isInitialRouteSelection || !hasExplicitBackendTarget);
         }
 
         if (shouldClearParam || rejectedProfileIdParam) {
+            initialProfileIdParamRef.current = undefined;
             if (setNavigationParams(navigation, { profileId: undefined })) {
                 return;
             }
@@ -1510,24 +1532,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
                 payload: { params: { profileId: undefined } },
             } as never);
         }
-    }, [canSelectProfile, navigation, profileIdParam, selectedProfileId, selectProfile, setSelectedProfileId, useProfiles]);
-
-    // Keep agentType compatible with the currently selected profile.
-    React.useEffect(() => {
-        if (!useProfiles || selectedProfileId === null) {
-            return;
-        }
-
-        const profile = profileMap.get(selectedProfileId) || getBuiltInProfile(selectedProfileId);
-        if (!profile) {
-            return;
-        }
-
-        const nextEntry = resolvePreferredCompatibleProfileBackendEntry(profile);
-        if (nextEntry) {
-            setBackendTarget(nextEntry.target);
-        }
-    }, [profileMap, resolvePreferredCompatibleProfileBackendEntry, selectedProfileId, setBackendTarget, useProfiles]);
+    }, [canSelectProfile, hasExplicitBackendTarget, navigation, profileIdParam, selectedProfileId, selectProfile, setSelectedProfileId, useProfiles]);
 
     const prevAgentTypeRef = React.useRef(agentType);
 
