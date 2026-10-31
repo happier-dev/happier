@@ -2564,6 +2564,8 @@ export const de: TranslationStructure = {
         },
         quota: {
             refreshing: 'Nutzung wird aktualisiert…',
+            refreshTimedOut: 'Aktualisierung nicht abgeschlossen. Der Rechner, der diese Daten aktualisiert, ist möglicherweise offline.',
+            refreshRateLimited: 'Der Anbieter hat diese Aktualisierung gedrosselt. Letzte bekannte Nutzung wird angezeigt.',
             loading: 'Wird geladen…',
             error: ({ message }: { message: string }) => `Fehler: ${message}`,
             lastUpdated: ({ time }: { time: string }) => `Zuletzt aktualisiert: ${time}`,

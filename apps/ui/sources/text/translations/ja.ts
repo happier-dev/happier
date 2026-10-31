@@ -3099,6 +3099,8 @@ localTailscale: {
     },
     quota: {
       refreshing: "使用量を更新中…",
+      refreshTimedOut: "更新が完了しませんでした。このデータを更新するマシンがオフラインの可能性があります。",
+      refreshRateLimited: "プロバイダーがこの更新を制限しています。最後の既知の使用状況を表示しています。",
       loading: "読み込み中…",
       error: ({ message }: { message: string }) => `エラー: ${message}`,
       lastUpdated: ({ time }: { time: string }) => `最終更新: ${time}`,

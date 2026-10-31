@@ -2645,6 +2645,8 @@ export const ru: TranslationStructure = {
     },
     quota: {
       refreshing: "Обновление использования…",
+      refreshTimedOut: "Обновление не завершилось. Компьютер, обновляющий эти данные, может быть не в сети.",
+      refreshRateLimited: "Провайдер ограничил это обновление. Показывается последнее известное использование.",
       loading: "Загрузка…",
       error: ({ message }: { message: string }) => `Ошибка: ${message}`,
       lastUpdated: ({ time }: { time: string }) => `Обновлено: ${time}`,

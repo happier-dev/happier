@@ -2650,6 +2650,8 @@ export const ca: TranslationStructure = {
         },
         quota: {
             refreshing: 'Actualitzant l’ús…',
+            refreshTimedOut: 'L’actualització no ha finalitzat. És possible que la màquina que actualitza aquestes dades estigui desconnectada.',
+            refreshRateLimited: 'El proveïdor ha limitat aquesta actualització. Es mostra l’últim ús conegut.',
             loading: 'Carregant…',
             error: ({ message }: { message: string }) => `Error: ${message}`,
             lastUpdated: ({ time }: { time: string }) => `Última actualització: ${time}`,

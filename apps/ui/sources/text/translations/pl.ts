@@ -2722,6 +2722,8 @@ export const pl: TranslationStructure = {
     },
     quota: {
       refreshing: "Odświeżanie użycia…",
+      refreshTimedOut: "Odświeżanie nie zostało zakończone. Komputer odświeżający te dane może być w trybie offline.",
+      refreshRateLimited: "Dostawca ograniczył to odświeżanie. Wyświetlane jest ostatnie znane użycie.",
       loading: "Ładowanie…",
       error: ({ message }: { message: string }) => `Błąd: ${message}`,
       lastUpdated: ({ time }: { time: string }) => `Ostatnia aktualizacja: ${time}`,

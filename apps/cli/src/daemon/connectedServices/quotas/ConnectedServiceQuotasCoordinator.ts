@@ -164,6 +164,7 @@ import {
   extractActiveBindings,
   activeBindingMatchesRuntimeIdentity,
   isRecord,
+  isQuotaRateLimitError,
   isQuotaUnknownFallbackSnapshot,
   isQuotaAuthFailure,
   normalizeConnectedServiceQuotaGeneration,
@@ -3580,10 +3581,11 @@ export class ConnectedServiceQuotasCoordinator {
   }
 
   private async runFetcherWithTimeout<TSnapshot>(input: Readonly<{
-    fetcher: Readonly<{ fetch: (params: Readonly<{ record: ConnectedServiceCredentialRecordV1; now: number; signal: AbortSignal }>) => Promise<TSnapshot | null> }>;
+    fetcher: Readonly<{ fetch: (params: Readonly<{ record: ConnectedServiceCredentialRecordV1; now: number; signal: AbortSignal; force?: boolean }>) => Promise<TSnapshot | null> }>;
     record: ConnectedServiceCredentialRecordV1;
     now: number;
     signal?: AbortSignal;
+    force?: boolean;
   }>): Promise<
     | Readonly<{ type: 'timeout' }>
     | Readonly<{ type: 'result'; snapshot: TSnapshot | null }>
@@ -3597,6 +3599,7 @@ export class ConnectedServiceQuotasCoordinator {
       record: buildCredentialRecordForQuotaFetcher(input.record),
       now: input.now,
       signal: controller.signal,
+      ...(input.force ? { force: true } : {}),
     });
 
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
@@ -3740,6 +3743,7 @@ export class ConnectedServiceQuotasCoordinator {
     record: ConnectedServiceCredentialRecordV1;
     credentialRevision: ConnectedServiceCredentialRevisionV1 | null;
     signal?: AbortSignal;
+    force?: boolean;
   }>): Promise<QuotaSnapshotFetchResult> {
     if (input.signal?.aborted) return { type: 'timeout' };
     // Provider selection is fixed per service on this coordinator. Hash the complete
@@ -3793,6 +3797,7 @@ export class ConnectedServiceQuotasCoordinator {
     profileId: string;
     record: ConnectedServiceCredentialRecordV1;
     signal?: AbortSignal;
+    force?: boolean;
   }>): Promise<QuotaSnapshotFetchResult> {
     // The observation owner captures time once, shared by every joining caller.
     // A caller's scheduling time is not an input to the provider read.
@@ -3802,6 +3807,7 @@ export class ConnectedServiceQuotasCoordinator {
         record: input.record,
         now: Math.max(0, Math.trunc(this.now())),
         signal: input.signal,
+        ...(input.force ? { force: true } : {}),
       });
       if (result.type !== 'result' || !result.snapshot || isQuotaUnknownFallbackSnapshot(result.snapshot)
         || input.record.kind !== 'oauth') return result;
@@ -4404,6 +4410,10 @@ export class ConnectedServiceQuotasCoordinator {
         let staleSnapshotVerifiedCredentialFingerprint: string | null | undefined;
         let expectedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null = null;
         let subscriptionWork: Promise<void> | null = null;
+        // Refresh-outcome state for the catch path: whether this attempt serves a
+        // user-requested refresh and where the last-known snapshot lives.
+        let forcedRefreshAttempt = false;
+        let failureStorageMode: ResolvedQuotaStorageMode | null = null;
         try {
           const bindingKey = this.makeBindingKey({ serviceId, profileId });
           const directGroupTargets = groupSwitchTargetsByBindingKey.get(bindingKey) ?? [];
@@ -4416,6 +4426,8 @@ export class ConnectedServiceQuotasCoordinator {
           const scheduledRefreshes = this.listScheduledCurrentSourceRefreshesForBinding({ serviceId, profileId });
           const forcedRefresh = this.shouldForceQuotaRefresh(existing.existing, existing.preopenedSnapshot)
             || scheduledRefreshes.length > 0;
+          forcedRefreshAttempt = forcedRefresh;
+          failureStorageMode = existing.storageMode;
 
           const failureState = this.failureStateByBindingKey.get(bindingKey);
           const quotaFresh = fetcher && this.isExistingQuotaSnapshotFresh({ existing: existing.existing, preopenedSnapshot: existing.preopenedSnapshot, now, fetcher, forcedRefresh });
@@ -4503,6 +4515,7 @@ export class ConnectedServiceQuotasCoordinator {
             profileId,
             record,
             credentialRevision: credential.credentialRevision,
+            force: forcedRefresh,
           });
           if (raced.type === 'timeout') {
             // Best-effort only: ignore late results. The AbortController should be enough for well-behaved fetchers.
@@ -4568,6 +4581,27 @@ export class ConnectedServiceQuotasCoordinator {
               snapshot: annotateSnapshotAsStale(staleSnapshotForFallback),
               verifiedCredentialFingerprint: staleSnapshotVerifiedCredentialFingerprint,
             });
+          }
+          // A user-requested refresh refused with 429 must not end in silence at the
+          // client that asked for it: persist the last-known meters with a
+          // rate-limit annotation and an advanced fetchedAt so the pending refresh
+          // resolves promptly with a visible "rate limited" outcome instead of the
+          // generic refresh deadline. The failure backoff above still spaces the
+          // daemon's next provider attempt by the provider's Retry-After.
+          if (forcedRefreshAttempt && failureStorageMode !== null && staleSnapshotForFallback && isQuotaRateLimitError(error)) {
+            await this.recordFetchedQuotaSnapshotAsAccountUsage({
+              serviceId,
+              profileId,
+              snapshot: {
+                ...annotateSnapshotAsStale(staleSnapshotForFallback, 'provider_rate_limited'),
+                fetchedAt: now,
+              },
+              now,
+              accountMode: failureStorageMode,
+            }).catch(() => null);
+            this.clearScheduledCurrentSourceRefreshes(
+              this.listScheduledCurrentSourceRefreshesForBinding({ serviceId, profileId }),
+            );
           }
           // Best-effort only.
           continue;
