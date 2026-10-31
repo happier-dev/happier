@@ -214,6 +214,7 @@ export function createSystemTasksRunner(params: Readonly<{
       }
       state.resolvePrompt(respondParams.answer);
       await new Promise((resolve) => setTimeout(resolve, 0));
+      return undefined;
     },
 
     async cancel(cancelParams) {

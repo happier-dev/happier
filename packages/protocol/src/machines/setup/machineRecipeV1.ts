@@ -96,6 +96,7 @@ function packageIdentityError(identity: { manager: string; name: string; kind?: 
     } else if (identity.source !== undefined || identity.scope !== undefined) return 'Package source and install scope belong only to winget.';
     if (identity.manager === 'apt' && !/^[a-z0-9][a-z0-9+.-]*$/.test(identity.name)) return 'An exact apt package name is required.';
     if (identity.manager === 'dnf' && !/^[A-Za-z0-9][A-Za-z0-9+_.-]*$/.test(identity.name)) return 'An exact dnf package name is required.';
+    return undefined;
 }
 /** The same exact native identity is used by desired steps and compact observations. */
 export const MachineRecipePackageIdentityV1Schema = z.object({ manager: PackageManager, ...PackageIdentityFields }).strict()
