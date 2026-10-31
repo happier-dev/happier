@@ -28,10 +28,13 @@ A profile can include:
 - **requirements** for variables that must exist before the session starts
 - **saved secret bindings** for required secrets
 - **compatibility** with one or more backend choices, including configured ACP backends
+- a **default backend** used when a session starts with this profile and no other backend is chosen
 - **default per-backend startup preferences**, such as permission and transcript-storage defaults where supported
 
 Profiles are applied **only when starting a new session**.
 They are **fixed per session** after launch. If you want a different profile, start a new session.
+
+The profile's compatible backends also constrain backend selection: when the profile is selected, incompatible backend choices are disabled in the app, and starts that would pair the profile with a disallowed backend are blocked. If the profile sets a default backend, new sessions in the app start on it (unless a route, draft, or explicit choice names another backend).
 
 ## Built-in vs custom profiles
 
@@ -64,9 +67,10 @@ If Profiles is turned off, the app falls back to the machine environment without
 2. Click **Add Profile**
 3. Give the profile a clear name
 4. Choose which backend choices it should be compatible with
-5. Add the environment variables Happier should inject when the session starts
-6. On each variable's card, turn on **Required** to block session creation when the variable is missing. Turn on **Use secret vault** for credentials you want to resolve through saved secrets; this also makes the variable required.
-7. Save the profile
+5. Optional: set **Default AI backend** so sessions started with this profile use a specific backend when you have not chosen one
+6. Add the environment variables Happier should inject when the session starts
+7. On each variable's card, turn on **Required** to block session creation when the variable is missing. Turn on **Use secret vault** for credentials you want to resolve through saved secrets; this also makes the variable required.
+8. Save the profile
 
 Recommended pattern:
 
@@ -131,6 +135,8 @@ happier codex --profile openai
 happier codex --profile "Work Codex"
 happier gemini --profile gemini-vertex
 ```
+
+A bare `happier --profile <profile>` (without an agent subcommand) starts the profile's **default backend** — for example, `happier --profile openai` starts Codex. `happier session create --launch-profile <profile>` without `--backend` uses the same default. If the profile has no default backend, the default backend command runs and reports any profile compatibility error as before.
 
 Profile lookup rules:
 

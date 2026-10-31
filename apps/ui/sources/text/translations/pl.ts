@@ -11492,6 +11492,13 @@ settingsSession: {
         bypassPermissions: "Pomiń wszystkie uprawnienia",
       },
     },
+    defaultBackend: {
+        title: 'Domyślny backend AI',
+        footer: 'Rozpoczyna nowe sesje na tym backendzie, gdy profil jest wybrany i nie wybrano innego backendu.',
+        noneTitle: 'Brak domyślnego',
+        noneSubtitle: 'Happier wybiera backend w zwykły sposób.',
+        selectedSubtitle: 'Używane przy rozpoczynaniu sesji z tym profilem.',
+    },
     defaultPermissions: {
       title: "Domyślne uprawnienia",
       footer:

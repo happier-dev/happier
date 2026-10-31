@@ -10654,6 +10654,13 @@ settingsSession: {
                 bypassPermissions: 'Salta tots els permisos',
             },
         },
+        defaultBackend: {
+            title: 'Backend d\'IA predeterminat',
+            footer: 'Inicia sessions noves en aquest backend quan el perfil està seleccionat i no se\'n tria un altre.',
+            noneTitle: 'Sense predeterminat',
+            noneSubtitle: 'Happier tria el backend com de costum.',
+            selectedSubtitle: 'S\'utilitza en iniciar una sessió amb aquest perfil.',
+        },
         defaultPermissions: {
             title: 'Permisos per defecte',
             footer: 'Substitueix els permisos per defecte a nivell de compte per a noves sessions quan se selecciona aquest perfil.',

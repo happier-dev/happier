@@ -11027,6 +11027,13 @@ settingsSession: {
         bypassPermissions: "跳过所有权限",
       },
     },
+    defaultBackend: {
+        title: '默认 AI 后端',
+        footer: '选择此配置文件且未选择其他后端时，新会话将使用此后端启动。',
+        noneTitle: '无默认值',
+        noneSubtitle: 'Happier 将照常选择后端。',
+        selectedSubtitle: '使用此配置文件启动会话时使用。',
+    },
     defaultPermissions: {
       title: "默认权限",
       footer:

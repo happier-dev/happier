@@ -10802,6 +10802,13 @@ settingsSession: {
                 bypassPermissions: 'Alle Berechtigungen überspringen',
             },
         },
+        defaultBackend: {
+            title: 'Standard-KI-Backend',
+            footer: 'Startet neue Sitzungen mit diesem Backend, wenn das Profil ausgewählt ist und kein anderes Backend gewählt wurde.',
+            noneTitle: 'Kein Standard',
+            noneSubtitle: 'Happier wählt das Backend wie üblich.',
+            selectedSubtitle: 'Wird beim Starten einer Sitzung mit diesem Profil verwendet.',
+        },
         defaultPermissions: {
             title: 'Standardberechtigungen',
             footer: 'Überschreibt die Standardberechtigungen des Kontos für neue Sessions, wenn dieses Profil gewählt ist.',

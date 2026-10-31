@@ -15,8 +15,10 @@ resetProfileEditFormTestState();
 
 const capture = vi.hoisted(() => ({
     customBackendPress: null as null | (() => void),
+    codexPresses: [] as Array<() => void>,
     reset() {
         this.customBackendPress = null;
+        this.codexPresses = [];
     },
 }));
 
@@ -97,9 +99,14 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: ({ title, onPress }: any) => {
+    Item: ({ title, subtitle, onPress }: any) => {
         if (title === 'Custom Backend' && typeof onPress === 'function') {
             capture.customBackendPress = onPress;
+        }
+        // Compatibility rows are the only rows keyed by bare agent id subtitles; they render
+        // before dropdown triggers, so index 0 is the compat toggle.
+        if (subtitle === 'codex' && typeof onPress === 'function') {
+            capture.codexPresses.push(onPress);
         }
         return React.createElement('Item', { title, onPress });
     },
@@ -219,5 +226,68 @@ describe('ProfileEditForm backend targets', () => {
             [configuredTargetKey]: true,
         }));
         expect(savedProfile?.compatibilityByTargetKey?.[legacyCustomAcpTargetKey]).toBeUndefined();
+    });
+
+    it('keeps a compatible default backend target on save', async () => {
+        const saveRef = { current: null as null | (() => boolean) };
+        const onSave = vi.fn((_: AIBackendProfile) => true);
+        const { ProfileEditForm } = await loadProfileEditForm();
+
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile: AIBackendProfileSchema.parse({
+                ...buildProfile(),
+                compatibilityByTargetKey: {
+                    [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
+                    [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' })]: true,
+                },
+                defaultBackendTargetKey: buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' }),
+            }),
+            machineId: null,
+            onSave,
+            onCancel: vi.fn(),
+            saveRef,
+        }));
+
+        const result = saveRef.current?.();
+        expect(result).toBe(true);
+        expect(onSave.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+            defaultBackendTargetKey: buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' }),
+        }));
+    });
+
+    it('clears the default backend target when its backend is toggled off', async () => {
+        capture.reset();
+        const saveRef = { current: null as null | (() => boolean) };
+        const onSave = vi.fn((_: AIBackendProfile) => true);
+        const { ProfileEditForm } = await loadProfileEditForm();
+
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile: AIBackendProfileSchema.parse({
+                ...buildProfile(),
+                compatibilityByTargetKey: {
+                    [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
+                    [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' })]: true,
+                },
+                defaultBackendTargetKey: buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' }),
+            }),
+            machineId: null,
+            onSave,
+            onCancel: vi.fn(),
+            saveRef,
+        }));
+
+        expect(capture.codexPresses.length).toBeGreaterThan(0);
+        await act(async () => {
+            capture.codexPresses[0]?.();
+        });
+
+        const result = saveRef.current?.();
+        expect(result).toBe(true);
+        expect(onSave.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+            compatibilityByTargetKey: expect.objectContaining({
+                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: false,
+            }),
+            defaultBackendTargetKey: undefined,
+        }));
     });
 });
