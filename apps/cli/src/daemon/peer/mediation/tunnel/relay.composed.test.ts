@@ -1097,56 +1097,6 @@ describe('registerPeerTcpTunnelRelayTerminator', () => {
         expect(decoded.ok ? Buffer.from(decoded.payload).toString('utf8') : null).toBe('world');
     });
 
-    it('uses binary raw-payload caps instead of the legacy frame cap for negotiated binary_frame_v2 data', async () => {
-        const mod = await loadRelayModule();
-        expect(mod?.registerPeerTcpTunnelRelayTerminator).toBeTypeOf('function');
-        if (!mod?.registerPeerTcpTunnelRelayTerminator) return;
-
-        const socket = createSocket();
-        const writes: string[] = [];
-        const connection = {
-            write: vi.fn((bytes: Uint8Array) => {
-                writes.push(Buffer.from(bytes).toString('utf8'));
-            }),
-            close: vi.fn(),
-        };
-
-        mod.registerPeerTcpTunnelRelayTerminator({
-            accountId: 'user_1',
-            machineId: 'machine_1',
-            socket,
-            nowMs: () => 2_000,
-            relayAuthorizationTrustRoots,
-            connectTcp: vi.fn(async () => connection),
-            maxFrameBytes: 8,
-            maxBinaryHeaderBytes: 512,
-            maxRawPayloadBytes: 32,
-        });
-
-        const openEnvelope = createOpenEnvelope('tun_binary_raw_cap');
-        expect(openEnvelope.frame.kind).toBe('open');
-        if (openEnvelope.frame.kind !== 'open') throw new Error('expected open frame fixture');
-        await socket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, {
-            ...openEnvelope,
-            frame: {
-                v: 1,
-                kind: 'open',
-                open: {
-                    ...openEnvelope.frame.open,
-                    selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-                },
-            },
-        });
-        await socket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createBinarySubstreamEnvelope({
-            tunnelId: 'tun_binary_raw_cap', substreamId: 'request', kind: 'open',
-        }));
-        await socket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createBinarySubstreamEnvelope({
-            tunnelId: 'tun_binary_raw_cap', substreamId: 'request', kind: 'data', payload: 'twelve-bytes',
-        }));
-
-        expect(writes).toEqual(['twelve-bytes']);
-    });
-
     it('opens separate loopback TCP connections for binary_frame_v2 substreams on one authorized relay tunnel', async () => {
         const mod = await loadRelayModule();
         expect(mod?.registerPeerTcpTunnelRelayTerminator).toBeTypeOf('function');

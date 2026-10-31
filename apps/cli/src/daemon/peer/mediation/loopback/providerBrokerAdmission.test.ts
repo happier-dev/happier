@@ -139,7 +139,7 @@ describe('provider-broker machine/1 admission', () => {
             socket.on('error', reject);
             socket.on('close', () => resolve(Buffer.concat(chunks).toString('utf8')));
           });
-          expect(result).toContain('HTTP/1.1 403');
+          expect(result).toContain(reason === 'target_unavailable' ? 'HTTP/1.1 403' : 'HTTP/1.1 503');
           expect(result).not.toContain(PROVIDER_BROKER_ENDPOINT_PATH_HEADER);
           expect(JSON.parse(result.slice(result.indexOf('\r\n\r\n') + 4))).toMatchObject({ error: { code: reason === 'target_unavailable' ? 'resource_unavailable' : 'broker_unavailable' } });
           expect(result).not.toContain('do-not-log');
