@@ -119,7 +119,7 @@ describe('createPiRuntimeEventProjector assistant snapshots', () => {
   it('does not treat a shared prefix from an earlier assistant segment as streamed current text', () => {
     const projector = createPiRuntimeEventProjector();
 
-    projector.project({
+    const earlier = projector.project({
       type: 'message_update',
       assistantMessageEvent: { type: 'text_delta', delta: 'Shared prefix' },
     }, context);
@@ -129,6 +129,16 @@ describe('createPiRuntimeEventProjector assistant snapshots', () => {
       toolName: 'Read',
       args: {},
     }, context);
+
+    const current = projector.project({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: 'Shared prefix continued' },
+    }, context);
+    expect(assistantTexts(current)).toEqual(['Shared prefix continued']);
+    expect(current).toMatchObject([{ messageId: expect.any(String) }]);
+    const currentDelta = current.find((event) => event.kind === 'message-delta');
+    const earlierDelta = earlier.find((event) => event.kind === 'message-delta');
+    expect(currentDelta?.messageId).not.toBe(earlierDelta?.messageId);
 
     expect(projector.project({
       type: 'message_end',
