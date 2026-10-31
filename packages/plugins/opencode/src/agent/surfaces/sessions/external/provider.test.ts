@@ -8,7 +8,7 @@ import {
 } from './provider.js';
 
 describe('retained OpenCode external-session takeover leaf', () => {
-  it('uses the host-selected local target instead of remote provider directory metadata', async () => {
+  it('preserves the native session identity and normalized endpoint in the takeover descriptor', async () => {
     const contribution: AgentExternalSessionTakeoverContribution =
       openCodeExternalSessionTakeoverContribution;
 

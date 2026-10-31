@@ -1,10 +1,10 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
@@ -14,6 +14,11 @@ describe('OpenCode plugin activation MCP discovery', () => {
 
   it('exposes native OpenCode MCP detections including disabled servers', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'opencode-activate-mcp-'));
+    let activation: PluginTestkit | undefined;
+    onTestFinished(async () => {
+      try { await activation?.dispose(); }
+      finally { await rm(projectRoot, { recursive: true, force: true }); }
+    });
     vi.stubEnv('XDG_CONFIG_HOME', join(projectRoot, 'empty-user-config'));
     vi.stubEnv('OPENCODE_CONFIG', '');
     vi.stubEnv('OPENCODE_CONFIG_DIR', '');
@@ -40,7 +45,7 @@ describe('OpenCode plugin activation MCP discovery', () => {
       }),
       'utf8',
     );
-    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const registration = activation.registration('mcp.discoverySources', 'config');
     if (!registration) throw new Error('Missing OpenCode MCP discovery registration');
     const result = await Reflect.apply(registration, undefined, [{
@@ -65,11 +70,15 @@ describe('OpenCode plugin activation MCP discovery', () => {
       })),
       warnings: [],
     });
-    await activation.dispose();
   });
 
   it('keeps distinct native names that would collide under endpoint id normalization', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'opencode-activate-mcp-collision-'));
+    let activation: PluginTestkit | undefined;
+    onTestFinished(async () => {
+      try { await activation?.dispose(); }
+      finally { await rm(projectRoot, { recursive: true, force: true }); }
+    });
     vi.stubEnv('XDG_CONFIG_HOME', join(projectRoot, 'empty-user-config'));
     vi.stubEnv('OPENCODE_CONFIG', '');
     vi.stubEnv('OPENCODE_CONFIG_DIR', '');
@@ -91,7 +100,7 @@ describe('OpenCode plugin activation MCP discovery', () => {
       }),
       'utf8',
     );
-    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const registration = activation.registration('mcp.discoverySources', 'config');
     if (!registration) throw new Error('Missing OpenCode MCP discovery registration');
     const result = await Reflect.apply(registration, undefined, [{
@@ -115,6 +124,5 @@ describe('OpenCode plugin activation MCP discovery', () => {
       })),
       warnings: [],
     });
-    await activation.dispose();
   });
 });

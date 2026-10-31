@@ -27,6 +27,7 @@ function buildOauth(
   profileId: string,
   providerAccountId: string,
   now = 1_000,
+  tokenSuffix = '',
 ) {
   return buildConnectedServiceCredentialRecord({
     now,
@@ -35,8 +36,8 @@ function buildOauth(
     kind: 'oauth',
     expiresAt: now + 60_000,
     oauth: {
-      accessToken: ACCESS_TOKEN_SENTINEL,
-      refreshToken: REFRESH_TOKEN_SENTINEL,
+      accessToken: `${ACCESS_TOKEN_SENTINEL}${tokenSuffix}`,
+      refreshToken: `${REFRESH_TOKEN_SENTINEL}${tokenSuffix}`,
       idToken: null,
       scope: null,
       tokenType: null,
@@ -223,6 +224,12 @@ describe('OpenCode connected-account auth materialization', () => {
     try {
       await expect(materializeOpenCodeAuthEnvironment({
         connectedAccountMaterializationAuthority: 'qualified',
+        materializationId: 'missing-child-capability',
+        rootDir,
+        requestAuth: { ...requestAuth(rootDir, 'openai'), capabilityPath: '' },
+      })).rejects.toThrow(/child capability/i);
+      await expect(materializeOpenCodeAuthEnvironment({
+        connectedAccountMaterializationAuthority: 'qualified',
         materializationId: 'missing-qualified-request-auth',
         rootDir,
         requestAuth: {
@@ -371,7 +378,7 @@ describe('OpenCode connected-account auth materialization', () => {
     try {
       const materializeIdentity = async (profileId: string, accountId: string, now: number) => (
         await materializeOpenCodeAuthEnvironment({
-          openaiCodex: buildOauth('openai-codex', profileId, accountId, now),
+          openaiCodex: buildOauth('openai-codex', profileId, accountId, now, `-rotation-${now}`),
           connectedAccountMaterializationAuthority: 'qualified',
           materializationId: profileId,
           rootDir,

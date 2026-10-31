@@ -53,7 +53,10 @@ describe('OpenCode tool-event identity publication', () => {
     const f = await fixture(); f.defer();
     const pending = publishOpenCodeToolPartRuntimeEvents({ ...f.args,
       part: { ...f.args.part, tool: `${f.server}_change_title`, state: { status: 'running', input: {} } } });
-    expect(f.events.map(event => event.kind)).toEqual(['tool-call']);
+    expect(f.events).toMatchObject([{
+      kind: 'tool-call', toolName: 'mcp__happier__change_title',
+      toolCallId: 'call-1', turnId: 'turn-1', sessionId: 'session-a',
+    }]);
     await pending;
   });
 });
