@@ -645,6 +645,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     } = useTranscriptWebViewportTelemetryDiagnostics({
         chatListNativeId,
         itemsRef,
+        listRef,
         listContentHeightRef,
         listLayoutHeightRef,
         olderPaginationSnapshotRef,

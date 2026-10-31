@@ -7,8 +7,23 @@ export type WebTranscriptScrollMetrics = Readonly<{
     clientHeight: number;
 }>;
 
+function readWebTranscriptScrollMetrics(element: HTMLElement): WebTranscriptScrollMetrics {
+    return {
+        element,
+        scrollTop: element.scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+    };
+}
+
 export function resolveWebTranscriptScrollMetrics(params: Readonly<{
     root: HTMLElement | null | undefined;
+    /**
+     * The renderer's own scroll node (`getScrollableNode()`): the element it writes scroll offsets
+     * to. It is the transcript scroller whether or not content overflows yet, so it is read
+     * directly; discovery below only runs before the renderer has published one.
+     */
+    scrollElement?: unknown;
     cachedElement?: HTMLElement | null | undefined;
     win: Window;
     minOverflowPx?: number;
@@ -18,6 +33,11 @@ export function resolveWebTranscriptScrollMetrics(params: Readonly<{
     score?: (el: HTMLElement) => number;
     allowRootFallback?: boolean;
 }>): WebTranscriptScrollMetrics | null {
+    const scrollElement = params.scrollElement;
+    if (typeof HTMLElement !== 'undefined' && scrollElement instanceof HTMLElement && scrollElement.isConnected) {
+        return readWebTranscriptScrollMetrics(scrollElement);
+    }
+
     const root = params.root ?? null;
     if (!root) return null;
 
@@ -34,12 +54,7 @@ export function resolveWebTranscriptScrollMetrics(params: Readonly<{
         && (root as any).contains(cachedElement)
         && isWebElementScrollable({ el: cachedElement, win: params.win, minOverflowPx })
     ) {
-        return {
-            element: cachedElement,
-            scrollTop: cachedElement.scrollTop,
-            scrollHeight: cachedElement.scrollHeight,
-            clientHeight: cachedElement.clientHeight,
-        };
+        return readWebTranscriptScrollMetrics(cachedElement);
     }
 
     const element = resolveWebScrollableElement(root, {
@@ -52,20 +67,10 @@ export function resolveWebTranscriptScrollMetrics(params: Readonly<{
     });
     if (!element) {
         if (params.allowRootFallback !== true) return null;
-        return {
-            element: root,
-            scrollTop: root.scrollTop,
-            scrollHeight: root.scrollHeight,
-            clientHeight: root.clientHeight,
-        };
+        return readWebTranscriptScrollMetrics(root);
     }
 
-    return {
-        element,
-        scrollTop: element.scrollTop,
-        scrollHeight: element.scrollHeight,
-        clientHeight: element.clientHeight,
-    };
+    return readWebTranscriptScrollMetrics(element);
 }
 
 export function isWebTranscriptScrollable(metrics: WebTranscriptScrollMetrics, minOverflowPx = 1): boolean {
