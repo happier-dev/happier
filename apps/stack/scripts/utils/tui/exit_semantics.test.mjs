@@ -18,19 +18,6 @@ function terminateTestProcess(child) {
   }
 }
 
-test('explicit TUI quit stops the owner while an unexpected terminal exit detaches from it', () => {
-  assert.deepEqual(resolveTuiExitPolicy({ explicit: true }), {
-    terminateChild: true,
-    terminateTauri: true,
-    stopRuntime: true,
-  });
-  assert.deepEqual(resolveTuiExitPolicy(), {
-    terminateChild: false,
-    terminateTauri: true,
-    stopRuntime: false,
-  });
-});
-
 test('unexpected TUI exit only tears down its Tauri boundary, while explicit exit reaches the owner stop boundary', async () => {
   const unexpectedEvents = [];
   await applyTuiExitPolicy({

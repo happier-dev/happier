@@ -5,22 +5,28 @@ import { resolveTuiChildEnv } from './resolve_child_env.mjs';
 
 test('resolveTuiChildEnv falls back to stack env file for missing stack keys', () => {
   const out = resolveTuiChildEnv({
-    stackEnvFromFile: { HAPPIER_STACK_STACK: 'file-stack', HAPPIER_STACK_EXPO_DEV_PORT: '19364' },
+    stackEnvFromFile: {
+      HAPPIER_STACK_STACK: 'file-stack',
+      HAPPIER_STACK_EXPO_DEV_PORT: '19364',
+      HAPPIER_STACK_REPO_DIR: '/from/file',
+    },
     processEnv: { PATH: '/bin' },
   });
 
   assert.equal(out.HAPPIER_STACK_STACK, 'file-stack');
   assert.equal(out.HAPPIER_STACK_EXPO_DEV_PORT, '19364');
+  assert.equal(out.HAPPIER_STACK_REPO_DIR, '/from/file');
   assert.equal(out.HAPPIER_STACK_TUI, '1');
 });
 
 test('resolveTuiChildEnv prefers process env when keys overlap', () => {
   const out = resolveTuiChildEnv({
-    stackEnvFromFile: { HAPPIER_STACK_STACK: 'file-stack' },
-    processEnv: { HAPPIER_STACK_STACK: 'process-stack' },
+    stackEnvFromFile: { HAPPIER_STACK_STACK: 'file-stack', HAPPIER_STACK_REPO_DIR: '/from/file' },
+    processEnv: { HAPPIER_STACK_STACK: 'process-stack', HAPPIER_STACK_REPO_DIR: '/from/process' },
   });
 
   assert.equal(out.HAPPIER_STACK_STACK, 'process-stack');
+  assert.equal(out.HAPPIER_STACK_REPO_DIR, '/from/process');
   assert.equal(out.HAPPIER_STACK_TUI, '1');
 });
 

@@ -30,17 +30,6 @@ function readLocalGitConfigValue(repoDir, key) {
   }
 }
 
-test('ensureStagedGitRepo initializes git repo and creates an empty commit', () => {
-  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-staged-repo-'));
-  try {
-    ensureStagedGitRepo({ repoDir, env: process.env, dryRun: false });
-    assert.ok(fs.existsSync(path.join(repoDir, '.git')));
-    assert.ok(hasHeadCommit(repoDir));
-  } finally {
-    fs.rmSync(repoDir, { recursive: true, force: true });
-  }
-});
-
 test('ensureStagedGitRepo creates a commit when .git exists but HEAD is missing', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-staged-repo-'));
   try {
@@ -81,6 +70,7 @@ test('ensureStagedGitRepo does not persist identity config when creating an init
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-staged-repo-'));
   try {
     ensureStagedGitRepo({ repoDir, env: process.env, dryRun: false });
+    assert.ok(fs.existsSync(path.join(repoDir, '.git')));
     assert.ok(hasHeadCommit(repoDir));
 
     assert.equal(readLocalGitConfigValue(repoDir, 'user.email'), null);

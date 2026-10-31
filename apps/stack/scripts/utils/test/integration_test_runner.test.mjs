@@ -8,7 +8,7 @@ test('shouldRunRealIntegrationTests defaults to false', () => {
 });
 
 test('shouldRunRealIntegrationTests enables real tests when env var is truthy', () => {
-  for (const value of ['1', 'true', 'yes', 'y', 'on']) {
+  for (const value of ['1', 'true', 'yes', 'y', 'on', '  TrUe  ']) {
     assert.equal(shouldRunRealIntegrationTests({ HAPPIER_STACK_RUN_REAL_INTEGRATION_TESTS: value }), true);
   }
 });
@@ -31,10 +31,6 @@ test('splitRealIntegrationTests splits real integration suffixes', () => {
   const { regular, real } = splitRealIntegrationTests(files);
   assert.deepEqual(regular, ['/tmp/a.integration.test.mjs', '/tmp/c.integration.test.mjs']);
   assert.deepEqual(real, ['/tmp/b.real.integration.test.mjs', '/tmp/d.real.integration.test.mjs']);
-});
-
-test('shouldRunRealIntegrationTests trims and lowercases env values', () => {
-  assert.equal(shouldRunRealIntegrationTests({ HAPPIER_STACK_RUN_REAL_INTEGRATION_TESTS: '  TrUe  ' }), true);
 });
 
 test('shouldRunRealIntegrationTests falls back on unknown values', () => {

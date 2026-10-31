@@ -10,22 +10,19 @@ import {
   normalizeTuiForwardedArgs,
 } from './args.mjs';
 
-test('normalizeTuiForwardedArgs defaults to dev for empty args', () => {
-  assert.deepEqual(normalizeTuiForwardedArgs([]), ['dev']);
-});
-
 test('normalizeTuiForwardedArgs defaults to dev when only flags are provided', () => {
   assert.deepEqual(normalizeTuiForwardedArgs(['--restart', '--mobile']), ['dev', '--restart', '--mobile']);
   assert.deepEqual(normalizeTuiForwardedArgs(['--json']), ['dev', '--json']);
 });
 
-test('normalizeTuiForwardedArgs preserves explicit args', () => {
-  assert.deepEqual(normalizeTuiForwardedArgs(['stack', 'dev', 'exp1']), ['stack', 'dev', 'exp1']);
-});
-
 test('extractTuiLaunchOptions strips Tauri flags from child args and preserves forwarded commands', () => {
   assert.deepEqual(extractTuiLaunchOptions([]), {
     forwardedArgs: ['dev'],
+    rescue: false,
+    withTauri: false,
+  });
+  assert.deepEqual(extractTuiLaunchOptions(['stack', 'dev', 'exp1']), {
+    forwardedArgs: ['stack', 'dev', 'exp1'],
     rescue: false,
     withTauri: false,
   });
