@@ -470,16 +470,16 @@ export async function runCodex(opts: {
     const confirmProviderAcceptedPrompt = (message: Readonly<{
         userMessageLocalIds?: readonly string[] | null;
         mode?: Readonly<{ localId?: string | null }> | null;
-    }>, appliedModelId?: string | null): void => {
+    }>, appliedModelId?: string | null, delivery?: Readonly<{ kind: 'command' }>): void => {
         const localIds = normalizeProviderPromptLocalIds([
             ...(message.userMessageLocalIds ?? []),
             message.mode?.localId ?? null,
         ]);
         if (useCodexAppServer) {
-            codexAppServerProviderInputOutcomes?.observeAcceptedLocalInput({ localIds });
+            codexAppServerProviderInputOutcomes?.observeAcceptedLocalInput({ localIds, ...(delivery ? { delivery } : {}) });
             return;
         }
-        codexAcpProviderInputOutcomes?.observeAccepted({ localIds, appliedModelId });
+        codexAcpProviderInputOutcomes?.observeAccepted({ localIds, appliedModelId, ...(delivery ? { delivery } : {}) });
     };
     const blockProviderPromptDeliveryBeforeAcceptance = async (input: Readonly<{
         localIds: readonly string[];
@@ -2567,7 +2567,7 @@ export async function runCodex(opts: {
                     shouldExit,
                     sendReady,
                 });
-                confirmProviderAcceptedPrompt(message);
+                confirmProviderAcceptedPrompt(message, undefined, { kind: 'command' });
                 continue;
             }
 
@@ -2844,7 +2844,7 @@ export async function runCodex(opts: {
                         if (shouldLogAcpDebug) {
                             logger.debug('[CodexACP] compactContext complete');
                         }
-                        confirmProviderAcceptedPrompt(message);
+                        confirmProviderAcceptedPrompt(message, undefined, { kind: 'command' });
                         continue;
                     }
 

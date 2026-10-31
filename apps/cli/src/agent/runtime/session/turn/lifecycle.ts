@@ -43,6 +43,7 @@ type MutableTurn = {
 type CreateSessionTurnLifecycleParams = Readonly<{
     sessionId: string;
     enqueueSessionTurn: (mutation: SessionTurnMutationV1) => Promise<void>;
+    onTurnInputBound?: (input: Readonly<{ turnId: string; localIds: readonly string[] }>) => void;
     createId?: () => string;
     now?: () => number;
     activeTurnTouchIntervalMs?: number;
@@ -329,6 +330,9 @@ export function createSessionTurnLifecycle(
             if (!observationDisposed) stallWatch.armTurnStallWatch();
         } else {
             mergeProviderFacts(activeTurn, input);
+        }
+        if (input.startingInputLocalIds?.length) {
+            params.onTurnInputBound?.({ turnId: activeTurn.turnId, localIds: input.startingInputLocalIds });
         }
         const mutation = buildMutation({
             action: 'begin',

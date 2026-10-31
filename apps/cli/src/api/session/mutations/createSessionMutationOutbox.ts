@@ -137,6 +137,7 @@ export type CreateSessionMutationOutboxParams = Readonly<{
     sessionId: string;
     getSocket: () => SessionMutationSocket;
     requestReconnect: (reason: string) => void;
+    onSessionTurnDelivered?: (mutation: SessionTurnMutationV1) => void;
     deliverAgentStateRequestSettlement?: (mutation: AgentStateRequestSettlementMutationV1) => Promise<SessionMutationDeliveryOutcome>;
 }>;
 
@@ -148,6 +149,7 @@ export type CreateSessionMutationJournalParams = Readonly<{
     token: string;
     getSocket: () => SessionMutationSocket;
     requestReconnect: (reason: string) => void;
+    onSessionTurnDelivered?: (mutation: SessionTurnMutationV1) => void;
     deliverAgentStateRequestSettlement?: (mutation: AgentStateRequestSettlementMutationV1) => Promise<SessionMutationDeliveryOutcome>;
     deliverRuntimeActivitySnapshot?: (
         mutation: RuntimeActivitySnapshotMutationV1,
@@ -261,6 +263,20 @@ export function createSessionMutationJournal(params: CreateSessionMutationJourna
                 return await selected.deliverRuntimeActivitySnapshot(mutation);
             },
             getSocket: () => selectActiveOutboxHandle(handles).getSocket(),
+            onSessionTurnDelivered: (mutation) => {
+                for (const handle of handles.values()) {
+                    try {
+                        handle.onSessionTurnDelivered?.(mutation);
+                    } catch (error) {
+                        logger.infoFile('[API] Session turn delivery observer failed after publication', {
+                            sessionId: params.sessionId,
+                            turnId: mutation.turnId,
+                            mutationId: mutation.mutationId,
+                            error: serializeAxiosErrorForLog(error),
+                        });
+                    }
+                }
+            },
             requestReconnect: (reason) => {
                 for (const handle of handles.values()) {
                     try {
@@ -924,6 +940,9 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
                 try {
                     const outcome = await withSessionMutationDeliverySlot(() => deliver(mutation));
                     if (outcome.status === 'delivered' || outcome.status === 'ignored_lossy') {
+                        if (mutation.kind === 'session_turn' && outcome.status === 'delivered') {
+                            params.onSessionTurnDelivered?.(mutation.payload);
+                        }
                         const exactSettlement = mutation.kind === 'runtime_activity_snapshot'
                             && outcome.status === 'delivered'
                             && outcome.runtimeActivityEvidence

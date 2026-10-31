@@ -415,6 +415,7 @@ function isSessionProviderInputRejectedBeforeEffectReason(
 export type SessionProviderInputOutcome =
     | (SessionProviderInputOutcomeIdentity & Readonly<{
         kind: 'accepted';
+        delivery?: Readonly<{ kind: 'primary_turn' | 'command' }>;
         providerRequestId?: string;
         providerTurnId?: string;
         /** Model captured for this new provider prompt before dispatch. Omitted for in-flight steer. */
@@ -645,6 +646,11 @@ export class ApiSessionClient extends EventEmitter {
         state: PendingMaterializationDeliveryState;
         requestedAction?: PendingRequestedActionV1;
         providerAction?: import('@happier-dev/protocol').PendingProviderAction;
+        acceptedDeliveryKind?: 'primary_turn' | 'command';
+        turnPublication?: {
+            turnId: string | null;
+            published: boolean;
+        };
     }>>();
     // Generic reversible provider-path blocks retain identity so exact late provider evidence can
     // still settle the row. A proven pre-provider lifecycle failure retires it after durable block.
@@ -1124,6 +1130,17 @@ export class ApiSessionClient extends EventEmitter {
             sessionId: this.sessionId,
             getSocket: () => this.socket as any,
             requestReconnect: (reason) => this.kickSessionSocketReconnectForDurableMutation(reason),
+            onSessionTurnDelivered: (mutation) => {
+                if (mutation.action !== 'begin') return;
+                let changed = false;
+                for (const claim of this.canonicalPendingDeliveryByLocalId.values()) {
+                    if (claim.turnPublication?.turnId === mutation.turnId && !claim.turnPublication.published) {
+                        claim.turnPublication.published = true;
+                        changed = true;
+                    }
+                }
+                if (changed) this.publishPendingEligibilityWake();
+            },
             deliverAgentStateRequestSettlement: async (mutation) => {
                 const decrypted = await openAgentStateRequestSettlement(this.requestSettlementEncryptionScope, mutation.content);
                 // The crypto boundary also returns null for a wrong key. Retain that
@@ -1247,6 +1264,20 @@ export class ApiSessionClient extends EventEmitter {
         this.sessionTurnLifecycle = createSessionTurnLifecycle({
             sessionId: this.sessionId,
             enqueueSessionTurn: createSessionTurnMutationWriter(this.sessionMutationOutbox).enqueueSessionTurn,
+            onTurnInputBound: ({ turnId, localIds }) => {
+                for (const localId of this.normalizeProviderAcceptedUserMessageLocalIds(localIds)) {
+                    const publication = this.ensureCanonicalPendingTurnPublication(localId);
+                    if (!publication) continue;
+                    if (publication.turnId !== null && publication.turnId !== turnId) {
+                        // A provider continuation may reuse delivery attribution after exact acceptance.
+                        // That acceptance still belongs to the original turn. Before acceptance, an
+                        // authorized retry instead owns its newly admitted turn's publication.
+                        if (this.providerInputTerminalOutcomeByLocalId.get(localId) === 'accepted') continue;
+                        publication.published = false;
+                    }
+                    publication.turnId = turnId;
+                }
+            },
             onTurnFailure: (issue) => {
                 const recovery = this.usageLimitRecoveryRuntime;
                 if (recovery) void recovery.observeFailure(issue).catch(recovery.reportError);
@@ -1714,6 +1745,22 @@ export class ApiSessionClient extends EventEmitter {
         if (this.acceptedCanonicalPendingDeliveryResolutionLocalIdsInFlight.has(localId)) return;
         this.acceptedCanonicalPendingDeliveryResolutionLocalIdsInFlight.add(localId);
         try {
+            const claim = this.canonicalPendingDeliveryByLocalId.get(localId);
+            if (!claim) return;
+            if (claim.acceptedDeliveryKind === 'primary_turn') {
+                const publication = this.ensureCanonicalPendingTurnPublication(localId);
+                if (!publication) return;
+                if (publication.turnId === null) {
+                    logger.infoFile('[pendingQueue] accepted input awaits canonical turn correlation', {
+                        sessionId: this.sessionId, localId,
+                    });
+                }
+                while (!publication.published) {
+                    if (!this.isAcceptedCanonicalPendingDeliveryOperationCurrent(authority)
+                        || !this.canonicalPendingDeliveryByLocalId.has(localId)) return;
+                    if (!await this.waitForPendingEligibilityUpdate(authority.abortSignal)) return;
+                }
+            }
             // Retain one settlement operation for the accepted localId until it commits or its
             // existing session/runtime authority ends. Retrying settlement never invokes input.
             for (let attempt = 0; ; attempt += 1) {
@@ -5453,6 +5500,15 @@ export class ApiSessionClient extends EventEmitter {
         return normalized;
     }
 
+    private ensureCanonicalPendingTurnPublication(localId: string) {
+        const claim = this.canonicalPendingDeliveryByLocalId.get(localId);
+        if (!claim) return null;
+        if (claim.turnPublication) return claim.turnPublication;
+        const turnPublication = { turnId: null as string | null, published: false };
+        this.canonicalPendingDeliveryByLocalId.set(localId, { ...claim, turnPublication });
+        return turnPublication;
+    }
+
     /**
      * Bind one provider-owned exact-input evidence producer to this live session generation.
      * Rebinding fences every older observer, so a replaced runtime cannot settle current Queue
@@ -5594,6 +5650,17 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         if (!this.canonicalPendingDeliveryByLocalId.has(localId)) return;
+        if (outcome.kind === 'accepted') {
+            const claim = this.canonicalPendingDeliveryByLocalId.get(localId)!;
+            this.canonicalPendingDeliveryByLocalId.set(localId, { ...claim, acceptedDeliveryKind: outcome.delivery?.kind });
+            if (!outcome.delivery) {
+                // Released producers report exact custody without a corresponding primary-turn witness.
+                // Preserve their settlement contract until each producer can supply that witness.
+                logger.infoFile('[pendingQueue] accepted input uses opaque producer delivery contract', {
+                    sessionId: this.sessionId, localId, providerId: producer.providerId, providerMode: producer.mode,
+                });
+            }
+        }
         this.providerInputUncertainLocalIds.delete(localId);
         this.providerInputTerminalOutcomeByLocalId.set(localId, terminalOutcome);
 

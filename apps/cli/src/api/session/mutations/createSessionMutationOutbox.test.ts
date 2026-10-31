@@ -149,6 +149,33 @@ describe('createSessionMutationOutbox', () => {
         reloadConfiguration();
     });
 
+    it('dequeues a delivered turn and notifies other handles when one delivery observer throws', async () => {
+        const sessionId = 's-turn-delivery-observer-failure';
+        const socket = createApiSessionSocketStub({ connected: true });
+        const { createSessionMutationOutbox } = await import('./createSessionMutationOutbox');
+        const { createSessionTurnMutation } = await import('./sessionMutationTypes');
+        const observed: string[] = [];
+        const common = { token: 'tok', sessionId, getSocket: () => socket, requestReconnect: () => {} };
+        const first = createSessionMutationOutbox({ ...common, onSessionTurnDelivered: () => {
+            throw new Error('observer failed after server ACK');
+        } });
+        const second = createSessionMutationOutbox({ ...common, onSessionTurnDelivered: (mutation) => {
+            if (typeof mutation.turnId !== 'string') throw new Error('Delivered begin is missing its turn identity');
+            observed.push(mutation.turnId);
+        } });
+        try {
+            await first.awaitReady();
+            await first.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
+            await first.enqueueSessionTurn(createSessionTurnMutation({ sessionId, action: 'begin', turnId: 'turn-observed' }));
+            await first.flush('flush');
+            expect(observed).toEqual(['turn-observed']);
+            await expect(readPersistedOutboxMutations(sessionId)).resolves.toEqual([]);
+        } finally {
+            await first.close();
+            await second.close();
+        }
+    });
+
     it('publishes a generic runtime Activity settlement only after durable admission and dequeue', async () => {
         const sessionId = 's-runtime-activity-exact-tail';
         const socket = createApiSessionSocketStub({

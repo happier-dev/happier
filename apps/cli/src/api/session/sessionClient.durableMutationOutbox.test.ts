@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
   SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
   SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
   SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
@@ -233,6 +234,129 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 describe('ApiSessionClient durable mutation outbox', () => {
+  it.each(['new-turn', 'command', 'late-acceptance', 'aborted', 'reconnected', 'opaque', 'retry', 'accepted-continuation', 'unbound'] as const)(
+    'settles an accepted Pending input after its own publication: %s', async (kind) => {
+      useRealSupervisor = kind === 'reconnected';
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        features: { sharing: { pendingQueueV2: { enabled: true }, pendingDeliveryState: { enabled: true } } },
+        capabilities: { session: { runtimeActivity: { protocolVersion: 2 }, pendingInput: { protocolVersion: 1 } } },
+      }), { status: 200 })));
+      const beginEntered = createDeferred<void>();
+      const releaseBegin = createDeferred<void>();
+      const releaseNewerBegin = createDeferred<void>();
+      const acceptedSettlement = createDeferred<void>();
+      let pendingCount = 1;
+      let claims = 0;
+      let begins = 0;
+      sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAck: async (event, payload) => {
+        if (event === 'session-runtime-activity-snapshot') {
+          const request = payload as { sessionId: string; mutationId: string; snapshot: { state: string; activeCount: number } };
+          return { status: 'applied', sessionId: request.sessionId, mutationId: request.mutationId,
+            projection: { ...request.snapshot, observedAt: 1, revision: 1 } };
+        }
+        if (event === 'pending-materialize-next') {
+          if (claims++ > 0) return { ok: true, didMaterialize: false, pendingCount, pendingBlockedCount: 0, pendingVersion: 2 };
+          return { ok: true, didMaterialize: true, didWrite: false, pendingCount, pendingBlockedCount: 0, pendingVersion: 2,
+            message: { id: null, seq: null, localId: 'publication-input', messageRole: 'user', providerAction: 'send',
+              requestedAction: { v: 1, kind: 'enqueue' }, deliveryState: { mode: 'provider', unresolved: true },
+              content: { t: 'plain', v: { role: 'user', localId: 'publication-input', content: { type: 'text', text: 'prompt' },
+                meta: { source: 'ui', sentFrom: 'web' } } }, createdAt: 1, updatedAt: 1 } };
+        }
+        if (event === 'session-turn-mutation') {
+          const mutation = payload as { action: string };
+          if (mutation.action === 'begin') {
+            if (begins++ === 0) { beginEntered.resolve(); await releaseBegin.promise; }
+            else if (kind === 'late-acceptance' || kind === 'retry' || kind === 'accepted-continuation') await releaseNewerBegin.promise;
+          }
+          return { ok: true, applied: true };
+        }
+        if (event === ACCEPTED_PENDING_SETTLEMENT_EVENT_V1) {
+          pendingCount = 0;
+          acceptedSettlement.resolve();
+          return { ok: true, didResolve: true, pendingCount, pendingBlockedCount: 0, pendingVersion: 3,
+            message: { id: 'committed-input', seq: 1, localId: 'publication-input', messageRole: 'user',
+              content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'prompt' } } }, createdAt: 1, updatedAt: 1 } };
+        }
+        return { ok: true };
+      } });
+      userSocketStub = createApiSessionSocketStub({ connected: false });
+      const { ApiSessionClient } = await import('./sessionClient');
+      const fixture = createPlainSessionFixture({ id: 'publication-session', pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1 });
+      const client = new ApiSessionClient('tok', { ...fixture, metadata: { ...fixture.metadata, flavor: 'codex', machineId: 'machine-1' } });
+      try {
+        await client.getRuntimeActivitySnapshotPublisher().publish({ state: 'idle', activeCount: 0 });
+        await expect.poll(() => (client as unknown as {
+          sessionSyncPendingInputServerContract: { mode?: string } | null;
+        }).sessionSyncPendingInputServerContract?.mode).toBe('session_sync_v2_pending_input_v1');
+        await expect(client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' })).resolves.toMatchObject({
+          type: 'materialized', localId: 'publication-input',
+        });
+        const observe = client.bindProviderInputOutcomeProducer({ providerId: 'codex', mode: 'app-server', matchesCurrentSession: () => true });
+        if (kind === 'command') {
+          observe({ kind: 'accepted', localId: 'publication-input', delivery: { kind: 'command' } });
+          await acceptedSettlement.promise;
+          expect(pendingCount).toBe(0);
+          return;
+        }
+        if (kind === 'unbound') {
+          observe({ kind: 'accepted', localId: 'publication-input', delivery: { kind: 'primary_turn' } });
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          expect(pendingCount).toBe(1);
+        }
+        const started = await client.sessionTurnLifecycle.beginTurn({ provider: 'codex', startingInputLocalIds: ['publication-input'] });
+        await beginEntered.promise;
+        if (kind === 'accepted-continuation') {
+          observe({ kind: 'accepted', localId: 'publication-input', delivery: { kind: 'primary_turn' } });
+          await client.sessionTurnLifecycle.completeTurn({ provider: 'codex' });
+          const continuation = await client.sessionTurnLifecycle.beginTurn({ provider: 'codex', startingInputLocalIds: ['publication-input'] });
+          expect(continuation.turnId).not.toBe(started.turnId);
+        }
+        if (kind === 'late-acceptance') {
+          await client.sessionTurnLifecycle.completeTurn({ provider: 'codex' });
+          const newer = await client.sessionTurnLifecycle.beginTurn({ provider: 'codex' });
+          expect(newer.turnId).not.toBe(started.turnId);
+        }
+        if (kind === 'retry') {
+          releaseBegin.resolve();
+          await expect.poll(() => readPersistedOutboxMutationCount('publication-session')).toBe(0);
+          await client.sessionTurnLifecycle.cancelTurn({ provider: 'codex' });
+          const retried = await client.sessionTurnLifecycle.beginTurn({ provider: 'codex', startingInputLocalIds: ['publication-input'] });
+          expect(retried.turnId).not.toBe(started.turnId);
+        }
+        observe({ kind: 'accepted', localId: 'publication-input', ...(kind === 'opaque' ? {} : { delivery: { kind: 'primary_turn' as const } }) });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        if (kind === 'opaque') {
+          await expect.poll(() => pendingCount).toBe(0);
+          return;
+        }
+        expect(pendingCount).toBe(1);
+        if (kind === 'aborted') {
+          client.beginRuntimeTermination();
+          releaseBegin.resolve();
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          expect(pendingCount).toBe(1);
+          return;
+        }
+        if (kind === 'reconnected') {
+          expect(disconnectSessionTransport).not.toBeNull();
+          disconnectSessionTransport?.();
+          await expect.poll(() => transportCreationCount).toBe(2);
+          await expect.poll(() => (client as unknown as {
+            sessionConnectionEpoch: number;
+          }).sessionConnectionEpoch).toBe(2);
+        }
+        releaseBegin.resolve();
+        if (kind === 'retry') releaseNewerBegin.resolve();
+        await acceptedSettlement.promise;
+        expect(pendingCount).toBe(0);
+      } finally {
+        releaseBegin.resolve();
+        releaseNewerBegin.resolve();
+        await client.close();
+      }
+    },
+  );
+
   it.each(['pending', 'late_failure', 'completed', 'canceled', 'scoped_cancel', 'disposed'] as const)(
     'reconciles an offline permission on reconnect when it is %s', async (outcome) => {
     useRealSupervisor = true;

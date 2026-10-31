@@ -5193,6 +5193,71 @@ describe('createCodexAppServerRuntime', () => {
         ]);
     });
 
+    it('binds normalized native input identities before dispatching start and steer', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-normalized-turn-inputs-');
+        const bound: Array<{ turnId: string; localIds: readonly string[] }> = [];
+        const lifecycle = createSessionTurnLifecycle({
+            sessionId: 'normalized-native-inputs',
+            enqueueSessionTurn: async () => {},
+            onTurnInputBound: (input) => { bound.push(input); },
+        });
+        const session = {
+            ...createApiSessionClientFixture({ metadata: createRuntimeMetadata(root) }),
+            sessionTurnLifecycle: lifecycle,
+        } as unknown as Parameters<typeof createCodexAppServerRuntimeProduction>[0]['session'];
+        const runtime = createCodexAppServerRuntime({ directory: root, onThinkingChange: vi.fn(), session });
+        await runtime.startOrLoad({});
+        const completion = runtime.sendPrompt('overlap-start', { localIds: ['normalized-start'] });
+        await waitForCondition(() => runtime.canSteerPrompt(), {
+            timeoutMs: 1_000, intervalMs: 10, label: 'normalized input turn to become steerable',
+        });
+        await runtime.steerPrompt('normalized-steer', { localIds: ['normalized-steer'] });
+        await completion;
+        expect(bound.map(({ localIds }) => localIds)).toEqual([['normalized-start'], ['normalized-steer']]);
+        expect(bound[1].turnId).toBe(bound[0].turnId);
+        expect((await readRequestLog(requestLogPath)).filter(({ method }) => method === 'turn/steer')).toHaveLength(1);
+    });
+
+    it('does not dispatch a steer after its canonical admission outlives the active native turn', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-steer-admission-race-');
+        let releaseAdmission!: () => void;
+        const admission = new Promise<void>((resolve) => { releaseAdmission = resolve; });
+        let holdAdmission = false;
+        let admissionHeld = false;
+        const lifecycle = createSessionTurnLifecycle({
+            sessionId: 'steer-admission-race',
+            enqueueSessionTurn: async (mutation) => {
+                if (mutation.action === 'begin' && holdAdmission) {
+                    admissionHeld = true;
+                    await admission;
+                }
+            },
+        });
+        const session = {
+            ...createApiSessionClientFixture({ metadata: createRuntimeMetadata(root) }),
+            sessionTurnLifecycle: lifecycle,
+        } as unknown as Parameters<typeof createCodexAppServerRuntimeProduction>[0]['session'];
+        const runtime = createCodexAppServerRuntime({ directory: root, onThinkingChange: vi.fn(), session });
+        await runtime.startOrLoad({});
+        const completion = runtime.sendPrompt('overlap-start', { localId: 'first-input' });
+        await waitForCondition(() => runtime.canSteerPrompt(), {
+            timeoutMs: 1_000, intervalMs: 10, label: 'native turn to become steerable before held admission',
+        });
+        holdAdmission = true;
+        const steer = runtime.steerPrompt('must-not-dispatch-after-completion', { localIds: ['held-steer'] });
+        const outcome = steer.then(() => null, (error: unknown) => error);
+        try {
+            await waitForCondition(() => admissionHeld, {
+                timeoutMs: 1_000, intervalMs: 10, label: 'steer canonical admission to be held',
+            });
+            await completion;
+        } finally {
+            releaseAdmission();
+        }
+        expect(await outcome).toBeInstanceOf(Error);
+        expect((await readRequestLog(requestLogPath)).filter(({ method }) => method === 'turn/steer')).toEqual([]);
+    });
+
     it('does not steer a turn whose ownership changes while structured input is resolving', async () => {
         const { root, requestLogPath } = await createRuntimeFixture(
             'happier-codex-app-server-runtime-steer-input-owner-race-',

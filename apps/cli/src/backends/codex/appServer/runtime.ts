@@ -4998,13 +4998,17 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 ...(clientUserMessageId ? { clientUserMessageId } : {}),
             };
             const finishAcceptedSteer = async (): Promise<void> => {
-                await turnBoundaryTracker.appendSteerMessage({ localId: options?.localId ?? null });
+                await turnBoundaryTracker.appendSteerMessage({ localId: clientUserMessageId });
                 if (!clientUserMessageId) {
                     markPendingProviderPromptAccepted(pendingProviderPrompt, expectedTurnId);
                 }
                 options?.onProviderPromptAccepted?.();
             };
             try {
+                await turnBoundaryTracker.beginSteerInput({ localId: clientUserMessageId });
+                if (pendingTurn?.promise !== activeTurn.promise || !canSteerPrompt()) {
+                    throw new Error('Codex app-server active turn is not steerable');
+                }
                 await client.request('turn/steer', {
                     ...payload,
                     input: structuredInput,
@@ -5064,7 +5068,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     ? pendingProviderPrompt.localIds[0]
                     : null;
                 const activeTurn = await beginPendingTurnForThread(activeThreadId, {
-                    localId: optionsForAttempt?.localId ?? null,
+                    localId: clientUserMessageId,
                     userMessageSeq: optionsForAttempt?.userMessageSeq ?? null,
                     providerPrompt: pendingProviderPrompt,
                 });
