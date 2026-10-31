@@ -11,6 +11,7 @@ import {
   type ScmRepositoryCloneTargetDescription,
 } from '@happier-dev/plugin-sdk/scm';
 import { expect } from 'vitest';
+import { ScmHostingProviderContributionSchema } from '@happier-dev/protocol';
 import { createScmHostingProviderRegistry } from '../../../../../apps/cli/src/scm/hostingProviders/registry';
 import { githubHostingProviderAdapter, GITHUB_SCM_HOSTING_PROVIDER_ID } from '../../../scm-github/src/adapter.js';
 import { PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST } from '../../../scm-github/src/manifest.js';
@@ -177,7 +178,7 @@ export function makeProviderRegistry(
 ) {
     const declaration = GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders?.[0];
     if (!declaration) throw new Error('GitHub did not declare its hosting provider');
-    const { title: _title, ...definition } = declaration;
+    const { title: _title, ...definition } = ScmHostingProviderContributionSchema.parse(declaration);
     return createScmHostingProviderRegistry({
         providers: [{ ...definition, pluginId: GITHUB_PLUGIN_MANIFEST.id, displayName: 'GitHub',
             urlSafety: { allowedSchemes: description.repository.provider.urlSafety?.allowedSchemes ?? ['https:'],
