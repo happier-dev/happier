@@ -1,0 +1,64 @@
+{
+  "questions": [
+    {
+      "header": "Fixture text",
+      "question": "Q1: A harmless synthetic fixture contains four lines of public text and a short status marker. Which isolated reading choice should this scratch validation record while leaving every existing user setting unchanged?",
+      "multiSelect": false,
+      "options": [
+        {
+          "label": "Alpha synthetic (Recommended)",
+          "description": "Keep the harmless Alpha fixture choice."
+        },
+        {
+          "label": "Beta synthetic",
+          "description": "Keep the harmless Beta fixture choice."
+        }
+      ]
+    },
+    {
+      "header": "Draft action",
+      "question": "Q2: A synthetic capture window can stage public fixture text beside a harmless marker in its task-owned draft. Which draft action should this isolated validation retain for its synthetic composer demonstration?",
+      "multiSelect": false,
+      "options": [
+        {
+          "label": "Alpha synthetic (Recommended)",
+          "description": "Keep the harmless Alpha fixture choice."
+        },
+        {
+          "label": "Beta synthetic",
+          "description": "Keep the harmless Beta fixture choice."
+        }
+      ]
+    },
+    {
+      "header": "Shortcut",
+      "question": "Q3: A task-owned synthetic shortcut starts a harmless fixture check in this scratch workspace and records a plain status marker. Which shortcut choice should the isolated validation keep without changing any global shortcut?",
+      "multiSelect": false,
+      "options": [
+        {
+          "label": "Alpha synthetic (Recommended)",
+          "description": "Keep the harmless Alpha fixture choice."
+        },
+        {
+          "label": "Beta synthetic",
+          "description": "Keep the harmless Beta fixture choice."
+        }
+      ]
+    },
+    {
+      "header": "Text warning",
+      "question": "Q4: A harmless synthetic warning explains that fixture text is public and disposable. Which warning choice should this scratch validation keep?",
+      "multiSelect": false,
+      "options": [
+        {
+          "label": "Alpha synthetic (Recommended)",
+          "description": "Keep the harmless Alpha fixture choice."
+        },
+        {
+          "label": "Beta synthetic",
+          "description": "Keep the harmless Beta fixture choice."
+        }
+      ]
+    }
+  ]
+}

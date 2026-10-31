@@ -99,12 +99,16 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
       : !actual.includes('\n') && actual === expected
   );
   const reviewMatches = (screen: ClaudeNativeQuestionPresentation): boolean => (
-    screen.kind === 'review' && screen.reviewAnswers.length === questions.length
-    && screen.reviewAnswers.every((answer, index) => ownDrafts.has(index)
-      ? doesClaudeOwnedTextMatchCapture(desired[index]!.rendered, answer.answer)
-      : desired[index]!.freeform.length === 0
-        ? matchesClaudeNativeQuestionText(answer.answer, desired[index]!.rendered)
-        : answer.answer === desired[index]!.rendered)
+    screen.kind === 'review'
+    && (screen.reviewClipped ? seenPages.size === questions.length : screen.reviewAnswers.length === questions.length)
+    && screen.reviewAnswers.every((answer, visibleIndex) => {
+      const index = questions.length - screen.reviewAnswers.length + visibleIndex;
+      return ownDrafts.has(index)
+        ? doesClaudeOwnedTextMatchCapture(desired[index]!.rendered, answer.answer)
+        : desired[index]!.freeform.length === 0
+          ? matchesClaudeNativeQuestionText(answer.answer, desired[index]!.rendered)
+          : answer.answer === desired[index]!.rendered;
+    })
   );
   const questionIndex = () => questions.findIndex((question) => matchesClaudeNativeQuestionText(read().question ?? '', question.question ?? ''));
   const conflict = (index: number): boolean => {

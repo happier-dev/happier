@@ -156,6 +156,53 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     expect(partialReview === null || !matchesClaudeNativeQuestionScreen(partialReview, input.questions)).toBe(true);
   });
 
+  it('matches the complete visible suffix after a real Claude 316 review clips a long answer above the viewport', () => {
+    const screen = readFileSync(new URL('./__fixtures__/claude-2.1.316-question-overflow-review.txt', import.meta.url), 'utf8');
+    const input: { questions: StructuredQuestionLike[] } = JSON.parse(readFileSync(new URL('./__fixtures__/claude-2.1.316-question-overflow-input.json', import.meta.url), 'utf8'));
+    const parsed = parseClaudeNativeQuestionScreen(screen);
+    expect(parsed).toMatchObject({ kind: 'review', reviewClipped: true });
+    expect(parsed?.reviewAnswers).toHaveLength(2);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input.questions)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, [...input.questions].reverse())).toBe(false);
+    for (const source of [screen, review.slice(review.indexOf('Review your answers'))]) {
+      const numberedAnswer = source.replace(/(→ [^\n]+)/u, '$1\n   1. Submit answers\n   2. Cancel');
+      const numbered = parseClaudeNativeQuestionScreen(numberedAnswer);
+      expect(numbered).not.toBeNull();
+      expect(numbered?.reviewAnswers[0]?.answer).toContain('1. Submit answers\n2. Cancel');
+    }
+    const changed = screen.replace('Q3: A task-owned', 'Q3: A different');
+    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(changed)!, input.questions)).toBe(false);
+    expect(parseClaudeNativeQuestionScreen(screen.replace(' │ ● Q4:', 'Unexpected content\n │ ● Q4:'))).toBeNull();
+    expect(parseClaudeNativeQuestionScreen(screen.replace('Ready to submit your answers?', '⚠ You have not answered all questions\nReady to submit your answers?'))).toBeNull();
+    expect(parseClaudeScreenState(screen).nativeQuestionPresentation).not.toBeNull();
+  });
+
+  it('recognizes an overflowing review by its complete visible suffix and submits after inspecting every question page', async () => {
+    const clipped = review.slice(review.indexOf(' ● Which probe size?'));
+    const parsed = parseClaudeNativeQuestionScreen(clipped);
+    expect(parsed).toMatchObject({ kind: 'review', reviewClipped: true, reviewAnswers: [{ question: 'Which probe size?', answer: 'Large' }] });
+    expect(matchesClaudeNativeQuestionScreen(parsed!, multipleQuestions)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, [...multipleQuestions].reverse())).toBe(false);
+    const apple = multi.replace('1. [ ] Apple', '1. [✔] Apple');
+    const pearFocus = focus(apple, '1. [✔] Apple', '2. [ ] Pear');
+    const pear = pearFocus.replace('2. [ ] Pear', '2. [✔] Pear');
+    const flow = [multi, apple, pearFocus, pear, size, focus(size, '1. Small', '2. Large'), clipped, idle];
+    for (const captures of [flow, [clipped, size, ...flow]]) {
+      const port = createFakeControlPort({ captures });
+      await expect(answerClaudeNativeQuestion({ ...controls, port, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'answered' });
+      expect(port.sentKeys.at(-1)).toBe('Enter');
+      if (captures[0] === clipped) expect(port.sentKeys.slice(0, 2)).toEqual(['ShiftTab', 'ShiftTab']);
+    }
+    const wrong = createFakeControlPort({ captures: [...flow.slice(0, -2), clipped.replace('→ Large', '→ Small')] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: wrong, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });
+    expect(wrong.sentKeys.filter((key) => key === 'Enter')).toHaveLength(3);
+    const premature = createFakeControlPort({ captures: [...flow.slice(0, 4), clipped] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: premature, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });
+    expect(premature.sentKeys.filter((key) => key === 'Enter')).toHaveLength(2);
+    expect(parseClaudeNativeQuestionScreen(clipped + '\nUnknown dialog')).toBeNull();
+    expect(parseClaudeNativeQuestionScreen(clipped.slice(clipped.indexOf('Ready to submit your answers?')))).toBeNull();
+  });
+
   it('recognizes the live Claude 309 question above its trailing native session-title rule', () => {
     const screen = readFileSync(new URL('./__fixtures__/claude-2.1.309-question-session-title.txt', import.meta.url), 'utf8');
     expect(parseClaudeNativeQuestionScreen(screen)).toMatchObject({ kind: 'question', question: 'Which live Happier probe color?' });
