@@ -4,11 +4,6 @@ type AuggieAcpRuntimeDefinition = NonNullable<AgentAcpRuntimeOptions['definition
 
 export const AUGGIE_ACP_TIMEOUTS = Object.freeze({
   initMs: 60_000,
-  toolCallMs: 120_000,
-  investigationToolCallMs: 600_000,
-  toolKindTimeouts: {
-    think: 30_000,
-  },
   idleMs: 500,
 } satisfies NonNullable<AuggieAcpRuntimeDefinition['timeouts']>);
 

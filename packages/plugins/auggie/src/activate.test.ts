@@ -89,7 +89,7 @@ describe('Auggie activation', () => {
         mcp: { policy: 'pass_through' },
         timeouts: expect.objectContaining({
           initMs: 60_000,
-          investigationToolCallMs: 600_000,
+          idleMs: 500,
         }),
         stderrRules: expect.any(Object),
         toolNameInference: expect.any(Object),
