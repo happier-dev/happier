@@ -56,7 +56,8 @@ describe('buildGitlabEntryIdentity', () => {
     expect(issue.identity.entryId).toBe(mergeRequest.identity.entryId);
     expect(issue.identity.collisionScope).toBe(mergeRequest.identity.collisionScope);
     // Only the kind separates them, and it is part of the identity.
-    expect(issue.identity.kindId).not.toBe(mergeRequest.identity.kindId);
+    expect(issue.identity.kindId).toBe('issue');
+    expect(mergeRequest.identity.kindId).toBe('merge-request');
     expect(issue.locator.displayPath).toBe('example-group/example-subgroup/example-project#7');
   });
 
@@ -76,6 +77,8 @@ describe('buildGitlabEntryIdentity', () => {
     expect(a.identity.collisionScope).not.toBe(b.identity.collisionScope);
     expect(isGitlabIdentityWithinOrigin(a.identity, GITLAB_COM)).toBe(true);
     expect(isGitlabIdentityWithinOrigin(a.identity, selfManaged)).toBe(false);
+    expect(isGitlabIdentityWithinOrigin(b.identity, selfManaged)).toBe(true);
+    expect(isGitlabIdentityWithinOrigin(b.identity, GITLAB_COM)).toBe(false);
   });
 
   it('skips a row without an iid rather than falling back to the global id', () => {
