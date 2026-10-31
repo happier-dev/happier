@@ -28,6 +28,7 @@ describe('fetchEncryptedTranscriptWindow', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
   });
 
@@ -80,6 +81,7 @@ describe('fetchEncryptedTranscriptWindow', () => {
   });
 
   it('applies sanitized caller timeouts to page fetches', async () => {
+    vi.useFakeTimers();
     mockGet.mockResolvedValue({
       status: 200,
       data: { hasMore: false, messages: [] },
