@@ -28,3 +28,11 @@ export function isWorkflowRunExecutorStorageOperationV1(operation: unknown): boo
       return true;
   }
 }
+/** Storage operations sent by workflow owners and workers. */
+export type WorkflowRunStorageOperation = Readonly<Record<string, unknown> & {
+  operation:
+    | 'admit' | 'accepted-snapshot.resolve' | 'initialize' | 'get' | 'wait' | 'pause' | 'resume' | 'cancel' | 'delete' | 'read_state.set' | 'list' | 'summaries' | 'recovery.list'
+    | 'invocations.list' | 'invocations.admit' | 'invocations.get' | 'invocations.current' | 'invocations.fact'
+    | 'invocations.publish_draft' | 'invocations.complete_review' | 'transition' | 'invocations.recover'
+    | 'delivery.pull' | 'delivery.ack' | 'origin-input.withdrawn' | 'run-key.census' | 'run-key.commit';
+}>;
