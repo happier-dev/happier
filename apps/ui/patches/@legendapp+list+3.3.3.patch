@@ -568,7 +568,7 @@ diff --git a/node_modules/@legendapp/list/react-native.js b/node_modules/@legend
          const index = indexByKey.get(targetId);
          if (index !== void 0) {
            const item = data[index];
-@@ -1890,8 +2073,19 @@
+@@ -1890,8 +2073,20 @@
              scrollingTo.itemSize = newSize;
            }
          }
@@ -579,9 +579,10 @@ diff --git a/node_modules/@legendapp/list/react-native.js b/node_modules/@legend
 +      const hasActiveMaintainedEndOwnership = !!maintainScrollAtEnd && (maintainingScrollAtEnd === "pending-animated" || maintainingScrollAtEnd === "animated" || maintainingScrollAtEnd === "pending-instant" || maintainingScrollAtEnd === "instant") && peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
 +      const hasMaintainedEndOwnership = scrollTarget === void 0 && (hasExternalMaintainedEndOwnership || hasActiveMaintainedEndOwnership);
 +      const shouldAdjustMaintainedEnd = hasMaintainedEndOwnership && scrollingTo === void 0 && !maintainScrollAtEnd.animated;
-+      if (shouldAdjustMaintainedEnd) {
++      if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) {
 +        // HAPPIER-MVCP-END-ANCHOR: commit nonanimated end geometry through MVCP,
-+        // not a visible-row delta or a later maintenance frame.
++        // not a visible-row delta or a later maintenance frame. Content this commit
++        // inserted above the reader's anchor keeps the anchor-preserving diff instead.
 +        positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
 +      }
        updateAnchorLock(state, {
@@ -1720,7 +1721,7 @@ diff --git a/node_modules/@legendapp/list/react-native.mjs b/node_modules/@legen
          const index = indexByKey.get(targetId);
          if (index !== void 0) {
            const item = data[index];
-@@ -1869,8 +2052,19 @@
+@@ -1869,8 +2052,20 @@
              scrollingTo.itemSize = newSize;
            }
          }
@@ -1731,9 +1732,10 @@ diff --git a/node_modules/@legendapp/list/react-native.mjs b/node_modules/@legen
 +      const hasActiveMaintainedEndOwnership = !!maintainScrollAtEnd && (maintainingScrollAtEnd === "pending-animated" || maintainingScrollAtEnd === "animated" || maintainingScrollAtEnd === "pending-instant" || maintainingScrollAtEnd === "instant") && peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
 +      const hasMaintainedEndOwnership = scrollTarget === void 0 && (hasExternalMaintainedEndOwnership || hasActiveMaintainedEndOwnership);
 +      const shouldAdjustMaintainedEnd = hasMaintainedEndOwnership && scrollingTo === void 0 && !maintainScrollAtEnd.animated;
-+      if (shouldAdjustMaintainedEnd) {
++      if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) {
 +        // HAPPIER-MVCP-END-ANCHOR: commit nonanimated end geometry through MVCP,
-+        // not a visible-row delta or a later maintenance frame.
++        // not a visible-row delta or a later maintenance frame. Content this commit
++        // inserted above the reader's anchor keeps the anchor-preserving diff instead.
 +        positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
 +      }
        updateAnchorLock(state, {
@@ -2885,7 +2887,7 @@ diff --git a/node_modules/@legendapp/list/react-native.web.js b/node_modules/@le
    const prevScroll = state.scroll;
    getContentSize(ctx);
    if (shouldMVCP) {
-@@ -1718,8 +1914,19 @@
+@@ -1718,8 +1914,20 @@
              scrollingTo.itemSize = newSize;
            }
          }
@@ -2896,9 +2898,10 @@ diff --git a/node_modules/@legendapp/list/react-native.web.js b/node_modules/@le
 +      const hasActiveMaintainedEndOwnership = !!maintainScrollAtEnd && (maintainingScrollAtEnd === "pending-animated" || maintainingScrollAtEnd === "animated" || maintainingScrollAtEnd === "pending-instant" || maintainingScrollAtEnd === "instant") && peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
 +      const hasMaintainedEndOwnership = scrollTarget === void 0 && (hasExternalMaintainedEndOwnership || hasActiveMaintainedEndOwnership);
 +      const shouldAdjustMaintainedEnd = hasMaintainedEndOwnership && scrollingTo === void 0 && !maintainScrollAtEnd.animated;
-+      if (shouldAdjustMaintainedEnd) {
++      if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) {
 +        // HAPPIER-MVCP-END-ANCHOR: commit nonanimated end geometry through MVCP,
-+        // not a visible-row delta or a later maintenance frame.
++        // not a visible-row delta or a later maintenance frame. Content this commit
++        // inserted above the reader's anchor keeps the anchor-preserving diff instead.
 +        positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
 +      }
        updateAnchorLock(state, {
@@ -3994,7 +3997,7 @@ diff --git a/node_modules/@legendapp/list/react-native.web.mjs b/node_modules/@l
    const prevScroll = state.scroll;
    getContentSize(ctx);
    if (shouldMVCP) {
-@@ -1697,8 +1893,19 @@
+@@ -1697,8 +1893,20 @@
              scrollingTo.itemSize = newSize;
            }
          }
@@ -4005,9 +4008,10 @@ diff --git a/node_modules/@legendapp/list/react-native.web.mjs b/node_modules/@l
 +      const hasActiveMaintainedEndOwnership = !!maintainScrollAtEnd && (maintainingScrollAtEnd === "pending-animated" || maintainingScrollAtEnd === "animated" || maintainingScrollAtEnd === "pending-instant" || maintainingScrollAtEnd === "instant") && peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
 +      const hasMaintainedEndOwnership = scrollTarget === void 0 && (hasExternalMaintainedEndOwnership || hasActiveMaintainedEndOwnership);
 +      const shouldAdjustMaintainedEnd = hasMaintainedEndOwnership && scrollingTo === void 0 && !maintainScrollAtEnd.animated;
-+      if (shouldAdjustMaintainedEnd) {
++      if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) {
 +        // HAPPIER-MVCP-END-ANCHOR: commit nonanimated end geometry through MVCP,
-+        // not a visible-row delta or a later maintenance frame.
++        // not a visible-row delta or a later maintenance frame. Content this commit
++        // inserted above the reader's anchor keeps the anchor-preserving diff instead.
 +        positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
 +      }
        updateAnchorLock(state, {
@@ -5148,7 +5152,7 @@ diff --git a/node_modules/@legendapp/list/react.js b/node_modules/@legendapp/lis
    const prevScroll = state.scroll;
    getContentSize(ctx);
    if (shouldMVCP) {
-@@ -1718,8 +1914,19 @@
+@@ -1718,8 +1914,20 @@
              scrollingTo.itemSize = newSize;
            }
          }
@@ -5159,9 +5163,10 @@ diff --git a/node_modules/@legendapp/list/react.js b/node_modules/@legendapp/lis
 +      const hasActiveMaintainedEndOwnership = !!maintainScrollAtEnd && (maintainingScrollAtEnd === "pending-animated" || maintainingScrollAtEnd === "animated" || maintainingScrollAtEnd === "pending-instant" || maintainingScrollAtEnd === "instant") && peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
 +      const hasMaintainedEndOwnership = scrollTarget === void 0 && (hasExternalMaintainedEndOwnership || hasActiveMaintainedEndOwnership);
 +      const shouldAdjustMaintainedEnd = hasMaintainedEndOwnership && scrollingTo === void 0 && !maintainScrollAtEnd.animated;
-+      if (shouldAdjustMaintainedEnd) {
++      if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) {
 +        // HAPPIER-MVCP-END-ANCHOR: commit nonanimated end geometry through MVCP,
-+        // not a visible-row delta or a later maintenance frame.
++        // not a visible-row delta or a later maintenance frame. Content this commit
++        // inserted above the reader's anchor keeps the anchor-preserving diff instead.
 +        positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
 +      }
        updateAnchorLock(state, {
@@ -6257,7 +6262,7 @@ diff --git a/node_modules/@legendapp/list/react.mjs b/node_modules/@legendapp/li
    const prevScroll = state.scroll;
    getContentSize(ctx);
    if (shouldMVCP) {
-@@ -1697,8 +1893,19 @@
+@@ -1697,8 +1893,20 @@
              scrollingTo.itemSize = newSize;
            }
          }
@@ -6268,9 +6273,10 @@ diff --git a/node_modules/@legendapp/list/react.mjs b/node_modules/@legendapp/li
 +      const hasActiveMaintainedEndOwnership = !!maintainScrollAtEnd && (maintainingScrollAtEnd === "pending-animated" || maintainingScrollAtEnd === "animated" || maintainingScrollAtEnd === "pending-instant" || maintainingScrollAtEnd === "instant") && peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
 +      const hasMaintainedEndOwnership = scrollTarget === void 0 && (hasExternalMaintainedEndOwnership || hasActiveMaintainedEndOwnership);
 +      const shouldAdjustMaintainedEnd = hasMaintainedEndOwnership && scrollingTo === void 0 && !maintainScrollAtEnd.animated;
-+      if (shouldAdjustMaintainedEnd) {
++      if (shouldAdjustMaintainedEnd && !(positionDiff > MVCP_POSITION_EPSILON)) {
 +        // HAPPIER-MVCP-END-ANCHOR: commit nonanimated end geometry through MVCP,
-+        // not a visible-row delta or a later maintenance frame.
++        // not a visible-row delta or a later maintenance frame. Content this commit
++        // inserted above the reader's anchor keeps the anchor-preserving diff instead.
 +        positionDiff = Math.max(0, getContentSize(ctx) - state.scrollLength) - prevScroll;
 +      }
        updateAnchorLock(state, {
