@@ -207,7 +207,9 @@ test('streamed platform hashes use the same artifact digest decision', () => {
 });
 
 test('empty or malformed platform hashes cannot verify', () => {
-  assert.equal(verifyReleaseArtifactDigest({
-    artifactName: 'runner.zip', expectedSha256: '', actualSha256: '',
-  }).ok, false);
+  for (const invalidDigest of ['', 'z'.repeat(64), 'a'.repeat(63), 'a'.repeat(65)]) {
+    assert.equal(verifyReleaseArtifactDigest({
+      artifactName: 'runner.zip', expectedSha256: invalidDigest, actualSha256: invalidDigest,
+    }).ok, false);
+  }
 });
