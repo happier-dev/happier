@@ -61,7 +61,6 @@ export function mountHappierSession(container: HTMLElement, options: EmbedOption
   let latestRequest: object | null = null;
   let sequence = 0;
   let lastFrameSequence = -1;
-  const createdSessions = new Set<string>();
   let pendingCreatedSessionId: string | null = null;
   const root = document.createElement('div');
   root.style.cssText = 'position:relative;width:100%;height:100%;overflow:hidden;background:Canvas;color:CanvasText;container-type:inline-size';
@@ -159,8 +158,6 @@ export function mountHappierSession(container: HTMLElement, options: EmbedOption
       if (currentId !== null && payload.sessionId !== currentId) return;
       void requestCredential(payload, parsed.data.sequence);
     } else if (payload.kind === 'session.created') {
-      if (createdSessions.has(payload.sessionId)) return;
-      createdSessions.add(payload.sessionId);
       if (currentId === null) pendingCreatedSessionId = payload.sessionId;
       options.onSessionCreated?.({ sessionId: payload.sessionId });
     } else {

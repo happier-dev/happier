@@ -269,15 +269,17 @@ describe('embed host', () => {
     expect(m.container.querySelector('iframe')).toBeNull();
     m.ready(); await flush(); expect(m.getCredential).toHaveBeenCalledTimes(3);
   });
-  it('forwards created attribution once and keeps explicit current target through reload', async () => {
+  it('forwards producer creation facts, rejects sequence replay and keeps explicit target through reload', async () => {
     const childTokenId = '00000000-0000-4000-8000-000000000001';
     const m = mount(); m.ready(); await flush();
     expect(m.getCredential).toHaveBeenCalledWith({ embedPublicKey: publicKey, reason: 'initial' });
     m.receive({ kind: 'session.created', sessionId: 'N' }, 1);
-    m.receive({ kind: 'session.created', sessionId: 'N' }, 2);
+    m.receive({ kind: 'session.created', sessionId: 'N' }, 1);
     expect(m.onSessionCreated).toHaveBeenCalledExactlyOnceWith({ sessionId: 'N' });
     m.ready(); await flush();
     expect(m.getCredential).toHaveBeenLastCalledWith({ embedPublicKey: publicKey, reason: 'initial' });
+    m.receive({ kind: 'session.created', sessionId: 'N' }, 1);
+    expect(m.onSessionCreated).toHaveBeenCalledTimes(2);
     m.receive({ kind: 'credential.request', sessionId: 'N', embedPublicKey: publicKey, reason: 'created', createdByTokenId: childTokenId }, 3);
     await flush();
     expect(m.getCredential).toHaveBeenCalledWith({ sessionId: 'N', embedPublicKey: publicKey, reason: 'created', createdByTokenId: childTokenId });
