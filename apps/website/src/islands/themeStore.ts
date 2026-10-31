@@ -152,12 +152,3 @@ export function useTheme(): ThemeStoreValue {
     const toggle = useCallback(() => toggleTheme(), []);
     return { theme, setTheme, toggle };
 }
-
-/**
- * Test seam. The store is module state, so a test that flips the theme leaks
- * into the next one; this is how a suite puts it back.
- */
-export function __resetThemeStoreForTests(): void {
-    snapshot = null;
-    listeners.clear();
-}
