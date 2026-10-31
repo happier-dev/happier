@@ -44,7 +44,7 @@ describe('PushableAsyncIterable', () => {
     expect(results).toEqual(['first', 'second', 'third']);
   });
 
-  it('propagates setError to active consumers', async () => {
+  it.each(['buffered', 'drained'] as const)('propagates setError with a %s queue', async (queueState) => {
     const iterable = new PushableAsyncIterable<number>();
     const error = new Error('Test error');
 
@@ -53,6 +53,7 @@ describe('PushableAsyncIterable', () => {
       try {
         for await (const value of iterable) {
           values.push(value);
+          if (queueState === 'drained' && value === 2) iterable.setError(error);
         }
       } catch (caught) {
         expect(caught).toBe(error);
@@ -63,7 +64,7 @@ describe('PushableAsyncIterable', () => {
 
     iterable.push(1);
     iterable.push(2);
-    iterable.setError(error);
+    if (queueState === 'buffered') iterable.setError(error);
 
     await expect(consumer).resolves.toEqual([1, 2]);
   });

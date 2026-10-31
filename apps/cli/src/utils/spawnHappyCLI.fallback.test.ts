@@ -240,15 +240,13 @@ describe('spawnHappyCLI fallback invocation', () => {
     const inv = mod.buildHappyCliSubprocessInvocation(['daemon', 'start-sync']);
 
     expect(inv.runtime).toBe('node');
-    expect(inv.argv).toEqual(
-      expect.arrayContaining([
-        '--import',
-        expect.stringMatching(/node_modules[\\/]tsx[\\/]dist[\\/]esm[\\/]index\.mjs$/),
-        expect.stringMatching(/src[\\/]index\.ts$/),
-        'daemon',
-        'start-sync',
-      ]),
-    );
+    expect(inv.argv.slice(-5)).toEqual([
+      '--import',
+      expect.stringMatching(/node_modules[\\/]tsx[\\/]dist[\\/]esm[\\/]index\.mjs$/),
+      expect.stringMatching(/src[\\/]index\.ts$/),
+      'daemon',
+      'start-sync',
+    ]);
     expect(inv.env?.TSX_TSCONFIG_PATH).toEqual(expect.stringMatching(/[\\/]apps[\\/]cli[\\/]tsconfig\.runtime\.json$/));
     expect(process.env.TSX_TSCONFIG_PATH).toBeUndefined();
   });
