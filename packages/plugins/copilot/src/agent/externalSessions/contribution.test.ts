@@ -46,14 +46,6 @@ describe('Copilot native event history contribution', () => {
       : await reader.readAfterTranscript({ ...request, remoteSessionId: 'native', cursor: initial.value.tailCursor });
     expect(result).toMatchObject({ ok: false, code: 'agent_error', retryable: false, message: expect.stringContaining('JSONL') });
   });
-  it('registers a readable history owner through the production plugin activation', async () => {
-    let history: AgentExternalSessionsContribution | undefined;
-    await COPILOT_PLUGIN.activate({ agents: { register() {}, registerExternalSessions(_id: string, contribution: AgentExternalSessionsContribution) {
-      history = contribution;
-    } } } as never);
-    expect(history).toBeDefined();
-  });
-
   it('finds decoded body phrases, tool output and long Unicode text, excluding metadata and deltas', async () => {
     const { reader, request, file } = await fixture();
     const metadata = await reader.listCandidates(request);

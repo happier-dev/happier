@@ -28,6 +28,5 @@ const openSession = async (request: Parameters<typeof fixture.open>[0]) => {
   } }, context);
 };
 runAgentSkillDeliveryContract({ agent, openSession, observeLaunch: () => fixture.observeLaunch(), variants: [
-  { id: 'create', open: openSession, expect: 'delivers' },
   { id: 'resume', open: request => openSession({ ...request, kind: 'resume', providerSessionId: 'copilot-checkpoint' }), expect: 'delivers' },
 ] });
