@@ -15,8 +15,9 @@ export async function detectLatestSessionTurnActivity(params: Readonly<{
     transcriptFetchTimeoutMs?: number;
 }>): Promise<SessionTurnActivity> {
     let projectedActivity: SessionTurnActivity | null = null;
+    let refreshedSession: Awaited<ReturnType<typeof fetchSessionById>> = null;
     try {
-        const refreshedSession = await fetchSessionById({
+        refreshedSession = await fetchSessionById({
             token: params.token,
             sessionId: params.sessionId,
         });
@@ -34,6 +35,7 @@ export async function detectLatestSessionTurnActivity(params: Readonly<{
         encryptionMode: params.encryptionMode,
         encryptionKey: params.encryptionKey,
         encryptionVariant: params.encryptionVariant,
+        sessionProjection: refreshedSession,
         ...(typeof params.afterSeqExclusive === 'number' ? { afterSeqExclusive: params.afterSeqExclusive } : {}),
         ...(typeof params.transcriptFetchTimeoutMs === 'number'
             ? { transcriptFetchTimeoutMs: params.transcriptFetchTimeoutMs }
