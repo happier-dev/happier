@@ -9,41 +9,35 @@ import { LegendList, type LegendListRef } from '@legendapp/list/react-native';
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
 
 /**
- * END-ANCHOR vs PREPEND — "a reader parked at the top of the loaded range must survive a
- * history materialization commit, even while end-follow ownership is still reported".
+ * END-ANCHOR vs PREPEND — "a history materialization commit must keep the reader's anchor unless
+ * end-follow still owns the viewport after that commit".
  *
- * The incident this pins (live capture, 2026-10-31, happier 0.2.19 web build): a reader scrolled
- * to the top of a short loaded range (content ≈1.8 viewports) waited for `loadOlder`, and the
- * materialization commit — one data change prepending ~30,000px of history — landed them at the
- * LIVE TAIL instead. The vendored patch's `HAPPIER-MVCP-END-ANCHOR` block overwrote the
- * anchor-preserving correction (`+prepend size`, measured +29,958) with end geometry
- * (`maxScroll − prevScroll`, measured +30,998) because end-follow ownership was still reported
- * for the session, and the overwrite does not check WHERE the new content landed.
+ * The vendored patch's `HAPPIER-MVCP-END-ANCHOR` block replaces a data commit's anchor-preserving
+ * correction with end geometry (`maxScroll − prevScroll`) whenever end-follow ownership is reported
+ * during the commit. A prepend while the reader is parked at the top of a short loaded range made
+ * that overwrite visible (contributor live capture on 0.2.19 web: +30,998 end geometry against a
+ * +29,958 preserve value). The guard leaves a commit that inserted content above the reader's
+ * anchor to the anchor-preserving correction.
  *
- * The ownership residue is real on both axes the block reads: the external intent callback can
- * still report the held-'end' intent around the release boundary, and the library's cached
- * `isWithinMaintainScrollAtEndThreshold` signal plus a `maintainingScrollAtEnd` transaction flag
- * outlive the reader moving away. This file therefore drives the WORST CASE the block admits —
- * `isMaintainingScrollAtEnd: () => true` — which subsumes every residue path at this boundary.
+ * Scope, measured here rather than assumed: if end-follow ownership is STILL reported after the
+ * commit, Legend's own end maintenance (`doMaintainScrollAtEndFrame` → `scrollToEnd`) follows the
+ * tail one frame later anyway — correctly so for a real follower. The guard therefore matters when
+ * ownership is released between the commit and that frame, so the SUBJECT drives exactly that.
  *
  * The contract under test, at the library boundary the app actually consumes:
- *   1. SUBJECT — owned end-anchor + reader parked at the top + one large prepend commit ⇒ no
- *      write carries the end-anchor signature (`maxScroll − prevScroll`); the anchor-preserving
- *      signature (the prepend size) is the only correction this commit may spend.
+ *   1. SUBJECT — end-follow reported during the prepend commit and released before the next
+ *      frame ⇒ the commit spends exactly the anchor-preserving correction (the prepend height),
+ *      never end geometry. jsdom cannot resolve post-prepend row positions from real layout, so
+ *      the spent correction is the oracle.
  *   2. CONTROL — above-fold row growth with the unowned prop set DOES produce MVCP writes and
  *      holds the reader: the instrument is live and the preserve path is intact (the harness
  *      shape proven in `legendUnpinnedBelowFoldGrowth.real.integration.test.tsx`).
- *   3. PURPOSE — an owned reader placed at the end through a below-end append still lands at
- *      the new end: the end-anchor fast path keeps doing the one thing it was added for
- *      (commit end geometry immediately, no visible-row delta, no later maintenance frame).
+ *   3. PURPOSE — an owned reader at the end lands at the new end through a below-end append within
+ *      the data commit itself (no later maintenance frame), which is what the block exists for.
  *
  * BASIS: jsdom + the installed patched `@legendapp/list` 3.3.3 web build, with the transcript's
  * own list props (`maintainVisibleContentPosition: { data: true, size: true }`,
- * `alignItemsAtEnd`, `estimatedItemSize: 240`, the vendored size-version pair). Library-level
- * evidence about which correction owns a commit. jsdom cannot drive a prepend through the full
- * anchor-preserving chain (no real layout for re-resolving in-view positions across 100 new
- * rows), so the SUBJECT pins the WRITE contract — the end-anchor write must not fire — rather
- * than the final pixel position; the live-browser capture remains the pixel-level evidence.
+ * `alignItemsAtEnd`, `estimatedItemSize: 240`, the vendored size-version pair).
  */
 
 type Row = Readonly<{
@@ -275,7 +269,7 @@ describe('Legend end-anchor ownership through a prepend materialization (install
         maintainScrollAtEnd: false | Readonly<{ animated: boolean; isMaintainingScrollAtEnd: () => boolean }>;
         placeAtIndex?: number;
         placeViewPosition?: number;
-    }>): Promise<Readonly<{ listRef: React.RefObject<LegendListRef>; render: (data: readonly Row[]) => React.ReactElement }>> {
+    }>): Promise<Readonly<{ listRef: React.RefObject<LegendListRef | null>; render: (data: readonly Row[]) => React.ReactElement }>> {
         const listRef = React.createRef<LegendListRef>();
         const render = (data: readonly Row[]) => (
             <div id={HOST_ID} style={{ height: viewportHeight }}>
@@ -311,40 +305,42 @@ describe('Legend end-anchor ownership through a prepend materialization (install
         return { listRef, render };
     }
 
-    it('SUBJECT — an owned end-anchor must not claim a prepend commit while the reader is parked at the top of the loaded range', async () => {
+    it('SUBJECT — a prepend commit keeps the parked reader when end-follow is released before the next frame', async () => {
         // Loaded range of ~6 viewports with the reader parked at its top; the tail below the
-        // reader keeps the end-anchor signature (maxScroll − prevScroll ≈ prepend + tail) well
-        // away from the anchor-preserving signature (prepend size).
+        // reader keeps end geometry (prepend + tail) well away from the preserve value (prepend).
+        let endFollowReported = true;
         const initialRows = makeRows('tail', 12, 250);
         const { render } = await mountAndPlace({
             data: initialRows,
-            maintainScrollAtEnd: { animated: false, isMaintainingScrollAtEnd: () => true },
+            maintainScrollAtEnd: { animated: false, isMaintainingScrollAtEnd: () => endFollowReported },
             placeAtIndex: 0,
         });
         const scrollElement = findScrollElement();
+        expect(scrollElement.scrollTop, 'the reader must be parked at the top before the prepend').toBe(0);
 
-        // One history materialization commit: ~30,000px of older rows prepended above the reader.
-        const materialized = [...makeRows('hist', 100, 300), ...initialRows];
+        // One history materialization commit: 30,000px of older rows prepended above the reader,
+        // with end-follow still reported while it commits.
+        const prependedRows = makeRows('hist', 100, 300);
+        const prependHeightPx = prependedRows.reduce((total, row) => total + row.height, 0);
+        const materialized = [...prependedRows, ...initialRows];
         await act(async () => {
             root.render(render(materialized));
             flushResizeObservers();
             await Promise.resolve();
         });
+        endFollowReported = false;
         await flushLegendWork();
 
-        const maxScroll = scrollElement.scrollHeight - scrollElement.clientHeight;
-        // The end-anchor formula writes `maxScroll − prevScroll` (the live incident measured
-        // +30,998 against a +29,958 preserve value); the preserve path writes the prepend size
-        // (+30,000 here). A write at or beyond `maxScroll − 100` can only be the end-anchor.
-        const endAnchorSignatureWrites = physicalScrollWrites.filter((write) => write.delta >= maxScroll - 100);
-
+        // jsdom cannot resolve post-prepend row positions from real layout, so the oracle is the
+        // correction the commit spends: exactly the prepend height (anchor preserved), never the
+        // end geometry (`maxScroll − prevScroll`) and never a later end-follow write.
         expect(
-            endAnchorSignatureWrites,
-            `end-anchor write fired during a prepend commit: ${JSON.stringify({
-                maxScroll,
+            physicalScrollWrites.map((write) => write.top),
+            `the prepend did not keep the parked reader's anchor: ${JSON.stringify({
+                prependHeightPx,
                 writes: physicalScrollWrites.map((write) => ({ delta: write.delta, top: write.top })),
             })}`,
-        ).toHaveLength(0);
+        ).toEqual([prependHeightPx]);
     });
 
     it('CONTROL — above-fold growth with the unowned prop set is absorbed by MVCP writes (instrument liveness)', async () => {
@@ -395,6 +391,8 @@ describe('Legend end-anchor ownership through a prepend materialization (install
             flushResizeObservers();
             await Promise.resolve();
         });
+        // The commit's own MVCP write, before any deferred maintenance frame can run.
+        const commitWrites = physicalScrollWrites.filter(isMvcpWrite).map((write) => write.top);
         await flushLegendWork();
 
         const distanceFromEndAfter = scrollElement.scrollHeight - scrollElement.clientHeight - scrollElement.scrollTop;
@@ -405,5 +403,9 @@ describe('Legend end-anchor ownership through a prepend materialization (install
                 writes: physicalScrollWrites.map((write) => ({ delta: write.delta, top: write.top })),
             })}`,
         ).toBeLessThanOrEqual(1);
+        expect(
+            commitWrites.at(-1),
+            `the end-anchor must land the new end within the data commit: ${JSON.stringify({ commitWrites })}`,
+        ).toBe(scrollElement.scrollHeight - scrollElement.clientHeight);
     });
 });
