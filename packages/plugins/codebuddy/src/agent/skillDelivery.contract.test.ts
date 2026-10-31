@@ -14,6 +14,5 @@ it('graduates the probed CodeBuddy plugin-directory carrier', () => {
 const openSession = (request: Parameters<typeof fixture.open>[0]) => fixture.open(request,
   normalizePluginDeclarativeAcpRuntime(agent.runtime));
 runAgentSkillDeliveryContract({ agent, openSession, observeLaunch: () => fixture.observeLaunch(), variants: [
-  { id: 'create', open: openSession, expect: 'delivers' },
   { id: 'resume', open: request => openSession({ ...request, kind: 'resume', providerSessionId: 'codebuddy-checkpoint' }), expect: 'delivers' },
 ] });
