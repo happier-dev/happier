@@ -676,7 +676,7 @@ export function createForkedVoiceInferenceRuntimeClient(
             id,
             sessionId: started.sessionId,
             seq: appendInput.seq,
-            pcm16Base64: Buffer.from(appendInput.pcm16Bytes).toString('base64'),
+            pcm16Bytes: appendInput.pcm16Bytes,
           }),
           (frame) => {
             if (frame.kind !== 'result' || frame.result.kind !== 'stt_stream_append') {

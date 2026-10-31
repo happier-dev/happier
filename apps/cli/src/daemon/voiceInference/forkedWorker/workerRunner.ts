@@ -294,7 +294,7 @@ export function createVoiceInferenceWorkerRunner(
           }
           const appended = await managedSession.session.appendPcm16({
             seq: frame.seq,
-            pcm16Bytes: Buffer.from(frame.pcm16Base64, 'base64'),
+            pcm16Bytes: frame.pcm16Bytes,
             signal: abortController.signal,
           });
           send({ kind: 'result', id: frame.id, result: { kind: 'stt_stream_append', events: appended.events } });

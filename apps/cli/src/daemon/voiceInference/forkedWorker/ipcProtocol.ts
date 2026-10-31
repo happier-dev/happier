@@ -8,8 +8,11 @@
  * spawning anything.
  *
  * Wire format: each frame is a 4-byte big-endian unsigned length prefix followed by
- * exactly that many bytes of UTF-8 JSON. This survives partial reads and never relies
- * on a delimiter appearing inside arbitrary payloads.
+ * exactly that many bytes of payload. This survives partial reads and never relies
+ * on a delimiter appearing inside arbitrary payloads. The payload is UTF-8 JSON, except
+ * for `stt_stream_append`, whose PCM travels as raw bytes: a 0x00 marker (JSON never starts
+ * with it), a 4-byte big-endian JSON header length, the JSON header, then the raw PCM bytes.
+ * The frame ceiling covers the whole payload in both forms.
  *
  * Request/response is correlated by `id` and every request receives exactly one terminal
  * `result` or `error` frame. Streaming STT uses its explicit start/append/finish requests.
@@ -78,7 +81,7 @@ export type VoiceInferenceWorkerRequestFrame =
       id: string;
       sessionId: string;
       seq: number;
-      pcm16Base64: string;
+      pcm16Bytes: Uint8Array;
     }>
   | Readonly<{
       kind: 'stt_stream_finish';
@@ -139,6 +142,9 @@ export type VoiceInferenceWorkerFrame =
   | VoiceInferenceWorkerResponseFrame;
 
 const LENGTH_PREFIX_BYTES = 4;
+/** First payload byte of a frame carrying a raw binary tail; a JSON payload starts with `{`. */
+const BINARY_TAIL_MARKER = 0x00;
+const BINARY_TAIL_HEADER_BYTES = 1 + 4;
 
 /**
  * Conservative fallback per-frame ceiling (M2). The real ceiling is the centralized
@@ -154,13 +160,20 @@ export function encodeVoiceInferenceWorkerFrame(
   frame: VoiceInferenceWorkerFrame,
   maxFrameBytes: number = DEFAULT_MAX_FRAME_BYTES,
 ): Buffer {
-  const json = Buffer.from(JSON.stringify(frame), 'utf8');
-  if (json.byteLength > maxFrameBytes) {
+  const tail = frame.kind === 'stt_stream_append' ? frame.pcm16Bytes : null;
+  const json = Buffer.from(JSON.stringify(frame.kind === 'stt_stream_append' ? { ...frame, pcm16Bytes: undefined } : frame), 'utf8');
+  const payloadBytes = tail ? BINARY_TAIL_HEADER_BYTES + json.byteLength + tail.byteLength : json.byteLength;
+  if (payloadBytes > maxFrameBytes) {
     throw new Error('voice_inference_worker_frame_too_large');
   }
-  const prefix = Buffer.alloc(LENGTH_PREFIX_BYTES);
-  prefix.writeUInt32BE(json.byteLength, 0);
-  return Buffer.concat([prefix, json]);
+  const head = Buffer.alloc(LENGTH_PREFIX_BYTES + (tail ? BINARY_TAIL_HEADER_BYTES : 0));
+  head.writeUInt32BE(payloadBytes, 0);
+  if (!tail) {
+    return Buffer.concat([head, json]);
+  }
+  head.writeUInt8(BINARY_TAIL_MARKER, LENGTH_PREFIX_BYTES);
+  head.writeUInt32BE(json.byteLength, LENGTH_PREFIX_BYTES + 1);
+  return Buffer.concat([head, json, tail]);
 }
 
 /**
@@ -191,8 +204,22 @@ export function createVoiceInferenceWorkerFrameDecoder(
         if (buffer.byteLength < totalLength) {
           break;
         }
-        const json = buffer.subarray(LENGTH_PREFIX_BYTES, totalLength).toString('utf8');
+        const payload = buffer.subarray(LENGTH_PREFIX_BYTES, totalLength);
         buffer = buffer.subarray(totalLength);
+        if (payload[0] === BINARY_TAIL_MARKER) {
+          // Raw-tail frame: a header length that overruns the payload is corrupt and terminates the channel.
+          const jsonLength = payload.byteLength >= BINARY_TAIL_HEADER_BYTES ? payload.readUInt32BE(1) : -1;
+          if (jsonLength < 0 || BINARY_TAIL_HEADER_BYTES + jsonLength > payload.byteLength) {
+            throw new Error('voice_inference_worker_frame_malformed');
+          }
+          // The encoder uses the binary tail only for stream-append request frames.
+          const header = JSON.parse(payload.subarray(BINARY_TAIL_HEADER_BYTES, BINARY_TAIL_HEADER_BYTES + jsonLength).toString('utf8')) as Omit<
+            Extract<VoiceInferenceWorkerRequestFrame, { kind: 'stt_stream_append' }>, 'pcm16Bytes'
+          >;
+          frames.push({ ...header, pcm16Bytes: payload.subarray(BINARY_TAIL_HEADER_BYTES + jsonLength) });
+          continue;
+        }
+        const json = payload.toString('utf8');
         // A non-JSON payload throws here (SyntaxError). Like an oversized prefix, the daemon-side
         // client routes that throw through channel termination (M2) — it never silently advances
         // past corrupt bytes. Frame-shape validation is layered on top via
@@ -357,7 +384,7 @@ const VoiceInferenceWorkerRequestFrameSchema = z.discriminatedUnion('kind', [
     id: z.string(),
     sessionId: z.string().check(z.minLength(1)),
     seq: z.number().check(z.int(), z.nonnegative()),
-    pcm16Base64: z.string().check(z.minLength(1)),
+    pcm16Bytes: z.custom<Uint8Array>((value) => value instanceof Uint8Array && value.byteLength > 0),
   }),
   z.object({
     kind: z.literal('stt_stream_finish'),

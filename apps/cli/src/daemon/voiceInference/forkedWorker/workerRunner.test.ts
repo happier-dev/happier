@@ -214,7 +214,7 @@ describe('voice inference worker runner', () => {
       id: 'stream-append-1',
       sessionId: startResult.result.sessionId,
       seq: 0,
-      pcm16Base64: Buffer.from([0, 0, 1, 0]).toString('base64'),
+      pcm16Bytes: Buffer.from([0, 0, 1, 0]),
     } as unknown as VoiceInferenceWorkerRequestFrame);
     fake.sendRequest({
       kind: 'stt_stream_finish',
@@ -288,7 +288,7 @@ describe('voice inference worker runner', () => {
       id: 'missing-stream-append',
       sessionId: 'missing-stream',
       seq: 0,
-      pcm16Base64: Buffer.from([0, 0]).toString('base64'),
+      pcm16Bytes: Buffer.from([0, 0]),
     } as unknown as VoiceInferenceWorkerRequestFrame);
 
     await vi.waitFor(() => {
