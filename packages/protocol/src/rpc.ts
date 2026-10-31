@@ -275,6 +275,10 @@ export const RPC_ERROR_CODES = {
   METHOD_NOT_FOUND: 'RPC_METHOD_NOT_FOUND',
   FORBIDDEN: 'RPC_FORBIDDEN',
   SESSION_MACHINE_CONTROL_UNAVAILABLE: 'RPC_SESSION_MACHINE_CONTROL_UNAVAILABLE',
+  // Additive (0.2): emitted by the daemon RPC response wire guard when a single reply
+  // would exceed the response frame ceiling. Unknown to older readers, who surface it
+  // as a generic RPC failure via { error, errorCode }.
+  RESPONSE_TOO_LARGE: 'RPC_RESPONSE_TOO_LARGE',
 } as const;
 
 export type RpcErrorCode = (typeof RPC_ERROR_CODES)[keyof typeof RPC_ERROR_CODES];
@@ -284,6 +288,7 @@ export const RPC_ERROR_MESSAGES = {
   METHOD_NOT_FOUND: 'Method not found',
   FORBIDDEN: 'Forbidden',
   SESSION_MACHINE_CONTROL_UNAVAILABLE: 'Session machine control unavailable',
+  RESPONSE_TOO_LARGE: 'RPC response too large',
 } as const;
 
 // Session-scoped RPC method names (used with `${sessionId}:${method}` over socket RPC).
