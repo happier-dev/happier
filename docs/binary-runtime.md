@@ -131,6 +131,13 @@ This does not copy or migrate credentials from a previous data home.
 
 ## Desktop executable identity
 
+In current development source, desktop builds retain the full dev/preview semantic
+version in Tauri's app configuration, matching the updater feed on every platform.
+The Windows build pipeline sets the separate `bundle.windows.wix.version` numeric
+MSI version; converting the app version itself would make the updater offer the
+installed build repeatedly. Build preparation and bundle finalization use the same
+version projection in `scripts/pipeline/tauri/build-updater-artifacts.mjs`.
+
 Current development source configures `mainBinaryName` per desktop channel:
 `happier-desktop`, `happier-desktop-preview`, and `happier-desktop-dev`. These names
 keep Linux executables and icons distinct between channels and from the `happier`

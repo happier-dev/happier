@@ -40,30 +40,21 @@ function parseBool(value, name) {
 }
 
 /**
- * Windows MSI versioning is stricter than plain semver:
- * - pre-release identifiers must be numeric-only
- * - numeric identifiers must fit within a 16-bit unsigned integer (<= 65535)
- *
- * Our dev/preview build versions use `-dev.<n>` / `-preview.<n>`, which fails MSI packaging.
- * This normalizes those versions to `-<n>` for Windows only.
+ * Keep the app's semantic version identical to the updater feed on every platform.
+ * WiX needs a numeric fourth component (<= 65535); its dedicated override must not
+ * replace the app version, or Windows repeatedly offers its own dev/preview build.
  *
  * @param {string} buildVersion
- * @returns {string}
+ * @param {NodeJS.Platform} platform
  */
-export function normalizeTauriBuildVersionForWindows(buildVersion) {
-  const raw = String(buildVersion ?? '').trim();
-  if (!raw) return raw;
+export function resolveTauriBuildVersionConfig(buildVersion, platform) {
+  const version = String(buildVersion ?? '').trim();
+  const match = platform === 'win32' ? version.match(/^(\d+\.\d+\.\d+)-(?:dev|preview)\.(\d+)$/) : null;
+  if (!match) return { version };
 
-  const match = raw.match(/^(\d+\.\d+\.\d+)-(?:dev|preview)\.(\d+)$/);
-  if (!match) return raw;
-
-  const base = match[1];
-  const nRaw = match[2];
-  const n = Number.parseInt(String(nRaw ?? ''), 10);
-  if (!Number.isFinite(n) || n <= 0) return `${base}-1`;
-
-  const clamped = Math.min(65535, n);
-  return `${base}-${clamped}`;
+  const n = Number.parseInt(match[2], 10);
+  const build = !Number.isFinite(n) || n <= 0 ? 1 : Math.min(65535, n);
+  return { version, bundle: { windows: { wix: { version: `${match[1]}.${build}` } } } };
 }
 
 /**
@@ -577,14 +568,12 @@ function main() {
   const tauriEnv = actool?.env ?? baseTauriEnv;
   try {
     if (environment !== 'production') {
-      const tauriBuildVersion = platform === 'win32'
-        ? normalizeTauriBuildVersionForWindows(buildVersion)
-        : buildVersion;
+      const versionConfig = resolveTauriBuildVersionConfig(buildVersion, platform);
       const versionOverride = tempFile(tmpRoot, 'tauri.version.override.json');
       if (opts.dryRun) {
-        console.log(`[dry-run] write ${versionOverride} (version=${tauriBuildVersion})`);
+        console.log(`[dry-run] write ${versionOverride} (${JSON.stringify(versionConfig)})`);
       } else {
-        fs.writeFileSync(versionOverride, `${JSON.stringify({ version: tauriBuildVersion })}\n`, 'utf8');
+        fs.writeFileSync(versionOverride, `${JSON.stringify(versionConfig)}\n`, 'utf8');
       }
 
       const configPath = `src-tauri/${resolveTauriChannelConfigFile(environment)}`;
