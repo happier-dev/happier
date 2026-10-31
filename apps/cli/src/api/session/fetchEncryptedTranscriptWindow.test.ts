@@ -34,7 +34,7 @@ describe('fetchEncryptedTranscriptWindow', () => {
   it('builds afterSeq/limit params for page fetch', async () => {
     mockGet.mockResolvedValue({
       status: 200,
-      data: { messages: [{ seq: 5, createdAt: 1, content: { t: 'encrypted', c: 'c' } }] },
+      data: { hasMore: false, messages: [{ seq: 5, createdAt: 1, content: { t: 'encrypted', c: 'c' } }] },
     });
 
     const rows = await fetchEncryptedTranscriptPageAfterSeq({
@@ -65,7 +65,7 @@ describe('fetchEncryptedTranscriptWindow', () => {
   it('fetches latest messages with limit only (descending as returned by API)', async () => {
     mockGet.mockResolvedValue({
       status: 200,
-      data: { messages: [{ seq: 9, createdAt: 2, content: { t: 'encrypted', c: 'c2' } }] },
+      data: { hasMore: false, messages: [{ seq: 9, createdAt: 2, content: { t: 'encrypted', c: 'c2' } }] },
     });
 
     const rows = await fetchEncryptedTranscriptPageLatest({
@@ -82,7 +82,7 @@ describe('fetchEncryptedTranscriptWindow', () => {
   it('applies sanitized caller timeouts to page fetches', async () => {
     mockGet.mockResolvedValue({
       status: 200,
-      data: { messages: [] },
+      data: { hasMore: false, messages: [] },
     });
 
     await fetchEncryptedTranscriptPageLatest({
@@ -107,7 +107,7 @@ describe('fetchEncryptedTranscriptWindow', () => {
   it('uses the safe default timeout when caller timeout is absent or unsafe', async () => {
     mockGet.mockResolvedValue({
       status: 200,
-      data: { messages: [] },
+      data: { hasMore: false, messages: [] },
     });
 
     await fetchEncryptedTranscriptPageLatest({
@@ -132,6 +132,7 @@ describe('fetchEncryptedTranscriptWindow', () => {
     mockGet.mockResolvedValue({
       status: 200,
       data: {
+        hasMore: false,
         messages: [
           {
             seq: 1,
@@ -155,7 +156,7 @@ describe('fetchEncryptedTranscriptWindow', () => {
   it('computes afterSeq and limit for a bounded range fetch', async () => {
     mockGet.mockResolvedValue({
       status: 200,
-      data: { messages: [{ seq: 5, createdAt: 1, content: { t: 'encrypted', c: 'c' } }] },
+      data: { hasMore: false, messages: [{ seq: 5, createdAt: 1, content: { t: 'encrypted', c: 'c' } }] },
     });
 
     const result = await fetchEncryptedTranscriptRange({
