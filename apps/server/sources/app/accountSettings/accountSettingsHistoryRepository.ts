@@ -1,4 +1,6 @@
-import type { TransactionClient } from "@/storage/prisma";
+import { randomUUID } from "node:crypto";
+
+import { getDbProviderFromEnv, type TransactionClient } from "@/storage/prisma";
 import {
     AccountSettingsV2HistoryMutationRequestSchema,
     type AccountSettingsV2HistoryMutationRequest,
@@ -286,21 +288,28 @@ async function ensureAccountSettingsSnapshot(
     tx: TransactionClient,
     snapshot: AccountSettingsSnapshotInput,
 ): Promise<void> {
-    await tx.accountSettingsSnapshot.upsert({
-        where: {
-            accountId_version: {
-                accountId: snapshot.accountId,
-                version: snapshot.version,
-            },
-        },
-        create: {
-            accountId: snapshot.accountId,
-            version: snapshot.version,
-            settingsDbValue: snapshot.settingsDbValue,
-            encryptionMode: snapshot.encryptionMode,
-            contentKind: resolveAccountSettingsSnapshotContentKind(snapshot),
-        },
-        update: {},
+    const data = {
+        accountId: snapshot.accountId,
+        version: snapshot.version,
+        settingsDbValue: snapshot.settingsDbValue,
+        encryptionMode: snapshot.encryptionMode,
+        contentKind: resolveAccountSettingsSnapshotContentKind(snapshot),
+    };
+    // Retained history may already have been normalized by its exact-content
+    // CAS. Recording a Settings write must never replace that existing row.
+    if (getDbProviderFromEnv(process.env, "postgres") === "sqlite") {
+        // SQLite's Prisma delegate does not support createMany.skipDuplicates.
+        await tx.$executeRaw`
+            INSERT INTO "AccountSettingsSnapshot"
+                ("id", "accountId", "version", "settingsDbValue", "encryptionMode", "contentKind")
+            VALUES (${randomUUID()}, ${data.accountId}, ${data.version}, ${data.settingsDbValue}, ${data.encryptionMode}, ${data.contentKind})
+            ON CONFLICT ("accountId", "version") DO NOTHING
+        `;
+        return;
+    }
+    await tx.accountSettingsSnapshot.createMany({
+        data,
+        skipDuplicates: true,
     });
 }
 

@@ -26,29 +26,30 @@ function createHistoryTransaction(initialSnapshots: readonly Snapshot[]) {
     const snapshots = [...initialSnapshots];
     let nextId = initialSnapshots.length + 1;
     const accountSettingsSnapshot = {
-        upsert: vi.fn(async (input: Readonly<{
-            where: Readonly<{ accountId_version: Readonly<{ accountId: string; version: number }> }>;
-            create: Readonly<{
+        createMany: vi.fn(async (input: Readonly<{
+            data: Readonly<{
                 accountId: string;
                 version: number;
                 settingsDbValue: string | null;
             }>;
+            skipDuplicates: boolean;
         }>) => {
             const existing = snapshots.find((snapshot) => (
-                snapshot.accountId === input.where.accountId_version.accountId
-                && snapshot.version === input.where.accountId_version.version
+                snapshot.accountId === input.data.accountId
+                && snapshot.version === input.data.version
             ));
-            if (existing) return existing;
+            if (existing && input.skipDuplicates) return { count: 0 };
+            if (existing) throw new Error("Unique snapshot version already exists");
 
             const created: Snapshot = {
                 id: `snapshot-${nextId++}`,
-                accountId: input.create.accountId,
-                version: input.create.version,
-                createdAt: new Date(input.create.version),
-                settingsDbValue: input.create.settingsDbValue,
+                accountId: input.data.accountId,
+                version: input.data.version,
+                createdAt: new Date(input.data.version),
+                settingsDbValue: input.data.settingsDbValue,
             };
             snapshots.push(created);
-            return created;
+            return { count: 1 };
         }),
         findMany: vi.fn(async (input: Readonly<{
             where: Readonly<{ accountId: string }>;
@@ -88,6 +89,18 @@ function createHistoryTransaction(initialSnapshots: readonly Snapshot[]) {
 }
 
 describe("Account Settings history repository", () => {
+    it("preserves retained history when recording the previous version again", async () => {
+        const retained: Snapshot = { id: "normalized-history", accountId: "account-1", version: 3,
+            createdAt: new Date(3), settingsDbValue: "normalized-content" };
+        const fixture = createHistoryTransaction([retained]);
+        const write = { tx: fixture.tx,
+            previous: { accountId: "account-1", version: 3, settingsDbValue: "original-content", encryptionMode: "e2ee" as const },
+            next: { accountId: "account-1", version: 4, settingsDbValue: "next-content", encryptionMode: "e2ee" as const },
+            env: { HAPPIER_ACCOUNT_SETTINGS_HISTORY_LIMIT: "10" } };
+        await recordAccountSettingsSnapshotsForWrite(write);
+        await recordAccountSettingsSnapshotsForWrite(write);
+        expect(fixture.snapshots).toEqual([retained, expect.objectContaining({ version: 4, settingsDbValue: "next-content" })]);
+    });
     it.each([
         { field: "providerConnections", root: "providerSettingsV1", physicalKey: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1,
             value: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, source: { ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, defaultsByAgentTargetKey: {} },
