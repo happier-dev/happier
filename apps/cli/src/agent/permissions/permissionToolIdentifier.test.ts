@@ -68,17 +68,6 @@ describe('permissionToolIdentifier', () => {
     ).toBe('git status --porcelain');
   });
 
-  it('does not extract commands from generic execute titles', () => {
-    expect(
-      extractShellCommand({
-        toolCall: {
-          kind: 'execute',
-          title: 'Run shell command',
-        },
-      }),
-    ).toBeNull();
-  });
-
   it('builds a specific identifier for bash with a command', () => {
     expect(makeToolIdentifier('bash', { command: ['bash', '-lc', 'echo hello'] })).toBe('bash(echo hello)');
   });

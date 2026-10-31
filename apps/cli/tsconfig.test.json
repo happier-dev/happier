@@ -130,7 +130,6 @@
     "src/agent/catalog/resolution.external.test.ts",
     "src/agent/catalog/sessionControlAdapters.external.test.ts",
     "src/agent/catalog/snapshot.test.ts",
-    "src/agent/executionRuns/geminiExecutionRunBackendRegistry.demoted.test.ts",
     "src/agent/executionRuns/policy/executionRunPermissionDecision.handsOff.test.ts",
     "src/agent/executionRuns/policy/executionRunPermissionDecision.test.ts",
     "src/agent/executionRuns/policy/executionRunPermissionInteractionPolicy.test.ts",

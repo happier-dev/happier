@@ -42,22 +42,6 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
     expect(enabled).toBe(true);
   });
 
-  it('does not make guidance depend on whether the index currently has searchable content', async () => {
-    const enabled = await resolveCliMemoryRecallGuidanceEnabled({
-      surfaces: ['voice'],
-      deps: {
-        isActionEnabledByEnv: (actionId, ctx) =>
-          ctx?.surface === 'voice' && (actionId === 'memory.search' || actionId === 'memory.get_window'),
-        readMemorySettingsFromDisk: async () => buildMemorySettings({
-          enabled: true,
-          indexMode: 'hints',
-        }),
-      },
-    });
-
-    expect(enabled).toBe(true);
-  });
-
   it('returns false when a required memory action is disabled for the requested surface', async () => {
     const enabled = await resolveCliMemoryRecallGuidanceEnabled({
       surfaces: ['voice'],

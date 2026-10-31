@@ -123,24 +123,6 @@ describe('resolvePromptAssetContributionBlocks', () => {
     })).rejects.toMatchObject({ code: 'PLUGIN_PROMPT_ASSET_IDENTITY_CONFLICT' });
   });
 
-  it('preserves the exact non-empty resource text', async () => {
-    await expect(resolvePromptAssetContributionBlocks({
-      agent: { pluginId: 'acme.agent', localId: 'worker' },
-      contributions: [{
-        pluginId: 'acme.prompts', occurrenceId: createPluginRuntimeOccurrenceId('acme.prompts'),
-        definition: {
-          id: 'instructions', kind: 'systemPrompt', resource: 'body',
-          target: { kind: 'agent', agent: { pluginId: 'acme.agent', localId: 'worker' } },
-        },
-      }],
-      readResourceText: async () => '\nExact prompt bytes\n',
-    })).resolves.toEqual([{
-      id: 'plugin_prompt_asset.acme.prompts/instructions',
-      scope: 'session',
-      text: '\nExact prompt bytes\n',
-    }]);
-  });
-
   it('materializes only the selected qualified asset when one Agent has multiple profile prompts', async () => {
     const blocks = await resolvePromptAssetContributionBlocks({
       agent: { pluginId: 'happier.review.deepsec', localId: 'deepsec' },

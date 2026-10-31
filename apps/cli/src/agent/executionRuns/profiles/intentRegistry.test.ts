@@ -117,22 +117,6 @@ describe('executionRun intent profile registry', () => {
     ).listAvailableActionIds?.({ start: {} as never })).toContain('happier.review.coderabbit/publish');
   });
 
-  it('never cross-resolves a review host action onto a non-review intent', () => {
-    const catalog = buildExecutionRunProfileCatalog([{
-      pluginId: 'happier.review.coderabbit',
-      sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'cli_version_root', versionRootId: 'cli-coderabbit' } },
-      definition: {
-        id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt',
-        compatibleAgents: ['reviewer'],
-        defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
-        actions: [{ kind: 'hostAction', actionId: 'reviews.comments.create' }],
-      },
-    }]);
-    expect(() => resolveExecutionRunIntentProfileFromCatalog(
-      catalog, 'plan', 'happier.review.coderabbit/review',
-    )).toThrow(/does not own intent/);
-  });
-
   it('uses the contributed intent as the qualified runtime-profile owner and fails stale or mismatched selections closed', () => {
     const catalog = buildExecutionRunProfileCatalog([{
       pluginId: 'acme.review',

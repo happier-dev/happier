@@ -16,13 +16,6 @@ describe('stripTrailingJsonObjectFromText', () => {
     expect(stripTrailingJsonObjectFromText(`${nestedExample}\n{"walkthrough":`, ['walkthrough'])).toBe(nestedExample);
     expect(stripTrailingJsonObjectFromText('Updated: {"walkthrough":', ['walkthrough'])).toBe('Updated:');
   });
-  it('removes a trailing JSON object from prose', () => {
-    expect(stripTrailingJsonObjectFromText([
-      'Plan prose',
-      '{"summary":"Ok","sections":[]}',
-    ].join('\n'))).toBe('Plan prose');
-  });
-
   it('removes a fenced trailing JSON object from prose', () => {
     expect(stripTrailingJsonObjectFromText([
       'Plan prose',

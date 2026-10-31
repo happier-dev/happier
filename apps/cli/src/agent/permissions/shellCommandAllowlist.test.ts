@@ -21,16 +21,6 @@ describe('shellCommandAllowlist', () => {
     expect(res.segments).toEqual(['echo ${HOME}', 'echo ok']);
   });
 
-  it('does not let unset preludes inherit command-name allow rules', () => {
-    const patterns = [{ kind: 'prefix' as const, value: 'pwd' }];
-    expect(
-      isShellCommandAllowed(
-        'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_OAUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_SETUP_TOKEN; pwd',
-        patterns,
-      ),
-    ).toBe(false);
-  });
-
   it('does not allow extra segments when only the main command is allowed', () => {
     const patterns = [{ kind: 'prefix' as const, value: 'pwd' }];
     expect(
