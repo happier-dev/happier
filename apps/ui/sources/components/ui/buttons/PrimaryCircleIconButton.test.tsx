@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
 import { renderScreen } from '@/dev/testkit';
 import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
+import Color from 'color';
 
+vi.unmock('color');
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -51,7 +53,8 @@ describe('PrimaryCircleIconButton', () => {
         const screen = await renderScreen(<HappierMaterialRoleProvider role="chrome" resolveMaterialColor={() => 'rgba(235, 230, 225, 0.1)'}>
             <PrimaryCircleIconButton testID="glass-circle" active accessibilityLabel="Send" onPress={() => {}}><span /></PrimaryCircleIconButton>
         </HappierMaterialRoleProvider>);
-        expect(screen.findByTestId('glass-circle')!.findAllByType('Stop' as never).slice(0, 2).map(node => node.props.stopColor)).toEqual(['#000', '#111']);
+        expect(screen.findByTestId('glass-circle')!.findAllByType('Stop' as never).slice(0, 2)
+            .map(node => Color(node.props.stopColor).hex())).toEqual(['#000000', '#111111']);
     });
 
     it('does not emit raw text nodes under Pressable when icon children render as text on web', async () => {
