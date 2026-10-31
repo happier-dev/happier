@@ -10,18 +10,21 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import type { Theme } from '@/theme';
 import { resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 
+/** The disc's diameter. The pressable takes it directly: with an `overlay` it sits in an unsized anchor, where a percentage collapses to the icon. */
+const DISC_SIZE = 32;
+
 const stylesheet = StyleSheet.create((theme) => ({
   root: {
-    width: 32,
-    height: 32,
+    width: DISC_SIZE,
+    height: DISC_SIZE,
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
     flexShrink: 0,
   },
   inner: {
-    width: '100%',
-    height: '100%',
+    width: DISC_SIZE,
+    height: DISC_SIZE,
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
