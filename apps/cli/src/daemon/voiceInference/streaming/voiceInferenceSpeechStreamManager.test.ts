@@ -218,6 +218,7 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     await worker.stop();
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     envScope.restore();
     envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_WEB_LATENCY_TRACE']);
     reloadConfiguration();
@@ -419,7 +420,6 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     const streamRoot = await createTempStreamRoot();
     const manager = createVoiceInferenceSpeechStreamManager({
       streamRoot, voiceInferenceWorker: worker,
-      resolveMaxUploadBytes: () => 4,
     });
     managers.push(manager);
     const started = await manager.start({ requestId: `long-${ingress}`, packId, language: 'en',
@@ -776,7 +776,8 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     expect(await readdir(streamRoot)).toEqual([]);
   });
 
-  it.each(['pcm', 'compatibility'] as const)('preserves the file-upload limit for %s upload bridge starts', async (ingress) => {
+  it.each(['pcm', 'compatibility'] as const)('finishes %s upload bridge streams beyond the file-upload limit', async (ingress) => {
+    vi.stubEnv('HAPPIER_VOICE_INFERENCE_STT_MAX_UPLOAD_BYTES', '48');
     let observedInput: VoiceInferenceRuntimeTranscribeInput | null = null;
     const workerTranscribe = vi.spyOn(worker, 'transcribeAudio');
     const transcribeAudio = vi.fn<VoiceInferenceRuntime['transcribeAudio']>(async (input) => {
@@ -784,7 +785,7 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
       const wav = await readFile(input.filePath);
       expect(wav.subarray(0, 4).toString('ascii')).toBe('RIFF');
       expect(wav.subarray(8, 12).toString('ascii')).toBe('WAVE');
-      expect([...wav.subarray(44)]).toEqual([0, 0, 1, 0]);
+      expect([...wav.subarray(44)]).toEqual([0, 0, 1, 0, 2, 0]);
       return {
         text: 'compatibility transcript',
         language: input.language,
@@ -794,7 +795,6 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     const manager = createVoiceInferenceSpeechStreamManager({
       streamRoot: await createTempStreamRoot(),
       voiceInferenceWorker: worker,
-      resolveMaxUploadBytes: () => 4,
     });
     managers.push(manager);
 
@@ -816,16 +816,16 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     await expect(append(0, Buffer.from([0, 0]))).resolves.toMatchObject({ ok: true, ackSeq: 0 });
     await expect(append(1, Buffer.from([1, 0]))).resolves.toMatchObject({ ok: true, ackSeq: 1 });
     await expect(append(2, Buffer.from([2, 0]))).resolves.toMatchObject({
-      ok: false, errorCode: 'invalid_stream_state', error: 'daemon_voice_inference_stream_invalid_pcm',
+      ok: true, ackSeq: 2,
     });
 
     await expect(manager.finish({
       streamId: started.streamId,
       generation: started.generation,
-      finalSeq: 1,
+      finalSeq: 2,
     })).resolves.toMatchObject({
       ok: true,
-      ackSeq: 1,
+      ackSeq: 2,
       finalText: 'compatibility transcript',
       language: 'en',
       modelPackId: packId,
@@ -842,6 +842,7 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
       },
     });
     expect(workerTranscribe).toHaveBeenCalledWith(expect.objectContaining({ uploadId: started.streamId }));
+    vi.unstubAllEnvs();
   });
 
   it('does not select the upload bridge when streaming mode is omitted', async () => {

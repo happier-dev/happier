@@ -39,7 +39,7 @@ describe('validateDaemonVoiceInferenceAudioInput', () => {
         await Promise.all(tempDirs.splice(0).map(async (dir) => await rm(dir, { recursive: true, force: true }).catch(() => undefined)));
     });
 
-    it('rejects oversized pretranscoded wav uploads with the daemon upload limit', async () => {
+    it('validates admitted WAV input beyond the separately owned file-upload limit', async () => {
         envScope.patch({
             HAPPIER_VOICE_INFERENCE_STT_MAX_UPLOAD_BYTES: '32',
         });
@@ -60,10 +60,7 @@ describe('validateDaemonVoiceInferenceAudioInput', () => {
                     systemFfmpegAllowed: false,
                 },
             }),
-        ).rejects.toMatchObject({
-            code: 'invalid_audio_input',
-            message: 'voice_inference_audio_input_too_large',
-        });
+        ).resolves.toMatchObject({ filePath, inputMimeType: 'audio/wav' });
     });
 
     it('rejects unsupported daemon-decode mime types', async () => {

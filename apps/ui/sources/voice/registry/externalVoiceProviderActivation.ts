@@ -136,20 +136,10 @@ function assertSettingsOperationCurrent(
   if (signal.aborted || !isCurrent()) throw settingsOperationCancelled();
 }
 
-const MAX_VOICE_PROVIDER_CATALOG_ITEMS = 1_000;
-const MAX_VOICE_PROVIDER_CATALOG_BYTES = 1_048_576;
-const MAX_VOICE_PROVIDER_PREVIEW_URL_LENGTH = 16_384;
-
-function settingsOperationResponseInvalid(): Error {
-  return Object.assign(new Error('voice_provider_settings_response_invalid'), {
-    code: 'voice_provider_settings_response_invalid',
-  });
-}
-
 function parseVoiceProviderPreviewUrl(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const raw = value.trim();
-  if (!raw || raw.length > MAX_VOICE_PROVIDER_PREVIEW_URL_LENGTH) return null;
+  if (!raw) return null;
   try {
     const parsed = new URL(raw);
     return parsed.protocol === 'https:'
@@ -186,21 +176,12 @@ function sanitizeVoiceProviderCatalogItem(value: VoiceRealtimeJsonValue): VoiceR
   return Object.freeze(result);
 }
 
-function parseBoundedVoiceProviderCatalog(
+function parseVoiceProviderCatalog(
   value: readonly VoiceRealtimeJsonValue[],
 ): readonly VoiceRealtimeJsonValue[] {
-  if (value.length > MAX_VOICE_PROVIDER_CATALOG_ITEMS) {
-    throw settingsOperationResponseInvalid();
-  }
-  const encoder = new TextEncoder();
   const items: VoiceRealtimeJsonValue[] = [];
-  let totalBytes = 0;
   for (const item of value) {
     const parsed = sanitizeVoiceProviderCatalogItem(VoiceRealtimeJsonValueSchema.parse(item));
-    totalBytes += encoder.encode(JSON.stringify(parsed)).byteLength;
-    if (totalBytes > MAX_VOICE_PROVIDER_CATALOG_BYTES) {
-      throw settingsOperationResponseInvalid();
-    }
     items.push(parsed);
   }
   return Object.freeze(items);
@@ -263,7 +244,7 @@ export function bindVoiceProviderSettingsOperations(input: Readonly<{
               throw error;
             }
             assertSettingsOperationCurrent(signal, input.isCurrent);
-            return parseBoundedVoiceProviderCatalog(result);
+            return parseVoiceProviderCatalog(result);
           },
         });
       },

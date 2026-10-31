@@ -1751,7 +1751,7 @@ describe('voiceInferenceWorker', () => {
         await worker.stop();
     });
 
-    it('rejects STT uploads that exceed the configured max upload bytes', async () => {
+    it('transcribes admitted STT input without applying the file-transfer upload limit again', async () => {
         const packId = 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17';
         const sttModelBytes = Buffer.from('stt-model');
         const server = createServer();
@@ -1836,8 +1836,8 @@ describe('voiceInferenceWorker', () => {
                 strategy: 'daemon_decode',
                 systemFfmpegAllowed: false,
             },
-        })).rejects.toMatchObject({
-            code: 'invalid_audio_input',
+        })).resolves.toMatchObject({
+            text: 'unused',
         });
 
         await worker.stop();

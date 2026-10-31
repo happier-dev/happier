@@ -9,7 +9,6 @@ import {
 } from './voiceInferenceWorker.shared';
 import {
     resolveVoiceInferenceAcceptedInputMimeTypes,
-    resolveVoiceInferenceSttMaxUploadBytes,
 } from './voiceInferenceWorkerConfig';
 
 type DaemonVoiceInferenceAudioValidationResult = Readonly<{
@@ -39,7 +38,8 @@ async function assertWavHeader(filePath: string): Promise<void> {
     }
 }
 
-async function assertVoiceInferenceInputWithinUploadLimit(filePath: string): Promise<void> {
+async function assertVoiceInferenceInputFile(filePath: string): Promise<void> {
+    // Upload size is admitted by the transfer ingress; live streams share this validator.
     const fileStat = await stat(filePath).catch(() => {
         throw createVoiceInferenceError('invalid_audio_input', 'voice_inference_invalid_upload_path');
     });
@@ -49,9 +49,6 @@ async function assertVoiceInferenceInputWithinUploadLimit(filePath: string): Pro
     }
     if (fileStat.size <= 0) {
         throw createVoiceInferenceError('invalid_audio_input', 'voice_inference_empty_daemon_audio_input');
-    }
-    if (fileStat.size > resolveVoiceInferenceSttMaxUploadBytes()) {
-        throw createVoiceInferenceError('invalid_audio_input', 'voice_inference_audio_input_too_large');
     }
 }
 
@@ -70,7 +67,7 @@ export async function validateDaemonVoiceInferenceAudioInput(params: Readonly<{
             );
         }
         await assertWavHeader(params.filePath);
-        await assertVoiceInferenceInputWithinUploadLimit(params.filePath);
+        await assertVoiceInferenceInputFile(params.filePath);
         return {
             ...params,
             inputMimeType,
@@ -84,7 +81,7 @@ export async function validateDaemonVoiceInferenceAudioInput(params: Readonly<{
         );
     }
 
-    await assertVoiceInferenceInputWithinUploadLimit(params.filePath);
+    await assertVoiceInferenceInputFile(params.filePath);
 
     if (isVoiceInferenceWavMimeType(inputMimeType)) {
         await assertWavHeader(params.filePath);

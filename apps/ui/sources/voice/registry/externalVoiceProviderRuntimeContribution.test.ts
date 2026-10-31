@@ -672,11 +672,15 @@ describe('external Voice provider host composition', () => {
     }
   });
 
-  it('bounds final catalog responses exposed by provider settings operations', async () => {
-    const oversizedCatalog = bindVoiceProviderSettingsOperations({
+  it('preserves large valid catalogs and sanitizes preview URLs in provider settings operations', async () => {
+    const previewUrl = `https://cdn.example.test/preview?selection=${'a'.repeat(16_385)}`;
+    const catalog = Array.from({ length: 1_001 }, (_, index) => Object.freeze({
+      id: String(index), description: 'voice'.repeat(220), ...(index === 0 ? { previewUrl } : {}),
+    }));
+    const largeCatalog = bindVoiceProviderSettingsOperations({
       operations: Object.freeze({
         async listCatalog(): Promise<readonly VoiceRealtimeJsonValue[]> {
-          return Array.from({ length: 1_001 }, (_, index) => Object.freeze({ id: String(index) }));
+          return catalog;
         },
       }),
       createCredentials: (signal) => Object.freeze({
@@ -691,11 +695,11 @@ describe('external Voice provider host composition', () => {
       }),
       isCurrent: () => true,
     });
-    await expect(oversizedCatalog.listCatalog!({
+    await expect(largeCatalog.listCatalog!({
       catalog: 'voices',
       providerConfig: Object.freeze({ mode: 'default' }),
       signal: new AbortController().signal,
-    })).rejects.toMatchObject({ code: 'voice_provider_settings_response_invalid' });
+    })).resolves.toEqual(catalog);
 
     const maliciousPreviewCatalog = bindVoiceProviderSettingsOperations({
       operations: Object.freeze({

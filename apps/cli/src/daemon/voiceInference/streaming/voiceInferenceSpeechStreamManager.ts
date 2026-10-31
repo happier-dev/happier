@@ -13,7 +13,6 @@ import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { toVoiceInferenceError } from '@/api/machine/voiceInferenceRpcResponses';
 import { resolveVoiceInferencePaths } from '@/daemon/voiceInference/voiceInferencePaths';
-import { resolveVoiceInferenceSttMaxUploadBytes } from '@/daemon/voiceInference/voiceInferenceWorkerConfig';
 import type { VoiceInferenceWorkerStreamingTranscriptionSession } from '@/daemon/voiceInference/voiceInferenceWorker.execution';
 import type { VoiceDiagnosticsController } from '@/daemon/voiceDiagnostics/controller';
 import { openAes256GcmBytes, sealAes256GcmBytes } from '@happier-dev/transfers/node';
@@ -44,7 +43,6 @@ type BaseStreamSession = {
   pendingFrames: number;
   pendingBytes: number;
   compatibilityChunks: Map<number, CompatibilityChunk>;
-  compatibilityBytes: number;
   state: 'open' | 'finishing' | 'closed';
   tail: Promise<void>;
   abortController: AbortController;
@@ -137,7 +135,6 @@ export type CreateVoiceInferenceSpeechStreamManagerOptions = Readonly<{
   voiceDiagnostics?: Pick<VoiceDiagnosticsController, 'captureFile'>;
   streamRoot?: string;
   sessionTtlMs?: number;
-  resolveMaxUploadBytes?: () => number;
   maxAdmittedFrames?: number;
   maxAdmittedBytes?: number;
 }>;
@@ -278,7 +275,6 @@ export function createVoiceInferenceSpeechStreamManager(
     : Number.isFinite(configuration.filesTransferSessionTtlMs)
       ? Math.max(1_000, Math.trunc(configuration.filesTransferSessionTtlMs))
       : 60_000;
-  const resolveMaxUploadBytes = options.resolveMaxUploadBytes ?? resolveVoiceInferenceSttMaxUploadBytes;
   const maxAdmittedFrames = Math.max(1, Math.trunc(options.maxAdmittedFrames ?? 64));
   const maxAdmittedBytes = Math.max(2, Math.trunc(options.maxAdmittedBytes ?? 2 * 1024 * 1024));
   const activeApplicationAttemptIds = new Set<string>();
@@ -322,7 +318,6 @@ export function createVoiceInferenceSpeechStreamManager(
       session.pendingBytes -= chunk.pcm.byteLength;
     }
     session.compatibilityChunks.clear();
-    session.compatibilityBytes = 0;
     await session.tail.catch(() => undefined);
     session.peerApplicationEncryption?.recipientSecretKeySeed.fill(0);
     session.peerApplicationEncryption?.contentKey?.fill(0);
@@ -485,7 +480,6 @@ export function createVoiceInferenceSpeechStreamManager(
             pendingFrames: 0,
             pendingBytes: 0,
             compatibilityChunks: new Map(),
-            compatibilityBytes: 0,
             state: 'open',
             tail: Promise.resolve(),
             abortController,
@@ -516,7 +510,6 @@ export function createVoiceInferenceSpeechStreamManager(
             pendingFrames: 0,
             pendingBytes: 0,
             compatibilityChunks: new Map(),
-            compatibilityBytes: 0,
             state: 'open',
             tail: Promise.resolve(),
             abortController,
@@ -727,18 +720,14 @@ export function createVoiceInferenceSpeechStreamManager(
           ? await pending.result
           : streamError('invalid_stream_state', 'daemon_voice_inference_stream_invalid_pcm');
       }
-      // The upload limit belongs to file transcription. Native streaming
-      // admission uses pending credit, not cumulative microphone duration.
-      if ((session.mode === 'upload_bridge'
-          && session.admittedTotalBytes + session.compatibilityBytes + pcm.byteLength > resolveMaxUploadBytes())
-        || session.pendingFrames >= maxAdmittedFrames
+      // Live capture uses pending credit, not the file-transfer upload limit.
+      if (session.pendingFrames >= maxAdmittedFrames
         || session.pendingBytes + pcm.byteLength > maxAdmittedBytes) {
         return streamError('invalid_stream_state', 'daemon_voice_inference_stream_invalid_pcm');
       }
       let resolve!: CompatibilityChunk['resolve'];
       const result = new Promise<DaemonVoiceInferenceSttStreamChunkResponse>(done => { resolve = done; });
       session.compatibilityChunks.set(input.seq, { pcm, result, resolve });
-      session.compatibilityBytes += pcm.byteLength;
       session.pendingFrames += 1;
       session.pendingBytes += pcm.byteLength;
       // Independent RPC admission can finish in a different order at either
@@ -749,7 +738,6 @@ export function createVoiceInferenceSpeechStreamManager(
         const chunk = next;
         const seq = session.admittedSeq + 1;
         session.compatibilityChunks.delete(seq);
-        session.compatibilityBytes -= next.pcm.byteLength;
         session.pendingFrames -= 1;
         session.pendingBytes -= next.pcm.byteLength;
         void manager.appendPcm16Bytes({ streamId: input.streamId, generation: input.generation, seq, pcm16Bytes: next.pcm })
@@ -794,8 +782,6 @@ export function createVoiceInferenceSpeechStreamManager(
       const pcm = normalizePcm16Bytes(input.pcm16Bytes);
       if (
         !pcm
-        || (session.mode === 'upload_bridge'
-          && session.admittedTotalBytes + session.compatibilityBytes + pcm.byteLength > resolveMaxUploadBytes())
         || session.pendingFrames >= maxAdmittedFrames
         || session.pendingBytes + pcm.byteLength > maxAdmittedBytes
       ) {

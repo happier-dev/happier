@@ -882,9 +882,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
     expect(cancelStt).toHaveBeenCalledWith('stream-runtime-cancel');
   });
 
-  it('rejects binary append stream identity, ordering, PCM, cap, and lifecycle violations', async () => {
-    // The canonical worker's upload budget includes the 44-byte WAV header.
-    process.env.HAPPIER_VOICE_INFERENCE_STT_MAX_UPLOAD_BYTES = '48';
+  it('rejects binary append stream identity, ordering, PCM and lifecycle violations', async () => {
     const finishRelease = (() => {
       let resolve!: () => void;
       const promise = new Promise<void>((resolvePromise) => {
@@ -949,13 +947,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       generation: started.generation,
       seq: 0,
       pcm16Bytes: new Uint8Array([0]),
-    })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_stream_state' });
-    await expect(registration.appendSttStreamBinaryFrame({
-      voiceMediaApplicationAuthority: speechApplicationAuthority('stream-request-binary-negative'),
-      streamId: started.streamId,
-      generation: started.generation,
-      seq: 0,
-      pcm16Bytes: new Uint8Array(50),
     })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_stream_state' });
 
     await expect(registration.appendSttStreamBinaryFrame({
