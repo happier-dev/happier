@@ -1,5 +1,6 @@
 import type { SessionBroadcast, SocketRpcCallPayload, SocketRpcCallResponse, SocketRpcRequestPayload, Update } from '../types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import type { ExecutionRunMachineActivityV1 } from '@happier-dev/protocol/execution/runs/activityV1';
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import type { TeamCredentialExternalProviderOperationRetireV1, TeamCredentialExternalProviderOperationRetireResponseV1 } from '@happier-dev/protocol/teams';
 import { EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
@@ -51,7 +52,8 @@ export interface DaemonToServerEvents {
     data: TeamCredentialExternalProviderOperationRetireV1,
     cb: (answer: TeamCredentialExternalProviderOperationRetireResponseV1) => void,
   ) => void;
-  'machine-alive': (data: { machineId: string; time: number }) => void;
+  'machine-alive': (data: { machineId: string; time: number; workSummaryChanged?: true }) => void;
+  'execution-run-updated': (data: ExecutionRunMachineActivityV1) => void;
   'session-end': (data: { sid: string; time: number; exit?: any }) => void;
   [ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1]: (data: ActionOperationRevisionEphemeralV1) => void;
   'external-session-transcript-invalidated': (data: ExternalSessionTranscriptInvalidationV1) => void;
