@@ -236,7 +236,7 @@ async function defaultWaitForProcess(child) {
   return await new Promise(() => {});
 }
 
-function resolveRetryDelayMs(attempt) {
+export function resolveRetryDelayMs(attempt) {
   return Math.min(60_000, 5_000 * (2 ** Math.max(0, attempt - 1)));
 }
 

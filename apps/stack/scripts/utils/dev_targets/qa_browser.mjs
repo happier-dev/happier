@@ -6,11 +6,12 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
-import { setTimeout as delay } from 'node:timers/promises';
+import timers from 'node:timers/promises';
 import { redactFailureDiagnostic, runCaptureResult, spawnProc, killProcessTree } from '../proc/proc.mjs';
 import { prepareDevTargetSourceCommand, runDevTargetCommand } from './executor.mjs';
 import { resolveDevTargetSshConfigFile } from './mutagen_runtime.mjs';
-import { runDevTargetSshProcess } from './ssh_transport.mjs';
+import { classifyDevTargetSshDiagnostic, resolveDevTargetSshDiagnostic, runDevTargetSshProcess } from './ssh_transport.mjs';
+import { resolveRetryDelayMs } from './supervisor.mjs';
 import { buildRemoteQaBrowserStopCommand, buildSshForwardArgs, buildSshWorkerArgs, resolveRemoteStackStatePaths } from './remote_commands.mjs';
 import { loadControlledRuntimeConfig } from './service_placement.mjs';
 import { killPidOwnedByStack, listPsPidsForEnvQueries, observePsEnvLine } from '../proc/ownership.mjs';
@@ -343,7 +344,10 @@ export async function runQaBrowserSession({ target, stackName, stackBaseDir, ses
   const sshArgs = sshConfigFile ? ['-F', sshConfigFile] : [];
   const probe = await captureQaBrowserSsh(buildSshWorkerArgs(target, { remoteCommand: 'true', tty: false,
     sshArgs }), { env, capture });
-  if (!probe.ok) throw new Error(`[dev-targets] QA browser host ${target.name} is unavailable; controller-local browser fallback is disabled`);
+  if (!probe.ok) {
+    const code = resolveDevTargetSshDiagnostic(probe);
+    throw Object.assign(new Error(`[dev-targets] QA browser host ${target.name} is unavailable (${code}); controller-local browser fallback is disabled`), { code });
+  }
   const signalBus = new EventEmitter();
   const abort = new AbortController();
   const executionAbort = new AbortController();
@@ -395,10 +399,23 @@ export async function runQaBrowserSession({ target, stackName, stackBaseDir, ses
         HAPPIER_STACK_ENV_FILE: resolveStackEnvPath(stackName, env).envPath,
         HAPPIER_STACK_PROCESS_KIND: 'browser' };
       const signal = abort.signal;
+      let retryAttempt = 0;
       while (!workerFinished && !cancelled) {
+        if (retryAttempt > 0) {
+          try { await timers.setTimeout(resolveRetryDelayMs(retryAttempt), undefined, { signal }); }
+          catch (error) { if (signal.aborted) break; throw error; }
+        }
+        if (workerFinished || cancelled) break;
+        let diagnosticReason;
         tunnel = spawnProcess(`browser-forward:${sessionName}`, 'ssh', forwardArgs, forwardEnv,
-          { silent: true, persistOutput: false });
+          { silent: true, persistOutput: false, onLine: ({ stream, line }) => {
+            if (stream === 'stderr') diagnosticReason = classifyDevTargetSshDiagnostic(line) ?? diagnosticReason;
+          } });
         const forward = tunnel;
+        const forwardFailure = result => {
+          const code = resolveDevTargetSshDiagnostic({ ...result, diagnosticReason }) ?? 'ssh-connection-failed';
+          return Object.assign(new Error(`[dev-targets] QA browser SSH forward exited (${result?.code ?? result?.signal}); unavailable: ${code}`), { code });
+        };
         const readinessAbort = new AbortController();
         const readinessSignal = AbortSignal.any([signal, readinessAbort.signal]);
         let readinessExit;
@@ -413,20 +430,22 @@ export async function runQaBrowserSession({ target, stackName, stackBaseDir, ses
                   const response = await fetchImpl(`http://127.0.0.1:${localPort}/json/version`, { signal: readinessSignal });
                   if (response.ok && (await response.json()).webSocketDebuggerUrl) return;
                 } catch { /* Forward establishment is observed before declaring readiness. */ }
-                await delay(100, undefined, { signal: readinessSignal });
+                await timers.setTimeout(100, undefined, { signal: readinessSignal });
               }
             })(),
             forward.completion.then(result => {
               readinessExit = result;
-              throw new Error(`[dev-targets] QA browser SSH forward exited before readiness (${result?.code ?? result?.signal})`);
+              throw forwardFailure(result);
             }),
           ]);
         } catch (error) {
+          if (workerFinished || cancelled) break;
           // Recovery can reach a still-held remote reverse listener before its
           // old SSH peer observes transport loss. Keep the established browser
           // lifetime and bindings while the same owner restores its forward.
-          if (readiness && readinessExit?.code === 255 && !workerFinished && !cancelled) {
-            process.stderr.write('[dev-targets] QA browser SSH forward recovery failed before readiness; restoring its CDP and SOCKS listeners\n');
+          if (readiness && readinessExit && error.code !== 'ssh-authentication-failed') {
+            process.stderr.write(`[dev-targets] QA browser SSH forward unavailable: ${error.code}; restoring its CDP and SOCKS listeners after retry wait\n`);
+            retryAttempt++;
             continue;
           }
           throw error;
@@ -440,6 +459,7 @@ export async function runQaBrowserSession({ target, stackName, stackBaseDir, ses
             url };
           onReady(readiness);
         }
+        retryAttempt = 0;
         // The worker/cancellation owns the lifetime. Do not wait for a live
         // forward to exit before finally can close it.
         const ended = await new Promise((resolve, reject) => {
@@ -453,8 +473,10 @@ export async function runQaBrowserSession({ target, stackName, stackBaseDir, ses
           if (signal.aborted) onAbort();
         });
         if (workerFinished || cancelled || lifecycleFinished) break;
-        if (ended?.code !== 255) throw new Error(`[dev-targets] QA browser SSH forward exited (${ended?.code ?? ended?.signal})`);
-        process.stderr.write('[dev-targets] QA browser SSH forward disconnected; restoring its CDP and SOCKS listeners\n');
+        const error = forwardFailure(ended);
+        if (error.code === 'ssh-authentication-failed') throw error;
+        process.stderr.write(`[dev-targets] QA browser SSH forward unavailable: ${error.code}; restoring its CDP and SOCKS listeners after retry wait\n`);
+        retryAttempt++;
       }
     })().catch(error => { if (!cancelled) failure = error; closeWorker(); });
   };

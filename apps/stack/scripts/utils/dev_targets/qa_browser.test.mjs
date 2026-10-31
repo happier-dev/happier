@@ -488,28 +488,36 @@ test('QA browser CDP readiness can complete beyond the former default cutoff', a
   assert.equal(probes, 2);
 });
 
-test('QA browser restores a dropped SSH forward even when its first replacement fails before readiness', async () => {
+for (const recoveryEnd of ['cancellation', 'worker exit']) {
+test(`QA browser backs off dropped SSH forwards, restores its bindings, and settles after ${recoveryEnd}`, async t => {
+  // Clock and SSH are external boundaries; retry and browser lifetime stay real.
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
   const signalSource = new EventEmitter();
   let finishWorker;
   const worker = { stdin: new PassThrough(), completion: new Promise(resolve => { finishWorker = resolve; }) };
   worker.stdin.on('data', () => finishWorker({ code: 0 }));
   const forwards = [];
+  let workerStarts = 0;
   let abortedReadinessProbes = 0;
   let dropForward;
   let ready;
+  let resolveReady;
+  const readiness = new Promise(resolve => { resolveReady = resolve; });
+  let recovered = false;
   const result = runQaBrowserSession({ target: { name: 'absent', platform: 'posix', ssh: 'absent', repoDir: '/mirror', cliHomeDir: '/fixture' },
     stackName: 'agent-qa-browser', sessionName: 'restore-forward', stackBaseDir: '/fixture', url: 'http://localhost:3025',
-    onReady: value => { ready = value; dropForward({ code: 255 }); },
+    onReady: value => { ready = value; resolveReady(); },
   }, { signalSource, capture: captureReadyRemote,
     spawnProcess: (label, _command, args, _env, options) => {
       if (!label.startsWith('browser-forward:')) {
+        workerStarts++;
         setImmediate(() => options.onLine({ stream: 'stdout', line: 'HSTACK_QA_BROWSER={"port":40201,"debuggerPath":"/devtools/browser/fixture","pid":12,"proxyPort":40202}' }));
         return worker;
       }
       const child = { completion: new Promise(resolve => { dropForward = resolve; }) };
-      forwards.push({ args, child });
+      forwards.push({ args, child, startedAt: Date.now() });
       // The old remote SSH peer can still hold its reverse listener after the
-      // client loses transport. A replacement then exits 255 before CDP works.
+      // client loses transport. A replacement can exit before CDP works.
       if (forwards.length === 2) setImmediate(() => dropForward({ code: 255 }));
       return child;
     },
@@ -524,17 +532,134 @@ test('QA browser restores a dropped SSH forward even when its first replacement 
       if (forwards.length === 3) {
         assert.equal(url, `${ready.cdpHttpUrl}/json/version`, 'automation retains the same CDP endpoint');
         assert.equal(worker.stdin.readableLength, 0, 'transport recovery must not close the browser worker');
-        signalSource.emit('SIGINT');
+        recovered = true;
       }
       return { ok: true, json: async () => ({ webSocketDebuggerUrl: 'ws://localhost/devtools/browser/fixture' }) };
     },
   });
-  await result;
-  assert.equal(forwards.length, 3);
+  try {
+    await readiness;
+    dropForward({ code: 255 });
+    await new Promise(setImmediate);
+    assert.equal(forwards.length, 1, 'transport failure must not hot-spawn another SSH process');
+    t.mock.timers.tick(4_999);
+    await new Promise(setImmediate);
+    assert.equal(forwards.length, 1);
+    t.mock.timers.tick(1);
+    await new Promise(setImmediate);
+    assert.equal(forwards.length, 2);
+    // Let the replacement's SSH-exit event settle before advancing its delay.
+    await new Promise(setImmediate);
+    t.mock.timers.tick(9_999);
+    await new Promise(setImmediate);
+    assert.equal(forwards.length, 2, 'a failed replacement grows the existing retry delay');
+    t.mock.timers.tick(1);
+    await new Promise(setImmediate);
+    assert.equal(recovered, true, 'a genuine reconnection restores CDP health');
+    assert.deepEqual(forwards.map(forward => forward.startedAt), [0, 5_000, 15_000]);
+    dropForward({ code: 255 });
+    await new Promise(setImmediate);
+    assert.equal(forwards.length, 3);
+    t.mock.timers.tick(4_999);
+    await new Promise(setImmediate);
+    assert.equal(forwards.length, 3);
+    t.mock.timers.tick(1);
+    await new Promise(setImmediate);
+    assert.equal(forwards.length, 4, 'successful readiness resets the recovery delay');
+    assert.deepEqual(forwards.map(forward => forward.startedAt), [0, 5_000, 15_000, 20_000]);
+    dropForward({ code: 255 });
+    await new Promise(setImmediate);
+  } finally {
+    if (recoveryEnd === 'worker exit') finishWorker({ code: 0 });
+    else signalSource.emit('SIGINT');
+    await result;
+  }
+  t.mock.timers.tick(60_000);
+  await new Promise(setImmediate);
+  assert.equal(forwards.length, 4);
+  assert.equal(workerStarts, 1, 'forward recovery must never replay the browser payload');
   assert.equal(abortedReadinessProbes, 1, 'a failed recovery attempt must release its pending HTTP probe');
   for (const forward of forwards.slice(1)) {
     assert.deepEqual(forward.args, forwards[0].args, 'both SOCKS and CDP bindings survive recovery');
   }
+});
+}
+
+test('QA browser settles worker exit during a pending recovery health request', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const signals = new EventEmitter();
+  let finishWorker, dropForward, announceReady, announceProbe;
+  const worker = { stdin: new PassThrough(), completion: new Promise(resolve => { finishWorker = resolve; }) };
+  worker.stdin.on('data', () => finishWorker({ code: 0 }));
+  const ready = new Promise(resolve => { announceReady = resolve; });
+  const probing = new Promise(resolve => { announceProbe = resolve; });
+  let forwards = 0;
+  const result = runQaBrowserSession({
+    target: { name: 'absent', platform: 'posix', ssh: 'absent', repoDir: '/mirror', cliHomeDir: '/fixture' },
+    stackName: 'fixture', stackBaseDir: '/fixture', sessionName: 'worker-exit', url: 'http://app.localhost:19364',
+    onReady: announceReady,
+  }, { signalSource: signals, capture: captureReadyRemote,
+    spawnProcess: (label, _command, _args, _env, options) => {
+      if (!label.startsWith('browser-forward:')) {
+        setImmediate(() => options.onLine({ stream: 'stdout', line: 'HSTACK_QA_BROWSER={"port":40201,"debuggerPath":"/devtools/browser/fixture","pid":12,"proxyPort":40202}' }));
+        return worker;
+      }
+      forwards++;
+      return { completion: new Promise(resolve => { dropForward = resolve; }) };
+    },
+    stopProcess: async () => dropForward({ code: 0 }),
+    fetchImpl: async (_url, { signal }) => {
+      if (forwards === 1) return { ok: true, json: async () => ({ webSocketDebuggerUrl: 'ws://fixture' }) };
+      announceProbe();
+      return await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    },
+  });
+  try {
+    await ready;
+    dropForward({ code: 255 });
+    await new Promise(setImmediate);
+    t.mock.timers.tick(5_000);
+    await probing;
+    finishWorker({ code: 0 });
+    await assert.doesNotReject(result, 'a successful worker exit must not become an HTTP AbortError');
+    assert.equal(forwards, 2);
+  } finally {
+    signals.emit('SIGINT');
+    await result.catch(() => {});
+  }
+});
+
+test('QA browser reports an unavailable authentication refusal without retrying its forward', async () => {
+  const signals = new EventEmitter();
+  let finishWorker;
+  const worker = { stdin: new PassThrough(), completion: new Promise(resolve => { finishWorker = resolve; }) };
+  worker.stdin.on('data', () => finishWorker({ code: 0 }));
+  let finishForward, diagnose;
+  let forwards = 0;
+  const failure = await runQaBrowserSession({
+    target: { name: 'absent', platform: 'posix', ssh: 'absent', repoDir: '/mirror', cliHomeDir: '/fixture' },
+    stackName: 'fixture', stackBaseDir: '/fixture', sessionName: 'refused', url: 'http://app.localhost:19364',
+    onReady: () => {
+      diagnose?.({ stream: 'stderr', line: 'Host key verification failed.' });
+      finishForward({ code: 255 });
+    },
+  }, { signalSource: signals, capture: captureReadyRemote,
+    spawnProcess: (label, _command, _args, _env, options) => {
+      if (!label.startsWith('browser-forward:')) {
+        setImmediate(() => options.onLine({ stream: 'stdout', line: 'HSTACK_QA_BROWSER={"port":40201,"debuggerPath":"/devtools/browser/fixture","pid":12,"proxyPort":40202}' }));
+        return worker;
+      }
+      forwards++;
+      diagnose = options.onLine;
+      if (forwards > 1) setImmediate(() => signals.emit('SIGINT'));
+      return { completion: new Promise(resolve => { finishForward = resolve; }) };
+    },
+    stopProcess: async () => finishForward({ code: 0 }),
+    fetchImpl: async () => ({ ok: true, json: async () => ({ webSocketDebuggerUrl: 'ws://fixture' }) }),
+  }).then(() => null, error => error);
+  assert.equal(failure?.code, 'ssh-authentication-failed');
+  assert.match(failure.message, /unavailable/);
+  assert.equal(forwards, 1, 'a classified non-retryable refusal settles without another SSH spawn');
 });
 
 test('QA browser exits when its SSH forward dies during a pending CDP health request', async () => {
@@ -585,37 +710,67 @@ test('QA browser exits when its SSH forward dies during a pending CDP health req
   }
 });
 
-test('QA browser does not resurrect a deliberately terminated SSH forward', async () => {
-  const signalSource = new EventEmitter();
-  let finishWorker;
+// A forward is transport, not the browser's cancellation authority. The
+// 20:47Z owner continuation requires the same browser to survive its loss.
+for (const ended of [{ code: 0 }, { code: null, signal: 'SIGTERM' }]) {
+test(`QA browser retains its worker and restores clean/signaled forward loss (${ended.signal ?? ended.code})`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const signals = new EventEmitter();
+  let finishWorker, finishForward, announceReady, announceRecovered;
   const worker = { stdin: new PassThrough(), completion: new Promise(resolve => { finishWorker = resolve; }) };
   worker.stdin.on('data', () => finishWorker({ code: 0 }));
-  let forwards = 0;
-  let endForward;
-  const session = runQaBrowserSession({ target: { name: 'absent', platform: 'posix', ssh: 'absent', repoDir: '/mirror', cliHomeDir: '/fixture' },
-    stackName: 'agent-qa-browser', sessionName: 'intentional-stop', stackBaseDir: '/fixture', url: 'http://localhost:3025',
-    onReady: () => {
-      // A real owned OpenSSH forward stopped by SIGTERM on this controller
-      // completed with code 0 rather than a transport-loss exit 255.
-      endForward({ code: 0, signal: null });
-    },
-  }, { signalSource, capture: captureReadyRemote,
-    spawnProcess: (label, _command, _args, _env, options) => {
+  const ready = new Promise(resolve => { announceReady = resolve; });
+  const recovered = new Promise(resolve => { announceRecovered = resolve; });
+  const bindings = [];
+  let workers = 0;
+  const session = runQaBrowserSession({
+    stackName: 'agent-qa-browser', stackBaseDir: '/fixture',
+    sessionName: 'forward-loss', url: 'http://127.0.0.1:19364/',
+    target: { name: 'absent', platform: 'posix', ssh: 'absent', repoDir: '/mirror', cliHomeDir: '/fixture' },
+    onReady: announceReady,
+  }, {
+    signalSource: signals,
+    capture: async (command, args) => captureDevTargetSyncFixture(command, args)
+      ?? { ok: true, exitCode: 0, out: '', err: '' },
+    spawnProcess: (label, _command, args, _env, options) => {
       if (!label.startsWith('browser-forward:')) {
+        workers++;
         setImmediate(() => options.onLine({ stream: 'stdout', line: 'HSTACK_QA_BROWSER={"port":40201,"debuggerPath":"/devtools/browser/fixture","pid":12,"proxyPort":40202}' }));
         return worker;
       }
-      forwards++;
-      if (forwards > 1) setImmediate(() => signalSource.emit('SIGINT'));
-      return { completion: new Promise(resolve => { endForward = resolve; }) };
+      bindings.push(args);
+      const child = { completion: new Promise(resolve => { finishForward = resolve; }) };
+      if (bindings.length === 2) setImmediate(() => finishForward(ended));
+      return child;
     },
-    stopProcess: async () => endForward({ code: 0 }),
-    fetchImpl: async () => ({ ok: true, json: async () => ({ webSocketDebuggerUrl: 'ws://localhost/devtools/browser/fixture' }) }),
+    stopProcess: async () => finishForward({ code: 0 }),
+    fetchImpl: async (_url, { signal }) => {
+      if (bindings.length === 2) return await new Promise((_, reject) =>
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+      if (bindings.length === 3) announceRecovered();
+      return { ok: true, json: async () => ({ webSocketDebuggerUrl: 'fixture' }) };
+    },
   });
-  const failure = await session.then(() => null, error => error);
-  assert.ok(failure instanceof Error, 'an intentional foreground termination closes its owner');
-  assert.equal(forwards, 1, 'Stack retirement must not create replacement listeners');
+  try {
+    await ready;
+    finishForward(ended);
+    await new Promise(setImmediate);
+    t.mock.timers.tick(5_000);
+    await new Promise(setImmediate);
+    // The replacement exits in its own immediate; let its retry delay settle.
+    await new Promise(setImmediate);
+    t.mock.timers.tick(10_000);
+    await recovered;
+    await new Promise(setImmediate);
+    assert.equal(workers, 1, 'forward recovery preserves the existing browser worker');
+    assert.equal(bindings.length, 3, 'replacement loss before readiness also restores the route');
+    for (const args of bindings.slice(1)) assert.deepEqual(args, bindings[0]);
+  } finally {
+    signals.emit('SIGINT');
+    await session;
+  }
 });
+}
 
 test('GPU QA browser uses headed Chromium in the existing profile and SIGINT cleanup lifecycle', { skip: process.platform === 'win32' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-qa-gpu-' });
