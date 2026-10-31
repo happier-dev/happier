@@ -1502,6 +1502,13 @@ export const it: TranslationStructure = {
         bypassPermissions: "Salta tutti i permessi",
       },
     },
+    defaultBackend: {
+        title: 'Backend IA predefinito',
+        footer: 'Avvia le nuove sessioni su questo backend quando il profilo è selezionato e non viene scelto un altro backend.',
+        noneTitle: 'Nessun predefinito',
+        noneSubtitle: 'Happier sceglie il backend come di consueto.',
+        selectedSubtitle: 'Usato all\'avvio di una sessione con questo profilo.',
+    },
     defaultPermissions: {
       title: "Permessi predefiniti",
       footer:

@@ -31,6 +31,22 @@ describe('dispatchCli --tmux disallowed controller commands', () => {
     exitSpy.mockRestore();
   });
 
+  it('leaves implicit profile terminal policy to the tmux child invocation', async () => {
+    const original = process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
+    try {
+      delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
+      await dispatchCli({ args: ['--profile', 'codex', '--tmux'], rawArgv: [], terminalRuntime: null });
+      expect(startHappyHeadlessInTmux).toHaveBeenCalledWith(['--profile', 'codex', '--tmux']);
+      expect(process.env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBeUndefined();
+      process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '1';
+      await dispatchCli({ args: ['--profile', 'codex', '--tmux'], rawArgv: [], terminalRuntime: null });
+      expect(process.env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBe('1');
+    } finally {
+      if (original === undefined) delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
+      else process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = original;
+    }
+  });
+
   it('rejects --tmux for session controller commands', async () => {
     await expect(
       dispatchCli({

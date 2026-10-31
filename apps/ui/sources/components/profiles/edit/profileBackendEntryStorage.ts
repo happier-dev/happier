@@ -1,4 +1,4 @@
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey, isProfileCompatibleWithBackendTarget } from '@happier-dev/protocol';
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -31,20 +31,7 @@ export function isProfileCompatibleWithResolvedBackendEntry(
     profile: Pick<AIBackendProfile, 'compatibility' | 'compatibilityByTargetKey' | 'isBuiltIn'>,
     entry: ResolvedBackendCatalogEntry,
 ): boolean {
-    const explicitByTargetKey = readProfileTargetKeyValueForEntry(profile.compatibilityByTargetKey, entry);
-    if (typeof explicitByTargetKey === 'boolean') {
-        return explicitByTargetKey === true;
-    }
-
-    if (entry.builtInAgentId && typeof profile.compatibility?.[entry.builtInAgentId] === 'boolean') {
-        return profile.compatibility[entry.builtInAgentId] === true;
-    }
-
-    if (typeof profile.compatibility?.[entry.providerAgentId] === 'boolean') {
-        return profile.compatibility[entry.providerAgentId] === true;
-    }
-
-    return profile.isBuiltIn ? false : entry.family === 'builtInAgent';
+    return isProfileCompatibleWithBackendTarget(profile, entry.target);
 }
 
 export function stripLegacyProviderSentinelTargetKeys<TValue>(

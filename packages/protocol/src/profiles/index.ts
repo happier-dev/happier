@@ -15,7 +15,11 @@ export {
   getBuiltInBackendProfile,
 } from './builtInBackendProfiles.js';
 
-export { isProfileCompatibleWithAgent, isProfileCompatibleWithBackendTarget } from './profileCompatibility.js';
+export {
+  getProfileDefaultBackendTarget,
+  isProfileCompatibleWithAgent,
+  isProfileCompatibleWithBackendTarget,
+} from './profileCompatibility.js';
 
 export {
   getRequiredConfigEnvVarNames,

@@ -283,6 +283,8 @@ export type AgentCatalogEntry = Readonly<{
    * Optional CLI subcommand handler for this agent.
    */
   getCliCommandHandler?: () => Promise<CommandHandler>;
+  /** Default daemon autostart policy for a direct interactive terminal invocation. */
+  autostartDaemonInInteractiveTerminal?: boolean;
   getCliCapabilityOverride?: () => Promise<Capability>;
   /**
    * Optional extra capabilities contributed by this agent.

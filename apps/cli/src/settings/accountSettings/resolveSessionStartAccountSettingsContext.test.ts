@@ -5,6 +5,17 @@ import { resolveSessionStartAccountSettingsContext } from './resolveSessionStart
 import type { AccountSettingsContext } from './bootstrapAccountSettingsContext';
 
 describe('resolveSessionStartAccountSettingsContext', () => {
+  it('settles an explicit refresh even when an older cached snapshot exists', async () => {
+    const settings = accountSettingsParse({});
+    const refreshed: AccountSettingsContext = {
+      source: 'network', settings, settingsVersion: 2, loadedAtMs: 200,
+      settingsSecretsReadKeys: [], whenRefreshed: null,
+    };
+    const cached: AccountSettingsContext = {
+      ...refreshed, source: 'cache', settingsVersion: 1, whenRefreshed: Promise.resolve(refreshed),
+    };
+    expect(await resolveSessionStartAccountSettingsContext({ startedBy: 'terminal', snapshot: cached, refreshRequested: true })).toBe(refreshed);
+  });
   it('awaits the first background refresh for terminal session starts when bootstrap had no settings yet', async () => {
     const emptySettings = accountSettingsParse({ schemaVersion: 2 }) as AccountSettingsContext['settings'];
     const refreshedSettings = accountSettingsParse({

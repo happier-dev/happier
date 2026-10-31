@@ -18,8 +18,12 @@ export const BackendTargetRefSchema = lazySchema(() => z.union([BuiltInAgentTarg
 export type BackendTargetRefV1 = z.infer<typeof BackendTargetRefSchema>;
 
 /** The 0.2 catalog placeholder identifies transport; a configured target keeps its own reference. */
+export function getBackendTargetAgentId(target: BackendTargetRefV1): string {
+  return target.kind === 'builtInAgent' ? target.agentId : 'customAcp';
+}
+
 export function matchesBackendTargetAgentId(target: BackendTargetRefV1, agentId: string): boolean {
-  return agentId === (target.kind === 'builtInAgent' ? target.agentId : 'customAcp');
+  return agentId === getBackendTargetAgentId(target);
 }
 
 export const BackendTargetKeySchema = lazySchema(() => z.string().regex(/^(agent|acpBackend):.+$/, 'Invalid backend target key'));

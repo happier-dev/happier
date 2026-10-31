@@ -1,4 +1,4 @@
-import { buildBackendTargetKey, decryptSecretValueWithKeysV1, getProfileEnvironmentVariables, type AIBackendProfile } from '@happier-dev/protocol';
+import { buildBackendTargetKey, decryptSecretValueWithKeysV1, getProfileEnvironmentVariables, type AIBackendProfile, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { isPermissionMode, type PermissionMode } from '@/api/types';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
@@ -44,8 +44,8 @@ function readSecretBindingId(params: Readonly<{
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function resolvePermissionModeSeed(profile: AIBackendProfile, agentId: string): PermissionMode | null {
-  const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId });
+function resolvePermissionModeSeed(profile: AIBackendProfile, backendTarget: BackendTargetRefV1): PermissionMode | null {
+  const targetKey = buildBackendTargetKey(backendTarget);
   const raw = profile.defaultPermissionModeByTargetKey?.[targetKey];
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
@@ -53,8 +53,13 @@ function resolvePermissionModeSeed(profile: AIBackendProfile, agentId: string): 
   return isPermissionMode(trimmed) ? trimmed : null;
 }
 
-export async function buildProfileEnvOverlay(params: Readonly<{
+export async function buildProfileEnvOverlay(params: Readonly<({
   agentId: string;
+  backendTarget?: never;
+} | {
+  backendTarget: BackendTargetRefV1;
+  agentId?: never;
+}) & {
   profile: AIBackendProfile;
   accountSettings: Readonly<Record<string, unknown>>;
   credentials: Credentials;
@@ -62,6 +67,7 @@ export async function buildProfileEnvOverlay(params: Readonly<{
   promptSecretFn: SecretPromptFn | null;
   startedBy: 'terminal' | 'daemon' | undefined;
 }>): Promise<BuildProfileEnvOverlayResult> {
+  const backendTarget: BackendTargetRefV1 = params.backendTarget ?? { kind: 'builtInAgent', agentId: params.agentId! };
   const requiredConfigMissing: string[] = [];
 
   const overlayRaw: Record<string, string> = {
@@ -174,6 +180,6 @@ export async function buildProfileEnvOverlay(params: Readonly<{
   return {
     profileId: params.profile.id,
     envOverlayExpanded,
-    permissionModeSeed: resolvePermissionModeSeed(params.profile, params.agentId),
+    permissionModeSeed: resolvePermissionModeSeed(params.profile, backendTarget),
   };
 }

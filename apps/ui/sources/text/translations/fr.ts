@@ -10789,6 +10789,13 @@ settingsSession: {
                 bypassPermissions: 'Ignorer toutes les permissions',
             },
         },
+        defaultBackend: {
+            title: 'Backend d\'IA par défaut',
+            footer: 'Démarre les nouvelles sessions sur ce backend lorsque le profil est sélectionné et qu\'aucun autre backend n\'est choisi.',
+            noneTitle: 'Aucun backend par défaut',
+            noneSubtitle: 'Happier choisit le backend comme d\'habitude.',
+            selectedSubtitle: 'Utilisé lors du démarrage d\'une session avec ce profil.',
+        },
         defaultPermissions: {
             title: 'Permissions par défaut',
             footer: 'Remplace les permissions par défaut du compte pour les nouvelles sessions quand ce profil est sélectionné.',

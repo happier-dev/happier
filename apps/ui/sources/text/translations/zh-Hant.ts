@@ -9234,6 +9234,13 @@ settingsSession: {
             confirm: '刪除',
             cancel: '取消',
         },
+        defaultBackend: {
+            title: '預設 AI 後端',
+            footer: '選取此設定檔且未選擇其他後端時，新工作階段將使用此後端啟動。',
+            noneTitle: '無預設值',
+            noneSubtitle: 'Happier 會如常選擇後端。',
+            selectedSubtitle: '使用此設定檔啟動工作階段時套用。',
+        },
         aiBackend: {
             copilotSubtitleExperimental: 'GitHub Copilot CLI（實驗）',
             cursorSubtitleExperimental: 'Cursor Agent CLI（實驗）',

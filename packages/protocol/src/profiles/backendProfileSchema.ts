@@ -67,6 +67,11 @@ export const AIBackendProfileSchema = lazySchema(() => z.object({
   // Default model mode for this profile.
   defaultModelMode: z.string().optional(),
 
+  // Default backend target used when starting a session under this profile without an
+  // explicit backend choice. Consumers validate compatibility before use; a launch may
+  // reject an incompatible profile/target pairing.
+  defaultBackendTargetKey: BackendTargetKeySchema.optional(),
+
   // Canonical compatibility metadata.
   compatibilityByTargetKey: ProfileCompatibilityByTargetKeySchema.default({}),
 

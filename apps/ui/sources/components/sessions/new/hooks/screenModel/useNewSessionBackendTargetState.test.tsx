@@ -129,3 +129,57 @@ describe('useNewSessionBackendTargetState', () => {
         });
     });
 });
+const claudeEntry: ResolvedBackendCatalogEntry = {
+    target: { kind: 'builtInAgent', agentId: 'claude' },
+    targetKey: 'agent:claude',
+    family: 'builtInAgent',
+    providerAgentId: 'claude',
+    builtInAgentId: 'claude',
+    iconAgentId: 'claude',
+    title: 'Claude',
+    subtitle: 'claude',
+};
+
+const codexEntry: ResolvedBackendCatalogEntry = {
+    target: { kind: 'builtInAgent', agentId: 'codex' },
+    targetKey: 'agent:codex',
+    family: 'builtInAgent',
+    providerAgentId: 'codex',
+    builtInAgentId: 'codex',
+    iconAgentId: 'codex',
+    title: 'Codex',
+    subtitle: 'codex',
+};
+
+describe('useNewSessionBackendTargetState authored targets', () => {
+    beforeEach(() => applySettingsMock.mockReset());
+
+    it.each(['routeBackendTarget', 'tempBackendTarget', 'persistedBackendTarget', 'tempAgentType'] as const)('restores %s before remembered preferences', async (source) => {
+        let observed: ReturnType<typeof useNewSessionBackendTargetState> | undefined;
+        function Probe() {
+            observed = useNewSessionBackendTargetState({
+                entries: [claudeEntry, codexEntry], lastUsedAgent: 'codex',
+                [source]: source === 'tempAgentType' ? 'claude' : claudeEntry.target,
+            });
+            return null;
+        }
+        await renderScreen(React.createElement(Probe));
+        expect(observed?.backendTarget).toEqual(claudeEntry.target);
+        expect(applySettingsMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps automatic corrections out of last-used settings after a manual choice', async () => {
+        let observed: ReturnType<typeof useNewSessionBackendTargetState> | undefined;
+        function Probe() {
+            observed = useNewSessionBackendTargetState({ entries: [claudeEntry, codexEntry], lastUsedAgent: 'claude' });
+            return null;
+        }
+        await renderScreen(React.createElement(Probe));
+        act(() => observed?.setBackendTarget(codexEntry.target));
+        expect(applySettingsMock).toHaveBeenCalledWith({ lastUsedAgent: 'codex', lastUsedBackendTarget: codexEntry.target });
+        applySettingsMock.mockClear();
+        act(() => observed?.setBackendTargetAutomatically(claudeEntry.target));
+        expect(observed?.backendTarget).toEqual(claudeEntry.target);
+        expect(applySettingsMock).not.toHaveBeenCalled();
+    });
+});
