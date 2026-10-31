@@ -1106,17 +1106,16 @@ describe('MobileBottomChromeHost', () => {
         // Keep the canonical screen wrapper and its mounted observer while resizing.
         await screen.update(<MobileBottomChromeHost newSessionRendersFloatingComposer />);
         if (trigger === 'navigator') {
+            routerState.replace.mockClear();
             cockpitRegistrationState.registration = { ...cockpitRegistrationState.registration!, activeSurface: 'tabs' };
             await act(async () => { notifyCockpitRegistrationListeners(); });
         }
         if (trigger === 'press') {
             await act(async () => screen.tree.findByType('SessionCockpitTabBar' as never).props.onSurfacePress('tabs'));
         }
-        const href = String(routerState.replace.mock.calls.at(-1)?.[0]);
-        const url = new URL(href, 'https://happier.test');
-        expect(url.pathname).toBe('/session/session-1/details');
-        expect(url.searchParams.get('serverId')).toBe('home-a');
-        expect(parseSessionPaneUrlState(Object.fromEntries(url.searchParams))).toEqual({
+        // Tabs presentation preserves the Session URL and its exact comparison.
+        expect(routerState.replace).not.toHaveBeenCalled();
+        expect(parseSessionPaneUrlState(searchParamsState.pane)).toEqual({
             details: { kind: 'scmReview', comparison: { kind: 'workingTree', comparisonId: 'pending-comparison' },
                 view: 'walkthrough', explain: true, evidenceSessionId: 'evidence-session' },
         });

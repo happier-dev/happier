@@ -323,6 +323,9 @@ export function shouldRouteSessionCockpitSurfacePressThroughUrl(input: Readonly<
     if (!currentRoute || currentRoute.sessionId !== input.sessionId) {
         return true;
     }
+    // Tabs presents a page through the phone rail owner, or the existing empty scene when there is no page.
+    // Neither presentation changes the Session tab's route, including the navigator's later state-change echo.
+    if (input.surface === 'tabs') return false;
     // A root URL carrying desktop pane intent still needs the phone route
     // projection, even when the selected tab already matches that intent.
     const path = input.pathname?.split(/[?#]/, 1)[0]?.replace(/\/+$/, '');

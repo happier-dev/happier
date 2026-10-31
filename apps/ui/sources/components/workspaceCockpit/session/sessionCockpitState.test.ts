@@ -227,12 +227,15 @@ describe('sessionCockpitState', () => {
         });
     });
 
-    it('routes tabs presses through the canonical details URL when starting from files', () => {
-        expect(shouldRouteSessionCockpitSurfacePressThroughUrl({
-            pathname: '/session/session-1/files',
-            sessionId: 'session-1',
-            surface: 'tabs',
-        })).toBe(true);
+    it.each(['/session/session-1', '/session/session-1/files', '/session/session-1/git'])(
+        'keeps the Session route %s when Tabs presents its empty scene', (pathname) => {
+            expect(shouldRouteSessionCockpitSurfacePressThroughUrl({
+                pathname, sessionId: 'session-1', surface: 'tabs',
+                explicitRootSurfaceHint: 'chat',
+            })).toBe(false);
+        });
+
+    it('keeps routes that already select the requested surface', () => {
         expect(shouldRouteSessionCockpitSurfacePressThroughUrl({
             pathname: '/session/session-1/files',
             sessionId: 'session-1',
