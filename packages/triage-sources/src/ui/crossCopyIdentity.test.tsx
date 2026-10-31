@@ -346,15 +346,17 @@ describe('Triage post-mutation completion across independently bundled artifacts
 
   it('is safe for a separately bundled detail mounted outside the aggregate', async () => {
     const sourceDetail = loadArtifactCopy<PostMutationModule>(postMutationCode);
+    let completion: Promise<void> | undefined;
 
     function SourceDetail(): React.ReactElement {
       const complete = sourceDetail.useTriagePostMutationCompletion();
-      return <button onClick={() => { void complete(); }}>settled</button>;
+      return <button onClick={() => { completion = complete(); }}>settled</button>;
     }
 
     mount(<SourceDetail />);
-    await expect(async () => {
-      await act(async () => { container?.querySelector('button')?.click(); });
-    }).not.toThrow();
+    await act(async () => {
+      container?.querySelector('button')?.click();
+      await expect(completion).resolves.toBeUndefined();
+    });
   });
 });

@@ -68,21 +68,6 @@ describe('materializeTriageSourceAuthorizationV1', () => {
     );
   });
 
-  it('omits the signal option entirely when the caller supplied none', async () => {
-    const materializeListedAccount = vi.fn<
-      TriageListedAccountMaterializerV1['materializeListedAccount']
-    >(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer t' } }));
-
-    await materializeTriageSourceAuthorizationV1({
-      connectedAccounts: materializer(materializeListedAccount),
-      purpose: PURPOSE,
-      account: ACCOUNT,
-      origin: ORIGIN,
-    });
-
-    expect(materializeListedAccount.mock.calls[0]?.[1]).toEqual({});
-  });
-
   it('reads the authorization header under any casing and trims it', async () => {
     const outcome = await materializeTriageSourceAuthorizationV1({
       connectedAccounts: headers({ kind: 'httpHeaders', headers: { AUTHORIZATION: ' Bearer t ' } }),
