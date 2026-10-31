@@ -3,17 +3,26 @@ import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFla
 import { commandRegistry } from '@/cli/commandRegistry';
 import { buildRootHelpText } from '@/cli/buildRootHelpText';
 import { isTmuxAllowedCommand } from '@/cli/commandSurfaceManifest';
-import { readStartedByArg } from '@/cli/readStartedByArg';
 import { AGENTS, requireCatalogEntry } from '@/backends/catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
-import { readCredentials } from '@/persistence';
-import { readProfileQueryFromArgs, resolveProfileRoutedAgentIdFromSettings } from '@/cli/profileDefaultAgentRouting';
+import { partitionProviderSessionArgs } from '@/cli/providerSessionArgPartition';
+import type { CommandContext } from '@/cli/commandRegistry';
+import { prepareProfileSessionStart } from '@/cli/profileDefaultAgentRouting';
 import { resolveInheritedHerdrRuntime } from '@/terminal/runtime/inheritedHerdrRuntime';
-import { applyDaemonAutostartEnvForInvocation, shouldEnsureDaemonForInvocation } from '@/daemon/ensureDaemon';
+import { applyDaemonAutostartEnvForInvocation } from '@/daemon/ensureDaemon';
 import { applyEphemeralServerSelectionFromPrefixArgs } from '@/server/serverSelection';
 import packageJson from '../../package.json';
 import { fail } from '@happier-dev/cli-common/output';
 import { argvBeforeOptionTerminator } from '@/cli/commands/shared/argvFlags';
+
+function applySessionInvocationEnvironment(command: string | undefined, args: string[]): void {
+  const entry = Object.values(AGENTS).find((candidate) => candidate?.cliSubcommand === command);
+  applyDaemonAutostartEnvForInvocation({
+    args,
+    env: process.env,
+    autostartInInteractiveTerminal: entry?.autostartDaemonInInteractiveTerminal,
+  });
+}
 
 export async function dispatchCli(params: Readonly<{
   args: string[];
@@ -49,20 +58,6 @@ export async function dispatchCli(params: Readonly<{
   // Check if first argument is a subcommand
   const subcommand = args[0];
 
-  // Codex should prefer local TUI when invoked directly in a real terminal.
-  // The daemon always forces `--started-by daemon`, so this only affects direct `happier codex` usage.
-  if (subcommand === 'codex') {
-    const current = (process.env.HAPPIER_SESSION_AUTOSTART_DAEMON ?? '').toString().trim();
-    const startedBy = readStartedByArg(args);
-    const startedByDaemon = startedBy.value === 'daemon';
-    const shouldLeaveDefaults = startedBy.present && startedBy.value === null;
-    if (!current && !startedByDaemon && !shouldLeaveDefaults && process.stdin.isTTY && process.stdout.isTTY) {
-      process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '0';
-    }
-  }
-
-  applyDaemonAutostartEnvForInvocation({ args, env: process.env });
-
   // Headless tmux launcher (CLI flow)
   const optionArgs = argvBeforeOptionTerminator(args);
   if (optionArgs.includes('--tmux')) {
@@ -78,6 +73,9 @@ export async function dispatchCli(params: Readonly<{
       }
 
       try {
+        // Implicit profile selection belongs to the child session invocation; do
+        // not turn its fallback into an explicit inherited daemon preference.
+        if (subcommand && commandRegistry[subcommand]) applySessionInvocationEnvironment(subcommand, args);
         const { startHappyHeadlessInTmux } = await import('@/terminal/tmux/startHappyHeadlessInTmux');
         await startHappyHeadlessInTmux(args);
       } catch (error) {
@@ -90,13 +88,35 @@ export async function dispatchCli(params: Readonly<{
       return;
     }
   }
-  const commandHandler = (subcommand ? commandRegistry[subcommand] : undefined);
+  let command = subcommand;
+  let sessionStart: CommandContext['sessionStart'];
+  if (!commandRegistry[command ?? '']) {
+    const parsed = partitionProviderSessionArgs({ args });
+    if (parsed.profileQuery && !parsed.helpRequested && !parsed.versionRequested) {
+      const prepared = await prepareProfileSessionStart({
+        profileQuery: parsed.profileQuery,
+        startedBy: parsed.startedBy,
+        refreshRequested: parsed.refreshSettings,
+      });
+      sessionStart = prepared.sessionStart;
+      const target = prepared.backendTarget;
+      if (target?.kind === 'configuredAcpBackend') {
+        command = 'acp-catalog';
+        args = ['acp-catalog', '--backend', target.backendId, ...args];
+      } else if (target?.kind === 'builtInAgent') {
+        command = requireCatalogEntry(target.agentId).cliSubcommand;
+      }
+    }
+  }
+  applySessionInvocationEnvironment(command, args);
+  const commandHandler = command ? commandRegistry[command] : undefined;
   if (commandHandler) {
-    const startsSession = subcommand === 'resume'
-      || Object.values(AGENTS).some((entry) => entry?.cliSubcommand === subcommand);
+    const startsSession = command === 'resume' || command === 'acp-catalog'
+      || Object.values(AGENTS).some((entry) => entry?.cliSubcommand === command);
     await commandHandler({
       args,
       rawArgv,
+      ...(sessionStart ? { sessionStart } : {}),
       terminalRuntime: startsSession
         ? await resolveInheritedHerdrRuntime({ terminalRuntime, env: process.env })
         : terminalRuntime,
@@ -105,24 +125,6 @@ export async function dispatchCli(params: Readonly<{
   }
 
   const defaultEntry = requireCatalogEntry(DEFAULT_CATALOG_AGENT_ID);
-
-  // Bare `happier --profile <query>` starts the profile's default agent when it has one;
-  // without a routable default the default-backend handler below reports the profile error.
-  const profileQuery = readProfileQueryFromArgs(args);
-  if (profileQuery) {
-    const credentials = await readCredentials();
-    const routedAgentId = await resolveProfileRoutedAgentIdFromSettings({ profileQuery, credentials });
-    if (routedAgentId && routedAgentId !== DEFAULT_CATALOG_AGENT_ID && AGENTS[routedAgentId as keyof typeof AGENTS]?.getCliCommandHandler) {
-      const routedHandler = await AGENTS[routedAgentId as keyof typeof AGENTS]!.getCliCommandHandler!();
-      await routedHandler({
-        args,
-        rawArgv,
-        terminalRuntime: await resolveInheritedHerdrRuntime({ terminalRuntime, env: process.env }),
-      });
-      return;
-    }
-  }
-
   if (!defaultEntry.getCliCommandHandler) {
     throw new Error(`Default agent '${DEFAULT_CATALOG_AGENT_ID}' has no CLI command handler registered`);
   }
@@ -130,6 +132,7 @@ export async function dispatchCli(params: Readonly<{
   await defaultHandler({
     args,
     rawArgv,
+    ...(sessionStart ? { sessionStart } : {}),
     terminalRuntime: await resolveInheritedHerdrRuntime({ terminalRuntime, env: process.env }),
   });
 }

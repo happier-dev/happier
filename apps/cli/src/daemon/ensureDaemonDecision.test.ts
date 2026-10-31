@@ -86,6 +86,26 @@ describe('shouldAutoStartDaemonAfterAuth', () => {
 });
 
 describe('applyDaemonAutostartEnvForInvocation', () => {
+  it.each([['codex'], ['--profile', 'codex']])('applies the selected backend terminal policy before generic defaults (%j)', (...args) => {
+    const stdinTty = process.stdin.isTTY;
+    const stdoutTty = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    try {
+      const env: NodeJS.ProcessEnv = {};
+      applyDaemonAutostartEnvForInvocation({ args, env, autostartInInteractiveTerminal: false });
+      expect(env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBe('0');
+      const explicit: NodeJS.ProcessEnv = { HAPPIER_SESSION_AUTOSTART_DAEMON: '1' };
+      applyDaemonAutostartEnvForInvocation({ args, env: explicit, autostartInInteractiveTerminal: false });
+      expect(explicit.HAPPIER_SESSION_AUTOSTART_DAEMON).toBe('1');
+      const daemon: NodeJS.ProcessEnv = {};
+      applyDaemonAutostartEnvForInvocation({ args: [...args, '--started-by', 'daemon'], env: daemon, autostartInInteractiveTerminal: false });
+      expect(daemon.HAPPIER_SESSION_AUTOSTART_DAEMON).toBeUndefined();
+    } finally {
+      Object.defineProperty(process.stdin, 'isTTY', { value: stdinTty, configurable: true });
+      Object.defineProperty(process.stdout, 'isTTY', { value: stdoutTty, configurable: true });
+    }
+  });
   it('sets HAPPIER_SESSION_AUTOSTART_DAEMON=1 for session commands when unset', () => {
     const env: NodeJS.ProcessEnv = {};
     applyDaemonAutostartEnvForInvocation({ args: ['codex'], env });

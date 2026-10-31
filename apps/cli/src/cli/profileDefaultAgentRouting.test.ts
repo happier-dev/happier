@@ -2,37 +2,28 @@ import { describe, expect, it } from 'vitest';
 
 import { AIBackendProfileSchema, type AIBackendProfile } from '@happier-dev/protocol';
 
-import { readProfileQueryFromArgs, resolveProfileRoutedAgentId } from './profileDefaultAgentRouting';
+import { resolveProfileRoutedBackendTarget } from './profileDefaultAgentRouting';
 
 function customProfile(overrides: Record<string, unknown>): AIBackendProfile {
   return AIBackendProfileSchema.parse({ id: 'work', name: 'Work', isBuiltIn: false, ...overrides });
 }
 
-describe('readProfileQueryFromArgs', () => {
-  it('reads --profile and --launch-profile values in both spellings', () => {
-    expect(readProfileQueryFromArgs(['--profile', 'openai'])).toBe('openai');
-    expect(readProfileQueryFromArgs(['--launch-profile', 'work'])).toBe('work');
-    expect(readProfileQueryFromArgs(['--profile=openai'])).toBe('openai');
-    expect(readProfileQueryFromArgs(['--launch-profile=work'])).toBe('work');
+describe('resolveProfileRoutedBackendTarget', () => {
+  it('routes a configured ACP profile default', async () => {
+    expect(resolveProfileRoutedBackendTarget({
+      profileQuery: 'work',
+      customProfiles: [customProfile({ defaultBackendTargetKey: 'acpBackend:review-bot' })],
+    })).toEqual({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
   });
-
-  it('returns null without a usable profile flag value', () => {
-    expect(readProfileQueryFromArgs(['--model', 'gpt-5'])).toBeNull();
-    expect(readProfileQueryFromArgs(['--profile'])).toBeNull();
-    expect(readProfileQueryFromArgs(['--profile', '-v'])).toBeNull();
-  });
-});
-
-describe('resolveProfileRoutedAgentId', () => {
   it('routes a built-in profile to its default agent without account settings', async () => {
-    await expect(resolveProfileRoutedAgentId({
+    expect(resolveProfileRoutedBackendTarget({
       profileQuery: 'openai',
-      fetchCustomProfiles: async () => [],
-    })).resolves.toBe('codex');
-    await expect(resolveProfileRoutedAgentId({
+      customProfiles: [],
+    })).toEqual({ kind: 'builtInAgent', agentId: 'codex' });
+    expect(resolveProfileRoutedBackendTarget({
       profileQuery: 'deepseek',
-      fetchCustomProfiles: async () => [],
-    })).resolves.toBe('claude');
+      customProfiles: [],
+    })).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
   });
 
   it('routes a custom profile by id using its allowed default agent', async () => {
@@ -42,48 +33,46 @@ describe('resolveProfileRoutedAgentId', () => {
       defaultBackendTargetKey: 'agent:codex',
       compatibilityByTargetKey: { 'agent:codex': true, 'agent:claude': false },
     });
-    await expect(resolveProfileRoutedAgentId({
+    expect(resolveProfileRoutedBackendTarget({
       profileQuery: 'work',
-      fetchCustomProfiles: async () => [work],
-    })).resolves.toBe('codex');
+      customProfiles: [work],
+    })).toEqual({ kind: 'builtInAgent', agentId: 'codex' });
   });
 
-  it('does not route when the default is missing, not allowed, or not a built-in agent', async () => {
+  it('does not route when the default is missing', async () => {
     const noDefault = customProfile({ id: 'plain', name: 'Plain' });
-    await expect(resolveProfileRoutedAgentId({
+    expect(resolveProfileRoutedBackendTarget({
       profileQuery: 'plain',
-      fetchCustomProfiles: async () => [noDefault],
-    })).resolves.toBeNull();
+      customProfiles: [noDefault],
+    })).toBeNull();
 
+  });
+
+  it('reports an incompatible declared default instead of substituting another backend', () => {
     const notAllowed = customProfile({
       id: 'broken',
       name: 'Broken',
       defaultBackendTargetKey: 'agent:codex',
       compatibilityByTargetKey: { 'agent:codex': false },
     });
-    await expect(resolveProfileRoutedAgentId({
+    expect(() => resolveProfileRoutedBackendTarget({
       profileQuery: 'broken',
-      fetchCustomProfiles: async () => [notAllowed],
-    })).resolves.toBeNull();
+      customProfiles: [notAllowed],
+    })).toThrow('not compatible');
 
-    const acpDefault = customProfile({ id: 'acp', name: 'Acp', defaultBackendTargetKey: 'acpBackend:review-bot' });
-    await expect(resolveProfileRoutedAgentId({
-      profileQuery: 'acp',
-      fetchCustomProfiles: async () => [acpDefault],
-    })).resolves.toBeNull();
   });
 
   it('does not route when profile lookup fails or is ambiguous', async () => {
-    await expect(resolveProfileRoutedAgentId({
+    expect(resolveProfileRoutedBackendTarget({
       profileQuery: 'missing',
-      fetchCustomProfiles: async () => [],
-    })).resolves.toBeNull();
+      customProfiles: [],
+    })).toBeNull();
 
     const a = customProfile({ id: 'a', name: 'Same Name' });
     const b = customProfile({ id: 'b', name: 'same name' });
-    await expect(resolveProfileRoutedAgentId({
+    expect(resolveProfileRoutedBackendTarget({
       profileQuery: 'same name',
-      fetchCustomProfiles: async () => [a, b],
-    })).resolves.toBeNull();
+      customProfiles: [a, b],
+    })).toBeNull();
   });
 });

@@ -1,4 +1,6 @@
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
+import type { Credentials } from '@/persistence';
+import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 
 import { AGENTS, type AgentCatalogEntry } from '@/backends/catalog';
 
@@ -34,6 +36,8 @@ export type CommandContext = Readonly<{
   args: string[];
   rawArgv: string[];
   terminalRuntime: TerminalRuntimeFlags | null;
+  /** Prepared by implicit profile dispatch and consumed by this invocation's session handler. */
+  sessionStart?: Readonly<{ credentials: Credentials; accountSettingsContext: AccountSettingsContext }>;
 }>;
 
 export type CommandHandler = (context: CommandContext) => Promise<void>;

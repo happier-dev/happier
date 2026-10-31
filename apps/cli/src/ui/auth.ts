@@ -790,6 +790,8 @@ export async function ensureMachineIdForCredentials(
  */
 export async function authAndSetupMachineIfNeeded(opts: Readonly<{
     callerIntent?: 'standalone' | 'setup-managed';
+    /** Dispatch applies the selected backend's daemon policy after authentication. */
+    deferDaemonAutostart?: boolean;
 }> = {}): Promise<{
     credentials: Credentials;
     machineId: string;
@@ -820,7 +822,7 @@ export async function authAndSetupMachineIfNeeded(opts: Readonly<{
     rehydrateRelayScopeEnvFromConfiguration();
 
     if (
-      shouldAutoStartDaemonAfterAuth({
+      !opts.deferDaemonAutostart && shouldAutoStartDaemonAfterAuth({
         env: process.env,
         isDaemonProcess: configuration.isDaemonProcess,
         startedBy: 'terminal',

@@ -7,6 +7,7 @@ import { isClaudeCliJavaScriptFile } from '@/backends/claude/utils/resolveClaude
 import { readCredentials, readSettings } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded, ensureMachineIdForCredentials } from '@/ui/auth';
+import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveSessionStartAccountSettingsContext } from '@/settings/accountSettings/resolveSessionStartAccountSettingsContext';
 import { resolveSessionStartAccountSettingsRefreshMode } from '@/settings/accountSettings/resolveSessionStartAccountSettingsRefreshMode';
@@ -282,12 +283,12 @@ ${chalk.bold.cyan(`Claude Code Options (from \`${providerHelpCommand}\`):`)}
   const accountSettingsBootstrapMode = shouldPreferFastBootstrap ? 'fast' : 'blocking';
   const shouldForceAccountSettingsRefresh = refreshSettings || isDaemonStartedRemoteSession;
 
-  let credentials = await readCredentials();
+  let credentials = context.sessionStart?.credentials ?? await readCredentials();
   if (!credentials) {
     const auth = await authAndSetupMachineIfNeeded();
     credentials = auth.credentials;
   } else {
-    await ensureMachineIdForCredentials(credentials);
+    if (!context.sessionStart) await ensureMachineIdForCredentials(credentials);
     if (shouldAutoStartDaemonAfterAuth({ env: process.env, isDaemonProcess: configuration.isDaemonProcess, startedBy })) {
       void ensureDaemonRunningForSessionCommand().catch((error) => {
         logger.debug('[claude] Failed to auto-start daemon (non-fatal)', error);
@@ -312,7 +313,7 @@ ${chalk.bold.cyan(`Claude Code Options (from \`${providerHelpCommand}\`):`)}
   let restoreDirectConnectedServiceEnvironment: (() => void) | null = null;
   let runCompleted = false;
   try {
-    const snapshot = await bootstrapAccountSettingsContext({
+    const snapshot = context.sessionStart?.accountSettingsContext ?? await bootstrapAccountSettingsContext({
       agentId: 'claude',
       credentials,
       mode: accountSettingsBootstrapMode,
@@ -325,7 +326,9 @@ ${chalk.bold.cyan(`Claude Code Options (from \`${providerHelpCommand}\`):`)}
     const effectiveSnapshot = await resolveSessionStartAccountSettingsContext({
       startedBy,
       snapshot,
+      refreshRequested: shouldForceAccountSettingsRefresh,
     });
+    assertBackendEnabledByAccountSettings({ agentId: 'claude', settings: effectiveSnapshot.settings });
     options.claudeRemoteMetaDefaults = resolveProviderOutgoingMessageMetaExtras({
       agentId: 'claude',
       settings: effectiveSnapshot.settings,

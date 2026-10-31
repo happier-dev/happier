@@ -12,6 +12,7 @@ export async function handleConfiguredAcpCatalogCliCommand(context: CommandConte
   await runBackendSessionCliCommand({
     context,
     loadAccountSettings: true,
+    backendTargetForProfiles: { kind: 'configuredAcpBackend', backendId },
     loadRun: async () => {
       const { runConfiguredAcpBackend } = await import('./runConfiguredAcpBackend');
       return (opts) => runConfiguredAcpBackend({

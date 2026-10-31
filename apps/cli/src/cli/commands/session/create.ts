@@ -1,14 +1,13 @@
 import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
 import { AGENTS_CORE, resolveAgentIdFromFlavor, type AgentId } from '@happier-dev/agents';
-import { parseBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey, parseBackendTargetKey } from '@happier-dev/protocol';
 
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
-import { resolveProfileRoutedAgentIdFromSettings } from '@/cli/profileDefaultAgentRouting';
-import type { AIBackendProfile } from '@happier-dev/protocol';
+import { resolveProfileRoutedBackendTargetFromSettings } from '@/cli/profileDefaultAgentRouting';
 import type { Credentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
@@ -68,8 +67,6 @@ export async function cmdSessionCreate(
   argv: string[],
   deps: Readonly<{
     readCredentialsFn: () => Promise<Credentials | null>;
-    /** Test seam for profile-default agent routing; defaults to cached account settings. */
-    fetchProfileRoutingCustomProfiles?: (credentials: Credentials) => Promise<ReadonlyArray<AIBackendProfile>>;
   }>,
 ): Promise<void> {
   const json = wantsJson(argv);
@@ -100,17 +97,20 @@ export async function cmdSessionCreate(
     : '';
   const shouldRouteProfileDefault = profileIdForRouting.length > 0
     && parsedOptions.actionInput.agentId === DEFAULT_CATALOG_AGENT_ID;
-  const routedAgentId = shouldRouteProfileDefault
-    ? await resolveProfileRoutedAgentIdFromSettings({
+  const routedTarget = shouldRouteProfileDefault
+    ? await resolveProfileRoutedBackendTargetFromSettings({
       profileQuery: profileIdForRouting,
       credentials,
-      ...(deps.fetchProfileRoutingCustomProfiles ? { fetchCustomProfiles: deps.fetchProfileRoutingCustomProfiles } : {}),
     })
     : null;
-  const effectiveParsedOptions = routedAgentId && routedAgentId !== DEFAULT_CATALOG_AGENT_ID
+  const effectiveParsedOptions = routedTarget
     ? {
       ...parsedOptions,
-      actionInput: { ...parsedOptions.actionInput, agentId: routedAgentId },
+      backendTargetKey: buildBackendTargetKey(routedTarget),
+      actionInput: (() => {
+        const { agentId: _implicitAgentId, ...input } = parsedOptions.actionInput;
+        return { ...input, backendTargetKey: buildBackendTargetKey(routedTarget) };
+      })(),
     }
     : parsedOptions;
 
