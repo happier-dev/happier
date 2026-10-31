@@ -757,7 +757,7 @@ describe('model-pack transfer intents from PR 560', () => {
     const bytes = new Uint8Array([1, 2, 3, 4, 5, 6]);
     const url = 'https://example.com/model.onnx';
     memory.serveFile(url, bytes, { chunks: [bytes.slice(0, 2), bytes.slice(2, 4), bytes.slice(4)] });
-    const progress: Array<{ loaded: number; verified: number; filesDone: number }> = [];
+    const progress: Array<{ loaded: number; total: number; verified: number; filesDone: number; filesTotal: number }> = [];
     await installModelPackWithHost({
       host: { ...memory.host, openDownload: async (request) => {
         // Native hosts finish the transfer before the core reads the file back to verify it.
@@ -766,10 +766,10 @@ describe('model-pack transfer intents from PR 560', () => {
       } },
       packId: 'example', manifest: manifestFor([{ path: 'model.onnx', url, sha256: sha256Hex(bytes), sizeBytes: bytes.length }]),
       signal: new AbortController().signal,
-      onProgress: (p) => { progress.push({ loaded: p.loaded, verified: p.verified, filesDone: p.filesDone }); },
+      onProgress: (p) => { progress.push({ loaded: p.loaded, total: p.total, verified: p.verified, filesDone: p.filesDone, filesTotal: p.filesTotal }); },
     });
     expect(progress.some((p) => p.loaded === bytes.length && p.verified > 0 && p.verified < bytes.length && p.filesDone === 0)).toBe(true);
-    expect(progress.at(-1)).toEqual({ loaded: bytes.length, verified: bytes.length, filesDone: 1 });
+    expect(progress.at(-1)).toEqual({ loaded: bytes.length, total: bytes.length, verified: bytes.length, filesDone: 1, filesTotal: 1 });
   });
 
   it('keeps verification progress monotonic when a retry rehashes the kept prefix', async () => {
@@ -822,19 +822,6 @@ describe('model-pack transfer intents from PR 560', () => {
       { path: 'voices.bin', url: 'https://example.com/medium', sha256: sha256Hex(medium), sizeBytes: medium.length },
     ]));
     expect(memory.requestedUrls().slice(0, 2)).toEqual(['https://example.com/large', 'https://example.com/medium']);
-  });
-
-  it('reports file counts only after the file has verified', async () => {
-    const memory = createMemoryModelPackInstallerHost();
-    const bytes = new Uint8Array([1, 2, 3]);
-    const url = 'https://example.com/model';
-    memory.serveFile(url, bytes);
-    const progress: unknown[] = [];
-    await installModelPackWithHost({ host: memory.host, packId: 'example',
-      manifest: manifestFor([{ path: 'model.bin', url, sha256: sha256Hex(bytes), sizeBytes: bytes.length }]),
-      signal: new AbortController().signal, onProgress: value => { progress.push(value); },
-    });
-    expect(progress.at(-1)).toMatchObject({ loaded: 3, total: 3, filesDone: 1, filesTotal: 1 });
   });
 
   it.each(['valid', 'missing', 'wrong digest', 'truncated'] as const)('reuses unchanged installed bytes only after verification: %s', async (state) => {
