@@ -7,7 +7,7 @@ import { z } from 'zod/mini';
 export function bindMachineAccessActionHttpRequestV1(actionId: Exclude<MachineAccessActionId, 'machines.access.prepareKeys'>, input: unknown) {
   const spec = getActionSpec(actionId);
   if (!spec.serverTransport) throw new TypeError(`Machine access Action declares no transport: ${actionId}`);
-  return bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: z.pipe(spec.inputSchema, z.transform((value: unknown) => {
+  return bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: z.pipe(spec.inputSchema, z.transform((value: z.output<typeof spec.inputSchema>) => {
     const { serverId: _serverId, ...body } = value as Record<string, unknown>;
     return body;
   })), input });
