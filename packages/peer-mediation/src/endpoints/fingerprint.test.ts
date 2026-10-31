@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 
@@ -57,24 +57,30 @@ describe('fingerprintPeerEndpoints', () => {
         );
     });
 
-    it('does not retain raw bearer tokens as cache keys', () => {
-        const setSpy = vi.spyOn(Map.prototype, 'set');
+    it('distinguishes explicit authorization from a legacy URL-only candidate', () => {
+        expect(fingerprintPeerEndpoints([{
+            kind: 'http',
+            url: 'http://127.0.0.1:46001/machine-transfers/direct/a',
+            authorizationToken: 'token-a',
+            expiresAt: 10_000,
+        }])).not.toEqual(fingerprintPeerEndpoints([{
+            kind: 'http',
+            url: 'http://127.0.0.1:46001/machine-transfers/direct/a?token=legacy-token',
+            expiresAt: 10_000,
+        }]));
+    });
+
+    it('does not retain bearer tokens or URL auth material in fingerprints', () => {
         const token = 'bearer-secret-token';
-
-        try {
-            fingerprintPeerEndpoints([
-                {
-                    kind: 'http',
-                    url: 'http://127.0.0.1:46001/machine-transfers/direct/a',
-                    authorizationToken: token,
-                    expiresAt: 10_000,
-                },
-            ]);
-
-            const recordedKeys = setSpy.mock.calls.map(([key]) => key);
-            expect(recordedKeys).not.toContain(token);
-        } finally {
-            setSpy.mockRestore();
+        const fingerprint = fingerprintPeerEndpoints([{
+            kind: 'https',
+            url: 'https://url-user-secret:url-pass-secret@example.test/a?token=url-query-secret#url-fragment-secret',
+            authorizationToken: token,
+            expiresAt: 10_000,
+        }]);
+        expect(fingerprint).not.toBeNull();
+        for (const secret of [token, 'url-user-secret', 'url-pass-secret', 'url-query-secret', 'url-fragment-secret']) {
+            expect(fingerprint).not.toContain(secret);
         }
     });
 });
