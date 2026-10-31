@@ -23,18 +23,10 @@ function clampPolicy(policy: { minLen: number; maxLen: number; pattern: RegExp }
     });
 }
 
-let _lastPolicyCacheKey: string | null = null;
-let _lastResolvedPolicy: UsernamePolicy | null = null;
-
 export function resolveUsernamePolicyFromEnv(env: NodeJS.ProcessEnv): UsernamePolicy {
     const minLenRaw = (env.FRIENDS_USERNAME_MIN_LEN ?? "3").toString();
     const maxLenRaw = (env.FRIENDS_USERNAME_MAX_LEN ?? "32").toString();
     const rawPattern = (env.FRIENDS_USERNAME_REGEX ?? "^[a-z0-9_-]+$").toString();
-
-    const cacheKey = `${minLenRaw}|${maxLenRaw}|${rawPattern}`;
-    if (_lastResolvedPolicy && _lastPolicyCacheKey === cacheKey) {
-        return _lastResolvedPolicy;
-    }
 
     let pattern: RegExp;
     try {
@@ -43,15 +35,12 @@ export function resolveUsernamePolicyFromEnv(env: NodeJS.ProcessEnv): UsernamePo
         pattern = /^[a-z0-9_-]+$/;
     }
 
-    const resolved = clampPolicy({
+    return clampPolicy({
         minLen: parseIntEnv(minLenRaw, 3, { min: 1, max: 128 }),
         maxLen: parseIntEnv(maxLenRaw, 32, { min: 1, max: 128 }),
         pattern,
     });
 
-    _lastPolicyCacheKey = cacheKey;
-    _lastResolvedPolicy = resolved;
-    return resolved;
 }
 
 export function normalizeUsername(input: string): string {
