@@ -339,6 +339,19 @@ iOS, or Android process that invoked it. Missing or retired local activation
 must fail unavailable; it must not fall back to a daemon, move to another
 client, or enter a cross-client queue.
 
+An admitted controller invocation in unreleased 0.3 CLI source can also supply
+optional `services.machineConnectorSecrets`. After obtaining a connector token
+inside the Account handler, call
+`write({ token: bytes, subject: { provider, connectorId } })` and return only its
+opaque `{ grants: [{ machineId, installationId, grantRef }] }`. The host captures
+the controller, every receiving Machine and installation, receiver public keys
+and admitted operation. Each receiver gets a separately sealed grant from the
+same token acquisition. The token stays out
+of Action input and results, Saved Secrets and logs. Zero caller-owned bytes
+in `finally`; do not retain the sink or retry a write whose outcome is uncertain.
+Portable UI execution and invocations without that admitted controller omit it.
+See the maintained [Account author fixture](https://github.com/happier-dev/happier/tree/dev/packages/plugin-sdk/fixtures/account-actions).
+
 > **Development status:** The explicit `daemon | client` declaration is part
 > of the current Developer Preview contract, whose implementation remains in
 > progress, as is loaded web/iOS/Android certification. This capability has not

@@ -716,6 +716,35 @@ availability authorities.
 
 ### Portable Account Actions (0.3 development source)
 
+The optional Account Action `services.machineConnectorSecrets` sink spends the
+owning controller's existing Domain admission. The host captures its controller,
+every target installation/public key and operation; an author supplies only token
+bytes and `{ provider, connectorId }`. The existing installation-grant writer
+seals separately for each receiver and returns only
+`{ grants: [{ machineId, installationId, grantRef }] }`. The controller and
+receivers may differ. No Saved Secret, second grant writer or token-bearing
+Action result is involved. This is an invocation capability, absent without
+that admitted controller parent and in portable UI execution; it is not a new
+catalog service, policy issuer or Machine-selection operand. The existing
+writer owns cancellation, HTTP failure and byte cleanup; uncertain writes are
+not replayed automatically. The Domain owner retains each acknowledged grant
+in its private prepared content before dispatching native work, including when
+a later target write fails. One vendor operation serves the admitted target set.
+This describes unreleased 0.3 development source.
+
+The existing reviewed-child issuer carries this service in its typed,
+host-private `invocationServices` operand, not in Action input or results. The
+admitted child projects only its supplied connector service into Account
+services; omitting it clears an inherited parent's connector service. The
+child retains the existing target and active-parent lifetime.
+
+The development Cloudflare configure Action returns `prepared` after remote
+configuration and sealed connector custody, not after Machine activation.
+An unknown result retains acknowledged tunnel/DNS coordinates and any opaque
+grant reference so the controller can preserve them through the existing
+protected Domain content writer. Neither result proves the root-only file,
+container reader or active ingress; the native owner supplies that evidence.
+
 An Action may declare `execution: { target: 'account', account: { artifactId,
 exportName } }`. It runs in the invoking UI or CLI process, without a Machine,
 from the Account's current enabled release or the host's trusted bundled
