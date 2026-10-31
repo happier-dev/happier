@@ -1321,6 +1321,85 @@ describe('createClaudeUnifiedAcceptedPromptTranscriptDiscovery', () => {
     expect(match && discovery.consumeAcceptedPromptMatch(match)).toBe(true);
   });
 
+  // @anthropic-ai/claude-code-linux-x64@2.1.310 emits the attachment before
+  // checking abort/fold suspension and logging consume(absorbed_mid_turn).
+  it.each(['absorbed_mid_turn', 'delivered_to_agent', 'cleared_on_cancel', 'dropped_by_hook'] as const)(
+    'joins native queued consumption with its removal disposition: %s', (reason) => {
+      const prompt = 'consume this queued input exactly once';
+      const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      const commandUuid = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+      const deliveryId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+      const discovery = createClaudeUnifiedAcceptedPromptTranscriptDiscovery({
+        acceptedPromptWindowMs: 5_000, nowMs: () => 10_000,
+      });
+      discovery.recordAcceptedPrompt({ message: prompt, acceptedAtMs: 10_000,
+        deliveryIdentity: { localIds: ['native-ordered-input'] } });
+      const operation = { type: 'queue-operation', sessionId, content: prompt };
+      const attachment = { type: 'attachment', uuid: 'native-queued-attachment',
+        parentUuid: 'preceding-tool-result', isSidechain: false, sessionId,
+        timestamp: new Date(10_100).toISOString(),
+        attachment: { type: 'queued_command', prompt, commandMode: 'prompt',
+          origin: { kind: 'human' }, source_uuid: commandUuid, delivery_id: deliveryId,
+          timestamp: new Date(10_000).toISOString() } };
+      const enqueue = { ...operation, operation: 'enqueue', timestamp: new Date(10_000).toISOString() };
+      expect(discovery.findMatchingTranscript([enqueue])).toBeNull();
+      // The attachment can survive while abort/fold suspension leaves the command queued.
+      expect(discovery.findMatchingTranscript([attachment])).toBeNull();
+      expect(discovery.findMatchingTranscript([attachment])).toBeNull();
+      const remove = { ...operation, operation: 'remove',
+        ...(reason === 'dropped_by_hook' ? { content: undefined } : {}),
+        reason, commandUuid, deliveryId, timestamp: new Date(10_200).toISOString() };
+      const removed = discovery.findMatchingTranscript([remove]);
+      if (reason === 'cleared_on_cancel' || reason === 'dropped_by_hook') {
+        expect(removed).toBeNull();
+        expect(discovery.findMatchingTranscript([attachment])).toBeNull();
+      } else {
+        expect(removed).toMatchObject({ deliveryIdentity: { localIds: ['native-ordered-input'] },
+          transcriptUuid: 'native-queued-attachment' });
+        expect(removed && discovery.consumeAcceptedPromptMatch(removed)).toBe(true);
+        expect(discovery.findMatchingTranscript([attachment])).toBeNull();
+      }
+      const batched = createClaudeUnifiedAcceptedPromptTranscriptDiscovery({
+        acceptedPromptWindowMs: 5_000, nowMs: () => 10_000,
+      });
+      batched.recordAcceptedPrompt({ message: prompt, acceptedAtMs: 10_000,
+        deliveryIdentity: { localIds: ['native-ordered-input'] } });
+      const batchMatch = batched.findMatchingTranscript([enqueue, attachment, remove]);
+      if (reason === 'cleared_on_cancel' || reason === 'dropped_by_hook') expect(batchMatch).toBeNull();
+      else expect(batchMatch).toMatchObject({ deliveryIdentity: { localIds: ['native-ordered-input'] },
+        transcriptUuid: 'native-queued-attachment' });
+    },
+  );
+
+  it.each(['before', 'after'] as const)('keeps canceled evidence separate when observed %s replacement registration', (observedAt) => {
+    const discovery = createClaudeUnifiedAcceptedPromptTranscriptDiscovery({
+      acceptedPromptWindowMs: 5_000, nowMs: () => 10_000,
+    });
+    const prompt = 'same queued text';
+    const sessionId = 'native-identity-session';
+    const operation = { type: 'queue-operation', sessionId, content: prompt };
+    const attachment = (id: string) => ({ type: 'attachment', uuid: `attachment-${id}`,
+      parentUuid: 'main-parent', isSidechain: false, sessionId, timestamp: new Date(10_100).toISOString(),
+      attachment: { type: 'queued_command', prompt, commandMode: 'prompt', origin: { kind: 'human' },
+        source_uuid: id, delivery_id: `delivery-${id}`, timestamp: new Date(10_000).toISOString() } });
+    discovery.recordAcceptedPrompt({ message: prompt, deliveryIdentity: { localIds: ['canceled-input'] } });
+    discovery.findMatchingTranscript([{ ...operation, operation: 'enqueue', timestamp: new Date(10_000).toISOString() }]);
+    const canceledRemove = { ...operation, operation: 'remove', reason: 'cleared_on_cancel',
+      commandUuid: 'canceled-command', deliveryId: 'delivery-canceled-command', timestamp: new Date(10_050).toISOString() };
+    discovery.findMatchingTranscript([canceledRemove]);
+    if (observedAt === 'before') expect(discovery.findMatchingTranscript([attachment('canceled-command')])).toBeNull();
+    discovery.recordAcceptedPrompt({ message: prompt, deliveryIdentity: { localIds: ['replacement-input'] } });
+    discovery.findMatchingTranscript([{ ...operation, operation: 'enqueue', timestamp: new Date(10_060).toISOString() }]);
+    // The live owner's unmatched-candidate replay may repeat the old removal.
+    expect(discovery.findMatchingTranscript([canceledRemove])).toBeNull();
+    expect(discovery.findMatchingTranscript([attachment('replacement-command')])).toBeNull();
+    expect(discovery.findMatchingTranscript([attachment('canceled-command')])).toBeNull();
+    const accepted = discovery.findMatchingTranscript([{ ...operation, operation: 'remove', reason: 'absorbed_mid_turn',
+      commandUuid: 'replacement-command', deliveryId: 'delivery-replacement-command', timestamp: new Date(10_200).toISOString() }]);
+    expect(accepted).toMatchObject({ deliveryIdentity: { localIds: ['replacement-input'] },
+      transcriptUuid: 'attachment-replacement-command' });
+  });
+
   it('consumes repeated identical native queue episodes in chronological one-to-one order', () => {
     const prompt = 'repeat this exact queued prompt';
     const sessionId = 'abababab-abab-4bab-8bab-abababababab';
@@ -1525,9 +1604,8 @@ describe('createClaudeUnifiedAcceptedPromptTranscriptDiscovery', () => {
       content: 'foreign content',
     } as unknown as RawJSONLines])).toBe(false);
     expect(discovery.consumeMatchingTranscript([attachment])).toBe(false);
+    expect(discovery.consumeMatchingTranscript([remove])).toBe(true);
     expect(discovery.consumeMatchingTranscript([remove])).toBe(false);
-    expect(discovery.consumeMatchingTranscript([remove])).toBe(false);
-    expect(discovery.consumeMatchingTranscript([attachment])).toBe(true);
     expect(discovery.consumeMatchingTranscript([attachment])).toBe(false);
   });
 

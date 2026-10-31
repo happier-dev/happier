@@ -135,6 +135,10 @@ its native queue. `UserPromptSubmit` can fire at enqueue and does not prove that
 Claude has consumed the steer. The arbiter accepts a steer from its exact
 transcript consumption evidence; the existing queued-command matcher correlates
 the native enqueue/remove episode with its main-chain `queued_command` attachment.
+The attachment may precede native queue consumption, so the custody episode joins
+both facts in either order. Native cancellation and plugin-discard removals do
+not establish acceptance, and available native command and delivery identities
+keep a canceled episode separate from an identical replacement.
 The session scanner observes that evidence after awaiting earlier visible-message
 commits, including known resumes and rows appended while the replay baseline loads.
 There is no separate acceptance-only follower of the resume transcript.
