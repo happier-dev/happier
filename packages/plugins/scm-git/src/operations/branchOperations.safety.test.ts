@@ -2,12 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
-const runScmCommand = vi.fn();
+import { runWithGitScmCommandRunner, type GitScmCommandRunner } from '../testkit/scmRuntime.test-support.js';
 
-vi.mock('../runtime.js', async (importOriginal) => ({
-    ...await importOriginal<typeof import('../runtime.js')>(),
-    runScmCommand,
-}));
+const runScmCommand = vi.fn<GitScmCommandRunner>();
 
 function createTestContext() {
     return {
@@ -22,30 +19,30 @@ function createTestContext() {
 }
 
 describe('git branch operations safety', () => {
-    it('does not run `git stash pop` when transient stash was not created', async () => {
-        vi.resetModules();
+    it('does not run `git stash pop` when transient stash was not created', async () => runWithGitScmCommandRunner(runScmCommand, async () => {
 
         let switchCalls = 0;
-        runScmCommand.mockImplementation(async (input: { args: string[] }) => {
+        runScmCommand.mockImplementation(async (input) => {
             const args = input.args;
             if (args[0] === 'switch') {
                 switchCalls += 1;
                 if (switchCalls === 1) {
                     return {
                         success: false,
+                        exitCode: 1,
                         stdout: '',
                         stderr: 'error: Your local changes to the following files would be overwritten by checkout',
                     };
                 }
-                return { success: true, stdout: 'switched', stderr: '' };
+                return { success: true, stdout: 'switched', stderr: '', exitCode: 0 };
             }
             if (args[0] === 'stash' && args[1] === 'push') {
-                return { success: true, stdout: 'No local changes to save', stderr: '' };
+                return { success: true, stdout: 'No local changes to save', stderr: '', exitCode: 0 };
             }
             if (args[0] === 'stash' && args[1] === 'pop') {
-                return { success: true, stdout: 'popped', stderr: '' };
+                return { success: true, stdout: 'popped', stderr: '', exitCode: 0 };
             }
-            return { success: true, stdout: '', stderr: '' };
+            return { success: true, stdout: '', stderr: '', exitCode: 0 };
         });
 
         const { gitBranchCheckout } = await import('./branchOperations.js');
@@ -62,25 +59,25 @@ describe('git branch operations safety', () => {
         expect(res.didCreateStash).toBe(false);
         expect(res.didPopStash).toBe(false);
         expect(runScmCommand).not.toHaveBeenCalledWith(expect.objectContaining({ args: expect.arrayContaining(['stash', 'pop']) }));
-    });
+    }));
 
-    it('falls back to `git checkout -b` when `git switch -c` is unavailable', async () => {
-        vi.resetModules();
+    it('falls back to `git checkout -b` when `git switch -c` is unavailable', async () => runWithGitScmCommandRunner(runScmCommand, async () => {
         runScmCommand.mockReset();
 
-        runScmCommand.mockImplementation(async (input: { args: string[] }) => {
+        runScmCommand.mockImplementation(async (input) => {
             const args = input.args;
             if (args[0] === 'switch' && args[1] === '-c') {
                 return {
                     success: false,
+                    exitCode: 1,
                     stdout: '',
                     stderr: 'git: \'switch\' is not a git command. See \'git --help\'.',
                 };
             }
             if (args[0] === 'checkout' && args[1] === '-b') {
-                return { success: true, stdout: 'ok', stderr: '' };
+                return { success: true, stdout: 'ok', stderr: '', exitCode: 0 };
             }
-            return { success: true, stdout: '', stderr: '' };
+            return { success: true, stdout: '', stderr: '', exitCode: 0 };
         });
 
         const { gitBranchCreate } = await import('./branchOperations.js');
@@ -95,25 +92,25 @@ describe('git branch operations safety', () => {
 
         expect(res.success).toBe(true);
         expect(runScmCommand).toHaveBeenCalledWith(expect.objectContaining({ args: ['checkout', '-b', 'new-branch'] }));
-    });
+    }));
 
-    it('passes branch create startPoint positionally for `git switch -c` and fallback checkout', async () => {
-        vi.resetModules();
+    it('passes branch create startPoint positionally for `git switch -c` and fallback checkout', async () => runWithGitScmCommandRunner(runScmCommand, async () => {
         runScmCommand.mockReset();
 
-        runScmCommand.mockImplementation(async (input: { args: string[] }) => {
+        runScmCommand.mockImplementation(async (input) => {
             const args = input.args;
             if (args[0] === 'switch' && args[1] === '-c') {
                 return {
                     success: false,
+                    exitCode: 1,
                     stdout: '',
                     stderr: 'git: \'switch\' is not a git command. See \'git --help\'.',
                 };
             }
             if (args[0] === 'checkout' && args[1] === '-b') {
-                return { success: true, stdout: 'ok', stderr: '' };
+                return { success: true, stdout: 'ok', stderr: '', exitCode: 0 };
             }
-            return { success: true, stdout: '', stderr: '' };
+            return { success: true, stdout: '', stderr: '', exitCode: 0 };
         });
 
         const { gitBranchCreate } = await import('./branchOperations.js');
@@ -136,12 +133,11 @@ describe('git branch operations safety', () => {
             2,
             expect.objectContaining({ args: ['checkout', '-b', 'new-branch', 'origin/main'] }),
         );
-    });
+    }));
 
-    it('rejects option-like startPoint values for branch create', async () => {
-        vi.resetModules();
+    it('rejects option-like startPoint values for branch create', async () => runWithGitScmCommandRunner(runScmCommand, async () => {
         runScmCommand.mockReset();
-        runScmCommand.mockResolvedValue({ success: true, stdout: '', stderr: '' });
+        runScmCommand.mockResolvedValue({ success: true, stdout: '', stderr: '', exitCode: 0 });
 
         const { gitBranchCreate } = await import('./branchOperations.js');
 
@@ -157,5 +153,5 @@ describe('git branch operations safety', () => {
         expect(res.success).toBe(false);
         expect(res.errorCode).toBe(SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
         expect(runScmCommand).not.toHaveBeenCalled();
-    });
+    }));
 });

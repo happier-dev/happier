@@ -2,16 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
-const runScmCommand = vi.fn();
+import { runWithGitScmCommandRunner, type GitScmCommandRunner } from '../testkit/scmRuntime.test-support.js';
 
-vi.mock('../runtime.js', async (importOriginal) => ({
-    ...await importOriginal<typeof import('../runtime.js')>(),
-    runScmCommand,
-}));
+const runScmCommand = vi.fn<GitScmCommandRunner>();
 
 describe('git publish and stash operation safety', () => {
-    it('rejects option-like remotes before publish', async () => {
-        vi.resetModules();
+    it('rejects option-like remotes before publish', async () => runWithGitScmCommandRunner(runScmCommand, async () => {
         runScmCommand.mockReset();
 
         const { gitRemotePublish } = await import('./publishOperations.js');
@@ -24,10 +20,9 @@ describe('git publish and stash operation safety', () => {
         expect(result.success).toBe(false);
         expect(result.errorCode).toBe(SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
         expect(runScmCommand).not.toHaveBeenCalled();
-    }, 30_000);
+    }), 30_000);
 
-    it('rejects option-like stash refs before apply-like operations', async () => {
-        vi.resetModules();
+    it('rejects option-like stash refs before apply-like operations', async () => runWithGitScmCommandRunner(runScmCommand, async () => {
         runScmCommand.mockReset();
 
         const { gitStashApply, gitStashDrop, gitStashPop, gitStashShow } = await import('./stashOperations.js');
@@ -60,5 +55,5 @@ describe('git publish and stash operation safety', () => {
         );
 
         expect(runScmCommand).not.toHaveBeenCalled();
-    });
+    }));
 });
