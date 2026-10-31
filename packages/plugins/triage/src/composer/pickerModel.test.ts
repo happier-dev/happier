@@ -1,4 +1,5 @@
 import type { ComposerAttachmentViewV1 } from '@happier-dev/plugin-sdk/ui';
+import { ComposerAttachmentAuthorPresentationV1Schema } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { foldTriageSearchValue } from '../projection/entrySearch.js';
@@ -215,12 +216,12 @@ describe('buildTriagePickerView — selection and row actions', () => {
         expect(view.rows[0]?.mutation).toEqual({ kind: 'remove', instanceId: 'triage-1' });
     });
 
-    it('bounds the attachment label the composer will freeze', () => {
+    it.each(['A', '😀'])('preserves a useful title prefix within the composer label contract (%s)', (character) => {
         // A source title is bounded at 4 KiB while a composer attachment label is
         // bounded at 256 code points; passing the raw title straight through
         // makes the host reject the whole attach.
         const view = buildTriagePickerView({
-            facts: facts({ rows: [row({ entryId: '42', title: `${'A'.repeat(400)} tail` })] }),
+            facts: facts({ rows: [row({ entryId: '42', title: `Parser regression ${character.repeat(400)} tail` })] }),
             query: '',
             attached: [],
         });
@@ -228,7 +229,8 @@ describe('buildTriagePickerView — selection and row actions', () => {
         const mutation = view.rows[0]?.mutation;
         expect(mutation?.kind).toBe('attach');
         if (mutation?.kind !== 'attach') return;
-        expect(Array.from(mutation.presentation.label).length).toBeLessThanOrEqual(256);
+        expect(ComposerAttachmentAuthorPresentationV1Schema.safeParse(mutation.presentation).success).toBe(true);
+        expect(mutation.presentation.label.startsWith('Parser regression ')).toBe(true);
         expect(mutation.presentation.label.trim()).toBe(mutation.presentation.label);
     });
 });

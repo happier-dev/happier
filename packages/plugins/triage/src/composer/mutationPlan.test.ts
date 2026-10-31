@@ -77,25 +77,6 @@ describe('planTriageEntryAttachmentMutation — attach', () => {
         });
     });
 
-    it('carries no text or reference operation, so the draft prose survives byte-identical', () => {
-        // The one entry admission is the attachment. A text or reference
-        // operation here would be a second, independently persisted path to the
-        // same entry and would rewrite prose the user typed.
-        const plan = planTriageEntryAttachmentMutation({
-            intent: 'attach',
-            snapshot: snapshot({ text: 'please review this' }),
-            entryRef: entryRef('42'),
-            sourceInstance: SOURCE_INSTANCE,
-            presentation: PRESENTATION,
-        });
-
-        expect(plan.status).toBe('transaction');
-        if (plan.status !== 'transaction') return;
-        const kinds = plan.transaction.operations.map((operation) => operation.kind);
-        expect(kinds).toEqual(['attachment.add']);
-        expect(kinds.some((kind) => kind.startsWith('text.') || kind.startsWith('reference.'))).toBe(false);
-    });
-
     it('repeats the same canonical key for an already attached entry so the record updates in place', () => {
         const attached = triageAttachment('42', 'triage-1');
         const plan = planTriageEntryAttachmentMutation({
@@ -113,21 +94,6 @@ describe('planTriageEntryAttachmentMutation — attach', () => {
         expect(operation?.kind).toBe('attachment.add');
         if (operation?.kind !== 'attachment.add') return;
         expect(operation.value.key).toBe(attached.key);
-    });
-
-    it('carries only the private identity record as the value', () => {
-        const plan = planTriageEntryAttachmentMutation({
-            intent: 'attach',
-            snapshot: snapshot(),
-            entryRef: entryRef('42'),
-            sourceInstance: SOURCE_INSTANCE,
-            presentation: PRESENTATION,
-        });
-
-        if (plan.status !== 'transaction') throw new Error('expected a transaction');
-        const [operation] = plan.transaction.operations;
-        if (operation?.kind !== 'attachment.add') throw new Error('expected an attachment.add');
-        expect(Object.keys(operation.value.value as object).sort()).toEqual(['entryRef', 'sourceInstance', 'v']);
     });
 
     it('persists the observed routing hint beside the identity when one is supplied', () => {

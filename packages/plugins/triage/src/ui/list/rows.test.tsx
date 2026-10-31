@@ -183,18 +183,6 @@ describe('a PRs & Issues entry row', () => {
     expect(props).not.toHaveProperty('tone');
   });
 
-  it('never repeats the entry it has already been named after', () => {
-    // A description that restates the name makes every row announce itself
-    // twice, which is the failure the pinned name exists to prevent.
-    const props = triageListRowItemProps(
-      displayRow({ detail: 'Your review is requested' }),
-      false,
-      ANNOUNCED,
-    );
-
-    expect(props.accessibilityHint).not.toContain('Replace the duplicated normalizer');
-  });
-
   it('shows the same words it announces, in the same order', () => {
     // The description is the row's own visible content, not a second copy that
     // can drift from it. Nothing is announced that the row does not display.

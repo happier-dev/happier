@@ -200,13 +200,7 @@ describe('resolveTriageActionReferencesV1', () => {
 });
 
 describe('the action instruction', () => {
-    it('does not infer instructions from shipped ids or labels', () => {
-        expect(resolveTriageActionInstructionV1({
-            target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
-        }, null)).toBeNull();
-        expect(resolveTriageActionInstructionV1({
-            target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
-        }, null)).toBeNull();
+    it('returns no instruction when neither a prompt nor a fallback is configured', () => {
         expect(resolveTriageActionInstructionV1({
             target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
         }, null)).toBeNull();

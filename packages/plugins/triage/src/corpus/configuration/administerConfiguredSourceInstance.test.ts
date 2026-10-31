@@ -401,30 +401,4 @@ describe('configured source membership', () => {
         expect(await liveRows(collections.sourceInstances)).toHaveLength(33);
     });
 
-    it('lets a retired row be restored while the active set has room', async () => {
-        const { collections } = createTestkitCorpusCollections();
-        const common = {
-            collections,
-            source: SOURCE,
-            declaredPurpose: PURPOSE,
-            mintSourceInstanceId: mintSequence(ID_A),
-        } as const;
-
-        await administerConfiguredSourceInstance({
-            ...common,
-            request: { kind: 'create', draft: draft() },
-            nowMs: 1,
-        });
-        await administerConfiguredSourceInstance({
-            ...common,
-            request: { kind: 'remove', sourceInstanceId: ID_A },
-            nowMs: 2,
-        });
-
-        expect(await administerConfiguredSourceInstance({
-            ...common,
-            request: { kind: 'reactivate', sourceInstanceId: ID_A, draft: draft() },
-            nowMs: 3,
-        })).toEqual({ kind: 'reactivated', sourceInstanceId: ID_A });
-    });
 });

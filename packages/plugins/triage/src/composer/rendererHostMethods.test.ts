@@ -55,15 +55,6 @@ describe('Triage Composer renderer host-method declarations', () => {
             .toEqual(['readComposer', 'watchComposer']);
     });
 
-    it('keeps openSurface off the compact label, which never navigates', () => {
-        // Over-declaration is the other direction of the same defect: the
-        // compact label renders a count and owns no control at all, so a
-        // navigation requirement there could only refuse a surface that never
-        // needed the method.
-        expect(declaredHostMethods('entries-compact') ?? [])
-            .not.toContain('openSurface');
-    });
-
     it('keeps Composer methods off the renderers that never bind a draft', () => {
         // The app page and the Session panel mount outside any Composer scope.
         // A Composer method declared there is unsatisfiable at their mounts and

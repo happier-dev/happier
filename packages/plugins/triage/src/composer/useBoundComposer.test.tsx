@@ -50,11 +50,13 @@ async function mountBinding(): Promise<Readonly<{
         setComposer = setState;
         const current = useComposer().current();
         const handle = useTriageBoundComposer(composer);
-        frames.push(Object.freeze({
-            mountedOn: sessionIdOf(composer),
-            wrote: handle === null ? null : sessionIdOf(handle.ref),
-            current: current === null ? null : sessionIdOf(current.ref),
-        }));
+        React.useLayoutEffect(() => {
+            frames.push(Object.freeze({
+                mountedOn: sessionIdOf(composer),
+                wrote: handle === null ? null : sessionIdOf(handle.ref),
+                current: current === null ? null : sessionIdOf(current.ref),
+            }));
+        });
         return <Text value="bound" variant="label" />;
     }
 
