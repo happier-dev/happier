@@ -246,7 +246,8 @@ describe('AcpBackend spawn environment', () => {
       });
 
       try {
-        await expect(backend.startSession()).rejects.toThrow(secret);
+        // The provider's rejection detail still reaches the caller, with the credential redacted.
+        await expect(backend.startSession()).rejects.toThrow(/bearer \[REDACTED\]/iu);
         const logged = debugSpy.mock.calls.flatMap((call) => call).map((value) => (
           value instanceof Error ? `${value.message}\n${value.stack ?? ''}` : JSON.stringify(value)
         )).join('\n');

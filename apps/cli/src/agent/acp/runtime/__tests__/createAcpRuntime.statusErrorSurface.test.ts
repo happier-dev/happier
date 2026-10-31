@@ -127,6 +127,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
         markRolledBack: async () => {},
         touchActiveTurn: async () => {},
         hasActiveTurn: () => false,
+        observeProviderTurnEvent: () => {},
       },
     };
 

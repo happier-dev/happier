@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   AIBackendProfileSchema,
+  DEFAULT_BUILT_IN_BACKEND_PROFILES,
   SavedSecretSchema,
   getBuiltInBackendProfile,
+  getProfileDefaultBackendTarget,
   getRequiredConfigEnvVarNames,
   getMissingRequiredConfigEnvVarNames,
   getProfileEnvironmentVariables,
@@ -11,6 +13,52 @@ import {
   isProfileCompatibleWithAgent,
   resolveBackendProfile,
 } from './index.js';
+
+describe('profile default backend target (protocol)', () => {
+  it('parses a valid defaultBackendTargetKey and leaves it unset by default', () => {
+    const withDefault = AIBackendProfileSchema.parse({
+      id: 'work',
+      name: 'Work',
+      defaultBackendTargetKey: 'agent:codex',
+    });
+    expect(withDefault.defaultBackendTargetKey).toBe('agent:codex');
+
+    const withoutDefault = AIBackendProfileSchema.parse({ id: 'work', name: 'Work' });
+    expect(withoutDefault.defaultBackendTargetKey).toBeUndefined();
+  });
+
+  it('rejects a defaultBackendTargetKey that is not a backend target key', () => {
+    expect(() => AIBackendProfileSchema.parse({
+      id: 'work',
+      name: 'Work',
+      defaultBackendTargetKey: 'codex',
+    })).toThrow();
+  });
+
+  it('resolves the default backend target for built-in agents and configured ACP backends', () => {
+    expect(getProfileDefaultBackendTarget({ defaultBackendTargetKey: 'agent:codex' }))
+      .toEqual({ kind: 'builtInAgent', agentId: 'codex' });
+    expect(getProfileDefaultBackendTarget({ defaultBackendTargetKey: 'acpBackend:review-bot' }))
+      .toEqual({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+  });
+
+  it('returns null when the default backend target is unset or malformed', () => {
+    expect(getProfileDefaultBackendTarget({})).toBeNull();
+    expect(getProfileDefaultBackendTarget({ defaultBackendTargetKey: 'codex' })).toBeNull();
+  });
+
+  it('ships every built-in profile with a default backend target it allows', () => {
+    expect(DEFAULT_BUILT_IN_BACKEND_PROFILES.length).toBeGreaterThan(0);
+    for (const profile of DEFAULT_BUILT_IN_BACKEND_PROFILES) {
+      const defaultTarget = getProfileDefaultBackendTarget(profile);
+      expect(defaultTarget, profile.id).not.toBeNull();
+      expect(
+        defaultTarget !== null && isProfileCompatibleWithBackendTarget(profile, defaultTarget),
+        profile.id,
+      ).toBe(true);
+    }
+  });
+});
 
 describe('profiles (protocol)', () => {
   it('exports backend profile helpers from index', () => {
@@ -178,6 +226,19 @@ describe('profiles (protocol)', () => {
       ),
     ).toBe(true);
     expect(isProfileCompatibleWithAgent({ compatibilityByTargetKey: { 'agent:claude': true }, isBuiltIn: true }, 'claude')).toBe(true);
+  });
+
+  it('applies legacy configured-provider compatibility consistently, with exact targets taking precedence', () => {
+    const target = { kind: 'configuredAcpBackend', backendId: 'review' } as const;
+    const legacy = AIBackendProfileSchema.parse({
+      id: 'legacy', name: 'Legacy', compatibilityByTargetKey: { 'agent:customAcp': false },
+      compatibility: { customAcp: true },
+    });
+    expect(isProfileCompatibleWithBackendTarget(legacy, target)).toBe(false);
+    expect(isProfileCompatibleWithBackendTarget({ ...legacy, compatibilityByTargetKey: {} }, target)).toBe(true);
+    expect(isProfileCompatibleWithBackendTarget({
+      ...legacy, compatibilityByTargetKey: { ...legacy.compatibilityByTargetKey, 'acpBackend:review': true },
+    }, target)).toBe(true);
   });
 
   it('returns required env var names (secret vs config)', async () => {

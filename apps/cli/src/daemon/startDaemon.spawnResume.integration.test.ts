@@ -35,7 +35,7 @@ import { UsageLimitRecoveryScheduler } from './connectedServices/usageLimitRecov
 import { RuntimeAuthRecoveryScheduler } from './connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
 import { TemporaryThrottleRecoveryScheduler } from './connectedServices/temporaryThrottle/TemporaryThrottleRecoveryScheduler';
 import { withHerdrApi } from '@/integrations/herdr/herdrApi.testkit';
-import { writeExecutableShim } from '@/testkit/fs/executableShim';
+import { createProviderCliFixture } from '@/testkit/process/providerCliFixture';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { parseAndStripTerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import type { StopSessionResult } from './sessions/stopSessionContract';
@@ -1111,18 +1111,11 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     exitSpy.mockRestore();
   }
 
+  let providerCliEnvScope: ReturnType<typeof createEnvKeyScope>;
+
   beforeEach(async () => {
-    providerCliEnvironment = createEnvKeyScope(['HAPPIER_CODEX_PATH', 'HAPPIER_CLAUDE_PATH']);
-    providerCliRoot = await mkdtemp(join(tmpdir(), 'happier-spawn-resume-provider-cli-'));
-    // Admission resolves the real executable even though runner creation is the OS fixture.
-    providerCliEnvironment.patch({
-      HAPPIER_CODEX_PATH: await writeExecutableShim({
-        dir: providerCliRoot, fileName: 'codex', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
-      }),
-      HAPPIER_CLAUDE_PATH: await writeExecutableShim({
-        dir: providerCliRoot, fileName: 'claude', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
-      }),
-    });
+    providerCliEnvScope = createEnvKeyScope(['HAPPIER_CLAUDE_PATH', 'HAPPIER_CODEX_PATH']);
+    providerCliEnvScope.patch(await createProviderCliFixture(['claude', 'codex']));
     deliverShutdownWatchdog = undefined;
     firedShutdownTimerWork = [];
     const { getDaemonShutdownWatchdogTimeoutMs } = await import('./shutdownPolicy');
@@ -1160,6 +1153,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
   });
 
   afterEach(async () => {
+    providerCliEnvScope.restore();
     await Promise.all(firedShutdownTimerWork);
     closeHerdrFixture?.();
     await herdrFixtureRun;
@@ -2507,8 +2501,6 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     const previousHeartbeatInterval = process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL;
     const previousTmuxInlineLimit = process.env.HAPPIER_CLI_TMUX_INLINE_SPAWN_MAX_CHARS;
     const previousHerdrBinary = process.env.HERDR_BIN_PATH;
-    const previousClaudeBinary = process.env.HAPPIER_CLAUDE_PATH;
-    const previousCodexBinary = process.env.HAPPIER_CODEX_PATH;
     const isTmuxCreation = contract === 'tmux_creation_unconfirmed' || contract === 'tmux_creation_not_started';
     const isHerdrCreation = contract === 'herdr_creation_unconfirmed' || contract === 'herdr_creation_stopped';
     const isTmux = contract === 'tmux_binding_exit_overlap' || isTmuxCreation;
@@ -2580,16 +2572,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         if (previous) target.mockImplementation(previous);
       });
     };
-    if (fixtureAgent === 'codex') {
-      // Spawn admission requires the Codex CLI the runner would launch.
-      process.env.HAPPIER_CODEX_PATH = await writeExecutableShim({
-        dir: fixtureHome, fileName: 'codex', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
-      });
-    }
     if (fixtureAgent === 'claude') {
-      process.env.HAPPIER_CLAUDE_PATH = await writeExecutableShim({
-        dir: fixtureHome, fileName: 'claude', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
-      });
       setActiveAccountSettingsSnapshot({
         source: 'network', settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
         settings: accountSettingsParse({ claudeUnifiedTerminalEnabled: false }),
@@ -3233,10 +3216,6 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     } finally {
       if (previousHerdrBinary === undefined) delete process.env.HERDR_BIN_PATH;
       else process.env.HERDR_BIN_PATH = previousHerdrBinary;
-      if (previousClaudeBinary === undefined) delete process.env.HAPPIER_CLAUDE_PATH;
-      else process.env.HAPPIER_CLAUDE_PATH = previousClaudeBinary;
-      if (previousCodexBinary === undefined) delete process.env.HAPPIER_CODEX_PATH;
-      else process.env.HAPPIER_CODEX_PATH = previousCodexBinary;
       replayClock?.mockRestore();
       releaseMarker();
       releaseBinding();
@@ -5536,6 +5515,11 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       });
       expect(runtimeStatus.plannedRestart.disabledReason).not.toBe('missing_resume_identity');
       expect(trackedSessionCapture.current.get(12345)?.vendorResumeId).toBe('vendor-codex-fresh');
+      // Disabling a backend only refuses new runners; a live runner is still adopted.
+      setActiveAccountSettingsSnapshot({
+        source: 'network', settingsVersion: Date.now(), loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+        settings: accountSettingsParse({ backendEnabledByTargetKey: { 'agent:codex': false } }),
+      });
 
       const result = await spawnSession({
         directory: '/tmp',
@@ -7536,13 +7520,117 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         token: 't',
       });
 
-      expect(result).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED });
+      expect(result).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.BACKEND_DISABLED });
       expect(spawnHappyCLI).not.toHaveBeenCalled();
       harness.requestShutdown('happier-cli');
       await run;
     } finally {
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
+      await restoreDaemonExitBoundary(exitSpy);
+    }
+  });
+
+  it('refuses to relaunch an inactive existing session whose built-in backend is disabled', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    try {
+      const { startDaemon } = await import('./startDaemon');
+      const run = startDaemon();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const spawnSession = await waitForSpawnSessionRegistration();
+      setActiveAccountSettingsSnapshot({
+        source: 'network', settingsVersion: Date.now(), loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+        settings: accountSettingsParse({ backendEnabledByTargetKey: { 'agent:codex': false } }),
+      });
+
+      const result = await spawnSession({
+        directory: '/tmp',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        existingSessionId: 'sess_plain',
+        token: 't',
+      });
+
+      expect(result).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.BACKEND_DISABLED });
+      expect(spawnHappyCLI).not.toHaveBeenCalled();
+      harness.requestShutdown('happier-cli');
+      await run;
+    } finally {
+      if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
+      await restoreDaemonExitBoundary(exitSpy);
+    }
+  });
+
+  it('refuses a disabled Claude resume before endpoint recovery can retire its terminal attachment', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    const { configuration } = await import('@/configuration');
+    const originalHome = configuration.happyHomeDir;
+    const fixtureHome = await mkdtemp(join(tmpdir(), 'happier-disabled-claude-recovery-'));
+    Object.defineProperty(configuration, 'happyHomeDir', { value: fixtureHome });
+    const attachments = await vi.importActual<typeof import('@/terminal/attachment/terminalAttachmentInfo')>('@/terminal/attachment/terminalAttachmentInfo');
+    const sessionId = 'sess_disabled_claude_recovery';
+    const attachmentId = 'attachment-disabled-claude' as NonNullable<
+      import('@/integrations/terminalHost/_types').TerminalHostHandle['attachmentId']
+    >;
+    let run: Promise<void> | null = null;
+    try {
+      await attachments.writeTerminalAttachmentInfo({ happyHomeDir: fixtureHome, sessionId, attachmentId,
+        handle: {
+          attachmentId, kind: 'zellij', sessionName: 'disabled-claude-zellij', paneId: 'terminal_2',
+          socketDir: '/tmp/disabled-claude-zellij',
+          attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', locality: 'same_machine', liveProbe: 'required' },
+        },
+        terminal: { mode: 'zellij', zellij: { sessionName: 'disabled-claude-zellij', paneId: 'terminal_2', socketDirV1: '/tmp/disabled-claude-zellij' } } });
+      claudeEndpointRecoveryBoundaryMocks.readTerminalAttachmentInfo.mockImplementation(attachments.readTerminalAttachmentInfo);
+      claudeEndpointRecoveryBoundaryMocks.removeTerminalAttachmentInfo.mockImplementation(attachments.removeTerminalAttachmentInfo);
+      claudeEndpointRecoveryBoundaryMocks.evaluateLiveness.mockResolvedValue({ paneAlive: false, paneDead: true, observedAt: 1 });
+      const hosts = await import('@/integrations/terminalHost/defaultRegistry');
+      const adapters = await hosts.createDefaultTerminalHostRegistry();
+      vi.spyOn(adapters.zellij!, 'evaluateLiveness').mockImplementation(claudeEndpointRecoveryBoundaryMocks.evaluateLiveness);
+      vi.spyOn(adapters.zellij!, 'dispose').mockImplementation(claudeEndpointRecoveryBoundaryMocks.dispose);
+      vi.spyOn(hosts, 'createDefaultTerminalHostRegistry').mockResolvedValue(adapters);
+
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const spawnSession = await waitForSpawnSessionRegistration();
+      setActiveAccountSettingsSnapshot({
+        source: 'network', settingsVersion: Date.now(), loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+        settings: accountSettingsParse({ backendEnabledByTargetKey: { 'agent:claude': false } }),
+      });
+
+      const result = await spawnSession({
+        directory: '/tmp',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        existingSessionId: sessionId,
+        token: 't',
+      });
+
+      expect(result).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.BACKEND_DISABLED });
+      expect(spawnHappyCLI).not.toHaveBeenCalled();
+      expect(claudeEndpointRecoveryBoundaryMocks.dispose).not.toHaveBeenCalled();
+      await expect(attachments.readTerminalAttachmentInfo({ happyHomeDir: fixtureHome, sessionId }))
+        .resolves.toMatchObject({ attachmentId });
+    } finally {
+      if (run) {
+        harness.requestShutdown('happier-cli');
+        await run;
+      }
+      if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
+      claudeEndpointRecoveryBoundaryMocks.readTerminalAttachmentInfo.mockReset();
+      claudeEndpointRecoveryBoundaryMocks.readTerminalAttachmentInfo.mockResolvedValue(null);
+      claudeEndpointRecoveryBoundaryMocks.removeTerminalAttachmentInfo.mockReset();
+      claudeEndpointRecoveryBoundaryMocks.removeTerminalAttachmentInfo.mockResolvedValue(false);
+      claudeEndpointRecoveryBoundaryMocks.evaluateLiveness.mockReset();
+      claudeEndpointRecoveryBoundaryMocks.evaluateLiveness.mockResolvedValue({ paneAlive: true, observedAt: 1 });
+      claudeEndpointRecoveryBoundaryMocks.dispose.mockClear();
+      Object.defineProperty(configuration, 'happyHomeDir', { value: originalHome });
+      await rm(fixtureHome, { recursive: true, force: true });
       await restoreDaemonExitBoundary(exitSpy);
     }
   });

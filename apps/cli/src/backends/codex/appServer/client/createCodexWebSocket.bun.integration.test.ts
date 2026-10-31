@@ -10,11 +10,13 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws-node';
 
 import { withTempDir } from '@/testkit/fs/tempDir';
 
+import { writeFakeCodexAppServerProxyScript } from '../testkit/fakeCodexAppServer';
+
 const bunExecutable = process.env.HAPPIER_TEST_BUN_EXECUTABLE?.trim() || 'bun';
 const bunAvailable = spawnSync(bunExecutable, ['--version'], { encoding: 'utf8' }).status === 0;
 const execFileAsync = promisify(execFile);
 
-describe('Codex Unix WebSocket under Bun', (): void => {
+describe.each(['unix', 'daemonProxy'] as const)('Codex %s WebSocket under Bun', (transport): void => {
     it.skipIf(!bunAvailable && !process.env.CI).each(['source', 'bundle', 'compiled'] as const)('%s exchanges frames over IPC without negotiating compression', async (mode: 'source' | 'bundle' | 'compiled'): Promise<void> => {
         await withTempDir('codex-ws-', async (root: string): Promise<void> => {
             const socketPath = process.platform === 'win32'
@@ -37,19 +39,30 @@ describe('Codex Unix WebSocket under Bun', (): void => {
                     server.once('error', reject);
                     server.listen(socketPath, resolve);
                 });
-                const ownerPath = fileURLToPath(new URL('./createCodexUnixWebSocket.ts', import.meta.url));
+                const proxyPath = await writeFakeCodexAppServerProxyScript(root, socketPath);
+                const ownerPath = fileURLToPath(new URL('./createCodexWebSocket.ts', import.meta.url));
                 const loadOwner = mode !== 'bundle'
-                    ? `const { createCodexUnixWebSocket } = await import(${JSON.stringify(ownerPath)});`
+                    ? `const { createCodexWebSocket } = await import(${JSON.stringify(ownerPath)});`
                     : [
                         // Loading from a data URL prevents accidental resolution from the source node_modules.
                         `const build = await Bun.build({ entrypoints: [${JSON.stringify(ownerPath)}], target: 'bun', write: false });`,
                         'if (!build.success) throw new AggregateError(build.logs, "Transport bundle failed");',
                         'const code = Buffer.from(await build.outputs[0].text()).toString("base64");',
-                        'const { createCodexUnixWebSocket } = await import("data:text/javascript;base64," + code);',
+                        'const { createCodexWebSocket } = await import("data:text/javascript;base64," + code);',
                     ].join('\n');
                 const source = [
+                    'import { createConnection } from "node:net";',
+                    'import { spawn } from "node:child_process";',
+                    'import { Duplex } from "node:stream";',
                     loadOwner,
-                    `const socket = createCodexUnixWebSocket(${JSON.stringify(socketPath)});`,
+                    transport === 'daemonProxy'
+                        ? `const proxy = spawn(${JSON.stringify(bunExecutable)}, [${JSON.stringify(proxyPath)}], { stdio: ['pipe', 'pipe', 'pipe'] });`
+                        : 'const proxy = null;',
+                    'const proxyClosed = proxy ? new Promise(resolve => proxy.once("close", resolve)) : Promise.resolve();',
+                    transport === 'daemonProxy'
+                        ? 'const stream = Duplex.from({ readable: proxy.stdout, writable: proxy.stdin });'
+                        : `const stream = createConnection(${JSON.stringify(socketPath)});`,
+                    'const socket = createCodexWebSocket(() => stream);',
                     'try {',
                     '  const [, reply] = await Promise.all([',
                     '    new Promise((resolve, reject) => {',
@@ -62,7 +75,7 @@ describe('Codex Unix WebSocket under Bun', (): void => {
                     '    }),',
                     '  ]);',
                     '  console.log(reply);',
-                    '} finally { socket.terminate(); }',
+                    '} finally { socket.terminate(); proxy?.kill(); await proxyClosed; }',
                 ].join('\n');
                 let executable = bunExecutable;
                 let args = ['--eval', source];

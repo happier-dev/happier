@@ -8,32 +8,7 @@ import {
   createCodexAppServerTestEnvScope,
   writeFakeCodexAppServerScript,
 } from './appServer/testkit/fakeCodexAppServer';
-
-type FakeSession = {
-  sessionId: string;
-  rpcHandlerManager: {
-    registerHandler: ReturnType<typeof vi.fn>;
-    invokeLocal: ReturnType<typeof vi.fn>;
-  };
-  onUserMessage: ReturnType<typeof vi.fn>;
-  sendSessionEvent: ReturnType<typeof vi.fn>;
-  keepAlive: ReturnType<typeof vi.fn>;
-  sendSessionDeath: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn>;
-  flush: ReturnType<typeof vi.fn>;
-  updateAgentState: ReturnType<typeof vi.fn>;
-  updateMetadata: ReturnType<typeof vi.fn>;
-  getMetadataSnapshot: ReturnType<typeof vi.fn>;
-  fetchLatestUserPermissionIntentFromTranscript: ReturnType<typeof vi.fn>;
-  waitForMetadataUpdate: ReturnType<typeof vi.fn>;
-  popPendingMessage: ReturnType<typeof vi.fn>;
-  sendCodexMessage: ReturnType<typeof vi.fn>;
-  sendAgentMessage: ReturnType<typeof vi.fn>;
-  getLastObservedMessageSeq: ReturnType<typeof vi.fn>;
-  getLastObservedUserMessageSeq: ReturnType<typeof vi.fn>;
-  markObservedUserMessage: ReturnType<typeof vi.fn>;
-  beginTurnAssistantTextSnapshot: ReturnType<typeof vi.fn>;
-};
+import { createRunCodexFakeSession } from './appServer/testkit/runCodexFakeSession';
 
 let sessionInputConsumerWaitForNextInputImpl: ((opts: any) => Promise<any>) | null = null;
 
@@ -203,56 +178,6 @@ vi.mock('@/rpc/handlers/killSession', () => ({
   registerKillSessionHandler: vi.fn(),
 }));
 
-function createFakeSession(initialMetadata: Record<string, unknown>): {
-  session: FakeSession;
-  getMetadataSnapshot: () => Record<string, unknown>;
-} {
-  let metadata = { ...initialMetadata };
-  let lastObservedMessageSeq = 0;
-  let lastObservedUserMessageSeq = 0;
-
-  const session = {
-    sessionId: 'sess_1',
-    rpcHandlerManager: {
-      registerHandler: vi.fn(),
-      invokeLocal: vi.fn(),
-    },
-    onUserMessage: vi.fn(),
-    sendSessionEvent: vi.fn(),
-    keepAlive: vi.fn(),
-    sendSessionDeath: vi.fn(),
-    close: vi.fn(async () => {}),
-    flush: vi.fn(async () => {}),
-    updateAgentState: vi.fn((updater: (state: Record<string, unknown>) => Record<string, unknown>) => updater({})),
-    updateMetadata: vi.fn((updater: (current: Record<string, unknown>) => Record<string, unknown>) => {
-      metadata = updater(metadata);
-      return metadata;
-    }),
-    getMetadataSnapshot: vi.fn(() => metadata),
-    fetchLatestUserPermissionIntentFromTranscript: vi.fn(async () => null),
-    waitForMetadataUpdate: vi.fn(async () => false),
-    popPendingMessage: vi.fn(async () => false),
-    sendCodexMessage: vi.fn(() => {
-      lastObservedMessageSeq += 1;
-    }),
-    sendAgentMessage: vi.fn(() => {
-      lastObservedMessageSeq += 1;
-    }),
-    getLastObservedMessageSeq: vi.fn(() => lastObservedMessageSeq),
-    getLastObservedUserMessageSeq: vi.fn(() => lastObservedUserMessageSeq),
-    markObservedUserMessage: vi.fn(() => {
-      lastObservedUserMessageSeq += 1;
-      lastObservedMessageSeq = Math.max(lastObservedMessageSeq, lastObservedUserMessageSeq);
-    }),
-    beginTurnAssistantTextSnapshot: vi.fn(() => 'turn-token'),
-  };
-
-  return {
-    session,
-    getMetadataSnapshot: () => metadata,
-  };
-}
-
 describe('runCodex app-server startup plan mode', () => {
   let envScope = createCodexAppServerTestEnvScope();
   const tempRoots = new Set<string>();
@@ -336,7 +261,7 @@ describe('runCodex app-server startup plan mode', () => {
       HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '10000',
     });
 
-    const { session } = createFakeSession({
+    const { session } = createRunCodexFakeSession({
       path: root,
       host: 'localhost',
       flavor: 'codex',
@@ -444,7 +369,7 @@ describe('runCodex app-server startup plan mode', () => {
     tempRoots.add(root);
     await mkdir(root, { recursive: true });
 
-    const { session } = createFakeSession({
+    const { session } = createRunCodexFakeSession({
       path: root,
       host: 'localhost',
       flavor: 'codex',
@@ -570,7 +495,7 @@ describe('runCodex app-server startup plan mode', () => {
       HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '10000',
     });
 
-    const { session } = createFakeSession({
+    const { session } = createRunCodexFakeSession({
       path: root,
       host: 'localhost',
       flavor: 'codex',

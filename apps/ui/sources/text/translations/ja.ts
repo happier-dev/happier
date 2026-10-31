@@ -1485,6 +1485,13 @@ export const ja: TranslationStructure = {
         bypassPermissions: "すべての権限をスキップ",
       },
     },
+    defaultBackend: {
+        title: 'デフォルトのAIバックエンド',
+        footer: 'プロファイルが選択されていて他のバックエンドが選ばれていない場合、新しいセッションをこのバックエンドで開始します。',
+        noneTitle: 'デフォルトなし',
+        noneSubtitle: 'Happierが通常どおりバックエンドを選択します。',
+        selectedSubtitle: 'このプロファイルでセッションを開始するときに使用されます。',
+    },
     defaultPermissions: {
       title: "既定の権限",
       footer:
@@ -4451,6 +4458,10 @@ localTailscale: {
                         title: "Claude Code の実験機能",
                         footer: "これらの設定は、Happier から開始する Claude のローカル（ターミナル）およびリモート（Agent SDK）セッションの両方に適用されます。"
                     },
+                    claudeIdleReclaim: {
+                        title: "待機中のセッション",
+                        footer: "次のプロンプトで同じ Claude セッションを再開します。再開には少し時間がかかる場合があります。メモリ内の状態は解放されます。バックグラウンドタスク、予定された処理、ファイルチェックポイントがある間は実行を続けます。統合ターミナルのセッションは停止しません。"
+                    },
                     claudeRemoteSdk: {
                         title: "クラシックランタイム（Agent SDK フォールバック）",
                         footer: "統合ターミナルランタイムがオフまたは利用できない場合に Agent SDK パスを使用します。"
@@ -4534,6 +4545,14 @@ localTailscale: {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Agent Teams を強制的に有効化",
                         subtitle: "Happier から開始するすべての Claude セッションで、Claude Code の実験的 Agent Teams（エージェント群）を有効にします。"
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "待機中の Claude プロセスを解放",
+                        subtitle: "一定時間操作がないとメモリを解放します。初期設定はオフです。"
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "待機時間（分）",
+                        subtitle: "有効にしたリモート Claude セッションを待機状態に保つ時間を選びます。"
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Agent SDK フォールバックを使用",

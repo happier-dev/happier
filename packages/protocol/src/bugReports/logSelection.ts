@@ -1,10 +1,12 @@
 import { z } from 'zod';
 
-export const BugReportLogSelectionSchema = z.object({
+import { lazySchema } from '../lazySchema.js';
+
+export const BugReportLogSelectionSchema = lazySchema(() => z.object({
   daemon: z.boolean(),
   session: z.boolean(),
   provider: z.boolean(),
-});
+}));
 
 export type BugReportLogSelection = z.infer<typeof BugReportLogSelectionSchema>;
 
@@ -18,7 +20,7 @@ export function resolveBugReportLogSelection(input?: Partial<BugReportLogSelecti
   return { daemon: input?.daemon !== false, session: input?.session !== false, provider: input?.provider === true };
 }
 
-export const BugReportSessionDiagnosticsSchema = z.object({
+export const BugReportSessionDiagnosticsSchema = lazySchema(() => z.object({
   context: z.object({
     sessionId: z.string(),
     machineId: z.string().optional(),
@@ -36,6 +38,6 @@ export const BugReportSessionDiagnosticsSchema = z.object({
       content: z.string(),
     }).optional(),
   })),
-});
+}));
 
 export type BugReportSessionDiagnostics = z.infer<typeof BugReportSessionDiagnosticsSchema>;

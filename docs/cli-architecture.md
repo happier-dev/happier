@@ -146,6 +146,31 @@ existing replay-capture owner. The shared runtime preserves fresh input and
 output emitted during native resume and imports captured history only when
 requested.
 
+## Interactive turn silence notices (development)
+
+The session turn lifecycle owns an observation-only silence timer. While a turn
+is active, correlated live provider messages reset it at provider ingress, before
+transcript filtering or buffering. Transcript delivery, historical replay,
+host-generated messages, and presence heartbeats are not provider activity.
+
+Claude Agent SDK 0.2.123 buffers native messages before its public iterator. The
+remote runner observes its supported spawn transport through a byte-preserving
+stdout transform, so transcript persistence cannot delay receipt observation.
+The existing primary-message classifier excludes SDK control frames, replay, and
+sidechains; native init and compaction receipt extend the existing session
+lineage before later messages in the same burst are classified.
+
+After 15 minutes without such an event, the runner writes one `turn stall noticed`
+entry to its file log, including session and turn identity and the observed event
+age. Continued silence produces no further entry; a new provider event starts a
+new episode. Terminal turn states and session shutdown stop observation.
+`HAPPIER_TURN_STALL_WARN_MS` overrides the interval; `0` disables it.
+
+This development diagnostic changes no session status and performs no abort,
+restart, or other recovery. A healthy long tool call may also be silent. It does
+not detect idle-process CPU spins, establish the cause of a hang, or replace
+provider-specific terminal dialog recovery and task-activity tracking.
+
 ## CLI entry flow
 
 ```mermaid
@@ -176,6 +201,26 @@ flowchart TD
 - Parses subcommands (`doctor`, `auth`, `connect`, `codex`, `gemini`, and default run flows).
 - Ensures auth and machine setup when needed (`authAndSetupMachineIfNeeded`).
 - Starts the daemon or runs an agent directly based on subcommand/context.
+
+### Profile default backend selection (development)
+
+The optional profile `defaultBackendTargetKey` selects a backend only when the
+invocation has no explicit Agent command or backend target. Profile lookup and
+target compatibility are owned by `packages/protocol/src/profiles`; CLI routing
+uses the existing session argument parser and settled account-settings context.
+Authentication and settings preparation precede custom-profile routing, and the
+selected handler consumes that same preparation. Configured ACP defaults use the
+existing catalog handler and retain their exact backend target for profile
+compatibility, secrets and permission defaults.
+
+The profile editor and runtime delegate compatibility to the protocol owner.
+Exact target keys win over released transport-placeholder keys and legacy Agent
+compatibility. Legacy keys are read compatibility, not a second policy. Missing
+compatibility remains permissive for custom profiles and restrictive for built-ins.
+Older profile readers ignore the new optional default, but an older editor can
+strip it during writeback; this addition does not provide lossless old-editor
+round trips. The successor line translates the preference into its native
+preferred-Agent model rather than adding another default field.
 
 ## Automated session targets and permissions (development)
 

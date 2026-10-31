@@ -82,13 +82,28 @@ event and the separate Pending count/version event.
 In development source, Claude's Agent SDK and legacy remote runtimes share
 `createClaudeRemotePromptSettlementTracker`. They request the documented
 [`--replay-user-messages`](https://code.claude.com/docs/en/cli-reference) acknowledgment and correlate its main-chain user UUID
-with the exact submitted Pending prompt. Local enqueue, SDK iterable consumption,
-and stdin writes do not settle Pending or retire its replay handoff. A submitted
-prompt without acknowledgment has an uncertain delivery outcome; its handoff
+with the exact submitted Pending prompt. Native results that identify an answered
+prompt through `user_message_uuids` (or the older `user_message_uuid`) also settle
+that prompt; their result output remains visible. Local enqueue, SDK iterable
+consumption, and stdin writes do not settle Pending or retire its replay handoff.
+A submitted prompt without acknowledgment has an uncertain delivery outcome; its handoff
 remains available and Pending does not automatically resend it. Inputs rejected
 before submission remain retryable. Matching acknowledgment echoes carry
 provider-only context and are excluded from the visible transcript. Locally
 handled commands retain their explicit local settlement.
+
+The same owner tracks which submitted prompts still await results, separately
+from delivery acknowledgement. An attributable result can finish those prompts
+while `queued_turn_count` still reports other native sends. Earlier or partial
+results retain foreground custody until the remaining submitted prompts have
+outcomes. Attribution is consumed by the ordered result handler, so raw ingress
+read-ahead cannot make an older result finish a newer prompt. Native results
+without attribution retain the existing queue-count boundary. Because native
+attribution lists are capped at 64 entries, an empty-queue result also retains
+the existing closeout for omitted older IDs once the latest submitted prompt
+has an attributable outcome; it does not acknowledge omitted delivery receipts.
+Elapsed silence, server snapshots, background-task counts, and unattributed
+idle events do not establish that a submitted prompt completed or was discarded.
 
 In development source, Claude unified terminal reports exact transcript-proven acceptance before stopping
 for missing required session hooks. The hook failure still stops the wrapper and

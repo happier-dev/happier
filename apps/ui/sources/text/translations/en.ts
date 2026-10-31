@@ -3869,6 +3869,10 @@ export const en = {
                         title: "Claude Code experiments",
                         footer: "These settings apply to both local Claude (terminal) and remote Claude (Agent SDK) sessions started by Happier."
                     },
+                    claudeIdleReclaim: {
+                        title: "Idle sessions",
+                        footer: "Your next prompt resumes the same Claude session and may take a little longer. In-memory state is released. Background tasks, scheduled work and file checkpointing keep it running. Unified terminal sessions stay running."
+                    },
                     claudeRemoteSdk: {
                         title: "Classic runtime (Agent SDK fallback)",
                         footer: "Use the Agent SDK path when unified terminal runtime is off or unavailable."
@@ -3952,6 +3956,14 @@ export const en = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Force-enable Agent Teams",
                         subtitle: "Enable Claude Code experimental Agent Teams (agent swarm) in all Claude sessions started by Happier."
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "Release idle Claude processes",
+                        subtitle: "Free memory after a quiet period. Off by default."
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "Idle after (minutes)",
+                        subtitle: "Choose how long an opted-in remote Claude session stays warm."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Use Agent SDK fallback",
@@ -10821,6 +10833,13 @@ settingsSession: {
                 plan: 'Plan before executing',
                 bypassPermissions: 'Skip all permissions',
             },
+        },
+        defaultBackend: {
+            title: 'Default AI backend',
+            footer: 'Starts new sessions on this backend when the profile is selected and no other backend is chosen.',
+            noneTitle: 'No default',
+            noneSubtitle: 'Happier picks the backend as usual.',
+            selectedSubtitle: 'Used when starting a session with this profile.',
         },
         defaultPermissions: {
             title: 'Default permissions',

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SDKMessage, SDKUserMessage } from '@/backends/claude/sdk';
 import type { EnhancedMode } from './loop';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 
 const mockQuery = vi.fn();
 const ensureJavaScriptRuntimeExecutableMock = vi.fn(async () => '/managed/js-runtime');
@@ -109,6 +110,44 @@ describe('claudeRemote', () => {
     ensureJavaScriptRuntimeExecutableMock.mockResolvedValue('/managed/js-runtime');
     resolveClaudeCliPathMock.mockReset();
     resolveClaudeCliPathMock.mockReturnValue('/resolved/claude-cli.js');
+  });
+
+
+  it('does not refresh turn silence from replay, foreign sessions or sidechain SDK traffic', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const notices: unknown[] = [];
+    const lifecycle = createSessionTurnLifecycle({ sessionId: 'legacy-happier', enqueueSessionTurn: async () => {},
+      turnStallWarnMs: 100, onTurnStallNotice: notice => notices.push(notice) });
+    // The Claude SDK query is the boundary; its callback and turn observer remain real.
+    mockQuery.mockImplementation((config: QueryCall) => ({
+      async *[Symbol.asyncIterator]() {
+        config.onMessageReceived?.(systemInitMessage('native-main'));
+        // Stdout can advance ahead of the iterator while transcript work is pending.
+        config.onMessageReceived?.({ type: 'system', subtype: 'compact_boundary', session_id: 'native-compacted' });
+        yield systemInitMessage('native-main');
+        await vi.advanceTimersByTimeAsync(75);
+        config.onMessageReceived?.({ type: 'assistant', session_id: 'native-compacted', message: { role: 'assistant', content: [] } });
+        await vi.advanceTimersByTimeAsync(99);
+        expect(notices).toEqual([]);
+        config.onMessageReceived?.({ type: 'assistant', session_id: 'foreign', message: { role: 'assistant', content: [] } });
+        config.onMessageReceived?.({ type: 'assistant', session_id: 'native-compacted', parent_tool_use_id: 'child', message: { role: 'assistant', content: [] } });
+        config.onMessageReceived?.({ type: 'assistant', session_id: 'native-compacted', isSidechain: true, message: { role: 'assistant', content: [] } });
+        config.onMessageReceived?.({ type: 'assistant', session_id: 'native-compacted', isReplay: true, message: { role: 'assistant', content: [] } });
+        await vi.advanceTimersByTimeAsync(1);
+        expect(notices).toHaveLength(1);
+        expect(notices[0]).toMatchObject({ lastEventAgeMs: 100 });
+        yield resultMessage();
+      },
+    }));
+    try {
+      await lifecycle.beginTurn({ provider: 'claude' });
+      const { claudeRemote } = await import('./claudeRemote');
+      await claudeRemote(createBaseOptions({ onProviderEvent: () => lifecycle.observeProviderTurnEvent() }));
+    } finally {
+      await lifecycle.endSession();
+      vi.useRealTimers();
+    }
   });
 
   it('keeps resume sessionId even if claudeCheckSession returns false (avoid false-negative context loss)', async () => {

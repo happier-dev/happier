@@ -20,6 +20,7 @@ import { waitForCondition } from '@/testkit/async/waitFor';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { resolveConnectedServiceHomeDir } from './homes/resolveConnectedServiceHomeDir';
 import { openSqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
+import { createProviderCliFixture } from '@/testkit/process/providerCliFixture';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 
 /**
@@ -172,6 +173,7 @@ async function expectPathRemoved(path: string): Promise<void> {
 
 describe('resolveConnectedServiceAuthForSpawn post-materialization resume reachability gate', () => {
   it('existing-state resume refuses native-only state and preserves the stable indexed rollout when present', async () => {
+    const providerEnv = await createProviderCliFixture(['codex']);
     const testRoot = await mkdtemp(join(tmpdir(), 'happier-existing-resume-'));
     const activeServerDir = join(testRoot, 'server');
     const sourceCodexHome = join(testRoot, 'native');
@@ -184,11 +186,7 @@ describe('resolveConnectedServiceAuthForSpawn post-materialization resume reacha
     const credentials = makeLegacyCredentials();
     const now = 1_000_000;
     try {
-      // Provider admission stays real; only executable presence is supplied.
-      const codexPath = await writeExecutableShim({
-        dir: testRoot, fileName: 'codex', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
-      });
-      const processEnv = { CODEX_HOME: sourceCodexHome, HAPPIER_CODEX_PATH: codexPath };
+      const processEnv = { ...providerEnv, CODEX_HOME: sourceCodexHome };
       await mkdir(join(sourceCodexHome, 'sessions'), { recursive: true });
       await writeFile(sourcePath, 'native-only transcript\n');
       const resolveLaunch = async () => {

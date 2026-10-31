@@ -56,6 +56,7 @@ import { defaultNameFromUrl } from './server/commandUtilities';
 import { DEFER_SERVER_SELECTION_FOLLOW_UP_ENV } from './backgroundServiceFollowUp';
 import {
     buildSetupPlan,
+    describeHostOnThisComputerChoice,
     parseSetupArgs,
     type SetupAutonomy,
     type SetupRelayReachability,
@@ -237,7 +238,7 @@ async function runCliStep(
     });
 }
 
-async function askWhereTheRelayLives(): Promise<SetupRelaySelection> {
+async function askWhereTheRelayLives(tailscale: TailscaleStatusSnapshot | null): Promise<SetupRelaySelection> {
     const setupChoicePrompt = createSetupChoicePrompt({
         machineName: hostname(),
         subtitle: 'Connect your devices. Your coding agents run here.',
@@ -245,7 +246,7 @@ async function askWhereTheRelayLives(): Promise<SetupRelaySelection> {
         choices: [
             { id: 'cloud', key: 'c', label: 'Happier Cloud (recommended)', description: 'No server maintenance', isDefault: true },
             { id: 'existing', key: 'r', label: 'Existing server', description: 'Address from the Happier app or your administrator' },
-            { id: 'thisComputer', key: 't', label: 'Host on this computer', description: 'Installs an additional server; needs a reachable network route' },
+            { id: 'thisComputer', key: 't', label: 'Host on this computer', description: describeHostOnThisComputerChoice(tailscale) },
         ],
     });
     const choice = await promptMultipleChoice(
@@ -453,13 +454,16 @@ export async function handleSetupCliCommand(context: CommandContext): Promise<vo
 
     let relaySelection = parsed.relaySelection;
 
-    // Probed only for a relay we are about to host here, and only once: nothing
-    // else in this flow depends on Tailscale.
+    // Probed at most once, and only when a relay may be hosted here: for that
+    // relay's reachability, or to describe the choice of hosting one.
     let tailscaleProbe: Promise<TailscaleStatusSnapshot | null> | null = null;
+    const probeTailscale = (): Promise<TailscaleStatusSnapshot | null> => {
+        tailscaleProbe ??= readTailscaleStatusSnapshot();
+        return tailscaleProbe;
+    };
     const tailscaleFor = async (selection: SetupRelaySelection | null): Promise<TailscaleStatusSnapshot | null> => {
         if (selection?.kind !== 'thisComputer') return null;
-        tailscaleProbe ??= readTailscaleStatusSnapshot();
-        return await tailscaleProbe;
+        return await probeTailscale();
     };
 
     const planFor = async (selection: SetupRelaySelection | null) => buildSetupPlan({
@@ -488,7 +492,7 @@ export async function handleSetupCliCommand(context: CommandContext): Promise<vo
     // The one question setup owns. A plan that stops has already said why, so
     // asking here would be asking someone who is not there.
     if (needsRelayChoice) {
-        relaySelection = await askWhereTheRelayLives();
+        relaySelection = await askWhereTheRelayLives(await probeTailscale());
         plan = await planFor(relaySelection);
     }
 

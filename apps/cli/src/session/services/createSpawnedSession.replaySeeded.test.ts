@@ -164,6 +164,22 @@ describe('createSpawnedSession — Replay-seeded creation', () => {
     expect(archiveSessionByIdBestEffort).toHaveBeenCalledWith({ token: 'token', sessionId: 'sess_child' });
   });
 
+  it('settles the orphaned row when a disabled backend rejects the spawn before admission', async () => {
+    getOrCreateSessionByTag.mockResolvedValue({ session: rawSession(CANONICAL_METADATA), created: true });
+    spawnDaemonSession.mockResolvedValue({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.BACKEND_DISABLED,
+      errorMessage: 'codex is disabled in your account settings',
+    });
+
+    await expect(createSpawnedSession(replaySeededParams())).rejects.toMatchObject({
+      code: SPAWN_SESSION_ERROR_CODES.BACKEND_DISABLED,
+    });
+
+    expect(archiveSessionByIdBestEffort).toHaveBeenCalledTimes(1);
+    expect(archiveSessionByIdBestEffort).toHaveBeenCalledWith({ token: 'token', sessionId: 'sess_child' });
+  });
+
   it('never archives a row when an older server omits the atomic create resolution', async () => {
     // Older create-or-load responses have no additive `resolution` field. The
     // client therefore treats ownership as unknown (`created: false`) and must

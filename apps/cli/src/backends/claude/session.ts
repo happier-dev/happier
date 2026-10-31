@@ -351,6 +351,8 @@ export class Session {
     private sessionIdMustBeResumed = false;
     mode: 'local' | 'remote' = 'local';
     thinking: boolean = false;
+    /** When `thinking` was last written; idle provider exit measures quiet time from here. */
+    thinkingChangedAtMs: number = Date.now();
     private currentTaskId: string | null = null;
     private permissionRpcRouter: ClaudePermissionRpcRouter | null = null;
     private happierMcpBridge:
@@ -818,6 +820,7 @@ export class Session {
     private applyThinkingState = (thinking: boolean): boolean => {
         const wasThinking = this.thinking;
         this.thinking = thinking;
+        this.thinkingChangedAtMs = Date.now();
         this.client.keepAlive(thinking, this.mode);
         this.scheduleNextKeepAlive();
         return wasThinking !== thinking;
@@ -859,6 +862,7 @@ export class Session {
         const id = this.currentTaskId ?? randomUUID();
         this.currentTaskId = null;
         this.thinking = false;
+        this.thinkingChangedAtMs = Date.now();
         this.client.keepAlive(false, this.mode);
         this.client.sendAgentMessage('claude', { type: 'turn_aborted', id });
     }

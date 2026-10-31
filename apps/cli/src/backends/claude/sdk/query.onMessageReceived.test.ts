@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Query } from './query';
 
 describe('Claude SDK Query (onMessageReceived)', () => {
-  it('forwards the provider tool-use id with a can_use_tool control request', async () => {
+  it('forwards provider tool-use and sidechain ids with a can_use_tool control request', async () => {
     const stdout = new PassThrough();
     const canCallTool = vi.fn(async () => ({ behavior: 'allow' as const, updatedInput: {} }));
     const q = new Query(
@@ -23,12 +23,14 @@ describe('Claude SDK Query (onMessageReceived)', () => {
         tool_name: 'Bash',
         input: { command: 'git status' },
         tool_use_id: 'toolu_1',
+        agent_id: 'child-agent',
       },
     }, signal)).resolves.toEqual({ behavior: 'allow', updatedInput: {} });
 
     expect(canCallTool).toHaveBeenCalledWith('Bash', { command: 'git status' }, {
       signal,
       toolUseId: 'toolu_1',
+      agentId: 'child-agent',
     });
 
     stdout.end();

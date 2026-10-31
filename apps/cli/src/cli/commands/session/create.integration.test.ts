@@ -8,7 +8,7 @@ import {
   createApiSessionSocketStub,
   type ApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
-import { deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1, AIBackendProfileSchema, type AIBackendProfile } from '@happier-dev/protocol';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
@@ -63,8 +63,10 @@ describe('happier session create (integration)', () => {
   let callerSessionGetAttempts = 0;
   let callerPermissionMode: 'default' | 'safe-yolo' | 'yolo' = 'yolo';
   let sessionSocket: ApiSessionSocketStub;
+  let profiles: AIBackendProfile[];
 
   beforeEach(async () => {
+    profiles = [];
     happyHomeDir = await createTempDir('happier-cli-session-create-');
 
     const sessionId = 'sess_integration_create_123';
@@ -92,6 +94,11 @@ describe('happier session create (integration)', () => {
 
     server = createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'GET' && url.pathname === '/v2/account/settings') {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ version: 1, content: { t: 'plain', v: { profiles } } }));
+        return;
+      }
 
       if (req.method === 'POST' && url.pathname === `/spawn-session`) {
         const chunks: Buffer[] = [];
@@ -284,6 +291,27 @@ describe('happier session create (integration)', () => {
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
+  });
+
+  it.each([
+    { defaultBackendTargetKey: 'agent:codex', explicit: [], expected: { kind: 'builtInAgent', agentId: 'codex' } },
+    { defaultBackendTargetKey: 'acpBackend:review-bot', explicit: [], expected: { kind: 'configuredAcpBackend', backendId: 'review-bot' } },
+    { defaultBackendTargetKey: 'acpBackend:review-bot', explicit: ['--backend', 'agent:claude'], expected: { kind: 'builtInAgent', agentId: 'claude' } },
+  ])('uses the profile target through real spawn transport ($defaultBackendTargetKey, explicit=$explicit)', async ({ defaultBackendTargetKey, explicit, expected }) => {
+    profiles = [AIBackendProfileSchema.parse({ id: 'work', name: 'Work', defaultBackendTargetKey })];
+    const { handleSessionCommand } = await import('./index');
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['create', '--launch-profile', 'work', ...explicit, '--json'], {
+        readCredentialsFn: async () => ({ token: 'token_test', encryption: {
+          type: 'dataKey', publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed), machineKey: machineKeySeed,
+        } }),
+      });
+      expect(output.json()).toMatchObject({ ok: true, kind: 'session_create' });
+      expect(observedSpawnBody).toMatchObject({ backendTarget: expected, profileId: 'work' });
+    } finally {
+      output.restore();
+    }
   });
 
   it('returns a session_create JSON envelope and marks created=true when tag does not exist', async () => {

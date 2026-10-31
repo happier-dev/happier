@@ -1,11 +1,13 @@
 import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
 import { AGENTS_CORE, resolveAgentIdFromFlavor, type AgentId } from '@happier-dev/agents';
-import { parseBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey, parseBackendTargetKey } from '@happier-dev/protocol';
 
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
+import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
+import { resolveProfileRoutedBackendTargetFromSettings } from '@/cli/profileDefaultAgentRouting';
 import type { Credentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
@@ -63,7 +65,9 @@ async function resolveSessionCreateConnectedServices(params: Readonly<{
 
 export async function cmdSessionCreate(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
+  deps: Readonly<{
+    readCredentialsFn: () => Promise<Credentials | null>;
+  }>,
 ): Promise<void> {
   const json = wantsJson(argv);
   const parsedOptions = parseSessionCreateSpawnOptions(argv);
@@ -86,12 +90,36 @@ export async function cmdSessionCreate(
     throw new Error(`Usage: ${SESSION_CREATE_USAGE}`);
   }
 
+  // A launch profile with a default backend routes the agent when the caller did not
+  // choose one explicitly; the parser emits `agentId` only for that no-choice case.
+  const profileIdForRouting = typeof parsedOptions.actionInput.profileId === 'string'
+    ? parsedOptions.actionInput.profileId.trim()
+    : '';
+  const shouldRouteProfileDefault = profileIdForRouting.length > 0
+    && parsedOptions.actionInput.agentId === DEFAULT_CATALOG_AGENT_ID;
+  const routedTarget = shouldRouteProfileDefault
+    ? await resolveProfileRoutedBackendTargetFromSettings({
+      profileQuery: profileIdForRouting,
+      credentials,
+    })
+    : null;
+  const effectiveParsedOptions = routedTarget
+    ? {
+      ...parsedOptions,
+      backendTargetKey: buildBackendTargetKey(routedTarget),
+      actionInput: (() => {
+        const { agentId: _implicitAgentId, ...input } = parsedOptions.actionInput;
+        return { ...input, backendTargetKey: buildBackendTargetKey(routedTarget) };
+      })(),
+    }
+    : parsedOptions;
+
   const executor = createCliActionExecutorFromCredentials({ credentials });
   let actionRes;
   try {
     const actionInput = await resolveSessionCreateConnectedServices({
       executor,
-      parsedOptions,
+      parsedOptions: effectiveParsedOptions,
     });
     actionRes = await executor.execute(
       'session.spawn_new',

@@ -38,6 +38,7 @@ import { logger } from '@/ui/logger';
 import { delay } from '@/utils/time';
 import { createSerializedWorkQueueDiagnostics, type SerializedWorkDiagnosticContext } from '@/utils/serializedWorkQueueDiagnostics';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
+import { markCodexTurnFailureSettled } from '../runtime/sessionTurnLifecycle';
 import type {
     ActiveTurnPendingPumpOptions,
     DrainPendingOptions,
@@ -3137,6 +3138,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
             emitAllPendingProviderPromptsAsUndeliverable();
         }
         if (options?.error) {
+            // This runtime has terminalized the session turn for this failure (failed or
+            // interrupted above); the runner must not surface it as another failed turn.
+            markCodexTurnFailureSettled(options.error, options.flushReason === 'failure' ? 'failed' : 'interrupted');
             activeTurn.reject(options.error);
             return;
         }
@@ -3217,8 +3221,13 @@ export function createCodexAppServerRuntime(params: Readonly<{
     const surfaceCodexAppServerTurnFailure = async (
         failure: Error,
         providerTurnId: string | null,
-        deferPresentationToPromptLoop = false,
+        options: Readonly<{
+            deferPresentationToPromptLoop?: boolean;
+            /** The provider turn already ended without a failure record (cancelled for a retry that will not run). */
+            providerTurnAlreadyEnded?: boolean;
+        }> = {},
     ): Promise<Awaited<ReturnType<typeof surfacePrimarySessionRuntimeIssue>> | null> => {
+        const deferPresentationToPromptLoop = options.deferPresentationToPromptLoop === true;
         if (!deferPresentationToPromptLoop) {
             try {
                 params.session.sendCodexMessage({
@@ -3235,15 +3244,22 @@ export function createCodexAppServerRuntime(params: Readonly<{
             cause: 'status_error' as const,
             error: failure,
         };
-        const issue = params.session.sessionTurnLifecycle || deferPresentationToPromptLoop
+        // A lifecycle-backed active turn records this issue through finishPendingTurn; an
+        // already-ended turn has no such owner left, so the failure allocates its own failed turn.
+        const recordAfterEndedTurn = options.providerTurnAlreadyEnded === true && Boolean(params.session.sessionTurnLifecycle);
+        const issue = (params.session.sessionTurnLifecycle && !recordAfterEndedTurn) || deferPresentationToPromptLoop
             ? classifyPrimarySessionRuntimeIssue(issueInput)
             : await surfacePrimarySessionRuntimeIssue({
                 ...issueInput,
                 session: params.session,
+                ...(recordAfterEndedTurn ? { allocateTurnWhenIdle: true } : {}),
             }).catch((error) => {
                 logger.debug('[codex-app-server] Failed to surface primary runtime issue (non-fatal)', error);
                 return null;
             });
+        if (recordAfterEndedTurn && issue) {
+            markCodexTurnFailureSettled(failure, 'failed');
+        }
         if (!params.session.sessionTurnLifecycle && !deferPresentationToPromptLoop) {
             publishCodexTurnAbortedMessage();
         }
@@ -3285,7 +3301,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         // lifecycle slot and permanently hides the exact auth/quota classification.
         let issue: Awaited<ReturnType<typeof surfacePrimarySessionRuntimeIssue>> | null = null;
         try {
-            issue = await surfaceCodexAppServerTurnFailure(failure, providerTurnId, deferPresentationToPromptLoop);
+            issue = await surfaceCodexAppServerTurnFailure(failure, providerTurnId, { deferPresentationToPromptLoop });
         } finally {
             // Diagnostics and lifecycle persistence must never retain native turn
             // ownership after the provider process/turn has already terminated.
@@ -3587,29 +3603,43 @@ export function createCodexAppServerRuntime(params: Readonly<{
         return true;
     };
 
-    const notificationMatchesPendingTurn = (notificationParams: unknown): boolean => {
+    const notificationMatchesPendingTurn = (
+        notificationParams: unknown,
+        notificationTurnId: string | null = readProviderEventTurnId(notificationParams),
+    ): boolean => {
         const activeTurn = pendingTurn;
         if (!activeTurn) return false;
         const notificationThreadId = readThreadId(notificationParams);
         if (notificationThreadId && notificationThreadId !== activeTurn.threadId) {
             return false;
         }
-        const notificationTurnId = readProviderEventTurnId(notificationParams);
         if (hasProviderTurnAlreadyTerminated(notificationParams, notificationTurnId)) {
             return false;
         }
         return !notificationTurnId || !activeTurn.turnId || notificationTurnId === activeTurn.turnId;
     };
 
+    const withProviderTurnObservation = <T>(
+        attachedClientGeneration: number,
+        matchesPendingTurn: boolean,
+        work: () => T,
+    ): T => {
+        if (attachedClientGeneration === clientLifecycleGeneration && matchesPendingTurn) {
+            params.session.sessionTurnLifecycle?.observeProviderTurnEvent();
+        }
+        return work();
+    };
+
     const terminalNotificationMatchesPendingTurn = (
         notificationParams: unknown,
         terminalTurnId: string | null,
     ): boolean => {
-        if (!notificationMatchesPendingTurn(notificationParams)) return false;
+        if (!notificationMatchesPendingTurn(notificationParams, terminalTurnId)) return false;
         if (!terminalTurnId) return true;
         const activeTurn = pendingTurn;
         if (!activeTurn) return false;
-        return activeTurn.turnId === terminalTurnId;
+        return activeTurn.turnId === terminalTurnId
+            || (!activeTurn.turnId && pendingTurnHasProviderAttributedActivity);
     };
 
     const resolveStreamUpdateContext = async (
@@ -3671,7 +3701,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             })();
             return historyBoundary.onNotification(
                 { method, params: historyIdentityParams },
-                () => runBridgeWork({
+                () => withProviderTurnObservation(attachedClientGeneration, notificationMatchesPendingTurn(notificationParams), () => runBridgeWork({
                     operation: 'provider-notification',
                     details: { method },
                 }, async () => {
@@ -3724,7 +3754,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     } finally {
                         retireAcceptedProviderPrompt(correlatedProviderPrompt, providerTurnId);
                     }
-                }),
+                })),
             );
         });
     };
@@ -3757,16 +3787,14 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     });
                     client.registerNotificationHandler('turn/started', (notificationParams) => {
                         if (attachedClientGeneration !== clientLifecycleGeneration) return;
+                        const notificationTurnId = readProviderEventTurnId(notificationParams, { allowTopLevelId: true });
                         void historyBoundary.onNotification(
                             { method: 'turn/started', params: notificationParams },
-                            () => runBridgeWork({
+                            () => withProviderTurnObservation(attachedClientGeneration, notificationMatchesPendingTurn(notificationParams, notificationTurnId), () => runBridgeWork({
                                 operation: 'provider-notification',
                                 details: { method: 'turn/started' },
                             }, async () => {
                                 if (attachedClientGeneration !== clientLifecycleGeneration) return;
-                                const notificationTurnId = readProviderEventTurnId(notificationParams, {
-                                    allowTopLevelId: true,
-                                });
                                 const notificationThreadId = readThreadId(notificationParams);
                                 if (notificationThreadId && syntheticSubagentThreadIds.has(notificationThreadId)) {
                                     if (notificationTurnId) await ensureSyntheticSubagentThread(notificationThreadId, notificationTurnId);
@@ -3775,7 +3803,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                                 const activeTurn = await adoptNativeTurnFromProviderActivity(notificationParams, {
                                     turnId: notificationTurnId,
                                 });
-                                if (!activeTurn || !notificationMatchesPendingTurn(notificationParams)) {
+                                if (!activeTurn || !notificationMatchesPendingTurn(notificationParams, notificationTurnId)) {
                                     return;
                                 }
                                 publishThreadId();
@@ -3804,7 +3832,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                                 ));
                                 turnInFlight = true;
                                 setThinking(true);
-                            }),
+                            })),
                         ).catch((error) => {
                             logger.debug('[codex-app-server] History boundary rejected turn/started notification', error);
                         });
@@ -3817,6 +3845,15 @@ export function createCodexAppServerRuntime(params: Readonly<{
                                 return;
                             }
 
+                            const observation = historyBoundary.onNotification(
+                                { method: 'thread/tokenUsage/updated', params: notificationParams },
+                                () => {
+                                    if (attachedClientGeneration === clientLifecycleGeneration
+                                        && notificationMatchesPendingTurn(notificationParams)) {
+                                        params.session.sessionTurnLifecycle?.observeProviderTurnEvent();
+                                    }
+                                },
+                            );
                             const notificationRecord = readRecord(notificationParams);
                             const tokenUsage = readRecord(notificationRecord?.tokenUsage ?? notificationRecord?.token_usage);
                             const totalBreakdown = readCodexTokenUsageBreakdown(tokenUsage?.total);
@@ -3825,7 +3862,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
 
                             void publishRuntimeContextWindow(contextWindowTokens);
 
-                            if (!totalBreakdown) return;
+                            if (!totalBreakdown) return observation;
 
                             params.session.sendCodexMessage({
                                 type: 'token_count',
@@ -3836,6 +3873,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                                 ...(threadId ? { key: `codex-app-server:${threadId}` } : {}),
                                 id: randomUUID(),
                             });
+                            return observation;
                         });
                     });
                     client.registerNotificationHandler('account/rateLimits/updated', (notificationParams) => {
@@ -3869,7 +3907,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         if (attachedClientGeneration !== clientLifecycleGeneration) return;
                         void historyBoundary.onNotification(
                             { method: 'error', params: notificationParams },
-                            () => runBridgeWork({
+                            () => withProviderTurnObservation(attachedClientGeneration, notificationMatchesPendingTurn(notificationParams), () => runBridgeWork({
                                 operation: 'provider-notification',
                                 details: { method: 'error' },
                             }, async () => {
@@ -3885,7 +3923,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                                     turnId: readProviderEventTurnId(notificationParams),
                                     willRetry: readRecord(notificationParams)?.willRetry === true,
                                 });
-                            }),
+                            })),
                         ).catch((error) => {
                             logger.debug('[codex-app-server] History boundary rejected error notification', error);
                         });
@@ -3919,7 +3957,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
                             const pending = historyBoundary.onRequest(
                                 { method, params: requestParams },
                                 () => handleServerRequest(method, requestParams, { allowProviderEffects: false, providerRequestKey: requestKey }),
-                                () => handleServerRequest(method, requestParams, { providerRequestKey: requestKey }),
+                                () => withProviderTurnObservation(attachedClientGeneration, notificationMatchesPendingTurn(requestParams), () => (
+                                    handleServerRequest(method, requestParams, { providerRequestKey: requestKey })
+                                )),
                             );
                             return Promise.resolve(pending).finally(() => {
                                 if (requestKey) {
@@ -3938,7 +3978,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         const pending = historyBoundary.onRequest(
                             { method: 'mcpServer/elicitation/request', params: requestParams },
                             () => mapMcpElicitationResponse({ decision: 'denied' }),
-                            () => handleMcpElicitationRequest(requestParams, message),
+                            () => withProviderTurnObservation(attachedClientGeneration, notificationMatchesPendingTurn(requestParams), () => (
+                                handleMcpElicitationRequest(requestParams, message)
+                            )),
                         );
                         return Promise.resolve(pending).finally(() => {
                             if (requestKey) {
@@ -3962,16 +4004,14 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     const registerTerminalHandler = (method: string): void => {
                         client.registerNotificationHandler(method, async (notificationParams) => {
                             if (attachedClientGeneration !== clientLifecycleGeneration) return;
+                            const terminalTurnId = readProviderEventTurnId(notificationParams, { allowTopLevelId: true });
                             await historyBoundary.onNotification(
                                 { method, params: notificationParams },
-                                () => runBridgeWork({
+                                () => withProviderTurnObservation(attachedClientGeneration, terminalNotificationMatchesPendingTurn(notificationParams, terminalTurnId), () => runBridgeWork({
                                     operation: 'provider-notification',
                                     details: { method },
                                 }, async () => {
                                 if (attachedClientGeneration !== clientLifecycleGeneration) return;
-                                const terminalTurnId = readProviderEventTurnId(notificationParams, {
-                                    allowTopLevelId: true,
-                                });
                                 const activeTurn = pendingTurn;
                                 const terminalThreadId = readThreadId(notificationParams);
                                 const canonicalParentThreadId = activeTurn?.threadId ?? threadId;
@@ -4002,7 +4042,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                                     && unacknowledgedTurn
                                     && !unacknowledgedTurn.turnId
                                 ) {
-                                    if (pendingTurnHasProviderAttributedActivity) {
+                                    if (terminalNotificationMatchesPendingTurn(notificationParams, terminalTurnId)) {
                                         await bindActiveNativeTurnIdFromProviderActivity(
                                             unacknowledgedTurn,
                                             notificationParams,
@@ -4048,7 +4088,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                                     trackedTurnId: activeTurn.turnId,
                                     terminalTurnId,
                                 });
-                                }),
+                                })),
                             );
                         });
                     };
@@ -4539,7 +4579,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
         debugDetails: unknown,
     ): Promise<void> => {
         logger.debug(debugMessage, debugDetails);
-        const issue = await surfaceCodexAppServerTurnFailure(originalFailure, null);
+        // Context-window exhaustion cancels the provider turn so compaction can retry it. With no
+        // retry left, this is the only owner that can record the failure.
+        const issue = await surfaceCodexAppServerTurnFailure(originalFailure, null, { providerTurnAlreadyEnded: true });
         await updateUsageLimitRecoveryFromSurfacedIssue(issue);
     };
 

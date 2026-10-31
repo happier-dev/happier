@@ -221,6 +221,22 @@ function classifyRelayReachability(
   return { kind: 'tailnet', tailnetName: tailscale.tailnetName };
 }
 
+const HOST_ON_THIS_COMPUTER_DEFAULT = 'Installs an additional server; needs a reachable network route';
+
+/**
+ * The "Host on this computer" choice, described by who could reach it.
+ *
+ * The default text leaves reachability as homework. A running Tailscale already
+ * answers it — the relay install publishes on the tailnet — so the choice says
+ * so before the user commits an account to it.
+ */
+export function describeHostOnThisComputerChoice(tailscale: TailscaleStatusSnapshot | null): string {
+  const reachability = classifyRelayReachability(tailscale);
+  if (reachability.kind !== 'tailnet') return HOST_ON_THIS_COMPUTER_DEFAULT;
+  const devices = reachability.tailnetName ? `devices on ${reachability.tailnetName}` : 'devices on your tailnet';
+  return `Installs an additional server; Tailscale can publish it to ${devices}`;
+}
+
 function normalizeUrl(value: string): string {
   return value.trim().replace(/\/+$/u, '');
 }

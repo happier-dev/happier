@@ -8,6 +8,9 @@ afterEach(() => {
 });
 
 describe('partitionProviderSessionArgs', () => {
+  it('uses the last profile selection across both aliases and spellings', () => {
+    expect(partitionProviderSessionArgs({ args: ['--profile', 'codex', '--launch-profile=anthropic'] }).profileQuery).toBe('anthropic');
+  });
   it('consumes --auto as the canonical automatic-edit permission intent', () => {
     const result = partitionProviderSessionArgs({
       args: ['opencode', '--auto', '--native-option'],

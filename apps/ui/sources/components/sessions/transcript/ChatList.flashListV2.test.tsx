@@ -1032,8 +1032,7 @@ function routeSessionViewportChangeIntoTestStore(
 
 vi.mock('@/sync/sync', async () => {
     const loadNewerMessages = vi.fn();
-    return (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListSyncModuleMock({
-        loadOlderMessages: vi.fn(),
+    const syncModule = (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListSyncModuleMock({
         loadTargetWindowMessages: vi.fn(),
         loadNewerMessages,
         hasDeferredNewerMessages: (sessionId: string) => deferredNewerSessionIdsState.has(sessionId),
@@ -1047,6 +1046,9 @@ vi.mock('@/sync/sync', async () => {
         markSessionLiveTailIntent: (sessionId: string) =>
             requireCanonicalSessionViewportSync().markSessionLiveTailIntent(qualifySessionViewportTestId(sessionId)),
     });
+    // Preserve the canonical empty-page result when beforeEach resets per-test overrides.
+    syncModule.sync.loadOlderMessages = vi.fn(syncModule.sync.loadOlderMessages);
+    return syncModule;
 });
 
 vi.mock('@/sync/store/hooks', async (importOriginal) => {
@@ -1112,7 +1114,8 @@ describe('ChatList (FlashList v2)', () => {
 
     beforeEach(async () => {
         const syncMod = await import('@/sync/sync');
-        vi.mocked(syncMod.sync.loadOlderMessages).mockReset();
+        // The real loader always resolves a result; web open-fill may now page older on its own.
+        vi.mocked(syncMod.sync.loadOlderMessages).mockReset().mockResolvedValue({ loaded: 0, hasMore: false, status: 'no_more' });
         vi.mocked(syncMod.sync.loadNewerMessages).mockReset();
         vi.mocked(
             (syncMod.sync as unknown as { loadTargetWindowMessages: ReturnType<typeof vi.fn> }).loadTargetWindowMessages,

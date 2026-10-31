@@ -9,7 +9,7 @@ import {
     resolveScreenFrameInsets,
     type HorizontalEdges,
     type HorizontalSafeArea,
-} from './horizontalSafeArea';
+} from './horizontalSafeAreaResolvers';
 
 // No provider means no side insets to own (isolated renders, tests).
 const HorizontalSafeAreaContext = React.createContext<HorizontalSafeArea>({ left: 0, right: 0, padded: true });

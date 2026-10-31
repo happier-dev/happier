@@ -2,10 +2,11 @@ import { createServer, type ServerResponse } from 'node:http';
 import { existsSync, readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { bindApiSessionSocketMock, createApiSessionSocketStub, resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
 import { ApiSessionClient } from '@/api/session/sessionClient';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { cloneCallableSessionRuntimeControls } from '@/api/session/sessionRuntimeControls';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -38,22 +39,18 @@ import { importOpenCodeTextHistoryCommitted } from './openCodeSessionMessageImpo
 
 function createSessionHarness() {
   const metadata: Record<string, unknown> = {};
+  const lifecycle = createSessionTurnLifecycle({
+    sessionId: 'happy_opencode_composed_lifecycle',
+    enqueueSessionTurn: async () => {},
+  });
+  onTestFinished(() => lifecycle.dispose());
+  const failTurn = vi.spyOn(lifecycle, 'failTurn');
   return {
     sessionId: 'happy_opencode_composed_lifecycle',
     keepAlive: vi.fn(),
     sendAgentMessage: vi.fn(),
     sendSessionEvent: vi.fn(),
-    sessionTurnLifecycle: {
-      beginTurn: vi.fn(async () => ({ turnId: 'turn-1' })),
-      attachProviderTurnId: vi.fn(async () => {}),
-      appendTranscriptAnchors: vi.fn(async () => {}),
-      completeTurn: vi.fn(async () => {}),
-      failTurn: vi.fn(async () => {}),
-      cancelTurn: vi.fn(async () => {}),
-      endSession: vi.fn(async () => {}),
-      markRollbackEligible: vi.fn(async () => {}),
-      markRolledBack: vi.fn(async () => {}),
-    },
+    sessionTurnLifecycle: { ...lifecycle, failTurn },
     sendUserTextMessageCommitted: vi.fn(async () => {}),
     sendAgentMessageCommitted: vi.fn(async () => {}),
     ensureMetadataSnapshot: vi.fn(async () => ({ ok: true })),

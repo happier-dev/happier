@@ -3957,6 +3957,10 @@ export const ca: TranslationStructure = {
                         title: "Experiments de Claude Code",
                         footer: "Aquests paràmetres s’apliquen tant a les sessions locals de Claude (terminal) com a les remotes de Claude (Agent SDK) iniciades per Happier."
                     },
+                    claudeIdleReclaim: {
+                        title: "Sessions inactives",
+                        footer: "El pròxim prompt reprèn la mateixa sessió de Claude i pot trigar una mica més. S’allibera l’estat en memòria. Les tasques en segon pla, la feina programada i els punts de control de fitxers la mantenen activa. Les sessions de terminal unificat continuen actives."
+                    },
                     claudeRemoteSdk: {
                         title: "Entorn clàssic (alternativa Agent SDK)",
                         footer: "Fes servir la ruta Agent SDK quan l'entorn de terminal unificat està desactivat o no disponible."
@@ -4040,6 +4044,14 @@ export const ca: TranslationStructure = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Força l’activació d’Agent Teams",
                         subtitle: "Activa Agent Teams experimental de Claude Code (eixam d’agents) a totes les sessions de Claude iniciades per Happier."
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "Allibera els processos inactius de Claude",
+                        subtitle: "Allibera memòria després d’un període sense activitat. Desactivat per defecte."
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "Temps d’inactivitat (minuts)",
+                        subtitle: "Tria quant de temps es manté preparada una sessió remota de Claude amb aquesta opció activada."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Usa l'alternativa Agent SDK",
@@ -10641,6 +10653,13 @@ settingsSession: {
                 plan: 'Planifica abans d\'executar',
                 bypassPermissions: 'Salta tots els permisos',
             },
+        },
+        defaultBackend: {
+            title: 'Backend d\'IA predeterminat',
+            footer: 'Inicia sessions noves en aquest backend quan el perfil està seleccionat i no se\'n tria un altre.',
+            noneTitle: 'Sense predeterminat',
+            noneSubtitle: 'Happier tria el backend com de costum.',
+            selectedSubtitle: 'S\'utilitza en iniciar una sessió amb aquest perfil.',
         },
         defaultPermissions: {
             title: 'Permisos per defecte',

@@ -4281,6 +4281,10 @@ export const pt: TranslationStructure = {
                         title: "Experimentos do Claude Code",
                         footer: "Estas configuracoes se aplicam tanto as sessoes locais do Claude (terminal) quanto as remotas (Agent SDK) iniciadas pelo Happier."
                     },
+                    claudeIdleReclaim: {
+                        title: "Sessões inativas",
+                        footer: "O próximo prompt retoma a mesma sessão do Claude e pode demorar um pouco mais. O estado em memória é liberado. Tarefas em segundo plano, trabalho agendado e checkpoints de arquivos a mantêm ativa. As sessões de terminal unificado continuam ativas."
+                    },
                     claudeRemoteSdk: {
                         title: "Runtime classico (fallback Agent SDK)",
                         footer: "Use o caminho Agent SDK quando o runtime de terminal unificado estiver desativado ou indisponivel."
@@ -4364,6 +4368,14 @@ export const pt: TranslationStructure = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Forcar ativacao do Agent Teams",
                         subtitle: "Ativa o Agent Teams experimental do Claude Code (enxame de agentes) em todas as sessoes do Claude iniciadas pelo Happier."
+                    },
+                    claudeRemoteIdleReclaimEnabled: {
+                        title: "Liberar processos inativos do Claude",
+                        subtitle: "Libera memória após um período sem atividade. Desativado por padrão."
+                    },
+                    claudeRemoteIdleReclaimTimeoutMinutes: {
+                        title: "Tempo de inatividade (minutos)",
+                        subtitle: "Escolha por quanto tempo uma sessão remota do Claude com esta opção ativada permanece pronta."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Usar fallback Agent SDK",
@@ -11522,6 +11534,13 @@ settingsSession: {
         plan: "Planejar antes de executar",
         bypassPermissions: "Ignorar todas as permissões",
       },
+    },
+    defaultBackend: {
+        title: 'Backend de IA padrão',
+        footer: 'Inicia novas sessões neste backend quando o perfil está selecionado e nenhum outro backend é escolhido.',
+        noneTitle: 'Sem padrão',
+        noneSubtitle: 'O Happier escolhe o backend como de costume.',
+        selectedSubtitle: 'Usado ao iniciar uma sessão com este perfil.',
     },
     defaultPermissions: {
       title: "Permissões padrão",

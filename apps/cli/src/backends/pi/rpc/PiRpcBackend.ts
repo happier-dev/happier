@@ -687,6 +687,7 @@ export class PiRpcBackend implements AgentBackend {
   private stdoutLineReader: PiRpcJsonlLineReader | null = null;
   private stderrLineReader: PiRpcJsonlLineReader | null = null;
   private readonly messageHandlers = new Set<AgentMessageHandler>();
+  private readonly providerTurnEventHandlers = new Set<() => void>();
   private readonly pendingRequests = new Map<string, PendingRpcRequest>();
   private readonly openPromptRequestIds = new Set<string>();
   private readonly activeExtensionUiRequestIds = new Set<string>();
@@ -750,6 +751,11 @@ export class PiRpcBackend implements AgentBackend {
 
   onMessage(handler: AgentMessageHandler): void {
     this.messageHandlers.add(handler);
+  }
+
+  onProviderTurnEvent(handler: () => void): () => void {
+    this.providerTurnEventHandlers.add(handler);
+    return () => { this.providerTurnEventHandlers.delete(handler); };
   }
 
   offMessage(handler: AgentMessageHandler): void {
@@ -1432,6 +1438,8 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   private async disposeResources(): Promise<void> {
+
+    this.providerTurnEventHandlers.clear();
 
     await abortPendingAcpPermissionRequests(this.permissionHandler, 'Pi backend disposed');
 
@@ -2808,6 +2816,25 @@ export class PiRpcBackend implements AgentBackend {
 
   private notePendingTurnActivity(event: Record<string, unknown>): void {
     const pending = this.pendingTurn;
+
+    // Resumed sessions can replay assistant messages before the accepted run starts.
+    // Provider-initiated turns have no pendingTurn; their events belong to the bound
+    // session once opening/restart has completed. The Session lifecycle ignores idle activity.
+    const observesLiveSession = pending
+      ? pending.agentStartObserved || event.type === 'agent_start'
+      : this.sessionId !== null && this.processTransitionInFlight === null;
+    if (
+      !this.disposed && observesLiveSession && typeof event.type === 'string'
+      && (event.sessionId === undefined || event.sessionId === this.sessionId)
+    ) {
+      for (const handler of this.providerTurnEventHandlers) {
+        try {
+          handler();
+        } catch (error) {
+          logger.warnFile('[pi] Provider activity handler failed', error);
+        }
+      }
+    }
     if (!pending) return;
 
     // Any Pi event is proof of life: bump the epoch (so an in-flight probe discards its result)

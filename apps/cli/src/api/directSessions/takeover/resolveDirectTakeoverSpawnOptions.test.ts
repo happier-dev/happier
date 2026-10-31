@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { writeFakeCodexAppServerThreadListScript } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
+import { withFakeCodexAppServerWebSocket, writeFakeCodexAppServerThreadListScript } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { Credentials } from '@/persistence';
 import type {
@@ -258,57 +258,55 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
     const projectDir = join(root, 'project');
     await mkdir(codexHome, { recursive: true });
     await mkdir(projectDir, { recursive: true });
-    const fakeAppServer = await writeFakeCodexAppServerThreadListScript({
-      dir: root,
-      loadedThreadIds: ['daemon-thread-1'],
-    });
-    vi.stubEnv('CODEX_HOME', codexHome);
-    vi.stubEnv('HAPPIER_CODEX_APP_SERVER_BIN', fakeAppServer);
-    bootstrapAccountSettingsContextMock.mockResolvedValueOnce({
-      settings: {
-        connectedServicesDefaultAuthByAgentIdV1: {
-          v: 1,
-          bindingsByAgentId: {
-            codex: {
-              v: 1,
-              bindingsByServiceId: {
-                'openai-codex': { source: 'connected', selection: 'group', groupId: 'default-pool' },
+    await withFakeCodexAppServerWebSocket({ dir: root, loadedThreadIds: ['daemon-thread-1'] }, async ({ proxyPath }) => {
+      vi.stubEnv('CODEX_HOME', codexHome);
+      vi.stubEnv('HAPPIER_CODEX_APP_SERVER_BIN', proxyPath);
+      bootstrapAccountSettingsContextMock.mockResolvedValueOnce({
+        settings: {
+          connectedServicesDefaultAuthByAgentIdV1: {
+            v: 1,
+            bindingsByAgentId: {
+              codex: {
+                v: 1,
+                bindingsByServiceId: {
+                  'openai-codex': { source: 'connected', selection: 'group', groupId: 'default-pool' },
+                },
               },
             },
           },
         },
-      },
-    });
+      });
 
-    const spawnOptions = await resolveDirectTakeoverSpawnOptions({
-      linked: createLinkedCodexSessionFixture({
-        remoteSessionId: 'daemon-thread-1',
-        sessionPath: projectDir,
-        source: { kind: 'codexHome', home: 'user' },
+      const spawnOptions = await resolveDirectTakeoverSpawnOptions({
+        linked: createLinkedCodexSessionFixture({
+          remoteSessionId: 'daemon-thread-1',
+          sessionPath: projectDir,
+          source: { kind: 'codexHome', home: 'user' },
+          codexBackendMode: 'appServer',
+        }),
+        sessionId: 'sess_happy_direct_codex_daemon',
+        credentials: TEST_CREDENTIALS,
+        transcriptStorage: 'direct',
+      });
+
+      expect(spawnOptions).toMatchObject({
         codexBackendMode: 'appServer',
-      }),
-      sessionId: 'sess_happy_direct_codex_daemon',
-      credentials: TEST_CREDENTIALS,
-      transcriptStorage: 'direct',
-    });
-
-    expect(spawnOptions).toMatchObject({
-      codexBackendMode: 'appServer',
-      transcriptStorage: 'direct',
-      environmentVariables: {
-        CODEX_HOME: codexHome,
-        CODEX_SQLITE_HOME: TEST_CODEX_SQLITE_HOME,
-        HAPPIER_CODEX_APP_SERVER_TRANSPORT: 'daemonProxy',
-      },
-      connectedServices: {
-        v: 1,
-        bindingsByServiceId: {
-          'openai-codex': { source: 'native' },
-          openai: { source: 'native' },
+        transcriptStorage: 'direct',
+        environmentVariables: {
+          CODEX_HOME: codexHome,
+          CODEX_SQLITE_HOME: TEST_CODEX_SQLITE_HOME,
+          HAPPIER_CODEX_APP_SERVER_TRANSPORT: 'daemonProxy',
         },
-      },
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': { source: 'native' },
+            openai: { source: 'native' },
+          },
+        },
+      });
+      expect(bootstrapAccountSettingsContextMock).not.toHaveBeenCalled();
     });
-    expect(bootstrapAccountSettingsContextMock).not.toHaveBeenCalled();
   });
 
   it('keeps an exact connected-service Codex source pinned instead of replacing it with the account default', async () => {
@@ -368,42 +366,40 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
     const projectDir = join(root, 'project');
     await mkdir(codexHome, { recursive: true });
     await mkdir(projectDir, { recursive: true });
-    const fakeAppServer = await writeFakeCodexAppServerThreadListScript({
-      dir: root,
-      loadedThreadIds: ['daemon-thread-2'],
-    });
-    vi.stubEnv('CODEX_HOME', codexHome);
-    vi.stubEnv('HAPPIER_CODEX_APP_SERVER_BIN', fakeAppServer);
+    await withFakeCodexAppServerWebSocket({ dir: root, loadedThreadIds: ['daemon-thread-2'] }, async ({ proxyPath }) => {
+      vi.stubEnv('CODEX_HOME', codexHome);
+      vi.stubEnv('HAPPIER_CODEX_APP_SERVER_BIN', proxyPath);
 
-    const spawnOptions = await resolveDirectTakeoverSpawnOptions({
-      credentials: TEST_CREDENTIALS,
-      linked: createLinkedCodexSessionFixture({
-        remoteSessionId: 'daemon-thread-2',
-        sessionPath: projectDir,
-        source: { kind: 'codexHome', home: 'user' },
+      const spawnOptions = await resolveDirectTakeoverSpawnOptions({
+        credentials: TEST_CREDENTIALS,
+        linked: createLinkedCodexSessionFixture({
+          remoteSessionId: 'daemon-thread-2',
+          sessionPath: projectDir,
+          source: { kind: 'codexHome', home: 'user' },
+          codexBackendMode: 'appServer',
+        }),
+        sessionId: 'sess_happy_persisted_codex_daemon',
+        transcriptStorage: 'persisted',
+      });
+
+      expect(spawnOptions).toMatchObject({
         codexBackendMode: 'appServer',
-      }),
-      sessionId: 'sess_happy_persisted_codex_daemon',
-      transcriptStorage: 'persisted',
-    });
-
-    expect(spawnOptions).toMatchObject({
-      codexBackendMode: 'appServer',
-      transcriptStorage: 'persisted',
-      environmentVariables: {
-        CODEX_HOME: codexHome,
-        CODEX_SQLITE_HOME: TEST_CODEX_SQLITE_HOME,
-        HAPPIER_CODEX_APP_SERVER_TRANSPORT: 'daemonProxy',
-      },
-      connectedServices: {
-        v: 1,
-        bindingsByServiceId: {
-          'openai-codex': { source: 'native' },
-          openai: { source: 'native' },
+        transcriptStorage: 'persisted',
+        environmentVariables: {
+          CODEX_HOME: codexHome,
+          CODEX_SQLITE_HOME: TEST_CODEX_SQLITE_HOME,
+          HAPPIER_CODEX_APP_SERVER_TRANSPORT: 'daemonProxy',
         },
-      },
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': { source: 'native' },
+            openai: { source: 'native' },
+          },
+        },
+      });
+      expect(bootstrapAccountSettingsContextMock).not.toHaveBeenCalled();
     });
-    expect(bootstrapAccountSettingsContextMock).not.toHaveBeenCalled();
   });
 
   it('refuses ambiguous connected-service Codex takeovers when the source does not identify an exact profile/home', async () => {

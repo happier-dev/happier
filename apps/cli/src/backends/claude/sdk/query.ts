@@ -271,9 +271,11 @@ export class Query implements AsyncIterableIterator<SDKMessage> {
             if (!toolUseId) {
                 throw new Error('Cannot apply a permission decision without a canonical tool-use ID')
             }
+            const agentId = readNonBlankOpaqueIdentifier(request.request.agent_id ?? request.request.agentId)
             return this.canCallTool(request.request.tool_name, request.request.input, {
                 signal,
                 toolUseId,
+                ...(agentId ? { agentId } : {}),
             })
         }
         

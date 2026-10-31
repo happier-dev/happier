@@ -4467,7 +4467,7 @@ export class ApiSessionClient extends EventEmitter {
     /**
      * Send a generic agent message to the session using ACP (Agent Communication Protocol) format.
      * Works for any agent type (Gemini, Codex, Claude, etc.) - CLI normalizes to unified ACP format.
-     * 
+     *
      * @param provider - The agent provider sending the message (e.g., 'gemini', 'codex', 'claude')
      * @param body - The message payload (type: 'message' | 'reasoning' | 'tool-call' | 'tool-result')
      */
@@ -6021,6 +6021,7 @@ export class ApiSessionClient extends EventEmitter {
 
     async close() {
         logger.debug('[API] socket.close() called');
+        this.sessionTurnLifecycle.dispose();
         this.startExecutionRunDisposal();
         this.executionRunPermissionHandler?.reset();
         this.executionRunPermissionHandler = null;

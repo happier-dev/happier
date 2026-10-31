@@ -174,6 +174,13 @@ export interface AgentBackend {
    * @param handler - Function to call when messages are received
    */
   onMessage(handler: AgentMessageHandler): void;
+
+  /**
+   * Observe live provider activity attributable to the current session before transcript
+   * filtering. Replay, foreign sessions and host-generated messages are excluded.
+   * Returns a subscription cleanup function.
+   */
+  onProviderTurnEvent?(handler: () => void): () => void;
   
   /**
    * Remove a previously registered message handler.

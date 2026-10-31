@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { FeaturesResponseSchema, type ActionOperationSnapshotV1, type SessionHandoffPrepareTargetRequestV2 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { writeExecutableShim } from '@/testkit/fs/executableShim';
+import { createProviderCliFixture } from '@/testkit/process/providerCliFixture';
 
 async function removeTestDirectory(path: string): Promise<void> {
   await rm(path, {
@@ -68,6 +68,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
 
   it('prepares existing-state through the native store without transfer and retains the mode across restart', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-existing-prepare-'));
+    const providerEnv = await createProviderCliFixture(['claude']);
     const claudeHome = join(activeServerDir, 'claude-home');
     const targetPath = join(activeServerDir, 'workspace');
     const previousClaudeHome = process.env.CLAUDE_CONFIG_DIR;
@@ -78,11 +79,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       await mkdir(join(claudeHome, 'projects', 'existing-project'), { recursive: true });
       await mkdir(targetPath);
       await writeFile(transcriptPath, transcript);
-      // Native state and launch admission stay real; only executable presence is supplied.
-      const claudePath = await writeExecutableShim({
-        dir: activeServerDir, fileName: 'claude', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
-      });
-      const processEnv = { ...process.env, HAPPIER_CLAUDE_PATH: claudePath };
+      const processEnv = { ...process.env, ...providerEnv };
       vi.resetModules();
       vi.doMock('@/configuration', async () => {
         const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');

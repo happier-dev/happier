@@ -191,6 +191,25 @@ describe('happier setup — choosing a relay', () => {
     expect(prompt).toContain('reachable network route');
   });
 
+  it('says a relay hosted here reaches the tailnet when Tailscale is running', async () => {
+    tailscaleStatus = {
+      backendState: 'Running',
+      authUrl: null,
+      dnsName: 'studio.example.ts.net',
+      tailnetName: 'example.ts.net',
+      tailscaleIps: ['100.64.0.1'],
+      loggedIn: true,
+      running: true,
+      daemonReachable: true,
+    };
+
+    await handleSetupCliCommand(context([]));
+
+    const prompt = multipleChoicePrompts.join('\n');
+    expect(prompt).toContain('example.ts.net');
+    expect(prompt).not.toContain('reachable network route');
+  });
+
   it('switches a machine pointed at a custom relay back to Cloud before signing in', async () => {
     activeProfile = { serverUrl: 'https://relay.example.com' };
 

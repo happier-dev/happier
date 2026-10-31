@@ -787,6 +787,29 @@ describe('ProviderSettingsScreen', () => {
         expect(defaultModelItem?.props?.subtitle).toBe('Sonnet 4.6');
     });
 
+    it('lets users opt in to idle Claude reclamation and edit its duration', async () => {
+        mockProviderId = 'claude';
+        const { CLAUDE_PROVIDER_SETTINGS_PLUGIN } = await import('@/agents/providers/claude/settings/plugin');
+        mockProviderSettingsPlugin.mockReturnValue(CLAUDE_PROVIDER_SETTINGS_PLUGIN);
+        const { CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS } = await import('@happier-dev/agents');
+        // Storage normally supplies canonical defaults; this route harness uses a sparse boundary fixture.
+        Object.assign(settingsState, CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS);
+        const screen = await renderProviderSettingsScreen();
+        const toggle = screen.findByTestId('settings-provider-field-claudeRemoteIdleReclaimEnabled');
+        expect(toggle).toBeTruthy();
+        await screen.pressByTestIdAsync('settings-provider-field-claudeRemoteIdleReclaimEnabled');
+        expect(applySettingsMock).toHaveBeenCalledWith({ claudeRemoteIdleReclaimEnabled: true });
+        const field = screen.findByTestId('settings-provider-field-claudeRemoteIdleReclaimTimeoutMinutes');
+        if (!field) throw new Error('Idle duration field is missing');
+        const input = field.findByType('TextInput' as any);
+        expect(input.props.value).toBe('30');
+        await act(async () => { input.props.onChangeText('45'); });
+        expect(applySettingsMock).toHaveBeenCalledWith({ claudeRemoteIdleReclaimTimeoutMinutes: 45 });
+        applySettingsMock.mockClear();
+        await act(async () => { input.props.onChangeText('0'); });
+        expect(applySettingsMock).not.toHaveBeenCalled();
+    });
+
     it('hides feature-gated provider setting sections when the feature is disabled', async () => {
         mockProviderId = 'claude';
         mockProviderSettingsPlugin.mockReturnValue(createClaudeUnifiedTerminalSettingsPlugin());

@@ -119,6 +119,7 @@ export function registerCodexPermissionHandlers(params: {
     versionInfo: CodexVersionInfo;
     getPermissionHandler: () => CodexMcpPermissionHandler | null;
     pendingAmendments: Map<string, string[]>;
+    onProviderTurnEvent?: () => void;
 }): void {
     const responseStyle = getElicitationResponseStyle(params.versionInfo);
     logger.debug('[CodexMCP] Elicitation response style', {
@@ -129,6 +130,7 @@ export function registerCodexPermissionHandlers(params: {
     params.client.setRequestHandler(
         ElicitRequestSchemaWithExtras,
         async (request: { params?: unknown }) => {
+            params.onProviderTurnEvent?.();
             const requestParams = (request.params ?? {}) as Record<string, unknown>;
             logger.debugLargeJson('[CodexMCP] Received elicitation request', requestParams);
 

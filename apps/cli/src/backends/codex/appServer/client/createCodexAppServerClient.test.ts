@@ -20,6 +20,8 @@ import {
     createCodexAppServerProcessEnv,
     createCodexAppServerTestEnvScope,
     writeFakeCodexAppServerScript,
+    writeFakeCodexAppServerProxyScript,
+    withFakeCodexAppServerWebSocket,
 } from '../testkit/fakeCodexAppServer';
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -140,91 +142,142 @@ describe('createCodexAppServerClient', () => {
         });
     });
 
-    it('uses the Codex daemon proxy transport without starting another app-server', async () => {
-        await withTempDir('happier-codex-app-server-client-daemon-proxy-', async (root) => {
-            const fakeAppServer = await writeFakeCodexAppServerScript({
-                dir: root,
-                bodyLines: [
-                    'for await (const line of rl) {',
-                    '  if (!line.trim()) continue;',
-                    '  const msg = JSON.parse(line);',
-                    '  if (msg.method === "initialize") {',
-                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: {} }) + "\\n");',
-                    '    continue;',
-                    '  }',
-                    '  if (msg.method === "thread/loaded/list") {',
-                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { data: ["thread-1"] } }) + "\\n");',
-                    '  }',
-                    '}',
-                ],
+    it.each(['unixWebSocket', 'daemonProxy'] as const)('speaks JSON-RPC over the %s WebSocket transport', async (transportKind) => {
+        await withTempDir('codex-ws-', async (root) => {
+            const loadedThreadId = '界'.repeat(475);
+            const loadedThreadIds = [loadedThreadId];
+            await withFakeCodexAppServerWebSocket({ dir: root, loadedThreadIds }, async ({ socketPath, proxyPath: fakeProxy }) => {
+                const spawn = vi.mocked(childProcess.spawn);
+                spawn.mockClear();
+                let client: Awaited<ReturnType<typeof createCodexAppServerClient>> | null = null;
+                try {
+                    client = await createCodexAppServerClient({
+                        processEnv: createCodexAppServerProcessEnv(fakeProxy, { HAPPIER_CODEX_APP_SERVER_MAX_JSON_LINE_CHARS: '512' }),
+                        transport: transportKind === 'daemonProxy'
+                            ? { kind: 'daemonProxy' }
+                            : { kind: 'unixWebSocket', socketPath },
+                    });
+                    await expect(client.request('thread/loaded/list')).resolves.toEqual({ data: [loadedThreadId] });
+                    loadedThreadIds[0] = 'x'.repeat(4096);
+                    await expect(client.request('thread/loaded/list')).rejects.toMatchObject({
+                        name: 'CodexAppServerJsonLineTooLargeError', maxChars: 512,
+                    });
+                    loadedThreadIds[0] = loadedThreadId;
+                    await expect(client.request('thread/loaded/list')).resolves.toEqual({ data: [loadedThreadId] });
+                    if (transportKind === 'daemonProxy') {
+                        expect(spawn.mock.calls.map(call => call[1])).toEqual([[fakeProxy, 'app-server', 'proxy']]);
+                    } else {
+                        expect(spawn).not.toHaveBeenCalled();
+                    }
+                    const controller = new AbortController();
+                    const cancelled = client.request('pending/cancel', {}, { signal: controller.signal, timeoutMs: null });
+                    controller.abort();
+                    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+                    const pending = client.request('pending/dispose', {}, { timeoutMs: null });
+                    const disposed = expect(pending).rejects.toThrow('disposed');
+                    await client.dispose();
+                    await disposed;
+                    const proxyChild = spawn.mock.results.find(result => result.type === 'return')?.value;
+                    if (transportKind === 'daemonProxy') {
+                        if (!proxyChild) throw new Error('Expected the native proxy process');
+                        expect(proxyChild.exitCode ?? proxyChild.signalCode).not.toBeNull();
+                    }
+                    await expect(client.request('thread/loaded/list')).rejects.toThrow('disposed');
+                } finally {
+                    await client?.dispose();
+                }
             });
-            const spawn = vi.mocked(childProcess.spawn);
-            spawn.mockClear();
-            const client = await createCodexAppServerClient({
-                processEnv: createCodexAppServerProcessEnv(fakeAppServer),
-                transport: { kind: 'daemonProxy' },
-            });
-            try {
-                await expect(client.request('thread/loaded/list')).resolves.toEqual({ data: ['thread-1'] });
-                expect(spawn.mock.calls[0]?.[1]).toEqual([
-                    fakeAppServer,
-                    'app-server',
-                    'proxy',
-                ]);
-                expect(spawn.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
-                    stdio: ['pipe', 'pipe', 'pipe'],
-                }));
-            } finally {
-                await client.dispose();
-            }
-        });
+        }, process.platform === 'win32' ? undefined : '/tmp');
     });
 
-    it('speaks JSON-RPC over the shared app-server Unix WebSocket', async () => {
-        await withTempDir('codex-ws-', async (root) => {
+    it.each(['unixWebSocket', 'daemonProxy'] as const)('rejects an oversized declared frame before receiving its body over %s', async transportKind => {
+        await withTempDir('codex-ws-ceiling-', async root => {
             const socketPath = process.platform === 'win32'
-                ? `\\\\.\\pipe\\happier-codex-test-${process.pid}-${Date.now()}`
+                ? `\\\\.\\pipe\\happier-codex-ceiling-${process.pid}-${Date.now()}`
                 : join(root, 'app-server.sock');
             const httpServer = createServer();
-            const webSocketServer = new WebSocketServer({
-                server: httpServer,
-                // Codex's tungstenite endpoint closes the handshake when clients offer
-                // permessage-deflate, so keep this fixture aligned with that real boundary.
-                verifyClient: (info, done) => done(info.req.headers['sec-websocket-extensions'] === undefined),
-            });
-            webSocketServer.on('connection', (socket) => {
-                socket.on('message', (payload) => {
-                    if (!Buffer.isBuffer(payload)) return;
-                    const message = JSON.parse(payload.toString('utf8')) as { id?: number; method?: string };
-                    if (message.method === 'initialize') {
-                        socket.send(JSON.stringify({ id: message.id, result: {} }));
-                    } else if (message.method === 'test/ping') {
-                        socket.send(JSON.stringify({ id: message.id, result: { pong: true } }));
-                    }
+            const webSocketServer = new WebSocketServer({ noServer: true });
+            httpServer.on('upgrade', (request, socket, head) => {
+                webSocketServer.handleUpgrade(request, socket, head, () => {
+                    // Advertise one byte above ws's existing 100 MiB default. Send
+                    // only the ten-byte header, never allocate or send that body.
+                    const header = Buffer.alloc(10);
+                    header[0] = 0x81;
+                    header[1] = 127;
+                    header.writeBigUInt64BE(BigInt(100 * 1024 * 1024) + 1n, 2);
+                    socket.write(header);
                 });
             });
             await new Promise<void>((resolve, reject) => {
                 httpServer.once('error', reject);
                 httpServer.listen(socketPath, resolve);
             });
-
+            const fakeProxy = await writeFakeCodexAppServerProxyScript(root, socketPath);
             const spawn = vi.mocked(childProcess.spawn);
             spawn.mockClear();
-            const client = await createCodexAppServerClient({
-                transport: { kind: 'unixWebSocket', socketPath },
-            });
+            let cleanup: (() => Promise<void>) | undefined;
             try {
-                await expect(client.request('test/ping')).resolves.toEqual({ pong: true });
-                expect(spawn).not.toHaveBeenCalled();
+                await expect(createCodexAppServerClient({
+                    processEnv: createCodexAppServerProcessEnv(fakeProxy),
+                    transport: transportKind === 'daemonProxy'
+                        ? { kind: 'daemonProxy' }
+                        : { kind: 'unixWebSocket', socketPath },
+                    initializeRequestOptions: { timeoutMs: 2_000 },
+                    onCleanup: value => { cleanup = value; },
+                })).rejects.toThrow('Codex app-server WebSocket failed:');
+                await cleanup?.();
+                if (transportKind === 'daemonProxy') {
+                    const proxyChild = spawn.mock.results.find(result => result.type === 'return')?.value;
+                    if (!proxyChild) throw new Error('Expected the native proxy process');
+                    expect(proxyChild.exitCode ?? proxyChild.signalCode).not.toBeNull();
+                }
             } finally {
-                await client.dispose();
+                await cleanup?.();
+                for (const socket of webSocketServer.clients) socket.terminate();
                 await new Promise<void>((resolve, reject) => {
-                    webSocketServer.close((error?: Error): void => {
-                        if (error) reject(error);
-                        else resolve();
-                    });
+                    webSocketServer.close(error => error ? reject(error) : resolve());
                 });
-                await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+                await new Promise<void>(resolve => httpServer.close(() => resolve()));
+            }
+        }, process.platform === 'win32' ? undefined : '/tmp');
+    });
+
+    it('cancels a daemon proxy during WebSocket upgrade and disposes its native process', async () => {
+        await withTempDir('codex-ws-cancel-', async root => {
+            const socketPath = process.platform === 'win32'
+                ? `\\\\.\\pipe\\happier-codex-cancel-${process.pid}-${Date.now()}`
+                : join(root, 'app-server.sock');
+            const controller = new AbortController();
+            const httpServer = createServer();
+            const heldSockets = new Set<import('node:stream').Duplex>();
+            httpServer.on('upgrade', (_request, socket) => {
+                // Hold the real HTTP upgrade open until the caller cancels it.
+                heldSockets.add(socket);
+                controller.abort();
+            });
+            await new Promise<void>((resolve, reject) => {
+                httpServer.once('error', reject);
+                httpServer.listen(socketPath, resolve);
+            });
+            const fakeProxy = await writeFakeCodexAppServerProxyScript(root, socketPath);
+            const spawn = vi.mocked(childProcess.spawn);
+            spawn.mockClear();
+            let cleanup: (() => Promise<void>) | undefined;
+            try {
+                await expect(createCodexAppServerClient({
+                    processEnv: createCodexAppServerProcessEnv(fakeProxy),
+                    transport: { kind: 'daemonProxy' },
+                    initializeRequestOptions: { signal: controller.signal, timeoutMs: null },
+                    onCleanup: value => { cleanup = value; },
+                })).rejects.toMatchObject({ name: 'AbortError' });
+                expect(cleanup).toBeTypeOf('function');
+                await cleanup?.();
+                const proxyChild = spawn.mock.results.find(result => result.type === 'return')?.value;
+                if (!proxyChild) throw new Error('Expected the native proxy process');
+                expect(proxyChild.exitCode ?? proxyChild.signalCode).not.toBeNull();
+            } finally {
+                for (const socket of heldSockets) socket.destroy();
+                await new Promise<void>(resolve => httpServer.close(() => resolve()));
             }
         }, process.platform === 'win32' ? undefined : '/tmp');
     });
@@ -1143,6 +1196,66 @@ describe('createCodexAppServerClient', () => {
                 await client.dispose();
             }
         });
+    });
+
+    it('preserves redacted proxy stderr when WebSocket closes before the proxy process exits', async () => {
+        await withTempDir('codex-ws-stderr-', async root => {
+            await withFakeCodexAppServerWebSocket({ dir: root, loadedThreadIds: [] }, async ({ proxyPath }) => {
+                const rawAccessToken = 'proxy-access-token-secret';
+                const rawThreadId = 'proxy-thread-secret';
+                const rawPath = join(root, 'auth.json');
+                const diagnostic = `proxy failed accessToken=${rawAccessToken} CODEX_THREAD_ID=${rawThreadId} path=${rawPath}`;
+                const noisyProxyPath = join(root, 'noisy-proxy.mjs');
+                const closeOutputPath = join(root, 'close-output');
+                await writeFile(noisyProxyPath, [
+                    '#!/usr/bin/env node',
+                    'import { existsSync } from "node:fs";',
+                    `process.stderr.write(${JSON.stringify(diagnostic)});`,
+                    // Keep the native process alive after its socket/stdout closes.
+                    `setInterval(() => { if (existsSync(${JSON.stringify(closeOutputPath)})) process.stdout.end(); }, 10);`,
+                    `await import(${JSON.stringify(proxyPath)});`,
+                ].join('\n'), { mode: 0o755 });
+                const spawn = vi.mocked(childProcess.spawn);
+                const originalSpawn = spawn.getMockImplementation();
+                if (!originalSpawn) throw new Error('Expected the OS spawn observer');
+                const stderr: string[] = [];
+                spawn.mockImplementation((...args) => {
+                    const child = originalSpawn(...args);
+                    child.stderr?.on('data', chunk => { stderr.push(String(chunk)); });
+                    return child;
+                });
+                let client: Awaited<ReturnType<typeof createCodexAppServerClient>> | null = null;
+                try {
+                    client = await createCodexAppServerClient({
+                        processEnv: createCodexAppServerProcessEnv(noisyProxyPath),
+                        transport: { kind: 'daemonProxy' },
+                    });
+                    await waitForCondition(() => stderr.join('').includes(diagnostic), { timeoutMs: 2_000, label: 'proxy stderr before stdout closes' });
+                    const exits: Error[] = [];
+                    client.onExit(error => { exits.push(error); });
+                    const pending = client.request('pending/request', {}, { timeoutMs: null })
+                        .then(() => null, (error: unknown) => error);
+                    await writeFile(closeOutputPath, '');
+                    const failure = await pending;
+                    if (!(failure instanceof Error)) throw new Error('Expected the transport failure');
+                    expect(failure.message).toContain('WebSocket');
+                    expect(failure.message).toContain('proxy failed');
+                    expect(failure.message).not.toContain(rawAccessToken);
+                    expect(failure.message).not.toContain(rawThreadId);
+                    expect(failure.message).not.toContain(rawPath);
+                    expect(failure.message).toContain('[REDACTED]');
+                    expect(failure.message).toContain('[REDACTED_PROVIDER_RESUME_ID]');
+                    expect(failure.message).toContain('[REDACTED_LOCAL_PATH]');
+                    await client.dispose();
+                    expect(failure.message.split('proxy failed')).toHaveLength(2);
+                    expect(exits).toHaveLength(1);
+                    expect(exits[0]).toBe(failure);
+                } finally {
+                    await client?.dispose();
+                    spawn.mockImplementation(originalSpawn);
+                }
+            });
+        }, process.platform === 'win32' ? undefined : '/tmp');
     });
 
     it('passes config overrides through as repeated -c flags to codex app-server', async () => {
