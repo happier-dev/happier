@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createFakeControlPort } from './fakeControlPort.js';
 import { createClaudeSettingsGuard, type SettingsGuard } from './settingsGuard.js';
@@ -11,8 +11,15 @@ import { DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS, type ApplyRuntimeConfigReason } fro
 import type { ControlRuntime } from './controlRuntime.js';
 import type { FakeControlPort } from './fakeControlPort.js';
 
+// The filesystem read is the boundary: keep the guard's snapshot, journal and restore real.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
+
 const tempRoots: string[] = [];
 afterEach(async () => {
+  vi.mocked(readFile).mockReset();
   await Promise.all(tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -215,26 +222,20 @@ describe('applyModelControl', () => {
   });
 
   it('reports failed when the settings guard cannot guarantee restore', async () => {
-    const port = createFakeControlPort({ captures: [IDLE, IDLE, MODEL_CONFIRMATION] });
-    // Simulate the fs-boundary guard being unable to restore (Settings Isolation Rules).
-    const guard: SettingsGuard = {
-      async acquire() {
-        return {
-          configDir: '/tmp/x',
-          snapshot: [],
-          async restore() {
-            return { ok: false, reason: 'byte mismatch after restoring settings.json' };
-          },
-          async release() {
-            return undefined;
-          },
-        };
+    const { guard, settingsPath, original } = await makeGuard();
+    const port = createFakeControlPort({
+      captures: [IDLE, IDLE, MODEL_CONFIRMATION],
+      onSendSpecialKey: async key => {
+        if (key === 'Enter') {
+          // A conflicting filesystem observation after the atomic restore must be refused.
+          vi.mocked(readFile).mockResolvedValueOnce(Buffer.from('conflicting settings bytes'));
+        }
       },
-    };
+    });
 
     const result = await applyModelControl(contextFor(port, guard), 'sonnet');
-    expect(result.kind).toBe('failed');
-    expect((result as { reason: string }).reason).toContain('settings');
+    expect(result).toMatchObject({ kind: 'failed', reason: expect.stringContaining('settings_guard:') });
+    expect(await readFile(settingsPath, 'utf8')).toBe(original);
   });
 });
 

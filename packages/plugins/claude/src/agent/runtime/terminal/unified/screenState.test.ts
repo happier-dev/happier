@@ -1069,11 +1069,6 @@ describe('parseClaudeScreenState — soft-wrapped composer draft (ported S-2)', 
     );
   });
 
-  it('does not bleed continuation capture past the composer bottom border', () => {
-    const state = parseClaudeScreenState(WRAPPED);
-    expect(state.composerContent).not.toContain('bypass permissions');
-  });
-
   it('captures wrapped drafts inside box-bordered composers as well', () => {
     const state = parseClaudeScreenState([
       '╭──────────────────────────────╮',

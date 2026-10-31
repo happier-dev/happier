@@ -14,15 +14,20 @@ describe('Claude remote SDK stream event helpers', () => {
             result: '  complete  ',
         })).toBe('complete');
 
-        expect(readClaudeAgentSdkResultFailure({
+        const failure = readClaudeAgentSdkResultFailure({
             type: 'result',
             subtype: 'error_during_execution',
             errors: [
                 'first failure',
-                { message: 'second failure', token: 'sk-ant-secret-value' },
+                { message: 'second failure: api_key=sk-ant-secret-value' },
             ],
             result: 'final failure',
-        })).toMatch(/^error_during_execution: /);
+        });
+        expect(failure).toMatch(/^error_during_execution: /);
+        expect(failure).toContain('first failure');
+        expect(failure).toContain('second failure');
+        expect(failure).toContain('final failure');
+        expect(failure).not.toContain('sk-ant-secret-value');
         expect(readClaudeAgentSdkResultFailure({
             type: 'result',
             subtype: 'success',

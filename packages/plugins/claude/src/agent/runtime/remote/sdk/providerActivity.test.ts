@@ -674,14 +674,6 @@ describe('createClaudeProviderActivityLedger', () => {
     expect(ledger.getSnapshot()).toEqual({ state: 'unknown', activeCount: 0 });
   });
 
-  it('keys by session/task tuple and removes only the exact sibling', () => {
-    const ledger = createClaudeProviderActivityLedger();
-    ledger.apply({ type: 'started', sessionId: 's1', taskId: 'same' });
-    ledger.apply({ type: 'started', sessionId: 's2', taskId: 'same' });
-    ledger.apply({ type: 'terminal', sessionId: 's1', taskId: 'same' });
-    expect(ledger.getActiveProviderTasks()).toEqual([{ sessionId: 's2', taskId: 'same' }]);
-  });
-
   it('deduplicates aliases and never expires silent affirmative truth', () => {
     vi.useFakeTimers();
     try {

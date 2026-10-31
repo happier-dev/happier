@@ -93,10 +93,10 @@ describe('bumpClaudeContextWindowTokensForObservedUsage', () => {
         })).toBe(1_200_000);
     });
 
-    it('ignores non-finite or non-positive observations', () => {
+    it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 0, -1])('ignores non-finite or non-positive observations (%s)', observedUsedTokens => {
         expect(bumpClaudeContextWindowTokensForObservedUsage({
             contextWindowTokens: CLAUDE_DEFAULT_CONTEXT_WINDOW_TOKENS,
-            observedUsedTokens: Number.NaN,
+            observedUsedTokens,
         })).toBe(CLAUDE_DEFAULT_CONTEXT_WINDOW_TOKENS);
     });
 });

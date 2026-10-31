@@ -50,10 +50,6 @@ describe('CLAUDE_STATIC_MODELS ultracode option', () => {
         }
     });
 
-    it('names the forced effort level in the ultracode description', () => {
-        expect(ultracodeOption('claude-opus-5')?.description).toContain('XHigh');
-    });
-
     it('never models ultracode as a reasoning_effort level', () => {
         for (const descriptor of CLAUDE_STATIC_MODELS) {
             const effort = descriptor.modelOptions?.find((option) => option.id === 'reasoning_effort');

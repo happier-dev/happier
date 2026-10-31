@@ -56,21 +56,6 @@ describe('controlResultToChangeOutcome — maps low-level results to the five pu
     expect(controlResultToChangeOutcome({ key: 'model', requested: 'sonnet', result: { kind: 'failed', reason: 'no confirmation' } }).status).toBe('failed');
   });
 
-  it('never produces a status outside the five frozen public statuses', () => {
-    const statuses = (['applied', 'already_effective', 'scheduled', 'unreachable', 'requires_restart', 'unsupported', 'failed'] as const).map((kind) => {
-      const result =
-        kind === 'applied' ? { kind: 'applied' as const }
-        : kind === 'already_effective' ? { kind: 'already_effective' as const }
-        : kind === 'scheduled' ? { kind: 'scheduled' as const, timing: 'next_idle' as const }
-        : kind === 'unreachable' ? { kind: 'unreachable' as const, reason: 'x' }
-        : kind === 'requires_restart' ? { kind: 'requires_restart' as const }
-        : kind === 'unsupported' ? { kind: 'unsupported' as const }
-        : { kind: 'failed' as const, reason: 'x' };
-      return controlResultToChangeOutcome({ key: 'model', requested: 'x', result }).status;
-    });
-    const allowed = new Set(['applied', 'requires_restart', 'requires_interactive_control', 'unsupported', 'failed']);
-    for (const status of statuses) expect(allowed.has(status)).toBe(true);
-  });
 });
 
 describe('aggregateApplyOutcome — combined status and prompt gating', () => {

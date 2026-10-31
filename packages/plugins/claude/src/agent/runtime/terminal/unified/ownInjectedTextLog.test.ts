@@ -169,10 +169,12 @@ describe('createClaudeUnifiedOwnInjectedTextLog', () => {
   });
 
   it('ignores empty/whitespace-only records', () => {
-    const log = createClaudeUnifiedOwnInjectedTextLog();
+    const log = createClaudeUnifiedOwnInjectedTextLog(1);
+    log.record('retained prompt');
     log.record('   ');
 
     expect(log.matches('   ')).toBe(false);
+    expect(log.matches('retained prompt')).toBe(true);
   });
 
   it('does not infer ownership of collapsed markers from a single-line injection', () => {

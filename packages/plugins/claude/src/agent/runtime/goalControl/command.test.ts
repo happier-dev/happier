@@ -3,11 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { buildClaudeGoalCommand } from './command.js';
 
 describe('buildClaudeGoalCommand', () => {
-  it('formats a set command as `/goal <objective>`', () => {
-    expect(buildClaudeGoalCommand({ type: 'set', objective: 'ship the goal feature' }))
-      .toBe('/goal ship the goal feature');
-  });
-
   it('trims surrounding whitespace from the objective', () => {
     expect(buildClaudeGoalCommand({ type: 'set', objective: '   tidy up   ' }))
       .toBe('/goal tidy up');

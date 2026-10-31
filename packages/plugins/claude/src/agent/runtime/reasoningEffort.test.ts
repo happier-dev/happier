@@ -168,9 +168,9 @@ describe('buildClaudeEffortCliArgs', () => {
 describe('[1m] extended-context model-id lookups', () => {
   it('resolves effort levels for a [1m] variant id through the direct lookup', () => {
     expect(resolveClaudeEffortLevelsForModelId('claude-sonnet-4-6[1m]'))
-      .toEqual(resolveClaudeEffortLevelsForModelId('claude-sonnet-4-6'));
+      .toEqual(['low', 'medium', 'high', 'max']);
     expect(resolveClaudeEffortLevelsForModelId('claude-fable-5[1m]'))
-      .toEqual(resolveClaudeEffortLevelsForModelId('claude-fable-5'));
+      .toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
   });
 
   it('resolves the default effort level for a [1m] variant id', () => {
@@ -178,7 +178,7 @@ describe('[1m] extended-context model-id lookups', () => {
     expect(resolveClaudeDefaultEffortLevelForModelId('claude-sonnet-4-6[1m]')).toBe('high');
   });
 
-  it('keeps CLI effort args lookup-only (the sent model id is never mutated)', () => {
+  it('resolves CLI effort args for a suffixed model id', () => {
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-fable-5[1m]', effort: 'xhigh' }))
       .toEqual(['--effort', 'xhigh']);
   });
