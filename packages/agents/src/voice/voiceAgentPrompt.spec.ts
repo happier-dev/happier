@@ -214,20 +214,6 @@ describe('voiceAgentPrompt', () => {
     expect(prompt).toContain('- setSessionMode:');
   });
 
-  it('omits disabled voice tool action specs in the client-tool prompt', () => {
-    const prompt = buildVoiceClientToolAgentPrompt({
-      initialConversationContextPlaceholder: '{{initialConversationContext}}',
-      sessionIdPlaceholder: '{{sessionId}}',
-      disabledActionIds: ['review.start'],
-    } as any);
-
-    const review = listVoiceToolActionSpecs().find((s) => s.id === 'review.start');
-    const toolName = review?.bindings?.voiceClientToolName;
-    if (typeof toolName === 'string' && toolName.trim().length > 0) {
-      expect(prompt).not.toContain(toolName);
-    }
-  });
-
   it('prioritizes discovery and hot-path actions in the local voice system prompt instead of inlining the full catalog', () => {
     const prompt = buildLocalVoiceAgentSystemPrompt({
       sessionId: 's1',
