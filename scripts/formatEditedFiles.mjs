@@ -7,8 +7,8 @@ import { promisify } from 'node:util';
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const execFileAsync = promisify(execFile);
 
-function editedPaths(payload) {
-  if (['Write', 'Edit', 'MultiEdit'].includes(payload.tool_name)) {
+function createdPaths(payload) {
+  if (payload.tool_name === 'Write') {
     return typeof payload.tool_input?.file_path === 'string'
       ? [payload.tool_input.file_path]
       : [];
@@ -20,18 +20,9 @@ function editedPaths(payload) {
       : payload.tool_input?.command;
   if (typeof patch !== 'string') return [];
   const paths = new Set();
-  let previousPath;
   for (const line of patch.split(/\r?\n/)) {
-    const file = /^\*\*\* (?:Add|Update) File: (.+)$/.exec(line);
-    if (file) {
-      previousPath = file[1];
-      paths.add(previousPath);
-    }
-    const move = /^\*\*\* Move to: (.+)$/.exec(line);
-    if (move) {
-      paths.delete(previousPath);
-      paths.add(move[1]);
-    }
+    const file = /^\*\*\* Add File: (.+)$/.exec(line);
+    if (file) paths.add(file[1]);
   }
   return [...paths];
 }
@@ -51,16 +42,28 @@ async function main() {
   for await (const chunk of process.stdin) input += chunk;
   const payload = JSON.parse(input);
   const paths = [];
-  for (const editedPath of editedPaths(payload)) {
-    const path = resolve(payload.cwd ?? rootDir, editedPath);
+  for (const createdPath of createdPaths(payload)) {
+    const path = resolve(payload.cwd ?? rootDir, createdPath);
     if (!isInsideRoot(path)) continue;
     try {
       if (!(await lstat(path)).isFile()) continue;
       if (!isInsideRoot(await realpath(path))) continue;
-      paths.push(path);
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
+      continue;
     }
+    // PostToolUse sees the file after writing; Git owns its tracked status.
+    try {
+      await execFileAsync(
+        'git',
+        ['ls-files', '--error-unmatch', '--', relative(rootDir, path)],
+        { cwd: rootDir },
+      );
+      continue;
+    } catch (error) {
+      if (error.code !== 1) throw error;
+    }
+    paths.push(path);
   }
   if (!paths.length) return;
   await execFileAsync(

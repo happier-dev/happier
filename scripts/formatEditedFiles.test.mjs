@@ -11,7 +11,10 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import { createTempFixture } from '../apps/stack/scripts/testkit/core/temp_fixture.mjs';
-import { runNodeCapture } from '../apps/stack/scripts/testkit/core/run_node_capture.mjs';
+import {
+  runCommandCapture,
+  runNodeCapture,
+} from '../apps/stack/scripts/testkit/core/run_node_capture.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -37,17 +40,31 @@ async function setup(t) {
     process.platform === 'win32' ? 'junction' : 'dir',
   );
   const dirty = 'export const value={x:1,y:2}\n';
-  for (const file of [
+  const formatted = 'export const value = { x: 1, y: 2 };\n';
+  const trackedFiles = [
     'src/edited file.ts',
     'src/other.ts',
     'src/build/example.ts',
     'vendor/generated.ts',
-  ]) {
+  ];
+  const init = await runCommandCapture('git', ['init', '--quiet'], {
+    cwd: fixture.root,
+  });
+  assert.equal(init.code, 0, init.stderr);
+  for (const file of trackedFiles) {
+    await writeFile(fixture.path(file), formatted);
+  }
+  const added = await runCommandCapture('git', ['add', '--', ...trackedFiles], {
+    cwd: fixture.root,
+  });
+  assert.equal(added.code, 0, added.stderr);
+  for (const file of trackedFiles) {
     await writeFile(fixture.path(file), dirty);
   }
   return {
     ...fixture,
     dirty,
+    formatted,
     async run(tool_name, tool_input) {
       return runNodeCapture([fixture.path('scripts/formatEditedFiles.mjs')], {
         cwd: fixture.path('src'),
@@ -62,16 +79,19 @@ async function setup(t) {
   };
 }
 
-test('Claude edits format only the exact edited file, including paths with spaces', async (t) => {
+test('Claude edits and tracked overwrites preserve foreign unformatted hunks', async (t) => {
   const fixture = await setup(t);
-  const result = await fixture.run('Edit', {
-    file_path: fixture.path('src/edited file.ts'),
-  });
-  assert.equal(result.code, 0, result.stderr);
-  assert.equal(
-    await readFile(fixture.path('src/edited file.ts'), 'utf8'),
-    'export const value = { x: 1, y: 2 };\n',
-  );
+  for (const tool of ['Edit', 'MultiEdit', 'Write']) {
+    const result = await fixture.run(tool, {
+      file_path: fixture.path('src/edited file.ts'),
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(
+      await readFile(fixture.path('src/edited file.ts'), 'utf8'),
+      fixture.dirty,
+      `${tool} must not format a tracked file`,
+    );
+  }
   assert.equal(
     await readFile(fixture.path('src/other.ts'), 'utf8'),
     fixture.dirty,
@@ -82,19 +102,44 @@ test('Claude edits format only the exact edited file, including paths with space
   assert.equal(buildSourceResult.code, 0, buildSourceResult.stderr);
   assert.equal(
     await readFile(fixture.path('src/build/example.ts'), 'utf8'),
-    'export const value = { x: 1, y: 2 };\n',
+    fixture.dirty,
   );
 });
 
-test('Codex patches format added/updated/moved destinations and respect the root ignore policy', async (t) => {
+test('Claude Write formats a new untracked file, including paths with spaces', async (t) => {
+  const fixture = await setup(t);
+  await writeFile(fixture.path('src/new file.ts'), fixture.dirty);
+  const result = await fixture.run('Write', {
+    file_path: fixture.path('src/new file.ts'),
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(
+    await readFile(fixture.path('src/new file.ts'), 'utf8'),
+    fixture.formatted,
+  );
+  assert.equal(
+    await readFile(fixture.path('src/other.ts'), 'utf8'),
+    fixture.dirty,
+  );
+});
+
+test('Codex patches format only Add files, leaving Update and moved destinations unchanged', async (t) => {
   const fixture = await setup(t);
   await writeFile(fixture.path('src/added.ts'), fixture.dirty);
   await writeFile(fixture.path('src/moved.ts'), fixture.dirty);
+  await writeFile(fixture.path('src/untracked.ts'), fixture.dirty);
+  await writeFile(fixture.path('vendor/added.ts'), fixture.dirty);
   const command = [
     '*** Begin Patch',
     '*** Add File: src/added.ts',
     '+export const value={x:1,y:2}',
+    '*** Add File: vendor/added.ts',
+    '+export const value={x:1,y:2}',
     '*** Update File: src/edited file.ts',
+    '@@',
+    '-old',
+    '+new',
+    '*** Update File: src/untracked.ts',
     '@@',
     '-old',
     '+new',
@@ -112,10 +157,19 @@ test('Codex patches format added/updated/moved destinations and respect the root
   ].join('\n');
   const result = await fixture.run('apply_patch', { command });
   assert.equal(result.code, 0, result.stderr);
-  for (const file of ['src/added.ts', 'src/edited file.ts', 'src/moved.ts']) {
+  assert.equal(
+    await readFile(fixture.path('src/added.ts'), 'utf8'),
+    fixture.formatted,
+  );
+  for (const file of [
+    'src/edited file.ts',
+    'src/moved.ts',
+    'src/untracked.ts',
+    'vendor/added.ts',
+  ]) {
     assert.equal(
       await readFile(fixture.path(file), 'utf8'),
-      'export const value = { x: 1, y: 2 };\n',
+      fixture.dirty,
     );
   }
   assert.equal(
@@ -125,6 +179,21 @@ test('Codex patches format added/updated/moved destinations and respect the root
   assert.equal(
     await readFile(fixture.path('src/other.ts'), 'utf8'),
     fixture.dirty,
+  );
+  await writeFile(fixture.path('src/string-patch.ts'), fixture.dirty);
+  const stringResult = await fixture.run(
+    'apply_patch',
+    [
+      '*** Begin Patch',
+      '*** Add File: src/string-patch.ts',
+      '+export const value={x:1,y:2}',
+      '*** End Patch',
+    ].join('\n'),
+  );
+  assert.equal(stringResult.code, 0, stringResult.stderr);
+  assert.equal(
+    await readFile(fixture.path('src/string-patch.ts'), 'utf8'),
+    fixture.formatted,
   );
 });
 
@@ -141,8 +210,8 @@ test('unrelated tools, outside paths and directory payloads never broaden format
       'Write',
       { file_path: resolve(fixture.root, '..', outside.path('outside.ts')) },
     ],
-    ['Edit', { file_path: fixture.path('src') }],
-    ['Edit', { file_path: fixture.path('src/link.ts') }],
+    ['Write', { file_path: fixture.path('src') }],
+    ['Write', { file_path: fixture.path('src/link.ts') }],
   ]) {
     const result = await fixture.run(name, input);
     assert.equal(result.code, 0, result.stderr);
