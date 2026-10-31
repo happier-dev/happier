@@ -77,8 +77,10 @@ describe('neutral public grids', () => {
       expect(axis(7).parentElement!.children).toHaveLength(30);
       // A two-digit label in a 13 px column must not wrap one digit per line: the label is a nowrap run.
       const label = [...axis(7).querySelectorAll<HTMLElement>('div')].find((element) => element.children.length === 0 && element.textContent === '17')!;
-      const classes = label.getAttribute('class') ?? '';
-      expect(classes.includes('r-whiteSpace-') && classes.includes('r-textOverflow-')).toBe(true);
+      const style = getComputedStyle(label);
+      expect(style.whiteSpace).toBe('nowrap');
+      expect(style.textOverflow).toBe('ellipsis');
+      expect(style.textAlign).toBe('center');
     } finally { mount.unmount(); }
   });
 });

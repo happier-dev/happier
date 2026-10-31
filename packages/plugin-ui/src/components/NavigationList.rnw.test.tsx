@@ -1,6 +1,6 @@
 import { act, type ReactNode } from 'react';
 import { View } from 'react-native';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type { HappierUiPalette } from '../environment/types.js';
 import type { PluginUiPresentationHost } from '../presentationHost/context.js';
@@ -218,6 +218,7 @@ describe('NavigationList (public plugin column anatomy)', () => {
         <NavigationList.Row testID="row" title="All" onPress={() => undefined} />
       </NavigationList>,
     );
+    onTestFinished(() => view.unmount());
     expect(view.container.querySelector('input')).toBeNull();
     await view.render(
       <PluginUiProviderInternal
@@ -228,7 +229,7 @@ describe('NavigationList (public plugin column anatomy)', () => {
         <NavigationList
           testID="views"
           title="Views"
-          search={{ value: '', onValueChange: onChange, label: 'Search views', testID: 'views-search' }}
+          search={{ value: 'no matching view', onValueChange: onChange, label: 'Search views', testID: 'views-search' }}
         >
           <NavigationList.Row testID="row" title="All" onPress={() => undefined} />
         </NavigationList>
@@ -237,6 +238,13 @@ describe('NavigationList (public plugin column anatomy)', () => {
     const input = view.container.querySelector<HTMLInputElement>('input');
     expect(input).not.toBeNull();
     expect(input?.getAttribute('placeholder')).toBe('Search views');
-    view.unmount();
+    expect(input?.value).toBe('no matching view');
+    expect(byTestId(view.container, 'row').textContent).toContain('All');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, 'another missing view');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenCalledExactlyOnceWith('another missing view');
+    expect(byTestId(view.container, 'row').textContent).toContain('All');
   });
 });

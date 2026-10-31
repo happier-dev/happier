@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
@@ -7,11 +7,13 @@ import { PluginUiProvider } from './PluginUiProvider.js';
 import { HappierStep } from '../presentation/content/Step.js';
 
 function mountStep(element: React.ReactElement, context = createSurfaceContext()) {
-  return mountThroughReactNativeWeb(
+  const mount = mountThroughReactNativeWeb(
     <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
       {element}
     </PluginUiProvider>,
   );
+  onTestFinished(() => mount.unmount());
+  return mount;
 }
 
 function marker(container: HTMLElement): HTMLElement {
@@ -27,6 +29,7 @@ describe('Step', () => {
       <HappierStep marker={{ kind: 'number', value: 2 }} title="Connect this computer"
         theme={context.theme} testID="step" />,
     );
+    onTestFinished(() => mount.unmount());
     expect(marker(mount.container).textContent).toBe('2');
     expect(mount.container.querySelector('[role="heading"]')?.textContent).toBe('Connect this computer');
   });

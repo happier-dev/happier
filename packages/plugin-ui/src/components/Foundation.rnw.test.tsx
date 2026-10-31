@@ -1,5 +1,5 @@
 import { act } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
@@ -400,5 +400,6 @@ function withColor(color: string): HTMLElement {
   const probe = document.createElement('div');
   probe.style.backgroundColor = color;
   document.body.appendChild(probe);
+  onTestFinished(() => probe.remove());
   return probe;
 }

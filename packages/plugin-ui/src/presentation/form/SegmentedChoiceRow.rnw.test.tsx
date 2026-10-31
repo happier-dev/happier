@@ -1,5 +1,5 @@
 import { act } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { HappierUiTypographyProvider } from '../../environment/context.js';
@@ -140,12 +140,13 @@ describe('segmented choice row', () => {
       <HappierSegmentedChoiceRow
         testID="width"
         label="Width"
-        options={WIDTHS}
+        options={[...WIDTHS, { id: 'compact', label: 'Compact' }]}
         value="full"
         onChange={onChange}
         colors={COLORS}
       />,
     );
+    onTestFinished(() => view.unmount());
     const segment = (id: string) =>
       view.container.querySelector<HTMLElement>(`[data-testid="width:${id}"]`)!;
     expect(
@@ -159,6 +160,8 @@ describe('segmented choice row', () => {
       segment('full').click();
     });
     expect(onChange).not.toHaveBeenCalled();
+    act(() => { segment('compact').click(); });
+    expect(onChange).toHaveBeenCalledExactlyOnceWith('compact');
   });
   it('draws the chosen label in the host semibold face, never a numeric weight over the regular face', () => {
     // A same-realm host whose faces encode their weight (Inter registered at normal weight): a
@@ -180,6 +183,7 @@ describe('segmented choice row', () => {
         <HappierSegmentedChoiceRow testID="width" label="Width" options={WIDTHS} value="full" onChange={() => undefined} colors={COLORS} />
       </HappierUiTypographyProvider>,
     );
+    onTestFinished(() => view.unmount());
     const label = (id: string) => [...view.container.querySelectorAll<HTMLElement>(`[data-testid="width:${id}"] *`)]
       .find((node) => node.textContent === (id === 'full' ? 'Full' : 'Half') && node.children.length === 0)!;
     expect(label('full').style.fontFamily).toBe('Face-SemiBold');

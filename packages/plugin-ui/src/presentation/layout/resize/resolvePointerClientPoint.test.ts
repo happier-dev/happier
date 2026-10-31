@@ -4,12 +4,18 @@ import { resolvePointerClientPoint } from './resolvePointerClientPoint.js';
 
 describe('resolvePointerClientPoint', () => {
     it('prefers nativeEvent.clientX/clientY when available', () => {
-        expect(resolvePointerClientPoint({ nativeEvent: { clientX: 123, clientY: 456 } }))
+        expect(resolvePointerClientPoint({
+            nativeEvent: { clientX: 123, clientY: 456, pageX: 901, pageY: 902 },
+            clientX: 11, clientY: 22, pageX: 33, pageY: 44,
+        }))
             .toEqual({ x: 123, y: 456 });
     });
 
     it('falls back to event.clientX/clientY', () => {
-        expect(resolvePointerClientPoint({ clientX: 11, clientY: 22 }))
+        expect(resolvePointerClientPoint({
+            clientX: 11, clientY: 22,
+            nativeEvent: { pageX: 55, pageY: 66 }, pageX: 77, pageY: 88,
+        }))
             .toEqual({ x: 11, y: 22 });
     });
 

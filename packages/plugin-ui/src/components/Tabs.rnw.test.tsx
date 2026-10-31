@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
-import { HappierTabs, isHappierTabSelected, type HappierTabDescriptor } from '../presentation/navigation/Tabs.js';
+import { HappierTabs, type HappierTabDescriptor } from '../presentation/navigation/Tabs.js';
 import { Tabs, Text, useTabPanelActivity } from './index.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 
@@ -68,11 +68,6 @@ describe('controlled Tabs', () => {
       await act(async () => { tabs[1]?.click(); });
       expect(tabs.map(tab => tab.getAttribute('aria-selected'))).toEqual(['false', 'true']);
     } finally { mount.unmount(); }
-  });
-
-  it('shares the controlled selection equality used by the core segmented-tab adapter', () => {
-    expect(isHappierTabSelected('activity', 'activity')).toBe(true);
-    expect(isHappierTabSelected('activity', 'logs')).toBe(false);
   });
 
   it('keeps selection caller-owned and exposes tab semantics', async () => {

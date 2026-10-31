@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { describe, expect, it } from 'vitest';
+import { act } from 'react';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
@@ -16,20 +17,26 @@ function mountSurface(children: ReactNode) {
 /** The settings row anatomy Happier draws for its own registries, reachable on a custom author page. */
 describe('SettingRow, SettingValueSlot and SettingStatusLine', () => {
   it('draws the label, hint and one control, with a unit beside a number', () => {
+    const onChange = vi.fn();
     const mount = mountSurface(
       <SettingRow
         testID="timeout"
         title="Request timeout"
         hint="How long a request may wait."
         layout="adaptive"
-        control={<SettingValueSlot kind="number" unit="ms"><Toggle label="On" value onChange={() => undefined} /></SettingValueSlot>}
+        control={<SettingValueSlot kind="number" unit="ms"><Toggle label="On" value onChange={onChange} /></SettingValueSlot>}
       />,
     );
+    onTestFinished(() => mount.unmount());
     const row = mount.container.querySelector('[data-testid="timeout"]');
     expect(row?.textContent).toContain('Request timeout');
     expect(row?.textContent).toContain('How long a request may wait.');
     expect(row?.textContent).toContain('ms');
-    mount.unmount();
+    expect(row?.querySelectorAll('[role="switch"]')).toHaveLength(1);
+    const toggle = row?.querySelector<HTMLElement>('[role="switch"]');
+    expect(toggle?.getAttribute('aria-checked')).toBe('true');
+    act(() => { toggle?.click(); });
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(false);
   });
 
   it('announces a refused change and keeps a stored-value line static', () => {
