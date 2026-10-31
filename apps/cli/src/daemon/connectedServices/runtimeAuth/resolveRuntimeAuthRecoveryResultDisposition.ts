@@ -102,7 +102,7 @@ export function resolveRuntimeAuthRecoveryResultDisposition(input: Readonly<{
   if (switchResult.status === 'quota_proof_unavailable') {
     return {
       kind: 'durable_wait', reason: 'quota_proof_unavailable',
-      nextRetryAtMs: unknownQuotaRetryAtMs,
+      nextRetryAtMs: Math.max(unknownQuotaRetryAtMs, readNonNegativeNumber(switchResult.retryAtMs) ?? 0),
     };
   }
 

@@ -225,6 +225,7 @@ export type ConnectedServiceAuthGroupSwitchResult =
       status: 'quota_proof_unavailable';
       activeProfileId: string | null;
       generation: number;
+      retryAtMs?: number;
       diagnostics?: ConnectedServiceAuthGroupSwitchDecisionDiagnostics;
     }>
   | Readonly<{

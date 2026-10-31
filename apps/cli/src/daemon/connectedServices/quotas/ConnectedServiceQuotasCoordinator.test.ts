@@ -6,6 +6,7 @@ import {
   accountSettingsParse,
   buildConnectedServiceCredentialRecord,
   ConnectedServiceQuotaSnapshotV1Schema,
+  ConnectedServiceIdSchema,
   ProviderAccountUsageSnapshotV1Schema,
   openAccountScopedBlobCiphertext,
   sealAccountScopedBlobCiphertext,
@@ -47,6 +48,9 @@ import { evaluatePredictiveSoftSwitchPolicy } from '../accountGroups/switching/p
 import { resolveClaudeConnectedServiceStableConfigDir } from '@/backends/claude/connectedServices/resolveClaudeConnectedServiceStableAuthDir';
 import { createConnectedServiceGroupMutationCurrentnessValidator } from '../credentials/createConnectedServiceGroupMutationCurrentnessValidator';
 import { buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation } from '../accountUsage/fromConnectedServiceQuotaObservation';
+import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
+  type ConnectedServiceAuthGroupSwitchState } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import { resolveRuntimeAuthRecoveryResultDisposition } from '../runtimeAuth/resolveRuntimeAuthRecoveryResultDisposition';
 
 type AccountExhaustionInput = Parameters<ConnectedServiceQuotasCoordinator['recordAccountExhaustionAndFanout']>[0];
 type RuntimeUsageLimitInput = Parameters<ConnectedServiceQuotasCoordinator['recordRuntimeUsageLimitExhaustionAndFanout']>[0];
@@ -313,11 +317,235 @@ function createDeferred<T>(): Readonly<{
   return { promise, resolve, reject };
 }
 
+function createObservationProbeFixture(fetch: ConnectedServiceQuotaFetcher['fetch'], consumeRecoveryCredit?: ConnectedServiceQuotaFetcher['consumeRecoveryCredit']) {
+  let now = 1_000_000;
+  let credentialRevision = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
+  let record = buildConnectedServiceCredentialRecord({ now, serviceId: 'openai-codex', profileId: 'backup',
+    kind: 'oauth', expiresAt: now + 60_000,
+    oauth: { accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh', idToken: null, scope: null,
+      tokenType: null, providerAccountId: 'synthetic-account', providerEmail: null } });
+  const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+  const api = {
+    getAccountEncryptionMode: async () => 'plain' as const,
+    getAccountEncryptionModeUncached: async () => 'plain' as const,
+    getConnectedServiceAuthGroup: async () => null,
+    getConnectedServiceQuotaSnapshotPlain: async () => null,
+    getConnectedServiceCredentialPlain: async () => ({ revisionSemantics: 'revisioned' as const, credentialRevision,
+      content: { t: 'plain' as const, v: record } }),
+    getConnectedServiceQuotaSnapshotSealed: async () => null,
+    getConnectedServiceCredentialSealed: async () => null,
+    // The server permits reacquisition by the same daemon owner.
+    acquireConnectedServiceRefreshLease: async () => ({ acquired: true, leaseUntil: now + 30_000 }),
+  } satisfies QuotaApi;
+  const quotas = new ConnectedServiceQuotasCoordinator({ api,
+    credentials: { token: 'synthetic', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) } },
+    quotaFetchers: [{ serviceId: 'openai-codex', fetch, consumeRecoveryCredit }], now: () => now, randomBytes,
+    discoveryEnabled: false, runtimeQuotaSnapshots, fetchTimeoutMs: 100,
+    machineIdProvider: () => 'synthetic-machine', ownerIdProvider: () => 'synthetic-machine:same-daemon' });
+  const state: ConnectedServiceAuthGroupSwitchState = {
+    serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'backup', generation: 2, runtimeStateRevision: 0,
+    credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+    policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+    members: [{ profileId: 'backup', priority: 1, enabled: true, createdAtMs: 1 }], memberStatesByProfileId: new Map(),
+  };
+  const switching = new ConnectedServiceAuthGroupSwitchCoordinator({
+    leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => now, quotaFreshnessMs: 60_000,
+    loadState: async () => state, probeQuotaSnapshotsForGroup: (input) => quotas.probeGroupQuotaSnapshots({
+      ...input, serviceId: ConnectedServiceIdSchema.parse(input.serviceId),
+    }),
+    commitSwitch: async () => { throw new Error('Unexpected selection'); },
+    applyGeneration: async () => { throw new Error('Unexpected application'); },
+  });
+  return { api, quotas, switching, observe: () => switching.observeCurrentGenerationForRecovery({
+    serviceId: 'openai-codex', groupId: 'team', observedProfileId: 'primary',
+  }), advance: (elapsedMs: number) => { now += elapsedMs; },
+  replaceRecord: (next: typeof record) => { record = next; }, readRecord: () => record,
+  replaceRevision: (next: string) => { credentialRevision = next; } };
+}
+
 describe('ConnectedServiceQuotasCoordinator', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     invalidateConnectedServiceAccountMode();
+  });
+
+  it('shares a current-profile provider probe across concurrent real recovery observers', async () => {
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
+    const fetch = vi.fn(async () => { entered.resolve(); await release.promise; return null; });
+    const fixture = createObservationProbeFixture(fetch);
+    const first = fixture.observe();
+    await entered.promise;
+    fixture.advance(1); // A later observer shares the ongoing observation's capture time.
+    const others = Array.from({ length: 7 }, () => fixture.observe());
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const concurrentFetches = fetch.mock.calls.length;
+    release.resolve();
+    const results = await Promise.all([first, ...others]);
+    expect(concurrentFetches).toBe(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(results.every((result) => result.status === 'quota_proof_unavailable')).toBe(true);
+  });
+
+  it('honors provider Retry-After when real recovery observers reprobe the current member', async () => {
+    const fetch = vi.fn(async () => { throw new ConnectedServiceQuotaFetchError('synthetic rate limit', {
+      status: 429, retryAfterMs: 300_000, quotaFetchErrorCode: 'provider_backoff' }); });
+    const fixture = createObservationProbeFixture(fetch);
+    const first = await fixture.observe();
+    fixture.advance(33_000);
+    const second = await fixture.observe();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect([first.status, second.status]).toEqual(['quota_proof_unavailable', 'quota_proof_unavailable']);
+    expect(first).toMatchObject({ retryAtMs: 1_300_000 });
+    expect(second).toMatchObject({ retryAtMs: 1_300_000 });
+    expect(resolveRuntimeAuthRecoveryResultDisposition({ result: second, nowMs: 1_033_000,
+      classificationResetsAtMs: 9_000_000, unknownNoEligibleMemberBackoffMs: 30_000,
+    })).toEqual({ kind: 'durable_wait', reason: 'quota_proof_unavailable', nextRetryAtMs: 1_300_000 });
+    fixture.advance(267_000);
+    await fixture.observe();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('rechecks provider admission when polling resumes after a concurrent recovery probe publishes Retry-After', async () => {
+    const leaseEntered = createDeferred<void>();
+    const releaseLease = createDeferred<void>();
+    const fetch = vi.fn(async () => {
+      throw new ConnectedServiceQuotaFetchError('synthetic rate limit', {
+        status: 429, retryAfterMs: 300_000, quotaFetchErrorCode: 'provider_backoff',
+      });
+    });
+    const fixture = createObservationProbeFixture(fetch);
+    vi.spyOn(fixture.api, 'acquireConnectedServiceRefreshLease').mockImplementationOnce(async () => {
+      leaseEntered.resolve();
+      await releaseLease.promise;
+      return { acquired: true, leaseUntil: 1_030_000 };
+    });
+    fixture.quotas.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1, bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'backup' } },
+      },
+    });
+    const polling = fixture.quotas.tickOnce();
+    await leaseEntered.promise;
+    try {
+      expect(await fixture.observe()).toMatchObject({ status: 'quota_proof_unavailable', retryAtMs: 1_300_000 });
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseLease.resolve();
+      await polling;
+    }
+    expect(fetch).toHaveBeenCalledTimes(1);
+    fixture.advance(300_000);
+    await fixture.quotas.tickOnce();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps an observer probe alive when another waiter reaches its deadline', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(1_000_000);
+    const entered = createDeferred<void>(); const release = createDeferred<void>();
+    let providerSignal: AbortSignal | undefined;
+    const fetch = vi.fn(async ({ signal }: FetchArgs) => {
+      providerSignal = signal; entered.resolve(); await release.promise; return null;
+    });
+    const fixture = createObservationProbeFixture(fetch);
+    const short = fixture.quotas.probeGroupQuotaSnapshots({ serviceId: 'openai-codex', groupId: 'team',
+      profileIds: ['backup'], deadlineAtMs: Date.now() + 50 });
+    await entered.promise;
+    const observer = fixture.observe();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await short).toMatchObject({ status: 'incomplete', reason: 'deadline_exceeded' });
+    expect(providerSignal?.aborted).toBe(false);
+    release.resolve();
+    expect(await observer).toMatchObject({ status: 'quota_proof_unavailable' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases shared probe work at the existing fetch timeout even if the provider ignores abort', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(1_000_000);
+    const fetch = vi.fn(() => new Promise<null>(() => {}));
+    const fixture = createObservationProbeFixture(fetch);
+    const pending = Promise.all([fixture.observe(), fixture.observe()]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await Promise.race([pending, Promise.resolve('still_pending')])).toEqual([
+      expect.objectContaining({ status: 'quota_proof_unavailable' }), expect.objectContaining({ status: 'quota_proof_unavailable' }),
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const next = fixture.observe();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await next).toMatchObject({ status: 'quota_proof_unavailable' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('lets a fresh observer replace a probe whose last waiter cancelled', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(1_000_000);
+    let fetchCount = 0;
+    const releaseFresh = createDeferred<void>();
+    const fixture = createObservationProbeFixture(async () => {
+      fetchCount += 1;
+      if (fetchCount === 1) return await new Promise<null>(() => {});
+      await releaseFresh.promise;
+      return null;
+    });
+    const short = fixture.quotas.probeGroupQuotaSnapshots({ serviceId: 'openai-codex', groupId: 'team',
+      profileIds: ['backup'], deadlineAtMs: Date.now() + 50 });
+    await vi.advanceTimersByTimeAsync(50);
+    const fresh = fixture.observe();
+    await vi.advanceTimersByTimeAsync(0);
+    const fetchesBeforeOldTimeout = fetchCount;
+    await vi.advanceTimersByTimeAsync(50);
+    await short;
+    const third = fixture.observe();
+    await vi.advanceTimersByTimeAsync(0);
+    releaseFresh.resolve();
+    await Promise.all([fresh, third]);
+    expect(fetchesBeforeOldTimeout).toBe(2);
+    expect(fetchCount).toBe(2);
+  });
+
+  it.each(['account identity', 'credential revision'] as const)('does not share probes across changed %s', async (change) => {
+    const entered = createDeferred<void>(); const release = createDeferred<void>();
+    const fetch = vi.fn(async () => { entered.resolve(); await release.promise; return null; });
+    const fixture = createObservationProbeFixture(fetch);
+    const first = fixture.observe(); await entered.promise;
+    const record = fixture.readRecord();
+    if (record.kind !== 'oauth') throw new Error('Expected OAuth fixture');
+    if (change === 'account identity') {
+      fixture.replaceRecord({ ...record, oauth: { ...record.oauth, providerAccountId: 'different-account' } });
+    } else {
+      fixture.replaceRevision('csr_cccccccccccccccccccccc');
+    }
+    const second = fixture.observe();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    release.resolve();
+    await Promise.all([first, second]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['pending observation', 'provider backoff'] as const)('fetches new quota after a reset despite %s', async (prior) => {
+    const entered = createDeferred<void>(); const release = createDeferred<void>();
+    const fetch = vi.fn(async () => {
+      if (fetch.mock.calls.length === 1) {
+        entered.resolve();
+        if (prior === 'provider backoff') {
+          throw new ConnectedServiceQuotaFetchError('synthetic rate limit', {
+            status: 429, retryAfterMs: 300_000, quotaFetchErrorCode: 'provider_backoff',
+          });
+        }
+        await release.promise;
+      }
+      return null;
+    });
+    const fixture = createObservationProbeFixture(fetch, async () => 'consumed');
+    const observer = fixture.observe(); await entered.promise;
+    if (prior === 'provider backoff') await observer;
+    const reset = await fixture.quotas.consumeRecoveryCreditForProfile({
+      serviceId: 'openai-codex', profileId: 'backup', idempotencyKey: 'synthetic-reset',
+    });
+    release.resolve(); await observer;
+    expect(reset).toMatchObject({ ok: true, receipt: { status: 'consumed' } });
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it('applies a Claude soft-threshold switch through the shared generation owner during a live turn', async () => {

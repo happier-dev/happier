@@ -124,7 +124,7 @@ function resolveCurrentProfileQuotaRecoveryProof(input: Readonly<{
 export class ConnectedServiceAuthGroupQuotaProbeIncompleteError extends Error {
   readonly code = 'connected_service_auth_group_quota_probe_incomplete';
 
-  constructor(readonly reason: ConnectedServiceGroupQuotaProbeResult['reason']) {
+  constructor(readonly reason: ConnectedServiceGroupQuotaProbeResult['reason'], readonly retryAtMs?: number) {
     super('Connected service auth group quota evidence could not be refreshed within the pre-turn budget');
     this.name = 'ConnectedServiceAuthGroupQuotaProbeIncompleteError';
   }
@@ -366,7 +366,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       ...(input.request.deadlineAtMs === undefined ? {} : { deadlineAtMs: input.request.deadlineAtMs }),
     });
     if (probeResult?.status === 'incomplete') {
-      throw new ConnectedServiceAuthGroupQuotaProbeIncompleteError(probeResult.reason);
+      throw new ConnectedServiceAuthGroupQuotaProbeIncompleteError(probeResult.reason, probeResult.retryAtMs);
     }
     return await this.deps.loadState({
       serviceId: input.request.serviceId,
@@ -887,7 +887,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       logger.warn('[ConnectedServiceAuthGroupSwitchCoordinator] Current-member quota proof unavailable', {
         serviceId: input.serviceId, groupId: input.groupId, reason: error.reason,
       });
-      return { status: 'quota_proof_unavailable', activeProfileId: initial.activeProfileId, generation: initial.generation };
+      return { status: 'quota_proof_unavailable', activeProfileId: initial.activeProfileId, generation: initial.generation,
+        ...(error.retryAtMs === undefined ? {} : { retryAtMs: error.retryAtMs }) };
     }
     const selected = selectConnectedServiceAuthGroupCandidate({
       nowMs: this.deps.nowMs(),

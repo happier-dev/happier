@@ -1804,6 +1804,15 @@ provider-proof identity follow the recipient's actual settled target. Missing or
 stale current-member quota proof uses the existing recovery backoff and quota
 probe owner to recheck that member. Fresh exhaustion waits for that member's
 reset; a different failed member's classification reset cannot govern this wait.
+Equivalent concurrent quota reads share one provider fetch, bounded by the quota
+owner's fetch timeout. A waiter's cancellation leaves other waiters active, and
+provider failure backoff also governs observation probes. An unavailable-proof
+wait preserves a later provider retry boundary instead of probing before it.
+The shared fetch owner rechecks backoff before starting new provider work, so a
+poll waiting for a lease or credential cannot bypass a concurrent probe's failure.
+Sharing includes credential revision and provider-visible account context. The
+post-reset refresh deliberately starts a new observation so it cannot reuse a
+quota read begun before the provider consumed the recovery credit.
 
 Initial intake and scheduler replay use the same durable recovery identity for
 Pending deduplication, even after the first continuation is consumed and the
