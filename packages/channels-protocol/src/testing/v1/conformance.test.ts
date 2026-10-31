@@ -168,7 +168,7 @@ describe('Channels V1 provider-contribution conformance', () => {
             candidate.id === EXTERNAL_ACTION_IDS.setup
         ));
         if (!action) throw new Error('Expected external setup Action fixture');
-        action.surfaces = ['plugin', 'ui'];
+        action.surfaces = ['plugin', 'ui', 'cli'];
         action.placementBindings = ['commandPalette'];
 
         expect(() => assertConversationProviderContributionV1(manifest)).not.toThrow();

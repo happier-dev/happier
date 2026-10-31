@@ -57,6 +57,12 @@ describe('Channels V1 public barrel', () => {
                 resultSchema: protocol.ConversationPermissionMediationSourceCurrentnessResultV1JsonSchema,
             },
         });
+        expect(Object.keys(protocol.CONVERSATION_CORE_PROVIDER_ACTION_DECLARATIONS_V1).sort()).toEqual(
+            Object.keys(protocol.CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1).sort(),
+        );
+        expect(new Set(Object.values(protocol.CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1)).size).toBe(
+            Object.keys(protocol.CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1).length,
+        );
         expect(protocol.compareCanonicalConversationResolutionCandidatesV1(
             { id: '1', label: 'Ada' },
             { id: '2', label: 'Ada' },

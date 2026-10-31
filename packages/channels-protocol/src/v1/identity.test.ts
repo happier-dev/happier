@@ -15,7 +15,7 @@ describe('Channels V1 relation identities', () => {
     });
 
     it('shares one relative-only protocol source with composed V1 schemas', () => {
-        expect(ConversationConnectionIdV1ProtocolSchema.safeParse('connection-1').success).toBe(true);
-        expect(ConversationConnectionIdV1ProtocolSchema.safeParse('connection 1').success).toBe(false);
+        expect(ConversationConnectionIdV1ProtocolSchema).toBe(ConversationConnectionIdV1Schema);
+        expect(ConversationBindingIdV1Schema).toBe(ConversationConnectionIdV1Schema);
     });
 });
