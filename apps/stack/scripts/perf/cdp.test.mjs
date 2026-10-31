@@ -105,12 +105,85 @@ test('capture composes CDP events, safe network records, telemetry and mapped CP
           : message.params.expression.includes('.collect()') ? { commits: 2, renders: 3, components: {}, timeOrigin: epoch - 10000,
             longTasks: [{ atMs: 9900, durationMs: 60 }, { atMs: 10020, durationMs: 60 }, { atMs: 10101, durationMs: 60 }],
             renderers: [{ version: '19' }], telemetryAvailable: true,
-            diagnostics: { timeOrigin: epoch - 10000, supportedEntryTypes: ['measure', 'long-animation-frame'], loafs: [], reactMeasures: [{name:'\u200bOwner',startTime:10000,duration:2,track:'Components ⚛'}], storeNotifications: [{atMs:epoch,changedKeys:['machines']}], socketEvents: [] },
+            diagnostics: { scopedRpcSetupAvailable: true, timeOrigin: epoch - 10000, supportedEntryTypes: ['measure', 'long-animation-frame'], loafs: [], reactMeasures: [{name:'\u200bOwner',startTime:10000,duration:2,track:'Components ⚛'}], storeNotifications: [{atMs:epoch,changedKeys:['machines']}], socketEvents: [] },
             telemetry: { events: [{ name: 'sync.store.storage.notify', count: 2 }] } } : undefined } };
         if (message.method === 'Profiler.start') {
           // The simulated trace owns this clock; host setup delay must not move
           // its requests outside the fixed epoch..epoch+100 capture window.
           const timestamp = 10;
+          send({ method: 'Network.requestWillBeSent', params: { requestId: 'socket-poll', wallTime: epoch / 1000, timestamp,
+            request: { method: 'POST', url: 'http://app.test/v1/updates/?transport=polling&sid=never-save-connection',
+              postData: '40' + JSON.stringify({ clientPurpose: 'sync', clientType: 'user-scoped', private: 'never-save' }) }, initiator: { type: 'script' } } });
+          send({ method: 'Network.webSocketCreated', params: { requestId: 'upgrade', timestamp,
+            url: 'ws://app.test/v1/updates/?transport=websocket&sid=never-save-connection' } });
+          for (const [direction, payloadData] of [['Sent', '2probe'], ['Received', '3probe'], ['Sent', '5']]) {
+            send({ method: `Network.webSocketFrame${direction}`, params: { requestId: 'upgrade', timestamp,
+              response: { opcode: 1, payloadData } } });
+          }
+          for (const [direction, payloadData, delta] of [
+            ['Received', '40{"sid":"never-save-namespace"}', .001],
+            ['Sent', '42["rpc-register",{"method":"never-save"}]', .002],
+            ['Sent', '42["rpc-call",{"params":"never-save"}]', .003],
+            ['Sent', '41', .004],
+          ]) send({ method: `Network.webSocketFrame${direction}`, params: { requestId: 'upgrade', timestamp: timestamp + delta,
+            response: { opcode: 1, payloadData } } });
+          send({ method: 'Network.webSocketClosed', params: { requestId: 'upgrade', timestamp: timestamp + .05 } });
+          for (const [phase, delta] of [['acquire', 1], ['connect', 2], ['connected', 15]]) {
+            send({ method: 'Runtime.bindingCalled', params: { name: '__happierPerfTelemetry', payload: JSON.stringify({
+              scopedRpcSetup: { phase, connectionId: 7, timeOrigin: epoch - 10000, atMs: epoch + delta, origin: 'http://app.test',
+                ...(phase === 'connected' ? { engineId: 'never-save-fallback' } : {}), private: 'never-save' },
+            }) } });
+          }
+          for (const [requestId, delta, postData] of [
+            ['scoped-admission', .01, '40' + JSON.stringify({ clientPurpose: 'scoped-rpc' })],
+            ['scoped-poll', .04, undefined],
+          ]) send({ method: 'Network.requestWillBeSent', params: { requestId, wallTime: epoch / 1000 + delta, timestamp: timestamp + delta,
+            request: { method: postData ? 'POST' : 'GET', url: 'http://app.test/v1/updates/?transport=polling&sid=never-save-fallback', postData }, initiator: { type: 'script' } } });
+          send({ method: 'Network.webSocketCreated', params: { requestId: 'failed-probe', timestamp: timestamp + .01,
+            url: 'ws://app.test/v1/updates/?transport=websocket&sid=never-save-fallback' } });
+          send({ method: 'Network.webSocketFrameError', params: { requestId: 'failed-probe', timestamp: timestamp + .02, errorMessage: 'never-save' } });
+          send({ method: 'Network.webSocketClosed', params: { requestId: 'failed-probe', timestamp: timestamp + .03 } });
+          send({ method: 'Network.requestWillBeSent', params: { requestId: 'session-admission', wallTime: epoch / 1000, timestamp,
+            request: { method: 'POST', url: 'http://app.test/v1/updates/?transport=polling&sid=never-save-session',
+              postData: '40' + JSON.stringify({ clientPurpose: 'sync', clientType: 'session-scoped', sessionId: 'never-save' }) }, initiator: { type: 'script' } } });
+          send({ method: 'Network.requestWillBeSent', params: { requestId: 'machine-admission', wallTime: epoch / 1000, timestamp,
+            request: { method: 'POST', url: 'http://app.test/v1/updates/?transport=polling&sid=never-save-machine',
+              postData: '40' + JSON.stringify({ clientType: 'machine-scoped', machineId: 'never-save' }) }, initiator: { type: 'script' } } });
+          // WebSocket-only connections have no sid in their URL. The real
+          // Engine open packet is the only join to the producer's Engine id.
+          send({ method: 'Network.webSocketCreated', params: { requestId: 'websocket-only', url: 'ws://app.test/v1/updates/?transport=websocket' } });
+          for (const [direction, payloadData, delta] of [
+            ['Received', '0{"sid":"never-save-websocket-only"}', .02],
+            ['Sent', '40{"clientPurpose":"scoped-rpc","clientType":"user-scoped"}', .025],
+            ['Received', '40{"sid":"never-save-namespace"}', .03],
+            ['Sent', '42["rpc-call",{"params":"never-save"}]', .035],
+          ]) send({ method: `Network.webSocketFrame${direction}`, params: { requestId: 'websocket-only', timestamp: timestamp + delta,
+            response: { opcode: 1, payloadData } } });
+          for (const [phase, delta] of [['acquire', 19], ['connect', 20], ['connected', 31]]) {
+            send({ method: 'Runtime.bindingCalled', params: { name: '__happierPerfTelemetry', payload: JSON.stringify({
+              scopedRpcSetup: { phase, connectionId: 8, timeOrigin: epoch - 10000, atMs: epoch + delta, origin: 'http://app.test',
+                ...(phase === 'connected' ? { engineId: 'never-save-websocket-only' } : {}) },
+            }) } });
+          }
+          send({ method: 'Network.webSocketClosed', params: { requestId: 'websocket-only', timestamp: timestamp + .04 } });
+          send({ method: 'Network.webSocketCreated', params: { requestId: 'websocket-reconnected', url: 'ws://app.test/v1/updates/?transport=websocket' } });
+          send({ method: 'Network.webSocketFrameReceived', params: { requestId: 'websocket-reconnected', timestamp: timestamp + .045,
+            response: { opcode: 1, payloadData: '0{"sid":"never-save-reconnected"}' } } });
+          for (const [direction, payloadData, delta] of [
+            ['Sent', '40{"clientPurpose":"scoped-rpc","clientType":"user-scoped"}', .046],
+            ['Received', '40{"sid":"never-save-namespace"}', .047],
+          ]) send({ method: `Network.webSocketFrame${direction}`, params: { requestId: 'websocket-reconnected', timestamp: timestamp + delta,
+            response: { opcode: 1, payloadData } } });
+          for (const [phase, delta] of [['acquire', 41], ['connect', 42], ['connected', 48]]) {
+            send({ method: 'Runtime.bindingCalled', params: { name: '__happierPerfTelemetry', payload: JSON.stringify({
+              scopedRpcSetup: { phase, connectionId: 8, timeOrigin: epoch - 10000, atMs: epoch + delta, origin: 'http://app.test',
+                ...(phase === 'connected' ? { engineId: 'never-save-reconnected' } : {}) },
+            }) } });
+          }
+          for (const scopedRpcSetup of [
+            { phase: 'acquire', connectionId: 7, timeOrigin: epoch - 10, atMs: epoch + 90, origin: 'http://app.test' },
+            { phase: 'never-save', connectionId: 99, timeOrigin: epoch - 10, atMs: epoch + 91, origin: 'never-save' },
+          ]) send({ method: 'Runtime.bindingCalled', params: { name: '__happierPerfTelemetry', payload: JSON.stringify({ scopedRpcSetup }) } });
           send({ method: 'Network.webSocketFrameReceived', params: { timestamp, response: { opcode: 1, payloadData: '42["before-native-pair",{}]' } } });
           send({ method: 'Network.requestWillBeSent', params: { requestId: 'n', wallTime: epoch / 1000, timestamp,
             request: { method: 'GET', url: 'http://app.test/v1/data?key=never-save' }, initiator: { type: 'script', stack: { callFrames: [],
@@ -148,7 +221,45 @@ test('capture composes CDP events, safe network records, telemetry and mapped CP
     await capture.begin();
     const result = await capture.finish();
     assert.deepEqual(result.sockets.slice(-2).map(row => row.bytes), [4, 2], 'all non-text CDP payloads use base64, including control messages');
-    assert.equal(result.network.requests, 4);
+    assert.equal(result.network.requests, 9);
+    assert.equal(result.socketConnections.length, 6);
+    const connection = result.socketConnections[0];
+    assert.equal(connection.purpose, 'Account');
+    assert.equal(connection.clientRole, 'user-scoped');
+    assert.deepEqual(connection.transports, ['polling', 'websocket']);
+    assert.equal(connection.upgradeOutcome, 'succeeded');
+    assert.equal(connection.clientDisconnectObserved, true);
+    assert.equal(connection.websocketLifetimeMs, 50);
+    assert.equal(result.network.records.find(row => row.requestId === 'socket-poll').socketConnectionId, connection.id);
+    assert.ok(result.sockets.filter(row => row.requestId === 'upgrade').every(row => row.socketConnectionId === connection.id));
+    const fallback = result.socketConnections[1];
+    assert.equal(fallback.purpose, 'scoped-RPC');
+    assert.equal(fallback.upgradeOutcome, 'failed');
+    assert.equal(fallback.closedMs, null, 'a failed WebSocket probe must not close its still-polling Engine.IO connection');
+    assert.equal(result.network.records.find(row => row.requestId === 'scoped-poll').socketConnectionId, fallback.id);
+    assert.equal(result.socketConnections[2].purpose, 'other', 'a Session sync socket must not be mislabeled as the Account connection');
+    assert.equal(result.socketConnections[3].purpose, 'other');
+    assert.equal(result.socketConnections[3].clientRole, 'machine-scoped', 'retain only the allowlisted role for clients without a purpose');
+    assert.equal(result.socketSetup.producerAvailable, true);
+    assert.deepEqual((result.socketSetup?.phases ?? []).filter(row => row.poolConnectionId === 'pool-1'), [
+      { phase: 'acquire', atMs: epoch + 1, poolConnectionId: 'pool-1', socketConnectionId: fallback.id },
+      { phase: 'connect', atMs: epoch + 2, poolConnectionId: 'pool-1', socketConnectionId: fallback.id },
+      { phase: 'connected', atMs: epoch + 15, poolConnectionId: 'pool-1', socketConnectionId: fallback.id },
+    ], 'producer phases join a later observed physical connection without retaining its private ids or payload');
+    assert.deepEqual(result.socketSetup.phases.filter(row => row.socketConnectionId === connection.id).map(row => row.phase),
+      ['upgrade', 'registered', 'rpc-register-sent', 'request-sent']);
+    const websocketOnly = result.socketConnections[4];
+    assert.equal(websocketOnly.purpose, 'scoped-RPC');
+    assert.deepEqual(websocketOnly.transports, ['websocket']);
+    assert.equal(websocketOnly.upgradeOutcome, 'not-applicable');
+    assert.deepEqual(result.socketSetup.phases.filter(row => row.poolConnectionId === 'pool-2')
+      .map(row => [row.phase, row.socketConnectionId]),
+      [['acquire', null], ['connect', null], ['connected', websocketOnly.id],
+        ['acquire', null], ['connect', null], ['connected', result.socketConnections[5].id]],
+      'a reused logical socket keeps exact Engine joins; earlier ambiguous phases remain explicitly unjoined');
+    assert.deepEqual(result.socketSetup.phases.filter(row => row.poolConnectionId === 'pool-3'), [
+      { phase: 'acquire', atMs: epoch + 90, poolConnectionId: 'pool-3', socketConnectionId: null },
+    ], 'a new document reusing a local ordinal cannot inherit an earlier document connection');
     assert.deepEqual(result.network.records.find(row => row.requestId === 'n').initiator.stack.map(frame => frame.functionName),
       ['inlineScheduler', 'asyncOwner'], 'inline and out-of-line async parents must use the same safe frame projection');
     assert.equal(asyncDepthCommands[0] > 0, true);
@@ -180,7 +291,9 @@ test('capture composes CDP events, safe network records, telemetry and mapped CP
     assert.equal(result.network.records.find(row => row.requestId === 'unknown-failure').failureCode, 'unclassified');
     assert.equal(result.network.records.find(row => row.requestId === 'n').serverRequestId, 'returned-id');
     assert.equal(result.telemetry.reduce((sum, summary) => sum + summary.events[0].count, 0), 8);
-    assert.deepEqual(result.sockets.map(row => row.event), ['unknown', 'update', 'binary', 'websocket'], 'buffer early sockets and do not shift them with a future native clock step');
+    // These anonymous frames are the original clock-pair fixture; the named
+    // connection vectors above independently verify transport/setup joins.
+    assert.deepEqual(result.sockets.filter(row => row.requestId === undefined).map(row => row.event), ['unknown', 'update', 'binary', 'websocket'], 'buffer early sockets and do not shift them with a future native clock step');
     assert.equal(result.react.commits, 2);
     assert.equal(result.cpu.functions[0].name, 'realOwner');
     assert.equal(result.cpu.functions[0].source, 'src/Owner.ts');

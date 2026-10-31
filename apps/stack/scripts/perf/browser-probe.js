@@ -15,12 +15,22 @@
       timeOrigin: performance.timeOrigin ?? null } } : {}) });
   let data = empty();
   let recording = true;
-  let unsubscribeStore;
+  let unsubscribeStore, unsubscribeScopedSetup, setupDeliveryFailed = false;
   const attachTelemetry = () => {
-    if (!diagnostics || !recording || unsubscribeStore) return;
+    if (!diagnostics || !recording) return;
     const telemetry = globalThis.__HAPPIER_SYNC_PERFORMANCE__;
-    if (typeof telemetry?.subscribeStoreNotifications !== 'function') return;
-    unsubscribeStore = telemetry.subscribeStoreNotifications(event => {
+    if (!unsubscribeScopedSetup && typeof telemetry?.subscribeScopedRpcSetup === 'function' && typeof globalThis.__happierPerfTelemetry === 'function') {
+      unsubscribeScopedSetup = telemetry.subscribeScopedRpcSetup(event => {
+        const { phase, connectionId, atMs, origin, engineId } = event;
+        try {
+          globalThis.__happierPerfTelemetry(JSON.stringify({ scopedRpcSetup: {
+            phase, connectionId, timeOrigin: performance.timeOrigin, atMs: performance.timeOrigin + atMs, origin,
+            ...(typeof engineId === 'string' ? { engineId } : {}),
+          } }));
+        } catch { setupDeliveryFailed = true; }
+      });
+    }
+    if (!unsubscribeStore && typeof telemetry?.subscribeStoreNotifications === 'function') unsubscribeStore = telemetry.subscribeStoreNotifications(event => {
       // The producer uses performance.now(); capture windows use epoch time.
       if (recording) data.diagnostics.storeNotifications.push({ atMs: performance.timeOrigin + event.atMs, changedKeys: [...event.changedKeys] });
     });
@@ -118,7 +128,12 @@
     recording = false;
     unsubscribeStore?.();
     unsubscribeStore = undefined;
+    unsubscribeScopedSetup?.();
+    unsubscribeScopedSetup = undefined;
     if (diagnostics) data.diagnostics.storeNotificationsAvailable = globalThis.__HAPPIER_SYNC_PERFORMANCE__?.storeNotificationsAvailable?.() ?? false;
+    if (diagnostics) data.diagnostics.scopedRpcSetupAvailable = !setupDeliveryFailed
+      && globalThis.__HAPPIER_SYNC_PERFORMANCE__?.scopedRpcSetupAvailable?.() === true
+      && typeof globalThis.__happierPerfTelemetry === 'function';
   };
   const storageKey = 'HAPPIER_SYNC_TUNING_JSON';
   const savedKey = '__HAPPIER_PERF_TUNING_ORIGINAL__';
@@ -131,7 +146,7 @@
   globalThis.__happierPerfProbe = {
     reset() {
       for (const { observer, type } of observers) { observer.takeRecords?.(); if (!recording) observer.observe({ type, buffered: false }); }
-      data = empty(); recording = true; attachTelemetry(); globalThis.__HAPPIER_SYNC_PERFORMANCE__?.reset();
+      data = empty(); recording = true; setupDeliveryFailed = false; attachTelemetry(); globalThis.__HAPPIER_SYNC_PERFORMANCE__?.reset();
     },
     collect() { finishObservations(); globalThis.__HAPPIER_SYNC_PERFORMANCE__?.markScenario?.('perf-capture-end'); return { ...data, timeOrigin: performance.timeOrigin,
       renderers: counts ? [...hook.renderers.values()].map(renderer => ({ version: renderer.version, package: renderer.rendererPackageName })) : [],

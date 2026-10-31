@@ -16,11 +16,15 @@ test('diagnostics observe React tracks and LoAFs without a fiber hook, bind late
     disconnect() { this.disconnected = true; }
   }
   const storage = { getItem: () => null, setItem() {}, removeItem() {} };
-  let notify, unsubscribed = 0;
+  let notify, setup, unsubscribed = 0, setupUnsubscribed = 0;
+  const setupDeliveries = [];
   const api = { isEnabled: () => false, reset() {}, flush() {},
+    scopedRpcSetupAvailable: () => true,
+    subscribeScopedRpcSetup(callback) { setup = callback; return () => { setupUnsubscribed++; setup = null; }; },
     storeNotificationsAvailable: () => true,
     subscribeStoreNotifications(callback) { notify = callback; return () => { unsubscribed++; notify = null; }; } };
   const context = vm.createContext({ __HAPPIER_PERF_CAPTURE_MODE__: 'timing', __HAPPIER_PERF_DIAGNOSTICS__: true,
+    __happierPerfTelemetry: payload => setupDeliveries.push(JSON.parse(payload)),
     performance: { now: () => 20, timeOrigin: 1000 }, PerformanceObserver: Observer, URL,
     localStorage: storage, sessionStorage: storage,
     addEventListener: (name, callback) => listeners.set(name, callback),
@@ -29,6 +33,9 @@ test('diagnostics observe React tracks and LoAFs without a fiber hook, bind late
   assert.equal(context.__REACT_DEVTOOLS_GLOBAL_HOOK__, undefined);
   context.__HAPPIER_SYNC_PERFORMANCE__ = api;
   listeners.get('happier:sync-performance-ready')();
+  assert.equal(typeof setup, 'function', 'the existing diagnostic owner must attach the scoped setup producer');
+  setup({ phase: 'acquire', connectionId: 1, atMs: 20, origin: 'http://app.test', private: 'never-save' });
+  assert.deepEqual(setupDeliveries, [{ scopedRpcSetup: { phase: 'acquire', connectionId: 1, timeOrigin: 1000, atMs: 1020, origin: 'http://app.test' } }]);
   notify({ atMs: 7, changedKeys: ['machines'] });
   const measures = observers.find(observer => observer.type === 'measure');
   measures.callback({ getEntries: () => [
@@ -46,6 +53,7 @@ test('diagnostics observe React tracks and LoAFs without a fiber hook, bind late
   assert.equal(result.diagnostics.storeNotificationsAvailable, true);
   assert.deepEqual(result.diagnostics.storeNotifications, [{ atMs: 1007, changedKeys: ['machines'] }]);
   assert.equal(result.diagnostics.socketEventsAvailable, false);
+  assert.equal(result.diagnostics.scopedRpcSetupAvailable, true);
   assert.deepEqual(result.diagnostics.reactMeasures, [
     { name: '\u200bVisibleRow', startTime: 3, duration: 4, track: 'Components', trackGroup: 'React Components' },
     { name: 'Update', startTime: 8, duration: 2, track: 'Blocking', trackGroup: 'Scheduler' },
@@ -53,6 +61,7 @@ test('diagnostics observe React tracks and LoAFs without a fiber hook, bind late
   assert.equal(result.diagnostics.loafs[0].scripts[0].sourceURL, 'https://example.com/app.js');
   assert.equal(JSON.stringify(result).includes('secret'), false);
   assert.equal(notify, null, 'collection releases the diagnostic store subscription');
+  assert.equal(setup, null, 'collection releases the scoped setup subscription');
   measures.callback({ getEntries: () => [{ name: '\u200bLate', startTime: 100, duration: 1 }] });
   assert.equal(collected.diagnostics.reactMeasures.length, 2);
   context.__happierPerfProbe.reset();
@@ -60,6 +69,7 @@ test('diagnostics observe React tracks and LoAFs without a fiber hook, bind late
   assert.equal(context.__happierPerfProbe.collect().diagnostics.storeNotifications.length, 1);
   context.__happierPerfProbe.stop();
   assert.equal(unsubscribed, 2);
+  assert.equal(setupUnsubscribed, 2);
   assert.equal(listeners.size, 0);
   assert.ok(observers.every(observer => observer.disconnected));
   const priorObservers = observers.length;

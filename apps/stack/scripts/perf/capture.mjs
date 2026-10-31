@@ -126,6 +126,160 @@ function pageAuthSurface() {
     retirementReasonCode: null, retirementReasonAvailability: 'not exposed by the app browser surface' };
 }
 
+// Join only inside this recorder. Raw Engine.IO connection ids, query values and
+// namespace/auth payloads never leave this closure or enter the saved capture.
+function socketConnectionRecorder() {
+  const byEngineId = new Map(), byWebSocket = new Map(), connections = [];
+  const setupEvents = [], networkPhases = [], poolConnections = new Map();
+  const setupPhases = new Set(['retirement-wait', 'retired', 'acquire', 'reachability-start', 'reachability-ready', 'connect', 'connected']);
+  const toWall = (timestamp, pairs) => {
+    const pair = pairs.findLast(pair => pair.timestamp <= timestamp) ?? pairs[0];
+    return Number.isFinite(timestamp) && pair ? timestamp * 1000 + pair.offsetMs : null;
+  };
+  const create = (timestamp, origin) => {
+    const connection = { id: `connection-${connections.length + 1}`, purpose: 'unknown', clientRole: 'unknown', transports: new Set(),
+      origin,
+      upgradeOutcome: 'not-observed', first: timestamp, last: timestamp, websocketFirst: null, websocketClosed: null, closed: null,
+      probeAcknowledged: false, clientDisconnectObserved: false };
+    connections.push(connection);
+    return connection;
+  };
+  const touch = (connection, timestamp) => {
+    if (!Number.isFinite(timestamp)) return;
+    connection.first = Number.isFinite(connection.first) ? Math.min(connection.first, timestamp) : timestamp;
+    connection.last = Number.isFinite(connection.last) ? Math.max(connection.last, timestamp) : timestamp;
+  };
+  const parseUrl = raw => {
+    try {
+      const url = new URL(raw);
+      if (url.pathname.replace(/\/$/, '') !== '/v1/updates') return null;
+      const transport = url.searchParams.get('transport');
+      if (!['polling', 'websocket'].includes(transport)) return null;
+      return { origin: url.origin.replace(/^ws/, 'http'), engineId: url.searchParams.get('sid'), transport };
+    } catch { return null; }
+  };
+  const packet = (connection, payload, direction, timestamp) => {
+    if (typeof payload !== 'string') return;
+    for (const part of payload.split('\x1e')) {
+      if (direction === 'received' && part.startsWith('0{')) {
+        try {
+          const open = JSON.parse(part.slice(1));
+          if (typeof open?.sid === 'string') byEngineId.set(JSON.stringify([connection.origin, open.sid]), connection);
+        } catch {} // A malformed Engine open cannot establish a private join.
+      }
+      if (direction === 'received' && part.startsWith('40{')) {
+        try {
+          if (typeof JSON.parse(part.slice(2))?.sid === 'string') networkPhases.push({ phase: 'registered', timestamp, connection });
+        } catch {} // Namespace admission is observed, never inferred from a dial.
+      }
+      const name = socketFrameClassification(part, 1).event;
+      if (direction === 'sent' && ['rpc-register', 'rpc-call'].includes(name)) {
+        networkPhases.push({ phase: name === 'rpc-call' ? 'request-sent' : 'rpc-register-sent', timestamp, connection });
+      }
+      if (direction === 'sent' && part.startsWith('40{')) {
+        try {
+          const auth = JSON.parse(part.slice(2));
+          if (['user-scoped', 'session-scoped', 'machine-scoped'].includes(auth?.clientType)) connection.clientRole = auth.clientType;
+          if (typeof auth?.clientPurpose === 'string') connection.purpose = auth.clientPurpose === 'scoped-rpc' ? 'scoped-RPC'
+            : auth.clientPurpose === 'sync' && auth.clientType === 'user-scoped' ? 'Account' : 'other';
+          else if (['session-scoped', 'machine-scoped'].includes(connection.clientRole)) connection.purpose = 'other';
+        } catch {} // An incomplete body cannot establish a purpose.
+      }
+      if (direction === 'sent' && part === '41') connection.clientDisconnectObserved = true;
+      if (direction === 'received' && part === '3probe') connection.probeAcknowledged = true;
+      if (direction === 'sent' && part === '5' && connection.probeAcknowledged) {
+        connection.upgradeOutcome = 'succeeded';
+        networkPhases.push({ phase: 'upgrade', timestamp, connection });
+      }
+    }
+  };
+  return {
+    request(event) {
+      const parsed = parseUrl(event.request.url);
+      if (!parsed) return {};
+      // Initial polling opens have no Engine.IO id yet. Leave them unjoined
+      // rather than guessing from timestamps or fetching response bodies.
+      if (!parsed.engineId) return { socketTransport: parsed.transport, socketConnectionId: null };
+      const identity = JSON.stringify([parsed.origin, parsed.engineId]);
+      let connection = byEngineId.get(identity);
+      if (!connection) { connection = create(event.timestamp, parsed.origin); byEngineId.set(identity, connection); }
+      touch(connection, event.timestamp);
+      connection.transports.add(parsed.transport);
+      packet(connection, event.request.postData, 'sent', event.timestamp);
+      return { socketTransport: parsed.transport, socketConnectionId: connection.id };
+    },
+    websocket(event, kind) {
+      if (kind === 'created') {
+        const parsed = parseUrl(event.url);
+        if (!parsed) return;
+        const identity = parsed.engineId ? JSON.stringify([parsed.origin, parsed.engineId]) : null;
+        let connection = identity ? byEngineId.get(identity) : null;
+        if (!connection) connection = create(event.timestamp, parsed.origin);
+        if (identity) byEngineId.set(identity, connection);
+        connection.transports.add('websocket');
+        connection.upgradeOutcome = parsed.engineId ? 'attempted' : 'not-applicable';
+        connection.websocketFirst = Number.isFinite(event.timestamp) ? event.timestamp : null;
+        byWebSocket.set(event.requestId, connection);
+      }
+      const connection = byWebSocket.get(event.requestId);
+      if (!connection) return;
+      touch(connection, event.timestamp);
+      if (kind === 'handshake-request' && connection.websocketFirst === null) connection.websocketFirst = event.timestamp;
+      if (kind === 'closed') {
+        connection.websocketClosed = event.timestamp;
+        if (['succeeded', 'not-applicable'].includes(connection.upgradeOutcome)) connection.closed = event.timestamp;
+        else if (connection.upgradeOutcome === 'attempted') connection.upgradeOutcome = 'closed-before-upgrade';
+      }
+      if (kind === 'frame-error' && connection.upgradeOutcome === 'attempted') connection.upgradeOutcome = 'failed';
+    },
+    frame(event, direction) {
+      const connection = byWebSocket.get(event.requestId);
+      if (!connection) return {};
+      touch(connection, event.timestamp);
+      if (event.response.opcode === 1) packet(connection, event.response.payloadData, direction, event.timestamp);
+      return { socketConnectionId: connection.id };
+    },
+    setup(event) {
+      if (!setupPhases.has(event?.phase) || !Number.isSafeInteger(event.connectionId) || event.connectionId <= 0
+        || !Number.isFinite(event.atMs) || !Number.isFinite(event.timeOrigin) || typeof event.origin !== 'string') return;
+      let origin;
+      try { origin = new URL(event.origin).origin; } catch { return; }
+      const identity = JSON.stringify([event.timeOrigin, event.connectionId]);
+      let pool = poolConnections.get(identity);
+      if (!pool) { pool = { id: `pool-${poolConnections.size + 1}`, engines: new Set() }; poolConnections.set(identity, pool); }
+      const engine = typeof event.engineId === 'string' && event.engineId ? JSON.stringify([origin, event.engineId]) : null;
+      if (engine) pool.engines.add(engine);
+      setupEvents.push({ phase: event.phase, atMs: event.atMs, pool, engine });
+    },
+    setupSnapshot(startMs, endMs, pairs) {
+      const network = networkPhases.map(row => ({ phase: row.phase, atMs: toWall(row.timestamp, pairs), socketConnectionId: row.connection.id }));
+      const producer = setupEvents.map(row => {
+        // One logical Socket.IO object can reconnect. A phase carrying its own
+        // Engine id is exact; earlier phases join only an unambiguous lifetime.
+        const engine = row.engine ?? (row.pool.engines.size === 1 ? row.pool.engines.values().next().value : null);
+        return { phase: row.phase, atMs: row.atMs, poolConnectionId: row.pool.id,
+          socketConnectionId: engine ? byEngineId.get(engine)?.id ?? null : null };
+      });
+      return [...network, ...producer].filter(row => row.atMs !== null && row.atMs >= startMs && row.atMs <= endMs)
+        .sort((left, right) => left.atMs - right.atMs);
+    },
+    snapshot(startMs, endMs, pairs) {
+      const wall = timestamp => toWall(timestamp, pairs);
+      return connections.filter(connection => {
+        const first = wall(connection.first), closed = wall(connection.closed);
+        return first !== null && first <= endMs && (closed === null || closed >= startMs);
+      }).map(connection => ({ id: connection.id, purpose: connection.purpose, clientRole: connection.clientRole, transports: [...connection.transports],
+        upgradeOutcome: connection.upgradeOutcome, clientDisconnectObserved: connection.clientDisconnectObserved,
+        firstObservedMs: wall(connection.first), lastObservedMs: wall(connection.last), closedMs: wall(connection.closed),
+        observedLifetimeMs: Math.max(0, (wall(connection.closed) ?? wall(connection.last)) - wall(connection.first)),
+        lifetimeBasis: 'first-to-last observed transport event; lower bound, absence of closure is not proof of liveness',
+        websocketLifetimeMs: Number.isFinite(connection.websocketFirst) && Number.isFinite(connection.websocketClosed)
+          ? Math.round((connection.websocketClosed - connection.websocketFirst) * 1000) : null }));
+    },
+    clear() { byEngineId.clear(); byWebSocket.clear(); poolConnections.clear(); connections.length = 0; setupEvents.length = 0; networkPhases.length = 0; },
+  };
+}
+
 export async function startCapture(options) {
   if (!['timing', 'counts'].includes(options.captureMode)) throw new Error('Explicit captureMode=timing|counts required');
   if (options.profiling && !options.outputDir) throw new Error('Profiling requires the existing bundle output directory');
@@ -143,6 +297,7 @@ export async function startCapture(options) {
   let heapStarted = false;
   const requests = [], sockets = [], socketLifecycle = [], telemetry = [], scripts = new Map(), nativePairs = [];
   const socketUrls = new Map();
+  const socketConnections = socketConnectionRecorder();
   const initiatorWork = [];
   let asyncCallStackDepth = null, beginAuthState = null;
   const requestedAsyncDepth = options.captureMode === 'counts' ? COUNTS_ASYNC_STACK_DEPTH : 0;
@@ -168,6 +323,7 @@ export async function startCapture(options) {
   const at = (timestamp, request) => timestamp * 1000 + request.clockOffsetMs;
   cdp.on('Debugger.scriptParsed', event => scripts.set(event.scriptId, { url: event.url, sourceMapURL: event.sourceMapURL }));
   cdp.on('Network.requestWillBeSent', event => {
+    const socketIdentity = socketConnections.request(event);
     // Both clocks are sampled together by Chromium, not by a queued renderer
     // evaluation. Keep preparation pairs too: an idle window may have sockets
     // before its first new HTTP request (or no HTTP requests at all).
@@ -183,7 +339,7 @@ export async function startCapture(options) {
     }
     const row = { id: `${event.requestId}:${requests.length}`, requestId: event.requestId,
       endpoint: safeUrl(event.request.url), method: event.request.method,
-      routeClass: networkRouteClass(event.request.url, event.request.method),
+      routeClass: networkRouteClass(event.request.url, event.request.method), ...socketIdentity,
       startMs: paired ? event.wallTime * 1000 : undefined, requestStartMs: paired ? event.wallTime * 1000 : undefined,
       nativeWallTime: event.wallTime, nativeTimestamp: event.timestamp, clockOffsetMs,
       fingerprint: requestFingerprint(event.request, salt),
@@ -248,11 +404,13 @@ export async function startCapture(options) {
     }
   });
   for (const [method, kind] of [['Created', 'created'], ['WillSendHandshakeRequest', 'handshake-request'], ['HandshakeResponseReceived', 'handshake-response'], ['Closed', 'closed'], ['FrameError', 'frame-error']]) cdp.on(`Network.webSocket${method}`, event => {
+    socketConnections.websocket(event, kind);
     if (event.url) socketUrls.set(event.requestId, safeUrl(event.url.replace(/^ws/, 'http')));
     if (recording) socketLifecycle.push({ requestId: event.requestId, kind, nativeTimestamp: event.timestamp ?? null,
       receiptMs: Date.now(), endpoint: socketUrls.get(event.requestId) ?? null });
   });
   for (const direction of ['Sent', 'Received']) cdp.on(`Network.webSocketFrame${direction}`, event => {
+    const socketIdentity = socketConnections.frame(event, direction.toLowerCase());
     if (!recording) return;
     const { payloadData, opcode } = event.response;
     const classification = socketFrameClassification(payloadData, opcode);
@@ -263,13 +421,19 @@ export async function startCapture(options) {
       try { const payload = JSON.parse(payloadData.slice(payloadData.indexOf('['))); const value = payload[1]?.method;
         if (typeof value === 'string' && /^[a-zA-Z0-9_.:/-]+$/.test(value)) rpcMethod = value; } catch {}
     }
-    sockets.push({ nativeTimestamp: event.timestamp, requestId: event.requestId, direction: direction.toLowerCase(), opcode, ...classification,
+    sockets.push({ nativeTimestamp: event.timestamp, requestId: event.requestId, ...socketIdentity, direction: direction.toLowerCase(), opcode, ...classification,
       bytes: opcode === 1 ? Buffer.byteLength(payloadData) : Buffer.byteLength(payloadData, 'base64'),
       ...(rpcMethod ? { rpcMethod } : {}) });
   });
   cdp.on('Runtime.bindingCalled', event => {
-    if (!recording || event.name !== '__happierPerfTelemetry') return;
-    try { telemetry.push(JSON.parse(event.payload)); } catch {}
+    if (event.name !== '__happierPerfTelemetry') return;
+    try {
+      const value = JSON.parse(event.payload);
+      // Consume even malformed setup envelopes here: they are never aggregate
+      // telemetry and must not carry private join fields into saved summaries.
+      if (value && Object.hasOwn(value, 'scopedRpcSetup')) { socketConnections.setup(value.scopedRpcSetup); return; }
+      if (recording) telemetry.push(value);
+    } catch {}
   });
   const evaluate = async expression => {
     const result = await cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
@@ -314,7 +478,7 @@ export async function startCapture(options) {
           await attempt('cleanup.OFF.removeOverride', () => evaluate('delete globalThis.__HAPPIER_PERF_CAPTURE_MODE__; delete globalThis.__HAPPIER_PERF_OFF_DOCUMENT__'));
         }
       }
-    } finally { recording = false; cdp.close(); }
+    } finally { recording = false; socketConnections.clear(); cdp.close(); }
     return { status: errors.length || attestOff && (off?.storeTelemetry !== false || off?.fiberHook !== false) ? 'CLEANUP_FAILED' : 'CLEANED', operations, errors,
       asyncCallStackDepth, authState: authState ?? null,
       ...(attestOff ? { freshDocumentOffAttestation: off ?? null } : {}) };
@@ -471,6 +635,9 @@ export async function startCapture(options) {
           summary: summarizeHeapProfile(heap?.profile, cleanSymbols) } } : undefined;
         return finished = { startMs, endMs, durationMs: endMs - startMs, profile: profile ?? null, cpu: summaryProfile ? summarizeProfile(summaryProfile, cleanSymbols) : null, profiling,
           network: { ...summarizeNetwork(windowRequests, { startMs, endMs }), records: windowRequests, observedThroughMs: Date.now() }, sockets: windowSockets,
+          socketConnections: socketConnections.snapshot(startMs, endMs, orderedPairs),
+          socketSetup: { producerAvailable: probeData?.diagnostics?.scopedRpcSetupAvailable === true,
+            phases: socketConnections.setupSnapshot(startMs, endMs, orderedPairs) },
           socketTimeline: { source: 'CDP physical WebSocket lifecycle and Engine.IO/Socket.IO frame kinds; physical connects alone do not establish a logical root reconnect',
             events: [...lifecycle, ...windowSockets].sort((a, b) => a.atMs - b.atMs) }, telemetry,
           react: probeData, authState: { begin: beginAuthState, end: endAuthState }, observedUi: { url: safeUrl(pageUrl), scripts: [...new Set([...scripts.values()].map(script => safeUrl(script.url)).filter(Boolean))] },

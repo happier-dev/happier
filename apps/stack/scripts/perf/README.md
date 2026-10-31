@@ -356,7 +356,53 @@ keys without storing values; missing source registration is unavailable, not
 zero notifications. `socket-timeline.json` contains physical WebSocket events,
 Engine.IO ping/pong and Socket.IO frame kinds with the existing native clock
 mapping. Physical connect events alone do not prove a logical root reconnect;
-request starts are in `network.json` and must be joined by time accordingly.
+request starts are in `network.json`.
+The development recorder's `browser-capture.json.socketConnections` supplies
+opaque per-capture connection ids, allowlisted purpose (Account, scoped-RPC,
+other or unknown) and client role, observed transports including probes, upgrade outcome and
+observed lifetime lower bounds. Polling request records and WebSocket frames
+carry `socketConnectionId` for joining those observations. Initial polling opens
+without an Engine.IO id remain unjoined. Arm the recorder before navigation and
+namespace admission to observe purpose; a connection admitted before attachment
+may remain unknown. Raw Engine.IO ids, query values and admission payloads stay
+inside the recorder and are discarded on close. A failed WebSocket probe does
+not establish that its polling connection closed.
+
+Profiling captures also expose `browser-capture.json.socketSetup`. Its
+`producerAvailable` bit reports whether the loaded UI supplied the opt-in scoped
+pool observer; missing instrumentation is unavailable, not zero acquisitions.
+`phases` contains only a phase, epoch timestamp and opaque joins. The UI records
+entry reservation (`acquire`), retiring-entry waits, readiness and connect/admission;
+CDP records successful upgrade, namespace admission (`registered`),
+`rpc-register-sent` and `request-sent`. Namespace admission is distinct from reverse
+method registration, and upgrade need not precede admission or the first RPC.
+Polling reply bodies are not fetched, so a namespace ACK carried only by polling
+has the UI's `connected` marker but no native `registered` marker.
+`poolConnectionId` identifies a logical pooled Socket within one document;
+`socketConnectionId` identifies its observed physical Engine connection. Private
+Engine ids and origins join these inside the recorder, including WebSocket-only
+Engine-open packets, and are discarded on cleanup. A logical Socket can reconnect:
+events with an Engine id join exactly, while earlier events join only one
+unambiguous lifetime and otherwise retain a null physical join. A new document
+cannot reuse the previous document's local ordinal. Arm before the cold action
+and load the current UI observer: late attachment cannot reconstruct an earlier
+acquisition. Compare native handshake/namespace timestamps with the UI's
+`connected` timestamp and the main-thread trace to separate transport progress
+from delayed JavaScript delivery; the subsequent gap to `request-sent` also
+includes Machine admission and crypto preparation. A direct HTTP route is visible
+in network records, not as a Socket.IO request phase. These diagnostics add no
+timer or poll and do no clock or join work without a profiling observer.
+
+In the current development UI, `serverScopedRpcSocketPool` owns both logical
+client leases and pending native acknowledgements. Releasing a client cannot
+idle-retire its still-issued request, including through Socket.IO `timeout()`;
+after the final acknowledgement settles, the existing five-second idle policy
+applies. Explicit pool shutdown/network withdrawal still closes the transport.
+Background-task sockets remain independent one-shots and close after their last
+use. For a settled healthy Home, measure after finite mount reads retire: expect
+zero new scoped acquisitions, recreations, polling or registrations. An aggregate
+WebSocket count without its connection purpose does not identify that producer.
+
 LoAF support is recorded rather than assumed on every browser.
 
 `heap.heapprofile` uses 1 MiB allocation sampling, including objects collected
