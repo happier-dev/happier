@@ -5,7 +5,7 @@ import { resolveBootstrapRepoRoot } from './resolveBootstrapRepoRoot.mjs';
 
 test('resolveBootstrapRepoRoot walks upward until it finds the monorepo root markers', () => {
   const root = resolveBootstrapRepoRoot({
-    startDir: '/repo/apps/bootstrap/scripts',
+    startDir: '/repo/apps/bootstrap/scripts/nested',
     existsSync: (path) => (
       path === '/repo/package.json'
       || path === '/repo/pnpm-lock.yaml'
