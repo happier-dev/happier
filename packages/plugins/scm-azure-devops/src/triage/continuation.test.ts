@@ -127,13 +127,29 @@ describe('Azure DevOps scan continuation codec', () => {
   });
 
   it('carries only the invocation frontier', () => {
-    const token = encoded(frontier({
-      projectNextToken: 'p'.repeat(64),
-      currentRepositoryId: 'f4b7c1a2-3d4e-4f50-9a6b-7c8d9e0f1a2b',
-      lastCompletedRepositoryId: 'a0d31c2e-4f50-4a6b-8c7d-9e0f1a2b3c4d',
-    }));
+    const source = {
+      ...frontier({
+        projectId: '5feb1c2d-3e4f-4a5b-8c9d-0e1f2a3b4c5d',
+        projectNextToken: 'project-page-2',
+        currentRepositoryId: 'f4b7c1a2-3d4e-4f50-9a6b-7c8d9e0f1a2b',
+        lastCompletedRepositoryId: 'a0d31c2e-4f50-4a6b-8c7d-9e0f1a2b3c4d',
+      }),
+      authorization: 'Basic fixture-secret',
+      repositories: ['fixture-private-repository'],
+      deliveredIds: ['fixture-delivered-entry'],
+      viewer: { id: 'fixture-private-viewer' },
+    };
+    const token = encoded(source);
+    expect(decode(token)).toMatchObject({
+      projectId: source.projectId,
+      projectNextToken: source.projectNextToken,
+      currentRepositoryId: source.currentRepositoryId,
+      lastCompletedRepositoryId: source.lastCompletedRepositoryId,
+    });
     // The frontier is a function of the contract, never of the account's inventory: no
     // repository list, delivered-id history, viewer record, or credential travels in it.
-    expect(token).not.toContain('Basic');
+    for (const withheld of ['Basic fixture-secret', 'fixture-private-repository', 'fixture-delivered-entry', 'fixture-private-viewer']) {
+      expect(token).not.toContain(withheld);
+    }
   });
 });

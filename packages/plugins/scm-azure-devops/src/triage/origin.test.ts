@@ -72,12 +72,6 @@ describe('buildAzureCollisionScope', () => {
     expect(scope).not.toContain('AcmeOrg/');
   });
 
-  it('keeps the same repository identical after a project or repository rename', () => {
-    const before = buildAzureCollisionScope({ origin, repositoryId });
-    const after = buildAzureCollisionScope({ origin, repositoryId });
-    expect(after).toBe(before);
-  });
-
   it('rejects a non-GUID repository id rather than minting a name-keyed scope', () => {
     expect(buildAzureCollisionScope({ origin, repositoryId: 'gateway' })).toBeNull();
   });
