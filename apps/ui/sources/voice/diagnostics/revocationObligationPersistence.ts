@@ -5,8 +5,6 @@ import {
 } from '@/sync/domains/scope/serverAccountScope';
 
 const STORAGE_KEY_PREFIX = 'voice-diagnostics-machine-revocations-v1';
-const MAX_MACHINE_ID_LENGTH = 1024;
-const MAX_OBLIGATIONS = 64;
 
 function storageKey(scope: ServerAccountScope): string {
   return serverAccountScopedStorageKey(STORAGE_KEY_PREFIX, scope);
@@ -15,7 +13,7 @@ function storageKey(scope: ServerAccountScope): string {
 function normalizeMachineId(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
-  if (!normalized || normalized.length > MAX_MACHINE_ID_LENGTH) return null;
+  if (!normalized) return null;
   return normalized;
 }
 
@@ -33,7 +31,6 @@ function parseMachineIds(raw: string | undefined): string[] {
       if (!machineId || seen.has(machineId)) continue;
       seen.add(machineId);
       machineIds.push(machineId);
-      if (machineIds.length >= MAX_OBLIGATIONS) break;
     }
     return machineIds;
   } catch {
@@ -65,7 +62,7 @@ export function addPersistedVoiceDiagnosticsMachineRevocation(
   if (!machineId) return;
   const current = readPersistedVoiceDiagnosticsMachineRevocations(scope);
   if (current.includes(machineId)) return;
-  writeMachineIds(scope, [...current, machineId].slice(-MAX_OBLIGATIONS));
+  writeMachineIds(scope, [...current, machineId]);
 }
 
 export function clearPersistedVoiceDiagnosticsMachineRevocation(

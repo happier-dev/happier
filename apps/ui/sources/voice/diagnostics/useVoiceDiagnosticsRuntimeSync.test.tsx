@@ -6,6 +6,7 @@ import { createDeferred, createMachineFixture, registerStandardCleanupTarget, re
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { VoiceSpeechDiagnosticsConfigureRequestV1Schema, VoiceSpeechDiagnosticsRevokeCaptureRequestV1Schema, VoiceSpeechDiagnosticsSettingsV1Schema, VoiceSpeechDiagnosticsStatusResponseV1Schema,
   resolveVoiceSpeechDiagnosticsStoragePolicy } from '@happier-dev/protocol/voice/diagnostics';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -125,7 +126,8 @@ function RuntimeSync(props: { voice: unknown }) {
 function createHarness(props: { voice: unknown }) {
   const machines = ['m1', 'm2', 'm3'].map(id => {
     const target = runtimeTargetsByMachineId.get(id) ?? (id === machineState.machineId ? machineState : { daemonStateVersion: 0, isOnline: false });
-    return createMachineFixture({ id, active: target.isOnline, activeAt: target.isOnline ? Date.now() : 0,
+    return createMachineFixture({ id, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+      active: target.isOnline, activeAt: target.isOnline ? Date.now() : 0,
       daemonStateVersion: target.daemonStateVersion,
       daemonState: { status: 'running', startedAt: target.daemonStateVersion } });
   });
@@ -168,7 +170,8 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
         { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, 'account-a') ?? undefined });
     disconnect = await home.restoreActiveConnection();
     scope = { serverId: home.homes.diagnostics!.id, accountId: 'account-a' };
-    const machine = createMachineFixture({ id: 'm1', activeAt: Date.now(), daemonStateVersion: 1 });
+    const machine = createMachineFixture({ id: 'm1', activeAt: Date.now(), daemonStateVersion: 1,
+      storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
     storage.setState({ machines: { m1: machine }, machineListByServerId: { [scope.serverId]: [machine] },
       settings: { ...storage.getState().settings, voice: voiceSettingsParse({ diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1' } }) } });
     const readiness = await renderHook(() => useMachineCliDetectionTarget('m1'));

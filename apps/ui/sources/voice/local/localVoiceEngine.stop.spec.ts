@@ -66,6 +66,7 @@ describe('local voice engine stop', () => {
     lifecycle.setConfiguredProviderId('local_conversation');
     const target = { serverId: localVoiceHomeId, sessionId: 's1' };
     const refusedRequests: string[] = [];
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       await lifecycle.toggle(target);
       await voiceAgentSessions.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID);
@@ -118,6 +119,7 @@ describe('local voice engine stop', () => {
       } else {
         expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', canStop: true });
       }
+      const failureBeforeEnd = lifecycle.getSnapshot();
       const callsBeforeEnd = sessionRpcWithServerScope.mock.calls.length;
       const end = await executeVoiceConversationAction('ui.voice_global.end', {
         expectedAttempt: getVoiceSessionPresentedAttemptId(),
@@ -127,18 +129,29 @@ describe('local voice engine stop', () => {
       expect(voiceAgentSessions.isActive(VOICE_AGENT_GLOBAL_SESSION_ID)).toBe(false);
       expect(refusedRequests.filter(method => method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toHaveLength(targetState === 'sweep_terminal_member' ? 0 : 1);
       const endRequests = sessionRpcWithServerScope.mock.calls.slice(callsBeforeEnd).map(([request]) => request.method);
-      expect(endRequests.filter(method => method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toHaveLength(1);
+      // Only a refused primary Stop needs its exact Run observation. The
+      // optional sweep does not acquire another finality decision.
+      expect(endRequests.filter(method => method === SESSION_RPC_METHODS.EXECUTION_RUN_GET))
+        .toHaveLength(targetState === 'sweep_terminal_member' ? 0 : 1);
       if (duplicateRuns.length) expect(duplicateRuns.map(run => run.status)).toEqual(
         targetState === 'sweep_terminal_member' ? ['failed', 'cancelled'] : ['cancelled', 'cancelled'],
       );
       const metadata = readVoiceAgentRunMetadataFromSession({ sessionId: retained.metadataSessionId, serverId: localVoiceHomeId });
-      if (targetState === 'unreachable' || targetState === 'running' || targetState === 'inactive_carrier' || targetState === 'terminal_inventory_unreachable' || targetState === 'unreachable_with_duplicate') {
+      if (targetState === 'unreachable' || targetState === 'running' || targetState === 'inactive_carrier' || targetState === 'unreachable_with_duplicate') {
         expect(metadata?.runId).toBe(previousRun.runId);
         expect(lifecycle.getAttemptTargetSessionAddress()).toEqual(target);
         expect(lifecycle.getSnapshot()).toMatchObject({ errorCode: 'provider_error', errorRecoveryAction: 'retry' });
         expect(previousRun.status).toBe(primaryTerminal ? 'failed' : 'running');
       } else {
         expect(metadata).toBeNull();
+      }
+      if (targetState === 'terminal_inventory_unreachable') {
+        expect(warnings).toHaveBeenCalledWith(expect.stringContaining('[voiceRunRecovery]'),
+          expect.objectContaining({ errorCode: expect.stringMatching(/^(target_unavailable|admission_unavailable)$/) }));
+        // Ending preserves the earlier genuine turn failure; optional cleanup
+        // must not replace it with a new unconfirmed-Stop failure.
+        expect(lifecycle.getSnapshot().errorCode).toBe(failureBeforeEnd.errorCode);
+        expect(lifecycle.getSnapshot().errorMessage).toBe(failureBeforeEnd.errorMessage);
       }
       // Restore the same daemon for the unresolved-primary/duplicate case:
       // readmission must adopt its retained Run rather than require a new daemon.
@@ -160,6 +173,7 @@ describe('local voice engine stop', () => {
       expect(previousRun.status).toBe(primaryTerminal ? 'failed' : 'running');
       expect(refusedRequests.filter(method => method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toHaveLength(targetState === 'sweep_terminal_member' ? 0 : 1);
     } finally {
+      warnings.mockRestore();
       sessionRpcWithServerScope.mockImplementation(targetState === 'unreachable_with_duplicate'
         ? responder : request => freshDaemon.dispatch(request.method, request.payload));
       await lifecycle.dispose();

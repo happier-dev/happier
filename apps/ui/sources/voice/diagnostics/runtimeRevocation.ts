@@ -32,7 +32,6 @@ const machinePolicyTails = new Map<string, Promise<void>>();
 type MachinePolicyIntentKind = 'enable' | 'disable';
 export type VoiceDiagnosticsMachinePolicyIntent<Kind extends MachinePolicyIntentKind = MachinePolicyIntentKind> = Readonly<{
   machineId: string;
-  generation: number;
   kind: Kind;
   obligation: VoiceDiagnosticsRevocationObligation | null;
   persistenceScope: ServerAccountScope | null;
@@ -42,7 +41,6 @@ type MachinePolicyIntentState = Readonly<{
   status: 'pending' | 'succeeded' | 'failed';
 }>;
 const machinePolicyIntentStates = new Map<string, MachinePolicyIntentState>();
-const machinePolicyGenerations = new Map<string, number>();
 
 function disabledDiagnosticsPolicy(settings: VoiceSpeechDiagnosticsSettingsV1): VoiceSpeechDiagnosticsSettingsV1 {
   return { ...settings, enabled: false, consentVersion: null };
@@ -121,7 +119,7 @@ function runSessionRevocation(
 }
 
 function isLatestMachinePolicyIntent(intent: VoiceDiagnosticsMachinePolicyIntent): boolean {
-  return machinePolicyIntentStates.get(intent.machineId)?.intent.generation === intent.generation;
+  return machinePolicyIntentStates.get(intent.machineId)?.intent === intent;
 }
 
 function setMachinePolicyIntentStatus(
@@ -137,8 +135,6 @@ export function declareVoiceDiagnosticsMachinePolicyIntent<Kind extends MachineP
   kind: Kind;
   persistenceScope?: ServerAccountScope | null;
 }>): VoiceDiagnosticsMachinePolicyIntent<Kind> {
-  const generation = (machinePolicyGenerations.get(input.machineId) ?? 0) + 1;
-  machinePolicyGenerations.set(input.machineId, generation);
   const target = Object.freeze({ kind: 'machine_policy' as const, machineId: input.machineId });
   const existingObligation = readVoiceDiagnosticsRevocationObligation(target);
   const previousIntent = machinePolicyIntentStates.get(input.machineId)?.intent;
@@ -165,7 +161,6 @@ export function declareVoiceDiagnosticsMachinePolicyIntent<Kind extends MachineP
   }
   const intent: VoiceDiagnosticsMachinePolicyIntent<Kind> = Object.freeze({
     machineId: input.machineId,
-    generation,
     kind: input.kind,
     obligation,
     persistenceScope,
@@ -353,5 +348,4 @@ export function resetVoiceDiagnosticsRevocationForTests(): void {
   sessionRevocationsInFlight.clear();
   machinePolicyTails.clear();
   machinePolicyIntentStates.clear();
-  machinePolicyGenerations.clear();
 }

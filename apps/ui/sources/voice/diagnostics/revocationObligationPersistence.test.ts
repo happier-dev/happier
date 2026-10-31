@@ -39,6 +39,13 @@ describe('voice diagnostics exact-machine revocation persistence', () => {
       JSON.stringify({ v: 1, machineIds: ['', 42, 'ok-machine', 'x'.repeat(1025)] }),
     );
 
-    expect(readPersistedVoiceDiagnosticsMachineRevocations(scopeA)).toEqual(['ok-machine']);
+    expect(readPersistedVoiceDiagnosticsMachineRevocations(scopeA)).toEqual(['ok-machine', 'x'.repeat(1025)]);
+  });
+
+  it('retains every unresolved Machine for the next reconnect instead of dropping older shutdowns at 64', () => {
+    const machineIds = Array.from({ length: 65 }, (_, index) => `machine-${index}`);
+    for (const machineId of machineIds) addPersistedVoiceDiagnosticsMachineRevocation(scopeA, machineId);
+    expect(readPersistedVoiceDiagnosticsMachineRevocations(scopeA)).toEqual(machineIds);
+    expect(readPersistedVoiceDiagnosticsMachineRevocations(scopeB)).toEqual([]);
   });
 });

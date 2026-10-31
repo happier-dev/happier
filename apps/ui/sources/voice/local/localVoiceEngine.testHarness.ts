@@ -1098,6 +1098,8 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         if (!fixtureMachine.metadata) throw new Error('Expected canonical Machine fixture metadata');
         const machine = createMachineFixture({
             id: 'machine-1',
+            storageMode: 'plain',
+            dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
             active: true,
             createdAt: Date.now(),
             activeAt: Date.now(),

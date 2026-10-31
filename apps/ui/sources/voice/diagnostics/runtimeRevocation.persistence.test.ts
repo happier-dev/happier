@@ -8,6 +8,7 @@ import { createMachineFixture } from '@/dev/testkit';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 
 const configure = vi.hoisted(() => vi.fn());
 vi.mock('socket.io-client', async (importOriginal) => (
@@ -70,7 +71,8 @@ describe('voice diagnostics revocation reload continuity', () => {
         { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, 'account-a') ?? undefined });
     disconnect = await home.restoreActiveConnection();
     scope = { serverId: home.homes.diagnostics!.id, accountId: 'account-a' };
-    const machine = createMachineFixture({ id: 'machine-former', activeAt: Date.now() });
+    const machine = createMachineFixture({ id: 'machine-former', activeAt: Date.now(), storageMode: 'plain',
+      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
     storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [scope.serverId]: [machine] } });
     clearPersistedFixtures();
     configure.mockReset();

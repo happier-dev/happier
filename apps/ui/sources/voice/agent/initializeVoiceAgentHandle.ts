@@ -23,7 +23,6 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { ensureVoiceConversationSessionId } from '@/voice/persistence/voiceConversationSession';
 import {
     doesVoiceAgentRunMetadataMatchBackendTarget,
-    readVoiceAgentRunMetadataFromSession,
 } from '@/voice/persistence/voiceAgentRunMetadata';
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
@@ -40,7 +39,7 @@ import {
 } from '@/voice/agent/voiceAgentRecoveryReplayState';
 import { shouldRecoverUnavailableGlobalVoiceAutoMachine } from '@/voice/agent/shouldRecoverUnavailableGlobalVoiceAutoMachine';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
-import { readPersistedVoiceConversationRuntimePublication } from '@/voice/binding/voiceConversationBindingPersistence';
+import { readPersistedVoiceConversationRuntimeState, type PersistedVoiceConversationRuntimeState } from '@/voice/binding/voiceConversationBindingPersistence';
 import {
     assertActiveDaemonTargetSession,
     clearVoiceAgentRunMetadata,
@@ -461,8 +460,8 @@ export async function initializeVoiceAgentHandle({
     let resolvedAgentId: string | null = null;
     let resolvedBackendTarget: BackendTargetRefV1 | null = null;
     let runMetadataSessionId: string | null = null;
-    let persistedRuntimePublication: ReturnType<typeof readPersistedVoiceConversationRuntimePublication> = null;
-    let persistedRunMeta: ReturnType<typeof readVoiceAgentRunMetadataFromSession> = null;
+    let persistedRuntimePublication: PersistedVoiceConversationRuntimeState['runtimePublication'] | null = null;
+    let persistedRunMeta: PersistedVoiceConversationRuntimeState['runMetadata'] = null;
     let existingRunId: VoiceAgentStartParams['existingRunId'] = null;
     let retainedRunState: ExecutionRunPublicState | null = null;
     let startResumeHandle: VoiceAgentStartParams['resumeHandle'] = null;
@@ -477,11 +476,12 @@ export async function initializeVoiceAgentHandle({
         && runtimePublicationSupportsTranscriptSource();
 
     const refreshPersistedRunState = (metadataSessionId: string | null) => {
-        persistedRuntimePublication = readPersistedVoiceConversationRuntimePublication({
+        const persisted = readPersistedVoiceConversationRuntimeState({
             managedSessionId: sessionId,
             conversationSessionId: metadataSessionId ?? daemonConversationSessionId,
         });
-        persistedRunMeta = metadataSessionId ? readVoiceAgentRunMetadataFromSession({ sessionId: metadataSessionId }) : null;
+        persistedRuntimePublication = persisted?.runtimePublication ?? null;
+        persistedRunMeta = persisted?.runMetadata ?? null;
         const allowPersistedRunIdReuse =
             configuredTranscriptPersistenceMode !== 'persistent' || shouldUseProviderResume();
         const matchesResolvedBackend =

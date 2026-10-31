@@ -30,6 +30,7 @@ import { AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protoco
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { FeedResponseSchema } from '@/sync/domains/social/feedTypes';
+import { CHANGES_AFTER_CURSOR_HTTP_HEADER, ChangesResponseSchema, CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
 
 
 /** Explicit empty-Account fixtures only; callers resolve the Home and apply their overrides first. */
@@ -37,6 +38,13 @@ export function createEmptyAccountBootstrapHttpResponse(path: string, init?: Req
     const pathname = path.split('?')[0];
     const method = (init?.method ?? 'GET').toUpperCase();
     if (method === 'GET') {
+        if (pathname === '/v2/cursor') return Response.json(CurrentCursorResponseSchema.parse({ cursor: 0, changesFloor: 0 }));
+        if (pathname === '/v2/changes') {
+            const afterHeader = new Headers(init?.headers).get(CHANGES_AFTER_CURSOR_HTTP_HEADER);
+            return Response.json(ChangesResponseSchema.parse({ changes: [], nextCursor: 0 }), {
+                ...(afterHeader === null ? {} : { headers: { [CHANGES_AFTER_CURSOR_HTTP_HEADER]: afterHeader } }),
+            });
+        }
         if (pathname === '/v1/machines') return Response.json([] satisfies FetchedMachineRow[]);
         if (pathname === '/v3/automations') return Response.json(AutomationDefinitionListResponseSchema.parse({ automations: [], nextCursor: null }));
         if (pathname === '/v1/feed') return Response.json(FeedResponseSchema.parse({ items: [], hasMore: false }));

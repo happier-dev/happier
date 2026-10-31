@@ -5,7 +5,6 @@ import type { VoiceAgentHandle } from '@/voice/agent/types';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { isVoiceAgentNotFoundError } from '@/voice/agent/voiceAgentErrorGuards';
 import { readPersistedVoiceConversationRuntimeState } from '@/voice/binding/voiceConversationBindingPersistence';
-import { readVoiceAgentRunMetadataFromSession } from '@/voice/persistence/voiceAgentRunMetadata';
 import {
   sessionExecutionRunGet,
   sessionExecutionRunList,
@@ -19,7 +18,6 @@ import { reconcileUnavailableVoiceRunStop, VoiceRunStopUnconfirmedError } from '
 import {
   clearVoiceAgentRunMetadata,
   persistVoiceAgentRunMetadata,
-  resolveVoiceRunMetadataSessionId,
 } from '@/voice/agent/voiceAgentRunState';
 
 export function createVoiceRunRecovery(
@@ -127,18 +125,13 @@ export function createVoiceRunRecovery(
     reason?: 'continued_elsewhere',
   ) => {
     const admittedLifetime = captureActiveServerAccountScopeLifetime();
+    const existingHandle = args.voiceAgentBySessionId.get(sessionId) ?? null;
     const persistedRuntimeState = readPersistedVoiceConversationRuntimeState({
       managedSessionId: sessionId,
+      conversationSessionId: existingHandle?.rpcSessionId,
     });
-    const metadataSessionId =
-      persistedRuntimeState?.metadataSessionId ??
-      resolveVoiceRunMetadataSessionId(sessionId, 'daemon');
-    const persistedRunMeta =
-      persistedRuntimeState?.runMetadata ??
-      (metadataSessionId
-        ? readVoiceAgentRunMetadataFromSession({ sessionId: metadataSessionId })
-        : null);
-    const existingHandle = args.voiceAgentBySessionId.get(sessionId) ?? null;
+    const metadataSessionId = persistedRuntimeState?.metadataSessionId ?? null;
+    const persistedRunMeta = persistedRuntimeState?.runMetadata ?? null;
     const pendingInit = args.voiceAgentInitBySessionId.get(sessionId) ?? null;
     args.voiceAgentInitBySessionId.delete(sessionId);
     args.voiceAgentBySessionId.delete(sessionId);
@@ -235,17 +228,13 @@ export function createVoiceRunRecovery(
       }
 
       if (daemonBackendId) {
-        // A failed inventory cannot prove that all matching Runs are gone
-        // from the state of the already-stopped primary Run alone.
+        // The exact primary Run owns the Stop result. Other matching Runs are
+        // best-effort cleanup; a failed sweep does not undo that result.
         const inventoryFailure = (error: unknown): undefined => {
           caller.throwIfAborted();
-          if (!accountLifetime.isCurrent()) throw error;
-          // Retained-read fallback can report admission_unavailable after the
-          // live target is lost. Preserve other cleanup/cancellation barriers
-          // and their codes; no inventory failure proves an empty inventory.
-          const code = readRpcErrorCode(error);
-          if (code !== 'target_unavailable' && code !== 'admission_unavailable') throw error;
-          unconfirmedStop ??= new VoiceRunStopUnconfirmedError(daemonRpcSessionId, null, error);
+          console.warn('[voiceRunRecovery] Additional Voice Run cleanup could not be confirmed', {
+            errorCode: readRpcErrorCode(error),
+          });
           return undefined;
         };
         const listed = await sessionExecutionRunList(daemonRpcSessionId, {}, runOptions).catch(inventoryFailure);
@@ -270,7 +259,8 @@ export function createVoiceRunRecovery(
           ),
         );
         for (const runId of matchingRunIds) {
-          await stopRun(daemonRpcSessionId, runId);
+          const stopped = await sessionExecutionRunStop(daemonRpcSessionId, { runId }, runOptions).catch(inventoryFailure);
+          if (stopped?.ok === false) inventoryFailure(createRpcCallError({ error: stopped.error, errorCode: stopped.errorCode }));
         }
       }
       // One unresolved Stop never prevents cleanup of the other observed Runs.

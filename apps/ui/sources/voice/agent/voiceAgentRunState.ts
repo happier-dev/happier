@@ -215,7 +215,6 @@ export async function clearStaleDaemonRunState(
     const staleRpcSessionId =
         normalizeNonEmptyString(handle?.rpcSessionId)
         ?? normalizeNonEmptyString(metadataSessionId)
-        ?? (sessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? resolvePersistedDaemonConversationSessionId() : sessionId)
         ?? sessionId;
 
     if (staleRunId) {

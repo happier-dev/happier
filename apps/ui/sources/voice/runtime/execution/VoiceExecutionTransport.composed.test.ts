@@ -16,6 +16,37 @@ await prepareStandaloneVoicePolicyHarness();
 await import('@/voice/adapters/localConversation/localConversationAdapter');
 
 describe('real Local Voice Agent activation', () => {
+    it.each(['stopped', 'terminal'] as const)('keeps the primary Run %s when optional cleanup inventory is unavailable', async primary => {
+        const daemon = await createRetainedVoiceAgentRpcBoundary();
+        let inventoryUnavailable = false;
+        const fixture = await createStandaloneVoicePolicyHarness({ mode: 'off', dispatch: async (method, input) => {
+            if (inventoryUnavailable && method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) {
+                return { ok: false, errorCode: 'target_unavailable', error: 'Target unavailable' };
+            }
+            if (inventoryUnavailable && primary === 'terminal' && method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP) {
+                return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Run already ended' };
+            }
+            return daemon.dispatch(method, input);
+        } });
+        const { createVoiceExecutionTransport } = await import('./VoiceExecutionTransport');
+        const { readVoiceAgentRunMetadataFromSession } = await import('@/voice/persistence/voiceAgentRunMetadata');
+        const transport = createVoiceExecutionTransport();
+        const warnings = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            await transport.ensureRunning(fixture.sessionId);
+            const run = daemon.readRetainedRun();
+            if (!run) throw new Error('Expected admitted Run');
+            if (primary === 'terminal') run.status = 'failed';
+            inventoryUnavailable = true;
+            await expect(transport.stop(fixture.sessionId, undefined, new AbortController().signal)).resolves.toBeUndefined();
+            expect(readVoiceAgentRunMetadataFromSession({ sessionId: fixture.sessionId,
+                serverId: fixture.handle.accountLifetime.scope.serverId })).toBeNull();
+            expect(warnings).toHaveBeenCalledWith(expect.stringContaining('[voiceRunRecovery]'),
+                expect.objectContaining({ errorCode: 'target_unavailable' }));
+            expect(transport.isActive(fixture.sessionId)).toBe(false);
+        } finally { inventoryUnavailable = false; warnings.mockRestore(); await fixture.dispose(); }
+    });
+
     it('does not load hidden carrier history before starting targetless Voice', async () => {
         const daemon = await createRetainedVoiceAgentRpcBoundary();
         const fixture = await createStandaloneVoicePolicyHarness({
@@ -122,11 +153,12 @@ describe('real Local Voice Agent activation', () => {
             if (outcome === 'cancel') caller.abort();
             else loseTransport(new Error('socket has been disconnected'));
             const failure: unknown = await stopping;
-            expect(failure).not.toBeNull();
+            if (outcome === 'cleanup_disconnect') expect(failure).toBeUndefined();
+            else expect(failure).not.toBeNull();
             // An interrupted cleanup read is transport-unavailable; mutation
             // acknowledgments retain their outcome-unknown public code.
-            expect(readRpcErrorCode(failure)).toBe(outcome === 'cancel' ? 'SOCKET_RPC_ABORTED'
-                : outcome === 'cleanup_disconnect' ? RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE : RPC_ERROR_CODES.OUTCOME_UNKNOWN);
+            if (outcome !== 'cleanup_disconnect') expect(readRpcErrorCode(failure)).toBe(outcome === 'cancel' ? 'SOCKET_RPC_ABORTED'
+                : RPC_ERROR_CODES.OUTCOME_UNKNOWN);
             if (outcome === 'cancel') {
                 expect(fixture.rpcSockets.some(socket => vi.mocked(socket.emit).mock.calls.some(([event]) => event === SOCKET_RPC_EVENTS.CANCEL))).toBe(true);
             }

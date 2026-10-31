@@ -652,6 +652,12 @@ releases each through the same runtime disposer. A late cancellation cannot
 acquire a replacement after that instance has retired. This is development
 source behavior, not a change to retention or the existing idle-lifetime policy.
 
+A confirmed primary Run Stop remains successful if the optional sweep
+for other matching Runs cannot load its inventory; that failure emits a cleanup
+warning. A refused or unreachable primary Stop still reconciles against the
+execution owner's exact Run state. Continuation on another client retires only
+the departing client's local custody.
+
 Session-owned child Runs retain their own transcript sidechain and interaction scope. They cannot publish the parent Session's work-state or active-input readiness; those projections belong to the main Session context. Finite and retained child contexts use the same Run-scoped work-state service, which reports Session projection as unavailable.
 
 In 0.3 development source, child contexts compose the same ordered transcript
