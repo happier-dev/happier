@@ -19,7 +19,7 @@ export async function readProviderAccountUsagePageProjection(
     storage: ProjectionStorage,
     admittedRecord?: Readonly<{ metadata?: unknown }>,
 ): Promise<{ projection: StoredProjection | null; complete: boolean; prefix?: z.infer<typeof ProviderAccountUsagePageProjectionPrefixReadV1Schema> }> {
-    const missing = (reason: 'absent' | 'superseded' | 'range' | 'prefix') => {
+    const missing = (reason: 'absent' | 'range' | 'prefix') => {
         // The HTTP null is deliberately unchanged. Record only the admission
         // branch: protected content and Account credentials never enter logs.
         log({ module: 'provider-account-usage', event: 'page_projection_read',
@@ -32,8 +32,7 @@ export async function readProviderAccountUsagePageProjection(
     const metadata = row?.metadata;
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata) || !('pageProjection' in metadata) || !metadata.pageProjection) return missing('absent');
     const parsed = ProviderAccountUsagePageProjectionMetadataV1Schema.safeParse(metadata.pageProjection);
-    if (!parsed.success) throw new ProviderAccountUsagePayloadInvariantError('Invalid B page projection');
-    if (!parsed.data) return missing('superseded');
+    if (!parsed.success || !parsed.data) throw new ProviderAccountUsagePayloadInvariantError('Invalid B page projection');
     if (parsed.data.recordId !== params.recordId) throw new ProviderAccountUsagePayloadInvariantError('Invalid B page projection');
     const projection = parsed.data;
     // A document read validates its own stored range. A demand read additionally

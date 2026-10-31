@@ -48,10 +48,6 @@ describe('B page projection persistence', () => {
             db.findUnique.mockResolvedValueOnce({ metadata: {} });
             await readProviderAccountUsagePageProjection(params, db.storage);
             if (value.content.t !== 'plain') throw new Error('Expected plain fixture');
-            const superseded = { ...Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'encoding')),
-                content: { t: 'plain', v: Object.fromEntries(Object.entries(value.content.v).filter(([key]) => key !== 'encoding')) } };
-            db.findUnique.mockResolvedValueOnce({ metadata: { pageProjection: superseded } });
-            await readProviderAccountUsagePageProjection(params, db.storage);
             db.findUnique.mockResolvedValueOnce({ metadata: { pageProjection: { ...value,
                 demand: { ...demand, range: { startAtMs: 1, endAtMs: 3 } },
                 content: { ...value.content, v: { ...value.content.v, range: { startAtMs: 1, endAtMs: 3 } } } } } });
@@ -59,22 +55,21 @@ describe('B page projection persistence', () => {
             db.count.mockResolvedValue(2);
             await readProviderAccountUsagePageProjection(params, db.storage);
             const diagnostics = output.mock.calls.map(([entry]) => entry);
-            expect(diagnostics).toEqual(['absent', 'superseded', 'range', 'prefix'].map(reason => ({
+            expect(diagnostics).toEqual(['absent', 'range', 'prefix'].map(reason => ({
                 module: 'provider-account-usage', event: 'page_projection_read', recordId: snapshot.recordId,
                 reason, range: demand.range,
             })));
         } finally { output.mockRestore(); }
     });
-    it('backfills and replaces superseded development encodings even when accepted coverage is unchanged', async () => {
+    it('refuses unsupported development bodies as invalid content without writing a replacement', async () => {
         const db = databaseBoundary();
         if (value.content.t !== 'plain') throw new Error('Expected plain fixture');
-        const superseded = { ...Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'encoding')),
+        const unsupported = { ...Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'encoding')),
             content: { t: 'plain', v: Object.fromEntries(Object.entries(value.content.v).filter(([key]) => key !== 'encoding')) } };
-        db.findUnique.mockResolvedValue(storedRecord({ materialFingerprint: 'retained', pageProjection: superseded }));
-        expect(await readProviderAccountUsagePageProjection({ accountId: 'owner', recordId: snapshot.recordId, projection: demand }, db.storage))
-            .toEqual({ projection: null, complete: false });
-        expect(await writeProviderAccountUsagePageProjection({ accountId: 'owner', value }, db.storage)).toEqual(value);
-        expect(db.update.mock.calls[0]?.[0].data.metadata).toEqual({ materialFingerprint: 'retained', pageProjection: value });
+        db.findUnique.mockResolvedValue(storedRecord({ materialFingerprint: 'retained', pageProjection: unsupported }));
+        await expect(readProviderAccountUsagePageProjection({ accountId: 'owner', recordId: snapshot.recordId, projection: demand }, db.storage))
+            .rejects.toBeInstanceOf(ProviderAccountUsagePayloadInvariantError);
+        expect(db.update).not.toHaveBeenCalled();
     });
     it('reuses a complete admitted prefix and distinguishes a new tail from a changed prefix', async () => {
         const db = databaseBoundary();
