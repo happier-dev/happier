@@ -259,6 +259,7 @@ describe('xAI Realtime protocol adapter', () => {
 
     expect(adapter.decodeControl({
       type: 'future.provider.event',
+      event_id: 'future-event-1',
       token: 'sentinel-secret-token',
       transcript: 'sentinel-private-transcript',
     })).toEqual([]);
