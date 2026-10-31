@@ -368,6 +368,16 @@ describe('plugin surface execution requirement', () => {
             expect(hook.getCurrent().selection.canExecute).toBe(false);
             expect(hook.getCurrent().isExecutionOriginCurrent()).toBe(false);
             expect(hook.getCurrent().selectedSupply).toBe(mounted.selectedSupply);
+            // Offline settles the Run-on chip and body even while Account
+            // availability has not returned. No daemon read can finish offline.
+            committedProjection = projectionForRender = project('occurrence-a', 1, 'establishing');
+            pageEntryForRender = projectionForRender.surfacePlacementsById[entryId];
+            await hook.rerender();
+            expect(hook.getCurrent().selection.state).toMatchObject({ kind: 'unavailable', reasons: ['offline'] });
+            expect(hook.getCurrent().selection.loading).toBe(false);
+            expect(hook.getCurrent().loading).toBe(false);
+            committedProjection = projectionForRender = initialProjection;
+            pageEntryForRender = initialProjection.surfacePlacementsById[entryId];
             await act(async () => { storage.setState({ machines: { [machineId]: machine },
                 machineListByServerId: { [connection.home.id]: [machine] } }); });
             await hook.rerender();

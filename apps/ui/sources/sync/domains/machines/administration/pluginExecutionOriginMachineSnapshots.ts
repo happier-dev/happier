@@ -321,6 +321,11 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
             machineId: getPluginMachineExecutionOriginRef(spec.storedOrigin).machineId,
         });
         const readLoading = (state: PluginMachineExecutionOriginStateV1) => {
+            // The presence owner has settled every eligible source offline.
+            // Neither Account availability nor its pending projection can
+            // finish an acquisition on that Machine until presence recovers.
+            if (state.kind === 'unavailable' && state.reasons.length > 0
+                && state.reasons.every(reason => reason === 'offline')) return false;
             const readinessHome = state.kind === 'selected' ? state.origin.serverIdentityId
                 : rememberedTarget?.serverIdentityId ?? spec.homeServerIdentityId;
             const establishingTarget = state.kind === 'selected' ? { serverIdentityId: state.origin.serverIdentityId,

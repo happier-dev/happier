@@ -53,6 +53,8 @@ import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoard
 import { createWorkBoardAccountStore } from '@/components/boards/model/workBoardAccountStore';
 import { useBoardWidgets } from '@/components/boards/model/useBoardContent';
 import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { useWidgetFrameTitle } from '@/components/widgets/frame/widgetFrameTitle';
+import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 
 // Statically imported surface consumers reach Sync; install its external Socket boundary before that graph loads.
 vi.mock('socket.io-client', async importOriginal =>
@@ -65,6 +67,40 @@ vi.mock('@/components/browser/frame/BrowserViewFrame.web', () => ({
 }));
 
 installDisconnectedServerSocketBoundary();
+
+it('settles the frame title from the installed body read without a second definition request', async () => {
+    const http = createHomeHubArtifactHttpBoundary('viewer');
+    const request = vi.spyOn(http, 'request');
+    const definitionReads = () => request.mock.calls.filter(([url]) => new URL(String(url)).pathname.startsWith('/v1/artifacts/')).length;
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://widget-title-settlement.test', accountId: 'viewer', request: http.request });
+    const scope = { ...getActiveServerAccountScope()!, owner: { kind: 'home' as const } };
+    const instance: WidgetInstanceV1 = { v: 1, id: 'unavailable-title', definition: {
+        kind: 'installed', surface: { pluginId: 'missing-plugin', localId: 'home' },
+    }, bindings: {} };
+    const runtime = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null, phase: 'establishing' as const,
+        interactionEnabled: false, machineId: null, serverId: scope.serverId, platform: 'web' as const,
+        accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' as const },
+        reloadClientExecutables() {}, reloadConnectedAccountProjection() {} };
+    let title: ReturnType<typeof useWidgetFrameTitle>['title'] = '';
+    function Frame(props: { runtime: React.ComponentProps<typeof AppShellPluginUiProjectionValueProvider>['value'] }) {
+        const frame = useWidgetFrameTitle(instance, null);
+        title = frame.title;
+        return <WidgetSurface scope={scope} instance={instance} descriptor={null} providedContext={{}}
+            appRuntime={props.runtime} recordRevision="title:1" presentation="content" testID="title-body"
+            onDefinitionRead={frame.onDefinitionRead} />;
+    }
+    const render = (value: React.ComponentProps<typeof AppShellPluginUiProjectionValueProvider>['value']) =>
+        <AppShellPluginUiProjectionValueProvider value={value}><Frame runtime={value} /></AppShellPluginUiProjectionValueProvider>;
+    const screen = await renderScreen(render(runtime));
+    try {
+        expect(typeof title).not.toBe('string');
+        expect(definitionReads()).toBe(0);
+        await screen.update(render({ ...runtime, phase: 'unavailable', unavailableReasonCode: 'plugin_runtime_unavailable' }));
+        expect(screen.tree.root.findAllByType(SurfaceStateCard).map(card => card.props.kind)).toContain('unavailable');
+        expect(title).toBe(t('sessionBoard.item.pluginUnavailable.title'));
+        expect(definitionReads()).toBe(0);
+    } finally { await screen.unmount(); await connection.dispose(); }
+});
 
 it('says another Account\u2019s saved definition is unavailable as one durable sentence, never as a start-up state', async () => {
     const http = createHomeHubArtifactHttpBoundary('viewer');

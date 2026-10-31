@@ -22,7 +22,7 @@ export function useWidgetFrameTitle(instance: WidgetInstanceV1, candidate: Reado
     }, [instance.definition]);
     const title = resolveWidgetInstanceTitle(instance, candidate, {
         definitionState: read?.reference === instance.definition ? read.state : 'loading',
-        pluginUiProjection, projectionPending: phase !== 'current',
+        pluginUiProjection, projectionPending: phase === 'establishing',
     });
     return { title: title ?? <WidgetFrameTitleSkeleton />, onDefinitionRead };
 }

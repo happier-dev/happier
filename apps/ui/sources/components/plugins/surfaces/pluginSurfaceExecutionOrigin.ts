@@ -169,6 +169,7 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
     // The exact mounted supplier can enter establishment before the shell's
     // committed selection publication catches up in layout. Its positive
     // loading fact must accompany the fresh guard that already refuses it.
-    const loading = selection.loading || selectedSupply?.phase === 'establishing';
+    const loading = selection.loading || (selection.state.kind === 'selected'
+        && selectedSupply?.phase === 'establishing');
     return { selection, selectedSupply, loading, isExecutionOriginCurrent };
 }
