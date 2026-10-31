@@ -84,6 +84,26 @@ contain that mode. Explicit requested modes retain their pending state even when
 discovery is unavailable. ACP usage notifications remain the authority for live
 context counts; a mode descriptor or model name cannot supply usage telemetry.
 
+### ACP startup failures (development source)
+
+The generic CLI `AcpBackend` owns MCP startup recovery for both new and loaded
+sessions. It serializes stdio servers in the ACP v1 shape without a transport
+discriminator; the SDK types check that boundary. A provider rejection naming
+exactly one passed MCP server permits one
+new start request without that server. A successful retry publishes an ordinary
+session notice with the server name and sanitized provider reason. An unnamed,
+ambiguous, or persistent rejection fails with the same bounded issue preview;
+deterministic JSON-RPC request rejections are not resent unchanged. Transport and
+other transient failures retain the existing retry policy. No MCP pre-probe is
+performed.
+
+The session runtime records startup failures even before a prompt has opened a
+turn. Issue-bearing `turn_failed` records project through the UI's existing
+transcript notice row; the session lifecycle still owns failure and recovery
+state. New-session model selection is scoped to the backend target, so changing
+Agents adopts the new Agent's default or remembered selection. An explicit
+model choice made with that target change remains authoritative.
+
 ### Session identity in UI (development source)
 
 Session presentation reads `resolveAgentIdFromSessionMetadata` from
