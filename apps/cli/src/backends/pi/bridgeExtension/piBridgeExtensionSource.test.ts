@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -170,6 +171,10 @@ describe('pi bridge extension behavior', () => {
 
   it('executes host-resolved tools through the Agent bridge with bounded typed results', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-pi-bridge-execute-'));
+    // The generated extension imports native ESM directly, outside Vitest's module graph.
+    const nativeChildProcess = createRequire(import.meta.url)('node:child_process') as typeof import('node:child_process');
+    const spawnBoundary = vi.spyOn(nativeChildProcess, 'spawn');
+    syncBuiltinESMExports();
     try {
       const argvPath = join(dir, 'argv.json');
       const overflowPidPath = join(dir, 'overflow-pid.txt');
@@ -289,6 +294,7 @@ if (args.input.value === 'fail') {
       } finally {
         clearTimeout(overflowAbortTimer);
       }
+      expect(spawnBoundary.mock.calls[0]?.[2]?.windowsHide).toBe(true);
       const overflowPid = Number(readFileSync(overflowPidPath, 'utf8'));
       await expect.poll(() => {
         try {
@@ -321,6 +327,8 @@ if (args.input.value === 'fail') {
       setTimeout(() => controller.abort(), 25);
       await expect(waitingCall).rejects.toThrow('bridge_cancelled');
     } finally {
+      spawnBoundary.mockRestore();
+      syncBuiltinESMExports();
       rmSync(dir, { recursive: true, force: true });
     }
   });

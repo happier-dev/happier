@@ -5,9 +5,32 @@ import { WriteStream } from 'node:fs';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 
-import { killProcessTree, markSpawnedProcessPlannedExit, runCapture, runCaptureResult, spawnProc } from './proc.mjs';
+import { killProcessTree, markSpawnedProcessPlannedExit, run, runCapture, runCaptureResult, spawnProc } from './proc.mjs';
 import { resolveDefaultShellForCommand } from './proc.mjs';
+
+for (const [name, invoke] of [
+  ['run', () => run(process.execPath, ['-e', ''], { stdio: 'ignore' })],
+  ['runCapture', () => runCapture(process.execPath, ['-e', ''])],
+  ['runCaptureResult', () => runCaptureResult(process.execPath, ['-e', ''])],
+  ['spawnProc', () => spawnProc('hidden-console', process.execPath, ['-e', ''], process.env, { silent: true }).completion],
+]) {
+  test(`${name} suppresses creation of a Windows console at the process boundary`, async (t) => {
+    const originalSpawn = childProcess.spawn;
+    t.mock.method(childProcess, 'spawn', (command, args, options) => {
+      assert.equal(options.windowsHide, true);
+      return originalSpawn(command, args, options);
+    });
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+    await invoke();
+  });
+}
 
 test('killProcessTree delegates Windows cleanup to the bounded async tree-termination owner', async () => {
   let leaderAlive = true;

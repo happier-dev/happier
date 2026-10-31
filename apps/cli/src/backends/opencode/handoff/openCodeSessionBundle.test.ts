@@ -169,7 +169,7 @@ describe('opencode session handoff bundle', () => {
       processEnv: { HAPPIER_OPENCODE_PATH: commandPath },
     });
 
-    expect(execFile).toHaveBeenCalledWith(commandPath, ['import', expect.stringContaining('handoff-opencode-')], undefined);
+    expect(execFile).toHaveBeenCalledWith(commandPath, ['import', expect.stringContaining('handoff-opencode-')], { windowsHide: true });
     await expect(access(importPath)).rejects.toThrow();
 
     expect(result.remoteSessionId).toBe('op_sess_1');
@@ -285,7 +285,7 @@ describe('opencode session handoff bundle', () => {
       processEnv: { HAPPIER_OPENCODE_PATH: commandPath },
     });
 
-    expect(execFile).toHaveBeenCalledWith(commandPath, ['import', expect.stringContaining('handoff-opencode-')], undefined);
+    expect(execFile).toHaveBeenCalledWith(commandPath, ['import', expect.stringContaining('handoff-opencode-')], { windowsHide: true });
     await expect(access(importPath)).rejects.toThrow();
 
     expect(result.directSource).toEqual({
@@ -487,7 +487,7 @@ describe('opencode session handoff bundle', () => {
       },
     });
 
-    expect(execFile).toHaveBeenCalledWith(runtimePath, [commandPath, 'import', expect.stringContaining('handoff-opencode-')], undefined);
+    expect(execFile).toHaveBeenCalledWith(runtimePath, [commandPath, 'import', expect.stringContaining('handoff-opencode-')], { windowsHide: true });
     await expect(access(importPath)).rejects.toThrow();
   });
 
@@ -606,7 +606,7 @@ describe('opencode session handoff bundle', () => {
     expect(execFile).toHaveBeenCalledWith(
       'C:\\Windows\\System32\\cmd.exe',
       ['/d', '/s', '/c', '"C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD import C:\\\\Temp\\\\handoff-opencode-win.json"'],
-      { windowsVerbatimArguments: true },
+      { windowsHide: true, windowsVerbatimArguments: true },
     );
   });
 });

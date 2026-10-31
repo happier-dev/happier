@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
 
 import type { CliDetectSpec } from '@/backends/types';
 
@@ -18,7 +18,7 @@ export function resolveGeminiAcpFlag(params: Readonly<{
   baseArgs?: readonly string[];
   env?: Readonly<Record<string, string | undefined>>;
 }>): GeminiAcpFlag {
-  const probe = spawnSync(params.command, [...(params.baseArgs ?? []), '--help'], {
+  const probe = spawnBackgroundSync(params.command, [...(params.baseArgs ?? []), '--help'], {
     cwd: process.cwd(),
     env: {
       ...process.env,

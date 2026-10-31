@@ -127,6 +127,7 @@ export function assertCargoAvailableForTauri({ env = process.env, resolveUserHom
     const cargoBinaryPath = join(cargoBinDir, cargoBinaryName);
 
     const res = spawnSync(cargoBinaryPath, ['--version'], {
+      windowsHide: true,
       env: input,
       stdio: 'ignore',
       timeout: 8_000,

@@ -235,6 +235,7 @@ function assertRoot() {
 
 function runCommand(cmd, args, { cwd, env, allowFail = false, stdio = 'pipe' } = {}) {
   const result = spawnSync(cmd, args, {
+    windowsHide: stdio !== 'inherit',
     cwd,
     env: env ?? process.env,
     encoding: 'utf-8',
@@ -2637,6 +2638,7 @@ function resolveRelayHostForwardSupport(env = process.env) {
 
   try {
     const probe = spawnSync('happier', ['relay', 'host', '--help'], {
+      windowsHide: true,
       env,
       stdio: 'ignore',
       encoding: 'utf-8',

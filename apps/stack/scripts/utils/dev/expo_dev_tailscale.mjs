@@ -100,6 +100,7 @@ export async function startExpoTailscaleForwarder({
   ], {
     env: { ...baseEnv },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    windowsHide: true,
     detached: process.platform !== 'win32',
   });
 

@@ -76,6 +76,7 @@ async function main() {
     try {
       spawnSync(process.execPath, [join(rootDir, 'scripts', 'service.mjs'), 'uninstall'], {
         stdio: json ? 'ignore' : 'inherit',
+        windowsHide: json,
         env: process.env,
         cwd: rootDir,
       });

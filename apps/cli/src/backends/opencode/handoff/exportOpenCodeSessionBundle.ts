@@ -22,6 +22,7 @@ const execFileAsync: ExecFileAsync = async (command, args, options) =>
       {
         encoding: 'utf8',
         maxBuffer: OPEN_CODE_EXPORT_MAX_BUFFER_BYTES,
+        windowsHide: true,
         ...(options?.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
       },
       (error, stdout, stderr) => {

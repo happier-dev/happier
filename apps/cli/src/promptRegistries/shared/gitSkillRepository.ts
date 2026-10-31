@@ -8,6 +8,7 @@ function runGit(args: readonly string[], cwd?: string): string {
   return execFileSync('git', args, {
     cwd,
     encoding: 'utf8',
+    windowsHide: true,
     env: {
       ...process.env,
       GIT_TERMINAL_PROMPT: '0',
