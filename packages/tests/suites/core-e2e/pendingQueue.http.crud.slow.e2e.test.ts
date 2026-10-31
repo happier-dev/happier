@@ -125,6 +125,9 @@ describe('core e2e: pending queue v2 http CRUD', () => {
       const list2 = await listPendingQueueV2({ baseUrl: server!.baseUrl, token: auth.token, sessionId });
       expect(list2.status).toBe(200);
       expect(list2.data.pending?.map((p) => p.localId)).toEqual([localIdB, localIdA]);
+      expect(list2.data.pending?.find((p) => p.localId === localIdA)?.content).toEqual({
+        t: 'encrypted', c: ciphertextA2,
+      });
 
       passed = true;
     } finally {
@@ -179,6 +182,13 @@ describe('core e2e: pending queue v2 http CRUD', () => {
 
       const restore = await restorePendingQueueV2({ baseUrl: server!.baseUrl, token: auth.token, sessionId, localId: localIdB });
       expect(restore.status).toBe(200);
+
+      const restored = await listPendingQueueV2({ baseUrl: server!.baseUrl, token: auth.token, sessionId });
+      expect(restored.status).toBe(200);
+      expect(restored.data.pending?.find((p) => p.localId === localIdB)?.status).toBe('queued');
+      const restoredSession = await fetchSessionV2(server!.baseUrl, auth.token, sessionId);
+      expect(restoredSession.pendingCount).toBe(2);
+      expect(restoredSession.pendingVersion).toBeGreaterThan(snap1.pendingVersion);
 
       const delA = await deletePendingQueueV2({ baseUrl: server!.baseUrl, token: auth.token, sessionId, localId: localIdA });
       expect(delA.status).toBe(200);

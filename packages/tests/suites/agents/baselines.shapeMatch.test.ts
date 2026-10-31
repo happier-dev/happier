@@ -4,7 +4,7 @@ import { diffProviderBaseline, type ProviderBaselineV1 } from '../../src/testkit
 import { normalizeShapeForBaseline, shapeOf, stableStringifyShape } from '../../src/testkit/providers/shape';
 
 describe('providers: baseline diff (shape matching)', () => {
-  it('accepts any observed fixture example that matches the baselined payload shape', () => {
+  it('accepts a later matching fixture after an incompatible example', () => {
     const baselineKey = 'acp/opencode/tool-call/Bash';
 
     const minimalPayload = {
@@ -21,13 +21,9 @@ describe('providers: baseline diff (shape matching)', () => {
       id: 'tool_1',
     };
 
-    const informativePayload = {
+    const incompatiblePayload = {
       ...minimalPayload,
-      input: {
-        ...minimalPayload.input,
-        command: 'echo HELLO',
-        _acp: { kind: 'unknown', rawInput: { command: 'echo HELLO' } },
-      },
+      name: 42,
     };
 
     const expectedShape = stableStringifyShape(normalizeShapeForBaseline(shapeOf(minimalPayload)));
@@ -41,12 +37,20 @@ describe('providers: baseline diff (shape matching)', () => {
       shapesByKey: { [baselineKey]: expectedShape },
     };
 
+    const rejected = diffProviderBaseline({
+      baseline,
+      observedFixtureKeys: [baselineKey],
+      observedExamples: { [baselineKey]: [{ payload: incompatiblePayload }] },
+      allowExtraKeys: true,
+    });
+    expect(rejected.ok).toBe(false);
+
     const res = diffProviderBaseline({
       baseline,
       observedFixtureKeys: [baselineKey],
       observedExamples: {
         [baselineKey]: [
-          { payload: informativePayload },
+          { payload: incompatiblePayload },
           { payload: minimalPayload },
         ],
       },

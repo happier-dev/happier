@@ -45,6 +45,7 @@ describe('providers harness: in-flight steer (codex ACP)', () => {
         const res = await runProviderContractMatrix();
         if (!res.ok) throw new Error(res.error);
         expect(res.ok).toBe(true);
+        expect(res.skipped).toBeUndefined();
       } finally {
         for (const key of envVars) {
           const value = saved[key];

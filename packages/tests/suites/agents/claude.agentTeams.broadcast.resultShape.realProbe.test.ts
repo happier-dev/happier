@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   coerceTextFromToolResultResult,
   runRealClaudeCliStreamJsonProbe,
+  type RealClaudeToolUseBlock,
 } from '../../src/testkit/providers/claude/realClaudeCliProbe';
 
 const ENABLED = process.env.HAPPIER_TEST_REAL_CLAUDE === '1';
@@ -50,6 +51,9 @@ describe('real Claude Agent Teams broadcast SendMessage result shape probe', () 
       }
 
       const marker = `BROADCAST_RESULT_OK_${Date.now()}`;
+      const isBroadcast = (use: RealClaudeToolUseBlock) =>
+        use.name === 'SendMessage' && typeof use.input === 'object' && use.input !== null
+        && 'type' in use.input && use.input.type === 'broadcast';
       const token = Date.now().toString(36);
       const prompt = [
         'This is a test harness for validating Claude Code Agent Teams broadcast SendMessage result shape.',
@@ -68,15 +72,14 @@ describe('real Claude Agent Teams broadcast SendMessage result shape probe', () 
           CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
         },
         stopWhen: ({ toolUses, toolResults }) => {
-          const hasBroadcastUse = toolUses.some((u) => u.name === 'SendMessage' && (u.input as any)?.type === 'broadcast');
-          const hasAnyResult = toolResults.length >= 2;
-          return hasBroadcastUse && hasAnyResult;
+          const broadcast = toolUses.find(isBroadcast);
+          return Boolean(broadcast?.toolUseId && toolResults.some((r) => r.toolUseId === broadcast.toolUseId));
         },
       });
 
       const sendMessageUses = result.toolUses.filter((u) => u.name === 'SendMessage');
       expect(sendMessageUses.length).toBeGreaterThan(0);
-      const broadcast = sendMessageUses.find((u) => (u.input as any)?.type === 'broadcast') ?? null;
+      const broadcast = sendMessageUses.find(isBroadcast) ?? null;
       expect(broadcast).not.toBeNull();
       if (broadcast) {
         expect(broadcast.input).toEqual(expect.objectContaining({
@@ -85,16 +88,13 @@ describe('real Claude Agent Teams broadcast SendMessage result shape probe', () 
         }));
       }
 
-      const broadcastToolUseId =
-        sendMessageUses
-          .filter((u) => (u.input as any)?.type === 'broadcast')
-          .map((u) => u.toolUseId)
-          .find((id): id is string => typeof id === 'string' && id.trim().length > 0) ?? null;
+      const broadcastToolUseId = broadcast?.toolUseId;
+      expect(broadcastToolUseId?.trim()).toBeTruthy();
 
       const matchingBroadcastResult = broadcastToolUseId
         ? result.toolResults.find((r) => r.toolUseId === broadcastToolUseId)
         : undefined;
-      const broadcastResult = matchingBroadcastResult ?? result.toolResults.at(-1) ?? null;
+      const broadcastResult = matchingBroadcastResult ?? null;
 
       expect(broadcastResult).not.toBeNull();
       if (!broadcastResult) return;
@@ -108,7 +108,7 @@ describe('real Claude Agent Teams broadcast SendMessage result shape probe', () 
           expect(parsed).toEqual(expect.objectContaining({ success: true }));
         }
         if ('message' in parsed) {
-          expect(String((parsed as any).message ?? '').trim().length).toBeGreaterThan(0);
+          expect(String(parsed.message ?? '').trim().length).toBeGreaterThan(0);
         }
       }
     },

@@ -118,7 +118,7 @@ async function browseFixtureCandidate(
 }
 
 async function closeBrowse(page: Page): Promise<void> {
-  const close = page.getByTestId('external-session-browse-cancel');
+  const close = page.getByTestId('external-sessions-browse-close');
   await expect(close).toHaveCount(1, { timeout: 60_000 });
   await close.click();
   await expect(page.getByTestId('direct-sessions-browse-modal')).toHaveCount(0, {

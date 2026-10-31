@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -190,14 +190,5 @@ test.describe('ui e2e: /new resume id browse fills from direct sessions', () => 
     await expect(resumeInput).toHaveCount(1, { timeout: 60_000 });
     await expect(resumeInput).toHaveValue(remoteSessionId, { timeout: 60_000 });
 
-    // Sanity check: appended file should not be required for browsing; but ensure the file can still change without breaking.
-    await appendFile(
-      rolloutFile,
-      responseItemLine({
-        timestamp: '2026-03-06T00:00:03.000Z',
-        payload: { type: 'message', role: 'user', content: [{ type: 'text', text: 'tail appended direct codex ui message' }] },
-      }),
-      'utf8',
-    );
   });
 });

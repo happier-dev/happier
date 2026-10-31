@@ -91,7 +91,7 @@ function hasClaudeToolCallRecord(value: unknown): boolean {
   if (record.type === 'tool-call' && provider === 'claude') return true;
   const content = asRecord(record.content);
   const data = asRecord(content?.data);
-  if (content?.type === 'acp' && content.provider === 'claude' && data?.type === 'tool-call') {
+  if (content?.type === 'acp' && content.agentId === 'claude' && data?.type === 'tool-call') {
     return true;
   }
   return Object.values(record).some(hasClaudeToolCallRecord);

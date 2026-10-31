@@ -264,7 +264,7 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
         }
 
         if (decoded.role !== 'agent') continue;
-        if (content?.type !== 'acp' || content.provider !== `acp:${backendId}`) continue;
+        if (content?.type !== 'acp' || content.agentId !== `acp:${backendId}`) continue;
         const data = isRecord(content.data) ? content.data : null;
         if (data?.type !== 'message' || typeof data.message !== 'string') continue;
         if (data.message.includes('ACP_STUB_USAGE_UPDATE_DONE plugin-backed-acp-e2e')) {

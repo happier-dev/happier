@@ -292,7 +292,7 @@ await connection.closed;
           const content = decrypted.content;
           if (!content || typeof content !== 'object') continue;
           if (content.type !== 'acp') continue;
-          if (content.provider !== 'codex') continue;
+          if (content.agentId !== 'codex') continue;
           const data = content.data;
           if (!data || typeof data !== 'object') continue;
           if (data.type !== 'message') continue;

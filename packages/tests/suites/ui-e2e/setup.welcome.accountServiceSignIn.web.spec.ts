@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { mkdir } from 'node:fs/promises';
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Request } from '@playwright/test';
 import { Agent as UndiciAgent, getGlobalDispatcher, setGlobalDispatcher, type Dispatcher } from 'undici';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -197,22 +197,26 @@ test.describe('ui e2e: welcome Account Service sign-in journey', () => {
     hasAuthorizationHeader: boolean;
   }
 
-  function collectRequests(page: Page): CapturedRequest[] {
-    const requests: CapturedRequest[] = [];
-    page.on('request', (request) => {
-      try {
-        const url = new URL(request.url());
-        if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
-        requests.push({
+  function collectRequests(page: Page): () => Promise<CapturedRequest[]> {
+    const requests: Request[] = [];
+    page.on('request', (request) => requests.push(request));
+    return async () => {
+      const captured = await Promise.all(requests.map(async (request) => {
+        let url: URL;
+        try {
+          url = new URL(request.url());
+        } catch {
+          return null;
+        }
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+        return {
           url: url.origin,
           pathname: url.pathname,
-          hasAuthorizationHeader: request.headerValue('authorization') !== null,
-        });
-      } catch {
-        // Ignore unparsable request URLs.
-      }
-    });
-    return requests;
+          hasAuthorizationHeader: await request.headerValue('authorization') !== null,
+        };
+      }));
+      return captured.filter((request): request is CapturedRequest => request !== null);
+    };
   }
 
   async function openFreshWelcome(page: Page): Promise<void> {
@@ -313,7 +317,7 @@ test.describe('ui e2e: welcome Account Service sign-in journey', () => {
     // Capture before the first navigation. This makes the legacy active-Home auto-redirect
     // corridor observable: the unrelated Home deliberately advertises mTLS auto-redirect,
     // while the selected sign-in service advertises only key authentication.
-    const requests = collectRequests(page);
+    const readRequests = collectRequests(page);
 
     await openFreshWelcome(page);
     await chooseSignInService(page, serviceOrigin);
@@ -339,6 +343,7 @@ test.describe('ui e2e: welcome Account Service sign-in journey', () => {
     await expect(page.getByText(ROUTINE_TERMINOLOGY_FORBIDDEN_RE)).toHaveCount(0);
 
     // --- Exact-target: every authentication/Directory request stays on the selected service.
+    const requests = await readRequests();
     const accountServiceCustodyRequests = requests.filter(
       (request) => request.pathname.startsWith('/v1/auth/account-directory')
         || request.pathname.startsWith('/v1/account-directory'),

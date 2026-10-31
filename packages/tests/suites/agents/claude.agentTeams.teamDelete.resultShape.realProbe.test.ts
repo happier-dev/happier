@@ -65,9 +65,8 @@ describe('real Claude Agent Teams TeamDelete result shape probe', () => {
         timeoutMs: 100_000,
         envOverlay: { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' },
         stopWhen: ({ toolUses, toolResults }) => {
-          const hasDelete = toolUses.some((u) => u.name === 'TeamDelete');
-          const hasAnyResult = toolResults.length >= 2;
-          return hasDelete && hasAnyResult;
+          const deletion = toolUses.find((u) => u.name === 'TeamDelete');
+          return Boolean(deletion?.toolUseId && toolResults.some((r) => r.toolUseId === deletion.toolUseId));
         },
       });
 
@@ -79,10 +78,11 @@ describe('real Claude Agent Teams TeamDelete result shape probe', () => {
 
       const deleteToolUseId =
         deleteUses.map((u) => u.toolUseId).find((id): id is string => typeof id === 'string' && id.trim().length > 0) ?? null;
+      expect(deleteToolUseId?.trim()).toBeTruthy();
       const matchingDeleteResult = deleteToolUseId
         ? result.toolResults.find((r) => r.toolUseId === deleteToolUseId)
         : undefined;
-      const deleteResult = matchingDeleteResult ?? result.toolResults.at(-1) ?? null;
+      const deleteResult = matchingDeleteResult ?? null;
       expect(deleteResult).not.toBeNull();
       if (!deleteResult) return;
 
@@ -92,15 +92,15 @@ describe('real Claude Agent Teams TeamDelete result shape probe', () => {
       const parsed = tryParseJsonObject(text);
       if (parsed) {
         // Claude tool_result shapes can evolve. Keep assertions stable but meaningful.
-        // Common pattern: `{ success: boolean, message: "..." }`.
+        // A returned success flag must acknowledge deletion.
         if ('success' in parsed) {
-          expect(typeof (parsed as any).success).toBe('boolean');
+          expect(parsed.success).toBe(true);
         }
         if ('message' in parsed) {
-          expect(String((parsed as any).message ?? '').trim().length).toBeGreaterThan(0);
+          expect(String(parsed.message ?? '').trim().length).toBeGreaterThan(0);
         }
         if ('team_name' in parsed) {
-          expect(String((parsed as any).team_name ?? '').trim().length).toBeGreaterThan(0);
+          expect(String(parsed.team_name ?? '').trim().length).toBeGreaterThan(0);
         }
       }
     },

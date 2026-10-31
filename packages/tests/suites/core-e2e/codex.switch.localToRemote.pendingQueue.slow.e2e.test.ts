@@ -41,7 +41,7 @@ type DecryptedAcpAgentMessage = Readonly<{
   role?: string;
   content?: Readonly<{
     type?: string;
-    provider?: string;
+    agentId?: string;
     data?: Readonly<{ type?: string; message?: string }>;
   }>;
 }>;
@@ -365,7 +365,7 @@ setInterval(() => {}, 1000);
 
           if (agentMessage?.role !== 'agent') continue;
           const content = agentMessage.content;
-          if (content?.type !== 'acp' || content.provider !== 'codex') continue;
+          if (content?.type !== 'acp' || content.agentId !== 'codex') continue;
           const data = content.data;
           if (data?.type !== 'message') continue;
           const message = data.message;

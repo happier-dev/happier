@@ -287,6 +287,7 @@ test.describe('ui e2e: web onboarding wizard', () => {
         await expect(command.getByRole('radio', { checked: true })).toHaveCount(1);
         await command.getByRole('radio', { name: 'Windows', exact: true }).click();
         await expect(command.getByRole('radio', { name: 'Windows', exact: true })).toBeChecked();
+        await expect(command.getByRole('radio', { checked: true })).toHaveCount(1);
         await expect(page.getByTestId('settings.machines.draft.form.pane.command.code')).toBeVisible();
     });
 });

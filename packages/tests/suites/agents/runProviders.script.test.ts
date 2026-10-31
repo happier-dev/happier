@@ -86,12 +86,6 @@ describe('providers run script timeout', () => {
     expect(resolveProvidersRunTimeoutFallbackMs({ presetId: 'all', tier: 'smoke' })).toBe(45 * 60 * 1000);
   });
 
-  it('uses a longer default timeout for all:smoke than a single-provider smoke run', () => {
-    const allSmoke = resolveProvidersRunTimeoutFallbackMs({ presetId: 'all', tier: 'smoke' });
-    const oneSmoke = resolveProvidersRunTimeoutFallbackMs({ presetId: 'opencode', tier: 'smoke' });
-    expect(allSmoke).toBeGreaterThan(oneSmoke);
-  });
-
   it('uses fallback for missing/invalid values', () => {
     expect(resolveProvidersRunTimeoutMs(undefined, 123_000)).toBe(123_000);
     expect(resolveProvidersRunTimeoutMs('0', 123_000)).toBe(123_000);

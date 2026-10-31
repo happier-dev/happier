@@ -14,6 +14,7 @@ import {
   deletePendingQueueV2,
   discardPendingQueueV2,
   enqueuePendingQueueV2,
+  listPendingQueueV2,
   patchPendingQueueV2,
   reorderPendingQueueV2,
   restorePendingQueueV2,
@@ -34,7 +35,7 @@ function findPendingChangedAfter(params: { events: any[]; sessionId: string; aft
 }
 
 describe('core e2e: pending queue v2 emits pending-changed socket updates', () => {
-  it('broadcasts pending-changed to connected sockets on enqueue', async () => {
+  it('broadcasts pending-changed to connected sockets for queue mutations', async () => {
     const testDir = run.testDir('pending-queue-v2-socket-pending-changed');
     const saveArtifactsOnSuccess = envFlag(['HAPPIER_E2E_SAVE_ARTIFACTS', 'HAPPY_E2E_SAVE_ARTIFACTS'], false);
     const startedAt = new Date().toISOString();
@@ -86,11 +87,31 @@ describe('core e2e: pending queue v2 emits pending-changed socket updates', () =
         return body?.pendingCount === 1;
       }, { timeoutMs: 20_000 });
 
+      const secondLocalId = randomUUID();
+      const beforeSecondEnqueue = socket.getEvents().length;
+      const secondEnqueue = await enqueuePendingQueueV2({ baseUrl: server.baseUrl, token: auth.token, sessionId, localId: secondLocalId, ciphertext });
+      expect(secondEnqueue.status).toBe(200);
+      await waitFor(() => {
+        const body = findPendingChangedAfter({ events: socket.getEvents(), sessionId, afterIndex: beforeSecondEnqueue });
+        return body?.pendingCount === 2;
+      }, { timeoutMs: 20_000 });
+
       const start2 = socket.getEvents().length;
-      const reorder = await reorderPendingQueueV2({ baseUrl: server.baseUrl, token: auth.token, sessionId, orderedLocalIds: [localId] });
+      const reorder = await reorderPendingQueueV2({ baseUrl: server.baseUrl, token: auth.token, sessionId, orderedLocalIds: [secondLocalId, localId] });
       expect(reorder.status).toBe(200);
       await waitFor(() => {
         const body = findPendingChangedAfter({ events: socket.getEvents(), sessionId, afterIndex: start2 });
+        return body?.pendingCount === 2;
+      }, { timeoutMs: 20_000 });
+      const reordered = await listPendingQueueV2({ baseUrl: server.baseUrl, token: auth.token, sessionId });
+      expect(reordered.status).toBe(200);
+      expect(reordered.data.pending?.map((row) => row.localId)).toEqual([secondLocalId, localId]);
+
+      const beforeSecondDelete = socket.getEvents().length;
+      const secondDelete = await deletePendingQueueV2({ baseUrl: server.baseUrl, token: auth.token, sessionId, localId: secondLocalId });
+      expect(secondDelete.status).toBe(200);
+      await waitFor(() => {
+        const body = findPendingChangedAfter({ events: socket.getEvents(), sessionId, afterIndex: beforeSecondDelete });
         return body?.pendingCount === 1;
       }, { timeoutMs: 20_000 });
 
