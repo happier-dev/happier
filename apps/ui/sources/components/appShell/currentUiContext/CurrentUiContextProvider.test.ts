@@ -166,6 +166,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
 
 import {
     type CurrentUiContextMountedEnrichment,
+    type CurrentUiContextMountedCommand,
 } from './currentUiContextModel';
 import {
     CurrentUiContextProvider,
@@ -305,6 +306,29 @@ describe('CurrentUiContextProvider', () => {
         expect(reader.readCurrentUiContext()!.commands.map(command => command.id)).toEqual([update.id]);
         await hook.unmount();
         expect(update.retirementSignal.aborted).toBe(true);
+    });
+
+    it('retains the exact host-local command across descriptive entity changes while retiring replaced author commands', async () => {
+        const hook = await renderHook(() => ({ publisher: useCurrentUiContextMountPublisher(), reader: useOptionalCurrentUiContextReader() }),
+            { wrapper: CurrentUiContextTestProvider });
+        const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
+        const publication = hook.getCurrent().publisher!.createMount();
+        const local: CurrentUiContextMountedCommand = { kind: 'hostLocal', invoke: () => ({ ok: true }) };
+        const author = { kind: 'executeAction' as const, action: { pluginId: 'triage', localId: 'file-remote-update' } };
+        const publish = (summary: string) => publication.publish({ entity: { kind: 'usage_summary', label: 'Usage', summary },
+            commands: [{ title: 'Today', command: local }, { title: 'File update', command: author }] });
+        await act(async () => { publish('Last 7 days'); });
+        const [localDescriptor, authorDescriptor] = reader.readCurrentUiContext()!.commands;
+        const localSignal = reader.resolveCurrentUiCommand(localDescriptor!.id)!.retirementSignal;
+        const authorSignal = reader.resolveCurrentUiCommand(authorDescriptor!.id)!.retirementSignal;
+        await act(async () => { publish('Today'); });
+        expect(reader.readCurrentUiContext()!.entity?.summary).toBe('Today');
+        expect(reader.readCurrentUiContext()!.commands[0]!.id).toBe(localDescriptor!.id);
+        expect(localSignal.aborted).toBe(false);
+        expect(authorSignal.aborted).toBe(true);
+        expect(reader.resolveCurrentUiCommand(authorDescriptor!.id)).toBeNull();
+        await hook.unmount();
+        expect(localSignal.aborted).toBe(true);
     });
 
     it('executes a private mounted host command and refuses its retired descriptor', async () => {

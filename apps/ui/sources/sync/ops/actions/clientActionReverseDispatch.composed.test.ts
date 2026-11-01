@@ -490,6 +490,116 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     expect(await caller.execute('ui.find', { op: 'read' }, context)).toEqual({ ok: true, result: { status: 'unavailable', reason: 'noClient' } });
     expect(foreignEffects).toBe(0);
   });
+  it('keeps Usage view, period and filter switches at zero binding mounts and registrations across 46 Machines', async () => {
+    const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
+    const { currentUiContextCommandClientRpcMethod } = await import('@happier-dev/protocol/actions/clientDispatchV1');
+    const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+    const { useUsageWidgetPageContext, usePublishUsageWidgetPageContext } = await import('@/components/settings/usage/useUsageWidgetPageContext');
+    const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { executeCurrentUiContextAction } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+    const { getUsagePeriodDefinition } = await import('@/sync/api/account/usagePeriods');
+    const { t } = await import('@/text');
+    // P03-WEB-PERF observed about 46 selectable Machines in the affected Account.
+    const machines = Array.from({ length: 46 }, (_, index) => createMachineFixture({
+      id: `usage-command-machine-${index}`, activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+    }));
+    await act(async () => { storage.setState(state => ({ profile: { ...state.profile!, id: 'relay-account' },
+      machines: Object.fromEntries(machines.map(machine => [machine.id, machine])), machineListByServerId: {} })); });
+    const authority = captureActiveServerAccountScopeLifetime();
+    let reader: CurrentUiContextReader | null = null;
+    let page: ReturnType<typeof useUsageWidgetPageContext> | undefined;
+    let selectView: ((view: string) => void) | undefined;
+    let addFilter: (() => void) | undefined;
+    let removeFilter: (() => void) | undefined;
+    let latestInvocation = '';
+    function UsageCommands(): React.ReactElement {
+      const [layoutId, setLayoutId] = React.useState('costs');
+      const [extraFilter, setExtraFilter] = React.useState(false);
+      // The full-page route echoes page-owned filters back through its URL params.
+      const [initialFilters, setInitialFilters] = React.useState<Parameters<typeof useUsageWidgetPageContext>[0]['initialFilters']>();
+      selectView = setLayoutId;
+      addFilter = () => setExtraFilter(true);
+      removeFilter = () => setExtraFilter(false);
+      page = useUsageWidgetPageContext({ authority, nowMs: 1_790_000_000_000, initialFilters, onFiltersChange: setInitialFilters });
+      usePublishUsageWidgetPageContext({ authority, page, layoutId, costBasisOptions: ['auto', 'reported'],
+        layouts: [{ id: 'costs', name: 'Costs' }, { id: 'plans', name: 'Plans' }],
+        selectLayout: next => { setLayoutId(next); return true; },
+        filterCommands: [{ field: 'agents', id: 'codex', title: 'Agent: Codex',
+          invoke: () => { latestInvocation = layoutId; return true; } },
+          ...(extraFilter ? [
+            { field: 'agents', id: 'claude', title: 'Agent: Claude', invoke: () => true },
+            { field: 'agents', id: 'gemini', title: 'Agent: Gemini', invoke: () => true },
+          ] : [])] });
+      reader = useOptionalCurrentUiContextReader();
+      return React.createElement(ClientActionReverseRuntime);
+    }
+    const registrations = vi.spyOn(apiSocket, 'registerMachineScopedRpcHandler');
+    releases.push(() => registrations.mockRestore());
+    const socket = clientSockets.slice().reverse().find(candidate => candidate.listeners(SOCKET_RPC_EVENTS.REQUEST).length > 0);
+    if (!socket) throw new Error('Account reverse receiver absent');
+    const emissions = vi.spyOn(socket, 'emit');
+    releases.push(() => emissions.mockRestore());
+    const unregisteredMethods = () => emissions.mock.calls.flatMap(([event, payload]) =>
+      event === SOCKET_RPC_EVENTS.UNREGISTER && payload && typeof payload === 'object'
+        && 'method' in payload && typeof payload.method === 'string' && payload.method.startsWith('usage-command-machine-')
+        ? [payload.method] : []);
+    const runtime = await renderMountedCurrentUiContext(React.createElement(UsageCommands));
+    const machineIds = new Set(machines.map(machine => machine.id));
+    // Count the runtime's actual descendants, independent of component names or props.
+    const bindingNodes = () => runtime.findByType(ClientActionReverseRuntime).children;
+    const initialBindings = new Set(bindingNodes());
+    expect(initialBindings.size, 'RPC registration must not mount React bindings').toBe(0);
+    expect(new Set(registrations.mock.calls.map(([machineId]) => machineId))).toEqual(machineIds);
+    const originalCommands = reader!.readCurrentUiContext()!.commands;
+    const originalIds = originalCommands.map(command => command.id);
+    const commandPairs = (ids: readonly string[]) => machines.flatMap(machine =>
+      ids.map(id => `${machine.id}:${currentUiContextCommandClientRpcMethod(id)}`));
+    expect(registrations.mock.calls.map(([machineId, method]) => `${machineId}:${method}`))
+      .toEqual(expect.arrayContaining(commandPairs(originalIds)));
+    const filterId = originalCommands.find(command => command.title === 'Agent: Codex')!.id;
+    const originalSignal = reader!.resolveCurrentUiCommand(filterId)!.retirementSignal;
+    const invoke = (commandId: string) => executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId }, context: { surface: 'ui' } });
+    try {
+      for (const switchContext of [() => selectView?.('plans'), () => page?.setPeriod('today'),
+        () => page?.setScope({ agents: ['codex'] })]) {
+        registrations.mockClear();
+        emissions.mockClear();
+        await act(async () => { switchContext(); });
+        expect.soft(reader!.readCurrentUiContext()!.commands.map(command => command.id)).toEqual(originalIds);
+        expect.soft(bindingNodes().filter(node => !initialBindings.has(node)), 'unchanged command set mounts no bindings').toHaveLength(0);
+        expect.soft(registrations.mock.calls, 'unchanged command set registers no methods').toHaveLength(0);
+        expect.soft(unregisteredMethods(), 'unchanged command set withdraws no methods').toHaveLength(0);
+      }
+      expect(reader!.readCurrentUiContext()!.entity?.summary).toBe(t(getUsagePeriodDefinition('today').translationKey));
+      expect(originalSignal.aborted).toBe(false);
+      await act(async () => { expect(await invoke(filterId)).toMatchObject({ ok: true }); });
+      expect(latestInvocation).toBe('plans');
+      registrations.mockClear();
+      emissions.mockClear();
+      await act(async () => { addFilter?.(); });
+      const added = reader!.readCurrentUiContext()!.commands.filter(command => !originalIds.includes(command.id));
+      expect(added).toHaveLength(2);
+      const addedPairs = commandPairs(added.map(command => command.id));
+      expect(registrations.mock.calls).toHaveLength(addedPairs.length);
+      expect(new Set(registrations.mock.calls.map(([machineId, method]) => `${machineId}:${method}`)))
+        .toEqual(new Set(addedPairs));
+      expect(unregisteredMethods()).toHaveLength(0);
+      expect(bindingNodes().filter(node => !initialBindings.has(node)), 'new commands reuse mounted Machine bindings').toHaveLength(0);
+      registrations.mockClear();
+      emissions.mockClear();
+      await act(async () => { removeFilter?.(); });
+      expect(registrations.mock.calls).toHaveLength(0);
+      expect(unregisteredMethods()).toHaveLength(addedPairs.length);
+      expect(new Set(unregisteredMethods())).toEqual(new Set(addedPairs));
+      for (const command of added) expect(reader!.resolveCurrentUiCommand(command.id)).toBeNull();
+      expect(reader!.resolveCurrentUiCommand(filterId)?.retirementSignal.aborted).toBe(false);
+      await act(async () => { storage.getState().clearProfileScope(); });
+      expect(originalSignal.aborted).toBe(true);
+      expect(await invoke(filterId)).toMatchObject({ ok: false });
+    } finally { await runtime.unmount(); }
+  });
   it('keeps reverse registrations stable across fresh current-UI snapshots and retires replaced commands', async () => {
     const insertionUpdates: Error[] = [];
     const originalConsoleError = console.error;

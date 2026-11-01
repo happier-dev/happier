@@ -187,16 +187,17 @@ function createMountRecord(input: Readonly<{
     previous: CurrentUiContextMountRecord | null;
 }>): CurrentUiContextMountRecord {
     const retirement = new AbortController();
-    const previous = input.previous?.owner === input.owner
-        && sameStrictJsonValue(input.previous.enrichment.entity, input.enrichment.entity)
-        ? input.previous : null;
+    const previous = input.previous?.owner === input.owner ? input.previous : null;
+    const sameEntity = sameStrictJsonValue(previous?.enrichment.entity, input.enrichment.entity);
     const retained = new Set<CurrentUiContextMountRecord['semanticCommands'][number]>();
     const semanticCommands = Object.freeze((input.enrichment.commands ?? []).map((entry) => {
         const unchanged = previous?.semanticCommands.find((candidate, index) => {
             const descriptor = previous.projection.commands[index]!;
             return !retained.has(candidate) && descriptor.title === entry.title && descriptor.description === entry.description
-                && (candidate.command === entry.command
-                    || ((entry.command.kind === 'openSurface' || entry.command.kind === 'executeAction')
+                // Host-local declarations own their semantic lifetime and resolve the latest handler.
+                // Descriptive entity updates must not retire an unchanged declaration.
+                && ((candidate.command === entry.command && (sameEntity || entry.command.kind === 'hostLocal'))
+                    || (sameEntity && (entry.command.kind === 'openSurface' || entry.command.kind === 'executeAction')
                         && sameStrictJsonValue(candidate.command, entry.command)));
         });
         if (unchanged) {

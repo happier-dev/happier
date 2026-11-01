@@ -55,11 +55,11 @@ export function useUsageWidgetPageContext(input: UsageWidgetPageContextInput): U
     const canChange = React.useCallback(() => input.active !== false && input.authority?.isCurrent() === true,
         [input.active, input.authority]);
 
-    React.useLayoutEffect(() => {
-        if (state.authority !== input.authority || state.sessionId !== input.sessionId || state.initialKey !== initialKey) {
-            setState(initialize());
-        }
-    }, [input.authority, input.sessionId, initialKey, state.authority, state.sessionId, state.initialKey]);
+    // Reconcile route intent before children commit. A URL echo of page-owned filters
+    // must not commit an inactive publication and retire otherwise unchanged commands.
+    if (state.authority !== input.authority || state.sessionId !== input.sessionId || state.initialKey !== initialKey) {
+        setState(initialize());
+    }
     React.useLayoutEffect(() => {
         const authority = input.authority;
         if (!authority) return;
@@ -157,7 +157,7 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
             title: describeUsageWidgetSlotValue('costBasis', costBasis, page.period), invoke: () => page.setScope({ costBasis }) })),
         ...(input.filterCommands ?? []).map(({ field, id, title, invoke }) => ({ key: pageCommandKey('filter', field, id), title, invoke })),
         ...(input.layouts ?? []).map(layout => ({ key: pageCommandKey('layout', layout.id), title: layout.name, invoke: () => applyLayout(layout.id) })),
-    ], canChange, JSON.stringify({ period: page.period, scope: page.scope, layoutId: input.layoutId ?? null }));
+    ], canChange);
     const publication = React.useMemo(() => {
         if (!canChange()) return null;
         const enrichment: CurrentUiContextMountedEnrichment = {
@@ -176,7 +176,7 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     }, [canChange, execute, reader]);
     // Menus close before invoking their queued callback. Resolve its semantic intent
     // from the committed publication, never the retired descriptor captured at close.
-    // Opaque external command ids still retire normally in the current-context owner.
+    // The current-context owner retires commands when their declaration or authority changes.
     const selectLayout = React.useCallback((id: string, signal?: AbortSignal) => signal?.aborted ? Promise.resolve(false)
         : invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('layout', id))?.command), [invoke]);
     const selectPeriod = React.useCallback((id: UsagePeriod) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('period', id))?.command), [invoke]);

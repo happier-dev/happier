@@ -23,48 +23,81 @@ import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 
-function MachineClientActionBinding({ serverId, generation, accountId, machineId, method, sessionId, readCurrentSessionId }: Readonly<{
-    serverId: string;
+function useMachineClientActionBindings({
+    serverId, generation, accountId, machineIds, methods, sessionId, readCurrentSessionId, contributedMachineIds,
+}: Readonly<{
+    serverId: string | null;
     generation: number;
-    accountId: string;
-    machineId: string;
-    method: string;
-    sessionId?: string;
+    accountId: string | null;
+    machineIds: readonly string[];
+    methods: readonly string[];
+    sessionId: string | null;
     readCurrentSessionId?: () => string | null;
-}>): null {
+    contributedMachineIds: ReadonlySet<string>;
+}>): void {
+    const bindings = React.useRef(new Map<string, Map<string, () => void>>());
+    const sessionReader = React.useRef(readCurrentSessionId);
+    React.useLayoutEffect(() => { sessionReader.current = readCurrentSessionId; }, [readCurrentSessionId]);
     React.useEffect(() => {
-        let mounted = true;
-        const binding = { serverId, accountId, isCurrent: () => {
-            const active = getActiveServerSnapshot();
-            const state = storage.getState();
-            const machine = resolveServerScopedMachine(state, serverId, machineId);
-            return active.serverId === serverId && active.generation === generation
-                && state.profile?.id === accountId && Boolean(machine
-                    && isMachineSelectableForFleet({ serverId, accountId }, machine));
-        }, canExecute: () => mounted
-            && (sessionId === undefined || readCurrentSessionId?.() === sessionId) };
-        const handler = method === RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE
-            ? createCurrentUiContributedActionRpcHandler({
-                ...binding, machineId, readProjection: readCurrentAppShellPluginUiProjection,
-                execute: async (...args) => {
-                    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-                    return await createDefaultActionExecutor().execute(...args);
-                },
-            })
-            : createUiClientActionReverseHandler(binding);
-        const dispose = apiSocket.registerMachineScopedRpcHandler(
-            machineId, method, handler, { settleInFlight: true },
-        );
+        const registered = bindings.current;
         return () => {
-            mounted = false;
-            dispose();
+            for (const machine of registered.values()) {
+                for (const dispose of machine.values()) dispose();
+            }
+            registered.clear();
         };
-    }, [serverId, generation, accountId, machineId, method, sessionId, readCurrentSessionId]);
-    return null;
+    }, [serverId, generation, accountId]);
+    React.useEffect(() => {
+        if (!serverId || !accountId) return;
+        const nextMachineIds = new Set(machineIds);
+        for (const [machineId, registered] of bindings.current) {
+            if (nextMachineIds.has(machineId)) continue;
+            for (const dispose of registered.values()) dispose();
+            bindings.current.delete(machineId);
+        }
+        const sessionMethod = sessionId ? sessionUiActionClientRpcMethod(sessionId) : null;
+        for (const machineId of machineIds) {
+            let registered = bindings.current.get(machineId);
+            if (!registered) {
+                registered = new Map();
+                bindings.current.set(machineId, registered);
+            }
+            const next = new Set([...methods, ...(sessionMethod ? [sessionMethod] : []),
+                ...(contributedMachineIds.has(machineId) ? [RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE] : [])]);
+            for (const [method, dispose] of registered) {
+                if (!next.has(method)) { dispose(); registered.delete(method); }
+            }
+            for (const method of next) {
+                if (registered.has(method)) continue;
+                let mounted = true;
+                const boundSessionId = method === sessionMethod ? sessionId : null;
+                const binding = { serverId, accountId, isCurrent: () => {
+                    const active = getActiveServerSnapshot();
+                    const state = storage.getState();
+                    const machine = resolveServerScopedMachine(state, serverId, machineId);
+                    return active.serverId === serverId && active.generation === generation
+                        && state.profile?.id === accountId && Boolean(machine
+                            && isMachineSelectableForFleet({ serverId, accountId }, machine));
+                }, canExecute: () => mounted
+                    && (boundSessionId === null || sessionReader.current?.() === boundSessionId) };
+                const handler = method === RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE
+                    ? createCurrentUiContributedActionRpcHandler({
+                        ...binding, machineId, readProjection: readCurrentAppShellPluginUiProjection,
+                        execute: async (...args) => {
+                            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+                            return await createDefaultActionExecutor().execute(...args);
+                        },
+                    })
+                    : createUiClientActionReverseHandler(binding);
+                const unregister = apiSocket.registerMachineScopedRpcHandler(machineId, method, handler, { settleInFlight: true });
+                registered.set(method, () => { mounted = false; unregister(); });
+            }
+        }
+    }, [serverId, generation, accountId, machineIds, methods, sessionId, contributedMachineIds]);
 }
 
 /** Currently reachable Machines share the existing reconnect-safe reverse-RPC channel. */
-export function ClientActionReverseRuntime(): React.ReactElement | null {
+export function ClientActionReverseRuntime(): null {
     const { serverId, generation } = useActiveServerSnapshot();
     const accountId = storage(state => state.profile?.id ?? null);
     const { selectableMachineIds } = useMachinePresenceMembership(serverId);
@@ -85,31 +118,27 @@ export function ClientActionReverseRuntime(): React.ReactElement | null {
         const snapshot = currentUiReader?.readCurrentUiContext() ?? null;
         // The reader rebuilds its DTO on every call; only method membership is a stable store snapshot.
         return snapshot ? JSON.stringify([currentUiReader?.readCurrentSessionId?.() ?? null,
-            snapshot.commands.map(command => command.id)]) : null;
+            snapshot.commands.map(command => command.id).sort()]) : null;
     }, [currentUiReader]);
-    React.useSyncExternalStore(
+    const currentUiRegistration = React.useSyncExternalStore(
         subscribeCurrentUiRegistration,
         readCurrentUiRegistration,
         readCurrentUiRegistration,
     );
-    const currentUiSnapshot = currentUiReader?.readCurrentUiContext() ?? null;
     const currentSessionId = currentUiReader?.readCurrentSessionId?.() ?? null;
-    if (!serverId || !accountId) return null;
-    // Inventory changes retire only the removed Machine, not unrelated in-flight Actions.
-    const methods = [...new Set([RPC_METHODS.UI_ACTION_EXECUTE, ...addresses.flatMap(address =>
-        address.scope.serverId === serverId && address.scope.accountId === accountId
-            ? [workflowDraftClientRpcMethod(address), workflowDraftClientRpcMethod({ scope: address.scope })] : []),
-        ...readAddresses.flatMap(address => address.scope.serverId === serverId && address.scope.accountId === accountId
-            ? [mountedWorkReadClientRpcMethod(address.actionId, address.sessionId)] : []),
-        ...(currentUiSnapshot ? [currentUiContextReadClientRpcMethod(), ...currentUiSnapshot.commands.map(command =>
-            currentUiContextCommandClientRpcMethod(command.id))] : []),
-    ])];
-    const sessionMethod = currentSessionId ? sessionUiActionClientRpcMethod(currentSessionId) : null;
-    return <>{selectableMachineIds.flatMap(machineId => [...methods,
-        ...(sessionMethod ? [sessionMethod] : []),
-        ...(contributedMachineIds.has(machineId) ? [RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE] : []),
-    ].map(method => <MachineClientActionBinding key={`${machineId}:${method}`}
-        serverId={serverId} generation={generation} accountId={accountId} machineId={machineId} method={method}
-        {...(method === sessionMethod && currentSessionId ? { sessionId: currentSessionId,
-            readCurrentSessionId: currentUiReader?.readCurrentSessionId } : {})} />))}</>;
+    const methods = React.useMemo(() => {
+        const currentUiSnapshot = currentUiReader?.readCurrentUiContext() ?? null;
+        return [...new Set([RPC_METHODS.UI_ACTION_EXECUTE, ...addresses.flatMap(address =>
+            address.scope.serverId === serverId && address.scope.accountId === accountId
+                ? [workflowDraftClientRpcMethod(address), workflowDraftClientRpcMethod({ scope: address.scope })] : []),
+            ...readAddresses.flatMap(address => address.scope.serverId === serverId && address.scope.accountId === accountId
+                ? [mountedWorkReadClientRpcMethod(address.actionId, address.sessionId)] : []),
+            ...(currentUiSnapshot ? [currentUiContextReadClientRpcMethod(), ...currentUiSnapshot.commands.map(command =>
+                currentUiContextCommandClientRpcMethod(command.id))] : []),
+        ])];
+    }, [serverId, accountId, addresses, readAddresses, currentUiReader, currentUiRegistration]);
+    // Registration belongs to the runtime, without one React mount per Machine or method.
+    useMachineClientActionBindings({ serverId, generation, accountId, machineIds: selectableMachineIds, methods,
+        sessionId: currentSessionId, readCurrentSessionId: currentUiReader?.readCurrentSessionId, contributedMachineIds });
+    return null;
 }
