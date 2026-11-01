@@ -54,8 +54,6 @@ export type DaemonSpeechStreamSenderOptions = Readonly<{
   packId?: string | null;
   language?: string | null;
   diagnostics?: VoiceSpeechDiagnosticsCaptureContextV1;
-  maxBufferedChunks?: number;
-  maxBufferedBytes?: number;
   maxInFlightChunks?: number;
   maxInFlightBytes?: number;
   finishTimeoutMs?: number;
@@ -75,8 +73,6 @@ type PendingChunk = {
   followers: Array<Readonly<{ resolve: (events: readonly DaemonVoiceInferenceSttStreamEvent[]) => void; reject: (error: unknown) => void }>>;
 };
 
-const DEFAULT_MAX_BUFFERED_CHUNKS = 64;
-const DEFAULT_MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 function createSenderError(code: string): Error & { code: string } {
   return Object.assign(new Error(code), { code });
 }
@@ -96,8 +92,6 @@ export class DaemonSpeechStreamSender {
   private readonly packId: string | null;
   private readonly language: string | null;
   private readonly diagnostics: VoiceSpeechDiagnosticsCaptureContextV1 | undefined;
-  private readonly maxBufferedChunks: number;
-  private readonly maxBufferedBytes: number;
   private readonly maxInFlightChunks: number;
   private readonly maxInFlightBytes: number;
   private readonly finishTimeoutMs: number;
@@ -122,8 +116,6 @@ export class DaemonSpeechStreamSender {
     this.packId = options.packId ?? null;
     this.language = options.language ?? null;
     this.diagnostics = options.diagnostics;
-    this.maxBufferedChunks = Math.max(1, Math.trunc(options.maxBufferedChunks ?? DEFAULT_MAX_BUFFERED_CHUNKS));
-    this.maxBufferedBytes = Math.max(1, Math.trunc(options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES));
     this.maxInFlightChunks = Math.max(1, Math.trunc(options.maxInFlightChunks ?? DEFAULT_MAX_IN_FLIGHT_CHUNKS));
     this.maxInFlightBytes = Math.max(1, Math.trunc(options.maxInFlightBytes ?? DEFAULT_MAX_IN_FLIGHT_BYTES));
     this.finishTimeoutMs = Math.max(1, Math.trunc(options.finishTimeoutMs ?? DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS));
@@ -166,16 +158,15 @@ export class DaemonSpeechStreamSender {
     if (this.closed) {
       return Promise.reject(createSenderError('daemon_speech_stream_closed'));
     }
-    if (
-      this.pendingBytes + pcm16Bytes.byteLength > this.maxBufferedBytes
-      || this.measureInFlightChunkBytes(pcm16Bytes.byteLength) > this.maxInFlightBytes
-    ) {
+    // Only the real downstream packet-admission window bounds a send. Retain
+    // accepted capture while it is occupied; a delayed ACK must not end a call.
+    if (this.measureInFlightChunkBytes(pcm16Bytes.byteLength) > this.maxInFlightBytes) {
       return Promise.reject(createSenderError('daemon_speech_stream_backpressure'));
     }
     // Capture cadence is not packet cadence. While response slots are occupied,
     // fill an unsent packet up to the negotiated carrier capacity rather than
     // spending another slot on each 20ms capture frame. Never mutate sent PCM.
-    const tail = [...this.pendingChunks.values()].at(-1);
+    const tail = this.pendingChunks.get(this.nextSeq - 1);
     const packetBudget = Math.min(this.transport.maxPcm16ChunkBytes ?? 0, this.maxInFlightBytes);
     if (tail && pcm16Bytes.byteLength > 0 && tail.pcm16Bytes.byteLength > 0
       && tail.scheduledGeneration === null && !tail.acknowledged
@@ -187,9 +178,6 @@ export class DaemonSpeechStreamSender {
       tail.pcm16Bytes = combined;
       this.pendingBytes += pcm16Bytes.byteLength;
       return new Promise((resolve, reject) => { tail.followers.push({ resolve, reject }); });
-    }
-    if (this.pendingChunks.size >= this.maxBufferedChunks) {
-      return Promise.reject(createSenderError('daemon_speech_stream_backpressure'));
     }
     const seq = this.nextSeq++;
     const promise = new Promise<readonly DaemonVoiceInferenceSttStreamEvent[]>((resolve, reject) => {
@@ -224,7 +212,9 @@ export class DaemonSpeechStreamSender {
       throw createSenderError('daemon_speech_stream_closed');
     }
     try {
-      await this.withFinishTimeout(this.waitForDrain());
+      // Draining may span several valid credit windows. The RPC deadline owns
+      // the finish request below, not audio that has not reached that request.
+      await this.waitForDrain();
       const active = this.activeStream;
       if (!active) {
         throw createSenderError('daemon_speech_stream_not_started');
@@ -273,10 +263,14 @@ export class DaemonSpeechStreamSender {
 
   private pump(ownerGeneration: number): void {
     if (!this.activeStream || this.closed || ownerGeneration !== this.localOwnerGeneration) return;
-    for (const pending of [...this.pendingChunks.values()].sort((a, b) => a.seq - b.seq)) {
+    // Sequence allocation and scheduling are contiguous. Start after the last
+    // send rather than copying/scanning the retained backlog on every capture.
+    for (let seq = this.highestSentSeq + 1; seq < this.nextSeq; seq += 1) {
+      if (this.inFlightChunks >= this.maxInFlightChunks) break;
+      const pending = this.pendingChunks.get(seq);
+      if (!pending) continue;
       if (pending.acknowledged) continue;
       if (pending.scheduledGeneration === ownerGeneration) continue;
-      if (this.inFlightChunks >= this.maxInFlightChunks) break;
       const sentByteLength = this.measureInFlightChunkBytes(pending.pcm16Bytes.byteLength);
       if (this.inFlightBytes + sentByteLength > this.maxInFlightBytes) break;
       pending.scheduledGeneration = ownerGeneration;
@@ -344,21 +338,20 @@ export class DaemonSpeechStreamSender {
     }
     this.lastAckSeq = ackSeq;
     for (const [seq, pending] of this.pendingChunks) {
-      if (seq <= ackSeq) {
-        if (!pending.acknowledged) {
-          pending.acknowledged = true;
-          this.pendingBytes = Math.max(0, this.pendingBytes - pending.pcm16Bytes.byteLength);
-          pending.pcm16Bytes = new Uint8Array(0);
-        }
-        this.settlePendingIfComplete();
+      if (seq > ackSeq) break;
+      if (!pending.acknowledged) {
+        pending.acknowledged = true;
+        this.pendingBytes = Math.max(0, this.pendingBytes - pending.pcm16Bytes.byteLength);
+        pending.pcm16Bytes = new Uint8Array(0);
       }
     }
+    this.settlePendingIfComplete();
     this.resolveDrainIfNeeded();
   }
 
   private settlePendingIfComplete(): void {
     // Cumulative ACKs can arrive before an earlier chunk's recognizer events.
-    // Publish only the contiguous completed prefix of the same bounded window.
+    // Publish only the contiguous completed prefix of the same stream.
     for (const pending of this.pendingChunks.values()) {
       if (!pending.acknowledged || pending.responseEvents === null) return;
       this.pendingChunks.delete(pending.seq);

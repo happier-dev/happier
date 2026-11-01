@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
+  type DaemonVoiceInferenceSttStreamFinishResponse,
   type DaemonVoiceInferenceSttStreamStartResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/voiceInference';
 
 import {
   createDaemonSpeechStreamSender,
@@ -11,6 +12,11 @@ import {
 } from './DaemonSpeechStreamSender';
 import { createDaemonSpeechStreamCarrierAdapter } from './DaemonSpeechStreamCarrier';
 import { createDeferred as deferred } from '@/dev/testkit';
+import {
+  DEFAULT_MAX_PENDING_APPLICATION_DISPATCHES,
+  DEFAULT_MAX_PENDING_APPLICATION_DISPATCH_BYTES,
+} from '@happier-dev/peer-transport/duplexFrames';
+import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 async function settleWithin<T>(promise: Promise<T>, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -154,8 +160,6 @@ async function runTenMinuteImpairmentProfile(profile: ImpairmentProfile): Promis
 
   const sender = createDaemonSpeechStreamSender({
     requestId: `request-${profile.label}`,
-    maxBufferedChunks: 64,
-    maxBufferedBytes: 64 * frameBytes,
     maxInFlightChunks: 8,
     maxInFlightBytes: 8 * frameBytes,
     transport: {
@@ -303,27 +307,25 @@ async function runTenMinuteImpairmentProfile(profile: ImpairmentProfile): Promis
 }
 
 describe('DaemonSpeechStreamSender', () => {
-  it.each([0, 640])('retains admission bounds and rejects every %i-byte capture callback on cancellation', async chunkBytes => {
-    const response = deferred<import('@happier-dev/protocol').DaemonVoiceInferenceSttStreamChunkResponse>();
-    const sender = createDaemonSpeechStreamSender({ requestId: 'coalesced-cancel', maxInFlightChunks: 1, maxBufferedChunks: 4, maxBufferedBytes: 2560,
+  it.each([0, 640])('retains queued audio and rejects every %i-byte capture callback on cancellation', async chunkBytes => {
+    const response = deferred<import('@happier-dev/protocol/daemon/voiceInference').DaemonVoiceInferenceSttStreamChunkResponse>();
+    const chunk = vi.fn(() => response.promise);
+    const sender = createDaemonSpeechStreamSender({ requestId: 'coalesced-cancel', maxInFlightChunks: 1,
       transport: { maxPcm16ChunkBytes: 1280,
-        start: async () => startResponse({ streamId: 'stream', generation: 0 }), chunk: () => response.promise,
+        start: async () => startResponse({ streamId: 'stream', generation: 0 }), chunk,
         finish: vi.fn(), cancel: async () => ({ ok: true, streamId: 'stream', generation: 0 }),
       },
     });
     await sender.start();
-    const settled = Promise.allSettled(Array.from({ length: 4 }, () => sender.pushChunk(new Uint8Array(chunkBytes))));
-    let pressure: unknown;
-    const extra = sender.pushChunk(new Uint8Array(chunkBytes)).catch(error => { pressure = error; });
+    const settled = Promise.allSettled(Array.from({ length: 5 }, () => sender.pushChunk(new Uint8Array(chunkBytes))));
     try {
       await Promise.resolve();
-      expect(pressure).toMatchObject({ code: 'daemon_speech_stream_backpressure' });
+      expect(chunk).toHaveBeenCalledTimes(1);
     } finally {
       await sender.cancel();
-      await extra;
       response.resolve({ ok: true, streamId: 'stream', generation: 0, ackSeq: 0, events: [] });
     }
-    expect(await settled).toEqual(Array.from({ length: 4 }, () => ({ status: 'rejected', reason: expect.objectContaining({ code: 'daemon_speech_stream_closed' }) })));
+    expect(await settled).toEqual(Array.from({ length: 5 }, () => ({ status: 'rejected', reason: expect.objectContaining({ code: 'daemon_speech_stream_closed' }) })));
     await sender.waitForDrain();
   });
 
@@ -384,7 +386,6 @@ describe('DaemonSpeechStreamSender', () => {
     });
     const sender = createDaemonSpeechStreamSender({
       requestId: 'request-1',
-      maxBufferedChunks: 4,
       transport: {
         start: vi.fn(async () => startResponse({ streamId: 'stream-1', generation: 1 })),
         chunk,
@@ -420,8 +421,8 @@ describe('DaemonSpeechStreamSender', () => {
   });
 
   it('delivers recognizer events in input order when a later reply wins the network race', async () => {
-    const responses = [deferred<import('@happier-dev/protocol').DaemonVoiceInferenceSttStreamChunkResponse>(),
-      deferred<import('@happier-dev/protocol').DaemonVoiceInferenceSttStreamChunkResponse>()];
+    const responses = [deferred<import('@happier-dev/protocol/daemon/voiceInference').DaemonVoiceInferenceSttStreamChunkResponse>(),
+      deferred<import('@happier-dev/protocol/daemon/voiceInference').DaemonVoiceInferenceSttStreamChunkResponse>()];
     const sender = createDaemonSpeechStreamSender({
       requestId: 'ordered-events',
       transport: {
@@ -453,8 +454,6 @@ describe('DaemonSpeechStreamSender', () => {
     });
     const sender = createDaemonSpeechStreamSender({
       requestId: 'request-window',
-      maxBufferedChunks: 4,
-      maxBufferedBytes: 2_560,
       maxInFlightChunks: 2,
       maxInFlightBytes: 1_280,
       transport: {
@@ -514,8 +513,6 @@ describe('DaemonSpeechStreamSender', () => {
       expect(measurement.sendIntervalP95Ms).toBeLessThanOrEqual(20);
       expect(measurement.maxInFlightFrames).toBeLessThanOrEqual(8);
       expect(measurement.maxInFlightBytes).toBeLessThanOrEqual(8 * 640);
-      expect(measurement.maxQueueDepth).toBeLessThanOrEqual(64);
-      expect(measurement.peakRetainedPcmBytes).toBeLessThanOrEqual(64 * 640);
       expect(measurement.memoryGrowthBytes).toBe(0);
       expect(measurement.droppedFrames).toBe(0);
       expect(measurement.duplicateFrames).toBe(0);
@@ -689,24 +686,89 @@ describe('DaemonSpeechStreamSender', () => {
     expect([...sent.carrierFrame.payloadBytes]).toEqual([10, 11]);
   });
 
-  it('fails fast instead of buffering unbounded audio when the stream cannot drain', async () => {
+  it.each(['binary_tunnel', 'json_rpc_compat'] as const)('recovers ordered audio after an 18-second ACK stall on %s', async transportKind => {
+    vi.useFakeTimers();
+    const resumed = deferred<void>();
+    const frameBytes = 640; // Canonical 16 kHz mono PCM16, 20 ms capture.
+    // The live capture had this retained prefix before its first failure. The
+    // 18-second probe is additional blocked ACK time, not a claim that 18 s of
+    // fresh 16 kHz audio alone occupies two MiB.
+    const retainedFrames = transportKind === 'binary_tunnel' ? 2_096_640 / frameBytes : 0;
+    const frameCount = retainedFrames + 18_000 / 20;
+    const expected = new Uint8Array(frameCount * frameBytes);
+    const received: Uint8Array[] = [];
+    const sequences: number[] = [];
+    const eventSequences: number[] = [];
+    const failures: unknown[] = [];
+    const settlements: Promise<void>[] = [];
+    let inFlightChunks = 0;
+    let inFlightBytes = 0;
+    let peakInFlightChunks = 0;
+    let peakInFlightBytes = 0;
+    const finish = vi.fn(async ({ finalSeq }: { finalSeq: number }) => ({
+      ok: true as const, streamId: 'stall-stream', generation: 1, ackSeq: finalSeq,
+      finalText: 'All captured audio recognized.', language: 'en', modelPackId: null, events: [],
+    }));
     const sender = createDaemonSpeechStreamSender({
-      requestId: 'request-1',
-      maxBufferedChunks: 1,
+      requestId: 'captured-stall',
+      transportKind,
+      carrierAdapter: createDaemonSpeechStreamCarrierAdapter({ routeKind: 'server_relay', binaryCapable: transportKind === 'binary_tunnel' }),
       transport: {
-        start: vi.fn(),
-        chunk: vi.fn(),
-        finish: vi.fn(),
-        cancel: vi.fn(),
+        ...(transportKind === 'binary_tunnel' ? { maxPcm16ChunkBytes: 64 * 1024 } : {}),
+        start: async () => startResponse({ streamId: 'stall-stream', generation: 1 }),
+        chunk: async ({ seq, carrierFrame }) => {
+          const pcm = carrierFrame.kind === 'binary_tunnel_frame_v2'
+            ? carrierFrame.payloadBytes
+            : new Uint8Array(Buffer.from(carrierFrame.jsonBase64Envelope.pcm16Base64, 'base64'));
+          received.push(pcm);
+          sequences.push(seq);
+          inFlightChunks += 1;
+          inFlightBytes += pcm.byteLength;
+          peakInFlightChunks = Math.max(peakInFlightChunks, inFlightChunks);
+          peakInFlightBytes = Math.max(peakInFlightBytes, inFlightBytes);
+          await resumed.promise;
+          inFlightChunks -= 1;
+          inFlightBytes -= pcm.byteLength;
+          return { ok: true, streamId: 'stall-stream', generation: 1, ackSeq: seq,
+            events: [{ type: 'partial', seq, text: String(seq), isEndpoint: false, confidence: null }] };
+        },
+        finish,
+        cancel: async () => ({ ok: true, streamId: 'stall-stream', generation: 1 }),
       },
     });
-
-    const firstChunk = sender.pushChunk(new Uint8Array([0, 0])).catch((error) => error?.code ?? 'unknown_error');
-    await expect(sender.pushChunk(new Uint8Array([1, 1]))).rejects.toMatchObject({
-      code: 'daemon_speech_stream_backpressure',
-    });
-    await sender.cancel();
-    await expect(firstChunk).resolves.toBe('daemon_speech_stream_closed');
+    let finishing: ReturnType<typeof sender.finish> | null = null;
+    try {
+      await sender.start();
+      for (let frame = 0; frame < frameCount; frame += 1) {
+        const pcm = new Uint8Array(frameBytes).fill(frame % 256);
+        expected.set(pcm, frame * frameBytes);
+        settlements.push(sender.pushChunk(pcm).then(
+          events => { eventSequences.push(...events.map(event => event.seq)); },
+          error => { failures.push(error); },
+        ));
+      }
+      finishing = sender.finish();
+      await vi.advanceTimersByTimeAsync(18_000);
+      expect(failures).toEqual([]);
+      expect(finish).not.toHaveBeenCalled();
+      expect(received.length).toBeLessThanOrEqual(DEFAULT_MAX_PENDING_APPLICATION_DISPATCHES);
+      resumed.resolve();
+      await Promise.all(settlements);
+      await expect(finishing).resolves.toMatchObject({ ok: true, finalText: 'All captured audio recognized.' });
+      expect(failures).toEqual([]);
+      expect(Buffer.concat(received).equals(Buffer.from(expected))).toBe(true);
+      expect(sequences).toEqual(received.map((_, sequence) => sequence));
+      expect(eventSequences).toEqual(sequences);
+      expect(peakInFlightChunks).toBeLessThanOrEqual(DEFAULT_MAX_PENDING_APPLICATION_DISPATCHES);
+      expect(peakInFlightBytes).toBeLessThanOrEqual(DEFAULT_MAX_PENDING_APPLICATION_DISPATCH_BYTES);
+      if (transportKind === 'binary_tunnel') expect(received.every(pcm => pcm.byteLength <= 64 * 1024)).toBe(true);
+    } finally {
+      resumed.resolve();
+      await sender.cancel();
+      await Promise.allSettled(settlements);
+      await finishing?.catch(() => undefined);
+      vi.useRealTimers();
+    }
   });
 
   it('cancels the active stream and rejects later sends without leaking buffered chunks', async () => {
@@ -717,12 +779,13 @@ describe('DaemonSpeechStreamSender', () => {
       return responses[seq]!.promise;
     });
     const cancel = vi.fn(async () => ({ ok: true as const, streamId: 'stream-1', generation: 1 }));
+    const finish = vi.fn();
     const sender = createDaemonSpeechStreamSender({
       requestId: 'request-1',
       transport: {
         start: vi.fn(async () => startResponse({ streamId: 'stream-1', generation: 1 })),
         chunk,
-        finish: vi.fn(),
+        finish,
         cancel,
       },
     });
@@ -743,9 +806,12 @@ describe('DaemonSpeechStreamSender', () => {
     ));
     await windowEntered.promise;
     expect(chunk).toHaveBeenCalledTimes(8);
+    const finishing = sender.finish().then(() => 'finished', () => 'cancelled');
     await sender.cancel();
 
     expect(cancel).toHaveBeenCalledWith({ streamId: 'stream-1', generation: 1 });
+    await expect(finishing).resolves.toBe('cancelled');
+    expect(finish).not.toHaveBeenCalled();
     await expect(Promise.all(settlements)).resolves.toEqual(Array(10).fill('daemon_speech_stream_closed'));
     expect(settlementCallbacks).toBe(10);
     for (let seq = 0; seq < responses.length; seq += 1) {
@@ -764,44 +830,81 @@ describe('DaemonSpeechStreamSender', () => {
     await expect(sender.pushChunk(new Uint8Array([0, 0]))).rejects.toMatchObject({ code: 'daemon_speech_stream_closed' });
   });
 
-  it('rejects finish when the outbound chunk drain hangs past the configured timeout', async () => {
-    const chunkResult = deferred<any>();
+  it('waits for successive valid ACK windows before starting the finish RPC', async () => {
+    vi.useFakeTimers();
+    const failures: unknown[] = [];
+    const finish = vi.fn(async ({ finalSeq }: { finalSeq: number }) => ({
+      ok: true as const, streamId: 'drain-stream', generation: 1, ackSeq: finalSeq,
+      finalText: 'Complete.', language: 'en', modelPackId: null, events: [],
+    }));
+    const sender = createDaemonSpeechStreamSender({
+      requestId: 'queued-drain',
+      transport: {
+        start: async () => startResponse({ streamId: 'drain-stream', generation: 1 }),
+        chunk: async ({ seq }) => {
+          // Each request is inside the real RPC deadline. Several credit
+          // windows may nevertheless take longer than one RPC to drain.
+          await new Promise<void>(resolve => setTimeout(resolve, DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS / 2));
+          return { ok: true, streamId: 'drain-stream', generation: 1, ackSeq: seq, events: [] };
+        },
+        finish,
+        cancel: async () => ({ ok: true, streamId: 'drain-stream', generation: 1 }),
+      },
+    });
+    const chunks: Promise<unknown>[] = [];
+    let finishing: Promise<unknown> | null = null;
+    try {
+      await sender.start();
+      for (let seq = 0; seq < DEFAULT_MAX_PENDING_APPLICATION_DISPATCHES * 2 + 1; seq += 1) {
+        chunks.push(sender.pushChunk(new Uint8Array([seq, 0])).catch(error => { failures.push(error); }));
+      }
+      finishing = sender.finish().catch(error => { failures.push(error); });
+      await vi.advanceTimersByTimeAsync(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS + 1);
+      expect(failures.map(error => (error as { code?: unknown }).code)).toEqual([]);
+      expect(finish).not.toHaveBeenCalled();
+      await vi.runAllTimersAsync();
+      await Promise.all(chunks);
+      await expect(finishing).resolves.toMatchObject({ ok: true, finalText: 'Complete.' });
+    } finally {
+      await sender.cancel();
+      await Promise.allSettled(chunks);
+      await finishing;
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels when the admitted finish RPC exceeds its configured deadline', async () => {
+    vi.useFakeTimers();
+    const finishResponse = deferred<DaemonVoiceInferenceSttStreamFinishResponse>();
+    const cancel = vi.fn(async () => ({ ok: true as const, streamId: 'stream-1', generation: 1 }));
     const sender = createDaemonSpeechStreamSender({
       requestId: 'request-1',
       finishTimeoutMs: 10,
       transport: {
         start: vi.fn(async () => startResponse({ streamId: 'stream-1', generation: 1 })),
-        chunk: vi.fn(() => chunkResult.promise),
-        finish: vi.fn(),
-        cancel: vi.fn(),
+        chunk: async ({ seq }) => ({ ok: true, streamId: 'stream-1', generation: 1, ackSeq: seq, events: [] }),
+        finish: () => finishResponse.promise,
+        cancel,
       },
     });
 
-    await sender.start();
-    const pendingChunk = sender.pushChunk(new Uint8Array([0, 0])).catch((error) => error?.code ?? 'unknown_error');
-
-    const result = await Promise.race([
-      sender.finish().then(
-        () => 'finished',
-        (error: any) => error?.code ?? 'unknown_error',
-      ),
-      new Promise<string>((resolve) => setTimeout(() => resolve('test_timeout'), 50)),
-    ]);
-
-    expect(result).toBe('daemon_speech_stream_finish_timeout');
-    await expect(pendingChunk).resolves.toBe('daemon_speech_stream_closed');
-    await expect(Promise.race([
-      sender.waitForDrain().then(() => 'drained'),
-      new Promise<string>((resolve) => setTimeout(() => resolve('still_pending'), 50)),
-    ])).resolves.toBe('drained');
-    chunkResult.resolve({
-      ok: true,
-      streamId: 'stream-1',
-      generation: 1,
-      ackSeq: 0,
-      events: [],
-    });
-    await Promise.resolve();
-    await Promise.resolve();
+    let finishing: Promise<unknown> | null = null;
+    try {
+      await sender.start();
+      await sender.pushChunk(new Uint8Array([0, 0]));
+      finishing = sender.finish().catch((error: unknown) => (error as { code?: unknown }).code);
+      await vi.advanceTimersByTimeAsync(10);
+      await expect(finishing).resolves.toBe('daemon_speech_stream_finish_timeout');
+      expect(cancel).toHaveBeenCalledWith({ streamId: 'stream-1', generation: 1 });
+      await expect(sender.waitForDrain()).resolves.toBeUndefined();
+    } finally {
+      await sender.cancel();
+      finishResponse.resolve({
+        ok: true, streamId: 'stream-1', generation: 1, ackSeq: 0,
+        finalText: '', language: 'en', modelPackId: null, events: [],
+      });
+      await finishing;
+      vi.useRealTimers();
+    }
   });
 });
