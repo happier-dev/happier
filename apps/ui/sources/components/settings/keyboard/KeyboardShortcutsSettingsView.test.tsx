@@ -179,14 +179,14 @@ describe('KeyboardShortcutsSettingsView', () => {
             capturedShortcutModalProps?.onResolve(' Alt+S ');
         });
 
-        expect(storage.getState().settings).toMatchObject({
+        await vi.waitFor(() => expect(storage.getState().settings).toMatchObject({
             keyboardShortcutDisabledCommandIdsV1: [],
             commandPaletteEnabled: true,
             keyboardShortcutOverridesV1: {
                 'commandPalette.open': [{ binding: 'Alt+S' }],
                 'session.new': [{ binding: 'Mod+K' }],
             },
-        });
+        }));
     });
 
     it('shows an alert and leaves settings untouched when a custom shortcut is invalid', async () => {

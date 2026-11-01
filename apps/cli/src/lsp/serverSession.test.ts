@@ -283,7 +283,9 @@ describe('language server session', () => {
                 expect(session.status().state).toBe('stopped');
                 await expect(session.query({ path: 'a.ts', kind: 'hover', position: { line: 0, character: 0 } }))
                     .rejects.toMatchObject({ code: 'session_unavailable' });
-                expect(await owners.startOwner(retained, { verifyCurrent: async () => false }))
+                const cancelledStart = new AbortController();
+                cancelledStart.abort();
+                expect(await owners.startOwner(retained, { signal: cancelledStart.signal }))
                     .toMatchObject({ status: 'refused', reasonCode: 'access_denied' });
                 expect(await owners.startOwner(retained, {})).toEqual({ status: 'started' });
                 expect(session.status()).toMatchObject({ state: 'ready' });
