@@ -1591,6 +1591,10 @@ succeed only after that same resolver reports a ready launch. Archive success
 also carries the checksum fact.
 Machine RPCs use `daemon.agents.install.start/read/cancel/list`:
 
+In 0.3 development, install admission accepts a catalog routing id or a qualified
+`pluginId/localId` identity. The registry resolves both to the same Agent before
+job creation, so both spellings share one active job and managed installation.
+
 - `start({agentId, definitionId?, expectedDefinitionVersion?, intent: 'install' | 'update' | 'uninstall', consent: {vendorRecipe: boolean}, force?})`
   returns `{ok: true, jobId}`. `force` requests reinstall rather than skip-if-installed.
 - `read({jobId, cursor})` returns `{ok: true, steps, progress, events, nextCursor, done, outcome}`. Events are

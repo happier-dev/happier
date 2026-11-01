@@ -7,8 +7,46 @@ import type { RpcHandler, RpcHandlerContext } from '../rpc/types';
 import { createAgentInstallJobOwner } from '@/capabilities/installJobs/agentInstallJobOwner';
 import { registerMachineAgentInstallJobRpcHandlers } from './rpcHandlers.agentInstallJobs';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
+import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+it('admits qualified bundled Codex installs through machine RPC and shares the routing-id job', async () => {
+  const home = await createTempDir('happier-codex-install-identity-');
+  const handlers = new Map<string, RpcHandler>();
+  let finishFetch!: (response: Response) => void;
+  const response = new Promise<Response>(resolve => { finishFetch = resolve; });
+  const owner = createAgentInstallJobOwner({ readRegistry: getResolvedContributionRegistry,
+    readTrackedSessions: () => [], env: { HOME: home, HAPPIER_HOME_DIR: home, PATH: '' },
+    // Only GitHub HTTP is substituted; bundled admission, identity projection,
+    // installer, settlement and RPC response parsing all remain real.
+    installerDeps: { fetchGitHubReleaseByTag: params => fetchGitHubReleaseByTag({ ...params,
+      fetchImpl: async () => response,
+    }) },
+  });
+  registerMachineAgentInstallJobRpcHandlers({ owner, rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } } });
+  try {
+    const start = handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!;
+    const request = { agentId: 'happier.agent.codex/codex', intent: 'install', consent: { vendorRecipe: false } };
+    const started = DaemonAgentInstallStartResponseSchema.parse(await start(request));
+    expect(started).toMatchObject({ ok: true, jobId: expect.any(String) });
+    if (!started.ok) return;
+    expect(await start({ ...request, agentId: 'codex' })).toEqual(started);
+    expect(await start({ ...request, agentId: 'other.plugin/codex' })).toMatchObject({ ok: false, errorCode: 'install_unavailable' });
+    expect(await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST)!({})).toMatchObject({ ok: true,
+      jobs: [{ jobId: started.jobId, agentId: 'codex', done: false }],
+    });
+    finishFetch(new Response('', { status: 403, headers: { 'x-ratelimit-remaining': '0' } }));
+    await vi.waitFor(async () => expect(await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_READ)!({ jobId: started.jobId, cursor: 0 }))
+      .toMatchObject({ ok: true, done: true, outcome: { kind: 'failed', code: 'rate_limited' } }));
+  } finally {
+    finishFetch(new Response('', { status: 403, headers: { 'x-ratelimit-remaining': '0' } }));
+    await owner.shutdown();
+    await removeTempDir(home);
+  }
+});
 
 it('refuses a requester Account definition before resolving the custodian catalog and leaves built-in target admission available', async () => {
   const handlers = new Map<string, RpcHandler>();

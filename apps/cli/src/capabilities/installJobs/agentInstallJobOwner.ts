@@ -4,7 +4,7 @@ import { ExecFileTerminationError } from '@happier-dev/cli-common/process';
 import { hasAgentCliManagedInstallForRuntime, installAgentCliForRuntime, removeAgentCliManagedInstallForRuntime, resolvePlatformFromNodePlatform, type AgentInstallProgressCallback } from '@happier-dev/cli-common/agents';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { PluginAgentCliInstallMetadataSchema } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AgentInstallJob, AgentInstallJobEvent, AgentInstallJobFailureCode, AgentInstallJobOutcome, DaemonAgentInstallStartRequest, DaemonAgentInstallReadRequest, DaemonAgentInstallCancelRequest, DaemonAgentInstallStartResponse, DaemonAgentInstallReadResponse, DaemonAgentInstallCancelResponse, DaemonAgentInstallListResponse } from '@happier-dev/protocol';
 import type { ResolvedAgentContribution, ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
@@ -391,9 +391,10 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
           jobs.delete(previous.snapshot.jobId);
         }
       }
-      const customRoutingId = readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(registry.agents), CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1);
-      const agent = registry.agents.find(candidate => candidate.id === input.agentId)
-        ?? (input.agentId === CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId ? registry.agents.find(candidate => candidate.id === customRoutingId) : undefined);
+      const identity = parseQualifiedPluginContributionKey(input.agentId)
+        ?? (input.agentId === CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId ? CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 : null);
+      const routingId = identity ? readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(registry.agents), identity) : null;
+      const agent = registry.agents.find(candidate => candidate.id === (routingId ?? input.agentId));
       if (!agent || input.definitionId !== undefined && !isCustomAcpAgentContributionIdentityV1(agent.identity)
         || input.definitionId === undefined && !agent.runtimeSpec) return { ok: false, errorCode: 'install_unavailable', error: 'The agent has no registered CLI runtime.' };
       const request = { ...parsed.data, agentId: agent.id };
