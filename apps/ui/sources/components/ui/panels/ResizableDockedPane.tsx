@@ -22,6 +22,13 @@ export type ResizableDockedPaneProps = Readonly<{
      * from the size the core keeps. The content and the handle follow the drawn edge.
      */
     drawnWidthPx?: number;
+    /**
+     * The pane fills the column its host lays out instead of drawing `widthPx`. For a column whose width
+     * is whatever its neighbours leave: a number measured after paint lags a window resize, and drawn as
+     * the pane's width it would hold the previous window's layout (the Session column at 1060 px in a
+     * 390 px window).
+     */
+    fill?: boolean;
     children: React.ReactNode;
     testID?: string;
 }>;
@@ -78,9 +85,8 @@ export const ResizableDockedPane = React.memo((props: ResizableDockedPaneProps) 
         <View
             testID={props.testID}
             style={{
-                width: props.drawnWidthPx ?? effectiveSizePx,
+                ...(props.fill ? { flex: 1, minWidth: 0 } : { width: props.drawnWidthPx ?? effectiveSizePx, flexShrink: 0 }),
                 position: 'relative',
-                flexShrink: 0,
                 alignSelf: 'stretch',
                 height: '100%',
                 minHeight: 0,

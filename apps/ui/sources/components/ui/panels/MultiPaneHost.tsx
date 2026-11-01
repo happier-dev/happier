@@ -294,6 +294,10 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     <Animated.View ref={mainSlideNodeRef} style={mainSlideStyle}>
                     <RetainedPanelSurface isActive={!shouldHideDockedMainRegion || mainLeaving} mode="flow" testID="multi-pane-main-retained">
                     <ResizableDockedPane widthPx={mainLeaving ? slideWidthPx : mainWidthPx}
+                        // Beside the side panes the Session column takes the room they leave (flex), so it
+                        // follows its host on the frame a window resizes; only a mirrored, overlaid or
+                        // leaving column has a width of its own.
+                        fill={!mirrored && !mainLeaving && layout.main !== 'overlay'}
                         minWidthPx={mainLeaving ? slideWidthPx : mirrored && layout.main !== 'overlay' ? DEFAULT_SESSION_MIN_PX : mainWidthPx}
                         maxWidthPx={mainLeaving ? slideWidthPx : mirrored && layout.main !== 'overlay' ? props.mainDockMaxWidthPx ?? mainWidthPx : mainWidthPx}
                         resizeEdge="left" onCommitWidthPx={props.onCommitMainDockWidthPx ?? NOOP}
