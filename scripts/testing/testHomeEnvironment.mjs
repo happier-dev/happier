@@ -8,6 +8,7 @@ export function createTestHomeEnvironment() {
   const temporary = createTestTempDirectory('happier-test-home-');
   const env = resolveTestHomeEnvironment(temporary.root);
   mkdirSync(env.HAPPIER_HOME_DIR, { recursive: true });
+  mkdirSync(env.HOME, { recursive: true });
   return { env, cleanup: temporary.cleanup };
 }
 

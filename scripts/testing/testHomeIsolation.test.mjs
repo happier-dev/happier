@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createVitest } from 'vitest/node';
 import { createTestTempDirectory } from './process/temporaryDirectories.mjs';
-import { assertTestHomePath, resolveTestHomeEnvironment } from './testHomeEnvironment.mjs';
+import { assertTestHomePath, createTestHomeEnvironment, resolveTestHomeEnvironment } from './testHomeEnvironment.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const configs = [
@@ -22,6 +22,21 @@ const configs = [
   'apps/ui/vitest.config.ts',
   'apps/server/vitest.ui.integration.config.ts',
 ];
+
+test('an isolated user Home can be the native process working directory', () => {
+  const home = createTestHomeEnvironment();
+  try {
+    assertTestHomePath(home.env.HOME, home.env.HAPPIER_TEST_HOME_ROOT);
+    const result = spawnSync(process.execPath, ['-e', 'process.stdout.write(process.cwd())'], {
+      cwd: home.env.HOME, env: { ...process.env, ...home.env }, encoding: 'utf8',
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(resolve(result.stdout), resolve(home.env.HOME));
+  } finally {
+    home.cleanup();
+  }
+});
 
 test('package harnesses isolate even a configuration import before worker setup', async () => {
   const sentinel = createTestTempDirectory('happier-home-sentinel-');
