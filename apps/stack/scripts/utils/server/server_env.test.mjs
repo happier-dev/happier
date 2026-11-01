@@ -3,6 +3,20 @@ import assert from 'node:assert/strict';
 
 import { buildServerRuntimeEnv } from './server_env.mjs';
 
+test('server projection consumes the canonical decision without reselecting ambient origins', () => {
+  const selected = ['https:', '', 'selected.example.test'].join('/');
+  const ambient = ['https:', '', 'ambient.example.test'].join('/');
+  const env = buildServerRuntimeEnv({
+    baseEnv: { HAPPIER_CANONICAL_SERVER_URL: ambient, HAPPIER_PUBLIC_SERVER_URL: ambient },
+    serverPort: 43123,
+    canonicalServerUrl: selected,
+    publicServerUrl: ambient,
+  });
+  assert.equal(env.HAPPIER_CANONICAL_SERVER_URL === selected, true,
+    'the environment adapter must project the URL owner decision, not decide again');
+  assert.equal(env.HAPPIER_PUBLIC_SERVER_URL === ambient, true);
+});
+
 test('Stack server environments replace inherited Session classification without reclassifying the caller', () => {
   const baseEnv = {
     HAPPIER_STACK_STACK: 'dev-owned-server',
@@ -73,66 +87,6 @@ test('buildServerRuntimeEnv uses the server origin when this process serves the 
   assert.equal(env.HAPPIER_WEBAPP_URL, 'http://happier-qa.localhost:3005');
 });
 
-test('buildServerRuntimeEnv defaults canonical identity locally without promoting inferred ingress', () => {
-  const env = buildServerRuntimeEnv({
-    baseEnv: {
-      HAPPIER_PUBLIC_SERVER_URL: 'https://mutable.example.test',
-      HAPPIER_PUBLIC_SERVER_URL_INFERRED: '1',
-    },
-    serverPort: 43123,
-    publicServerUrl: 'https://mutable.example.test',
-  });
-
-  assert.equal(env.HAPPIER_CANONICAL_SERVER_URL, 'http://localhost:43123');
-  assert.equal(env.HAPPIER_PUBLIC_SERVER_URL, 'https://mutable.example.test');
-});
-
-test('buildServerRuntimeEnv uses the stack-owned canonical origin instead of the public ingress', () => {
-  const env = buildServerRuntimeEnv({
-    baseEnv: {
-      HAPPIER_PUBLIC_SERVER_URL: 'https://relay.example.test',
-      HAPPIER_PUBLIC_SERVER_URL_INFERRED: '1',
-    },
-    serverPort: 43123,
-    canonicalServerUrl: 'http://happier-agent-qa.localhost:43123',
-    publicServerUrl: 'https://relay.example.test',
-  });
-
-  assert.equal(env.HAPPIER_CANONICAL_SERVER_URL, 'http://happier-agent-qa.localhost:43123');
-  assert.equal(env.HAPPIER_PUBLIC_SERVER_URL, 'https://relay.example.test');
-});
-
-test('buildServerRuntimeEnv keeps the stack-owned canonical origin above a leaked ambient public URL', () => {
-  const env = buildServerRuntimeEnv({
-    baseEnv: { HAPPIER_PUBLIC_SERVER_URL: 'https://other-stack.example.test' },
-    serverPort: 43123,
-    canonicalServerUrl: 'http://happier-agent-qa.localhost:43123',
-    publicServerUrl: 'http://happier-agent-qa.localhost:43123',
-  });
-
-  assert.equal(env.HAPPIER_CANONICAL_SERVER_URL, 'http://happier-agent-qa.localhost:43123');
-});
-
-test('buildServerRuntimeEnv keeps an explicit operator canonical URL authoritative', () => {
-  const env = buildServerRuntimeEnv({
-    baseEnv: { HAPPIER_CANONICAL_SERVER_URL: 'https://identity.example.test' },
-    serverPort: 43123,
-    canonicalServerUrl: 'http://happier-agent-qa.localhost:43123',
-    publicServerUrl: 'https://relay.example.test',
-  });
-
-  assert.equal(env.HAPPIER_CANONICAL_SERVER_URL, 'https://identity.example.test');
-});
-
-test('buildServerRuntimeEnv preserves an explicit historical public URL as canonical transition input', () => {
-  const env = buildServerRuntimeEnv({
-    baseEnv: { HAPPIER_PUBLIC_SERVER_URL: 'https://legacy.example.test' },
-    serverPort: 43123,
-    publicServerUrl: 'https://legacy.example.test',
-  });
-
-  assert.equal(env.HAPPIER_CANONICAL_SERVER_URL, 'https://legacy.example.test');
-});
 
 test('buildServerRuntimeEnv supports stack-specific server log override', () => {
   const env = buildServerRuntimeEnv({

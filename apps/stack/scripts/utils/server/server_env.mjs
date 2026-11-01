@@ -17,7 +17,7 @@ function resolveStackServerLogLevel({ baseEnv }) {
 export function buildServerRuntimeEnv({
   baseEnv,
   serverPort,
-  canonicalServerUrl = '',
+  canonicalServerUrl,
   publicServerUrl,
   serveUi = false,
   uiRequired = false,
@@ -25,25 +25,11 @@ export function buildServerRuntimeEnv({
   uiBuildDirExists = false,
   uiPrefix = '/',
 }) {
-  // Canonical identity is never derived from the public ingress URL: that value is inferred per start
-  // (Tailscale/relay/LAN) and would rotate the server's signed auth audience. Operator configuration
-  // wins, then the stack-owned canonical origin resolved by the stack URL owner, then the bounded
-  // explicit legacy public URL, then the local listener origin.
-  const operatorCanonicalServerUrl = String(baseEnv.HAPPIER_CANONICAL_SERVER_URL || '').trim();
-  const stackCanonicalServerUrl = String(canonicalServerUrl || '').trim();
-  const explicitLegacyPublicServerUrl = String(
-    baseEnv.HAPPIER_PUBLIC_SERVER_URL_INFERRED === '1'
-      ? ''
-      : baseEnv.HAPPIER_PUBLIC_SERVER_URL || '',
-  ).trim();
-  const stableCanonicalServerUrl = operatorCanonicalServerUrl
-    || stackCanonicalServerUrl
-    || explicitLegacyPublicServerUrl
-    || `http://localhost:${serverPort}`;
+  // The Stack URL owner has already selected the signing identity. Project it unchanged.
   const nextEnv = {
     ...baseEnv,
     PORT: String(serverPort),
-    HAPPIER_CANONICAL_SERVER_URL: stableCanonicalServerUrl,
+    HAPPIER_CANONICAL_SERVER_URL: canonicalServerUrl,
     HAPPIER_PUBLIC_SERVER_URL: publicServerUrl,
     PUBLIC_URL: publicServerUrl,
     METRICS_ENABLED: baseEnv.METRICS_ENABLED ?? 'false',

@@ -1825,6 +1825,10 @@ function resolveRemoteStackStartInvocation(target, {
   const serverPort = normalizedServices.server
     ? requireServicePort(remoteServerPort, 'remote server port')
     : null;
+  // Retained daemon-only commands still need their selected reverse-forward
+  // port after a signed-out native worker has retired its runtime publication.
+  const stackServerPort = serverPort ?? (usesRetainedRemoteStackState(runtimeMode) && normalizedServices.daemon
+    ? remoteServerPort : null);
   const serverRuntimeConfig = normalizedServices.server
     ? normalizeRemoteServerRuntimeConfig(remoteServerRuntimeConfig)
     : null;
@@ -1832,9 +1836,9 @@ function resolveRemoteStackStartInvocation(target, {
     ? (resolveServerPublicUrlOnTarget ? '' : requireStableOuterServerUrl(publicServerUrl))
     : publicServerUrl;
   // The signed auth audience belongs to the originating Stack: every client reaches this server
-  // through the origin's canonical origin, so the remote server must sign that one instead of the
+  // through the origin's canonical origin, so the remote server and daemon must consume that one instead of the
   // canonical origin the target would derive from its own Stack name and forwarded port.
-  const originCanonicalServerUrl = normalizedServices.server && String(canonicalServerUrl ?? '').trim()
+  const originCanonicalServerUrl = (normalizedServices.server || normalizedServices.daemon) && String(canonicalServerUrl ?? '').trim()
     ? requireStableOuterServerUrl(canonicalServerUrl, { label: 'canonical server URL' })
     : '';
   const expoPort = normalizedServices.expo
@@ -1881,7 +1885,7 @@ function resolveRemoteStackStartInvocation(target, {
     ...(normalizedServices.daemon && deferDaemonStartUntilCredentials
       ? ['HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH=1']
       : []),
-    ...(serverPort ? [`HAPPIER_STACK_SERVER_PORT=${serverPort}`] : []),
+    ...(stackServerPort ? [`HAPPIER_STACK_SERVER_PORT=${stackServerPort}`] : []),
     ...(usesRetainedRemoteStackState(runtimeMode) && stablePublicServerUrl ? [`HAPPIER_PUBLIC_SERVER_URL=${stablePublicServerUrl}`] : []),
     ...(originCanonicalServerUrl ? [`HAPPIER_CANONICAL_SERVER_URL=${originCanonicalServerUrl}`] : []),
     ...(expoPort ? [

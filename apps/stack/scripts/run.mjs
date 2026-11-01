@@ -35,7 +35,7 @@ import {
 import { STACK_RUNTIME_DAEMON_MEMBERSHIP_INTERVAL_MS, syncStackRuntimeDaemonPidFromDaemonState } from './utils/stack/runtime_daemon_state.mjs';
 import { startOwnerDaemonLifecycleReconciler } from './utils/dev/daemonLifecycleReconciler.mjs';
 import { resolveStackContext } from './utils/stack/context.mjs';
-import { getPublicServerUrlEnvOverride, resolveServerUrls } from './utils/server/urls.mjs';
+import { getPublicServerUrlEnvOverride, resolveServerUrls, resolveStackCanonicalServerUrl } from './utils/server/urls.mjs';
 import { preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
 import { openUrlInBrowser } from './utils/ui/browser.mjs';
 import { ensureDevExpoServer, resolveExpoTailscaleEnabled } from './utils/dev/expo_dev.mjs';
@@ -595,7 +595,13 @@ async function main() {
     (baseEnv.HAPPIER_STACK_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
   const resolvedUrls = serverRequested
     ? await resolveServerUrls({ env: baseEnv, serverPort, allowEnable: allowEnableTailscale })
-    : { defaultPublicUrl: serverConnection.publicServerUrl, publicServerUrl: serverConnection.publicServerUrl, canonicalServerUrl: serverConnection.publicServerUrl };
+    : {
+      defaultPublicUrl: serverConnection.publicServerUrl,
+      publicServerUrl: serverConnection.publicServerUrl,
+      canonicalServerUrl: await resolveStackCanonicalServerUrl({
+        env: baseEnv, serverPort, stackName, envPublicUrl: serverConnection.publicServerUrl,
+      }),
+    };
   defaultPublicUrl = resolvedUrls.defaultPublicUrl;
   publicServerUrl = resolvedUrls.publicServerUrl;
   canonicalServerUrl = resolvedUrls.canonicalServerUrl;

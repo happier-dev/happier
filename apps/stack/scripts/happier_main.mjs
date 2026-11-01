@@ -295,8 +295,9 @@ async function main() {
     Boolean(stackCliHomeOverride) ||
     Boolean(stackEnvFilePath && existsSync(stackEnvFilePath));
   if (isStackScopedInvocation) {
-    publicServerUrl = endpoint.publicServerUrl
-      ?? await resolveStackCanonicalServerUrl({ env: process.env, serverPort, stackName });
+    publicServerUrl = await resolveStackCanonicalServerUrl({
+      env: process.env, serverPort, stackName, envPublicUrl: endpoint.publicServerUrl,
+    });
   }
   const explicitHomeDir = String(env.HAPPIER_HOME_DIR ?? '').trim();
   const explicitStackIdentityHomeDir =

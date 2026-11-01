@@ -116,14 +116,18 @@ export function getWebappUrlEnvOverride({ env = process.env, stackName = null } 
 
 // The stack-owned canonical server origin: the stable identity a stack's server signs and verifies
 // auth audiences against. It is deliberately distinct from the public ingress URL, which is inferred
-// per start (Tailscale/relay/LAN) and therefore mutable. Only an explicit operator public URL from the
-// stack env file, or the stack's own stable `<prefix>-<stack>.localhost` origin, can define it.
+// per start (Tailscale/relay/LAN) and therefore mutable. The explicit canonical URL wins, followed by
+// an explicit operator public URL and then the stack's own stable localhost origin.
 export async function resolveStackCanonicalServerUrl({
   env = process.env,
   serverPort,
   stackName = null,
   envPublicUrl = null,
 } = {}) {
+  const explicitCanonicalUrl = normalizeUrlNoTrailingSlash(
+    String(env.HAPPIER_CANONICAL_SERVER_URL ?? '').trim(),
+  );
+  if (explicitCanonicalUrl) return explicitCanonicalUrl;
   const name =
     (stackName ?? '').toString().trim() ||
     (env.HAPPIER_STACK_STACK ?? '').toString().trim() ||
@@ -146,7 +150,9 @@ export async function resolveServerUrls({ env = process.env, serverPort, allowEn
       return { serverPort: endpoint.port, internalServerUrl: endpoint.internalServerUrl,
         defaultPublicUrl: endpoint.publicServerUrl, envPublicUrl: endpoint.publicServerUrl,
         publicServerUrl: endpoint.publicServerUrl, publicServerUrlSource: 'runtime',
-        canonicalServerUrl: endpoint.publicServerUrl };
+        canonicalServerUrl: await resolveStackCanonicalServerUrl({
+          env, serverPort: endpoint.port, envPublicUrl: endpoint.publicServerUrl,
+        }) };
     }
     serverPort = endpoint.port;
   }

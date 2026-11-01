@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { createServer } from 'node:http';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv, installCliNativeCustodySourceFixture, installNativeAdmissionFixture, installWorkspaceAdmissionProcessFixture } from '../../testkit/core/native_admission_fixture.mjs';
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
@@ -17,6 +18,8 @@ import { buildStackStableScopeId } from '../auth/stable_scope_id.mjs';
 import { parseArgs } from '../cli/args.mjs';
 import { resolveSourceQaUiMode } from '../../runtime/shared/borrowed_expo.mjs';
 import { buildServerRuntimeEnv } from '../server/server_env.mjs';
+import { parseEnvToObject } from '../env/dotenv.mjs';
+import { resolveStackServerEndpoint } from '../server/urls.mjs';
 import * as commandPolicy from './remote_commands.mjs';
 import {
   buildRemoteCancelCommand,
@@ -48,6 +51,66 @@ import {
 } from './remote_commands.mjs';
 
 const executionId = '018f0f52-5fe8-7a9f-8ef5-f81f20572791';
+
+test('retained daemon-only connection survives an exited native worker for recovery',
+  { skip: process.platform === 'win32', timeout: 60_000 }, async t => {
+    const { root } = await createTempFixture(t, { prefix: 'hstack-retained-daemon-connection-' });
+    const repoDir = join(root, 'repo');
+    const target = { name: 'native', platform: 'posix', ssh: 'fixture', repoDir,
+      cliHomeDir: join(root, 'state', 'cli') };
+    const stackName = 'agent-qa-native-connection';
+    const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode: 'source-snapshot' });
+    const server = createServer((_request, response) => {
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ status: 'ok' }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+    const port = server.address().port;
+    const serverUrl = ['http:', '', `127.0.0.1:${port}`].join('/');
+    const signingOrigin = ['https:', '', 'signing.example.test'].join('/');
+    await mkdir(join(repoDir, 'apps/stack/bin'), { recursive: true });
+    await mkdir(join(repoDir, 'apps/stack/scripts/utils/env'), { recursive: true });
+    await mkdir(join(repoDir, 'apps/stack/scripts/utils/dev_targets'), { recursive: true });
+    await mkdir(paths.stackBaseDir, { recursive: true });
+    await writeFile(join(root, 'controller-env'), `HAPPIER_STACK_REPO_DIR=${repoDir}\n`);
+    // Only the launched native processes are substituted: the worker exits
+    // without runtime publication, while the real producer and env writer run.
+    await writeFile(join(repoDir, 'apps/stack/bin/hstack.mjs'), 'process.exitCode = 0;\n');
+    await writeFile(join(repoDir, 'apps/stack/scripts/utils/dev_targets/runtime_observer.mjs'), 'process.exitCode = 0;\n');
+    await writeFile(join(repoDir, 'apps/stack/scripts/utils/env/env_file.mjs'),
+      `export { ensureEnvFileMutated } from ${JSON.stringify(new URL('../env/env_file.mjs', import.meta.url).href)};\n`);
+    const command = buildRemoteStackCommand(target, {
+      stackName, runtimeMode: 'source-snapshot',
+      services: { server: false, daemon: true, expo: false },
+      serverUrl, publicServerUrl: serverUrl, remoteServerPort: port,
+      canonicalServerUrl: signingOrigin,
+      env: { HAPPIER_STACK_ENV_FILE: join(root, 'controller-env') },
+    });
+    await promisify(execFile)('bash', ['-c', command], { cwd: repoDir, env: process.env });
+    const nativeEnv = parseEnvToObject(await readFile(paths.stackEnvPath, 'utf8'));
+    assert.equal(nativeEnv.HAPPIER_CANONICAL_SERVER_URL === signingOrigin, true,
+      'a daemon-only native client must receive the controller URL owner decision');
+    const endpoint = await resolveStackServerEndpoint({ stackName, runtimeState: null, env: {
+      ...nativeEnv, HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_STORAGE_DIR: paths.stackStorageDir,
+      HAPPIER_STACK_ENV_FILE: paths.stackEnvPath,
+    } });
+    assert.equal(endpoint.port, port, 'recovery must use the producer-selected forwarded listener after native exit');
+    const response = await fetch(new URL('/health', endpoint.internalServerUrl));
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, 'ok');
+    const windowsCommand = buildRemoteStackCommand({ ...target, platform: 'windows',
+      repoDir: 'C:/fixture/repo', cliHomeDir: 'C:/fixture/state/cli' }, {
+      stackName, runtimeMode: 'source-snapshot',
+      services: { server: false, daemon: true, expo: false },
+      serverUrl, publicServerUrl: serverUrl, remoteServerPort: port, env: {},
+      canonicalServerUrl: signingOrigin,
+    });
+    const windowsProjection = Buffer.from(windowsCommand.split(' ').at(-1), 'base64').toString('utf16le');
+    assert.ok(windowsProjection.includes(`HAPPIER_STACK_SERVER_PORT=${port}`));
+    assert.equal(windowsProjection.includes(`HAPPIER_CANONICAL_SERVER_URL=${signingOrigin}`), true);
+  });
 
 test('package binary invocations use payload placement instead of same-named scripts', async t => {
   const fixture = await createTempFixture(t, { prefix: 'package-binary-placement-' });

@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 
 import { getPublicServerUrlEnvOverride, getWebappUrlEnvOverride, resolveServerUrls, resolveStackServerEndpoint } from './urls.mjs';
+import { buildServerRuntimeEnv } from './server_env.mjs';
+import { sanitizeStackTestRunnerEnv } from '../test/test_env.mjs';
 
 async function createIsolatedStackStorage(t) {
   const storageDir = await mkdtemp(join(tmpdir(), 'hstack-server-urls-storage-'));
@@ -22,6 +25,88 @@ async function writeStackEnvAtStorageRoot(storageDir, stackName, contents) {
   await mkdir(stackDir, { recursive: true });
   await writeFile(join(stackDir, 'env'), contents, 'utf-8');
 }
+
+test('canonical URL owner preserves the configured signing identity across server projection', async (t) => {
+  const { storageDir, stackName } = await createIsolatedStackStorage(t);
+  const canonical = ['https:', '', 'signing.example.test'].join('/');
+  const ingress = ['https:', '', 'ingress.example.test'].join('/');
+  await writeStackEnvAtStorageRoot(storageDir, stackName, [
+    `HAPPIER_CANONICAL_SERVER_URL=${canonical}`,
+    `HAPPIER_PUBLIC_SERVER_URL=${ingress}`,
+  ].join('\n'));
+  const env = {
+    HOME: join(storageDir, 'home'),
+    HAPPIER_STACK_STACK: stackName,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_CANONICAL_SERVER_URL: canonical,
+    HAPPIER_PUBLIC_SERVER_URL: ingress,
+    HAPPIER_STACK_TAILSCALE_PREFER_PUBLIC_URL: '0',
+    HAPPIER_STACK_TAILSCALE_SERVE: '0',
+  };
+  const urls = await resolveServerUrls({ env, serverPort: 43123, allowEnable: false });
+  const serverEnv = buildServerRuntimeEnv({ baseEnv: env, serverPort: 43123, ...urls });
+  assert.equal(urls.canonicalServerUrl === canonical, true,
+    'the configured signing identity must not become the public ingress');
+  assert.equal(serverEnv.HAPPIER_CANONICAL_SERVER_URL === urls.canonicalServerUrl, true,
+    'server projection must consume the same canonical decision');
+  assert.equal(urls.publicServerUrl === ingress, true,
+    'selecting signing identity must preserve public ingress');
+});
+
+test('daemon-only canonical selection consumes the same signing identity as local startup', async (t) => {
+  const { storageDir, stackName } = await createIsolatedStackStorage(t);
+  const stackDir = join(storageDir, stackName);
+  const canonical = ['https:', '', 'signing.example.test'].join('/');
+  const ingress = ['https:', '', 'forward.example.test'].join('/');
+  await writeStackEnvAtStorageRoot(storageDir, stackName,
+    `HAPPIER_CANONICAL_SERVER_URL=${canonical}\nHAPPIER_STACK_REPO_DIR=${storageDir}\n`);
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    const probeEnv = { ...process.env };
+    let probePhase = 'import';
+    try {
+      const { recordStackRuntimeStart } = await import(process.env.HSTACK_STATE_MODULE);
+      const { resolveServerUrls } = await import(process.env.HSTACK_URLS_MODULE);
+      probePhase = 'record';
+      await recordStackRuntimeStart(probeEnv.HAPPIER_STACK_RUNTIME_STATE_PATH, {
+        stackName: probeEnv.HAPPIER_STACK_STACK, ownerPid: process.pid,
+        serverConnection: { internalServerUrl: probeEnv.HAPPIER_PUBLIC_SERVER_URL,
+          publicServerUrl: probeEnv.HAPPIER_PUBLIC_SERVER_URL },
+      });
+      probePhase = 'resolve';
+      const urls = await resolveServerUrls({ env: probeEnv, allowEnable: false });
+      console.log(JSON.stringify({
+        liveConnectionUsed: urls.internalServerUrl === probeEnv.HAPPIER_PUBLIC_SERVER_URL,
+        canonicalMatches: urls.canonicalServerUrl === probeEnv.HAPPIER_CANONICAL_SERVER_URL,
+      }));
+    } catch (error) {
+      console.log(JSON.stringify({
+        probePhase, errorName: error.name,
+        errorCode: /^[A-Z_]+$/.test(error.code ?? '') ? error.code : null,
+        errorSites: String(error.stack ?? '').split('\\n').slice(1)
+          .map(frame => frame.match(/([A-Za-z_]+\\.mjs:\\d+:\\d+)/)?.[1]).filter(Boolean),
+      }));
+      process.exitCode = 1;
+    }
+  `], { encoding: 'utf8', env: {
+    ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: storageDir }),
+    HOME: join(storageDir, 'home'),
+    HAPPIER_STACK_STACK: stackName,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_ENV_FILE: join(stackDir, 'env'),
+    HAPPIER_STACK_REPO_DIR: storageDir,
+    HAPPIER_STACK_RUNTIME_STATE_PATH: join(stackDir, 'stack.runtime.json'),
+    HAPPIER_STACK_CLI_HOME_DIR: join(stackDir, 'cli'),
+    HAPPIER_STACK_PROCESS_KIND: 'infra',
+    HAPPIER_CANONICAL_SERVER_URL: canonical,
+    HAPPIER_PUBLIC_SERVER_URL: ingress,
+    HSTACK_STATE_MODULE: new URL('../stack/runtime_state.mjs', import.meta.url).href,
+    HSTACK_URLS_MODULE: new URL('./urls.mjs', import.meta.url).href,
+  } });
+  assert.equal(result.status, 0, 'the real native owner probe must complete: ' + result.stdout.trim());
+  const observed = JSON.parse(result.stdout.trim());
+  assert.equal(observed.liveConnectionUsed, true, 'the real runtime connection must be admitted');
+  assert.equal(observed.canonicalMatches, true, 'native and local startup must consume the same identity');
+});
 
 test('the endpoint owner uses the live external connection on a daemon-only host instead of its stale local port', async (t) => {
   const { storageDir, stackName } = await createIsolatedStackStorage(t);
