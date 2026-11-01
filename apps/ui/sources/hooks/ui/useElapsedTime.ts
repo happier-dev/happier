@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
 export function useElapsedTime(date: Date | number | null | undefined, ticking = true): number {
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
+    const presented = useLayoutPresentationActive();
+    const viewed = useHostActivelyViewed();
+    const active = ticking && presented && viewed;
 
     useEffect(() => {
         // Handle null/undefined dates
@@ -25,7 +30,7 @@ export function useElapsedTime(date: Date | number | null | undefined, ticking =
 
         // Retained presentation keeps its last value without a clock. Resuming
         // samples the admitted timestamp again, so hidden time is never lost.
-        if (!ticking) return;
+        if (!active) return;
 
         // Set up interval to update every second
         const interval = setInterval(updateElapsed, 1000);
@@ -34,7 +39,7 @@ export function useElapsedTime(date: Date | number | null | undefined, ticking =
         return () => {
             clearInterval(interval);
         };
-    }, [date, ticking]);
+    }, [date, active]);
 
     return elapsedSeconds;
 }
