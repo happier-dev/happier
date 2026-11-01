@@ -325,9 +325,21 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
 
     // The base is the same snapshot with only the slice reverted, so unchanged files are reused.
     const baseIndex = git.treeEntries(base);
+    // A byte-identical filename change keeps the same source and resolution context.
+    // Compare it at its old location instead of treating existing errors as new.
+    const removedByIdentity = new Map(slice
+      .filter(({ status, path }) => status === 'D' && TYPESCRIPT_SOURCE.test(path))
+      .map(({ path }) => [`${posix.dirname(path)}\0${baseIndex.get(path).oid}`, path]));
+    const renamedFrom = new Map(slice
+      .filter(({ status, path }) => status === 'A' && TYPESCRIPT_SOURCE.test(path))
+      .flatMap(({ path }) => {
+        const previous = removedByIdentity.get(`${posix.dirname(path)}\0${treeIndex.get(path).oid}`);
+        return previous ? [[path, previous]] : [];
+      }));
     // Query the same roots in the same order: type display depends on the diagnostic query.
-    // Newly added files have no baseline diagnostics.
-    const baseRoots = roots.filter((file) => baseIndex.has(file));
+    // Newly added source content has no baseline diagnostics.
+    const baseRoots = [...new Set(roots.map(file => renamedFrom.get(file) ?? file))]
+      .filter((file) => baseIndex.has(file));
     const seen = new Set();
     if (baseRoots.length) {
       const prior = git.virtualConfigs(
@@ -360,8 +372,11 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
           deleted: revert.removedPaths,
         },
       });
-      for (const row of git.collect(baseSnapshot, prior.configs))
+      for (const row of git.collect(baseSnapshot, prior.configs)) {
         seen.add(keyOf(row));
+        for (const [file, previous] of renamedFrom)
+          if (row.file === previous) seen.add(keyOf({ ...row, file }));
+      }
     }
     result.fresh = headRows.filter((row) => !seen.has(keyOf(row)));
     return { ...result, ms: Date.now() - started };

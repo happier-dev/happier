@@ -136,6 +136,16 @@ test('diagnostics already present at the base are not attributed to the slice', 
   );
 });
 
+test('an exact same-directory rename retains its diagnostic baseline without hiding new importer failures', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await write('producer.ts', 'export const original: string = 1;\n');
+  const base = commitOnly('producer.ts');
+  execFileSync('git', ['mv', 'producer.ts', 'producer.composed.ts'], { cwd: repo });
+  const renamed = commitOnly('producer.composed.ts');
+  const result = checkCommitTypeCoherence({ repo, base, tree: renamed });
+  assert.deepEqual(result.fresh.map(({ file, code }) => [file, code]), [['consumer.ts', 2307]]);
+});
+
 test('a new diagnostic location is not hidden by an identical message elsewhere in the base', async (t) => {
   const { repo, write, commitOnly } = await checkout(t);
   await write(
