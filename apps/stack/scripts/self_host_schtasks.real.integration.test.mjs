@@ -197,6 +197,23 @@ test(
       { label: 'self-host-schtasks', env: commonEnv, timeoutMs: 60_000, cwd: sandboxDir }
     );
     const statusPayload = JSON.parse(String(status.stdout ?? '').trim());
+    if (statusPayload?.service?.active !== true || statusPayload?.healthy !== true) {
+      const schtasksVerbose = run('schtasks', ['/Query', '/TN', taskName, '/FO', 'LIST', '/V'], { label: 'self-host-schtasks', allowFail: true, timeoutMs: 20_000 });
+      const scheduledTask = run(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', `Get-ScheduledTask -TaskName '${taskName}' | Select-Object TaskName,State | ConvertTo-Json; Get-ScheduledTaskInfo -TaskName '${taskName}' | Select-Object LastRunTime,LastTaskResult | ConvertTo-Json; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*happier*' -or $_.CommandLine -like '*hstack*' } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json`],
+        { label: 'self-host-schtasks', allowFail: true, timeoutMs: 30_000 }
+      );
+      console.error(
+        [
+          '[self-host-schtasks] status after healthy install is not active/healthy',
+          `self-host status stdout:\n${String(status.stdout ?? '').trim()}`,
+          `self-host status stderr:\n${String(status.stderr ?? '').trim()}`,
+          `schtasks /V (${taskName}):\n${String(schtasksVerbose.stdout ?? '').trim()}\n${String(schtasksVerbose.stderr ?? '').trim()}`,
+          `scheduled task + processes:\n${String(scheduledTask.stdout ?? '').trim()}\n${String(scheduledTask.stderr ?? '').trim()}`,
+        ].join('\n\n')
+      );
+    }
     assert.equal(statusPayload?.ok, true);
     assert.equal(statusPayload?.service?.name, serviceName);
     assert.equal(statusPayload?.service?.active, true);
