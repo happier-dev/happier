@@ -1,3 +1,4 @@
+import { projectExternalActionWorkflowSessionLeafContextV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol';
 import type { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import type { RpcLocalActionContext, RpcHandlerContext } from '@/api/rpc/types';
@@ -263,6 +264,7 @@ export function buildActionExecutorContextForRpc(
                 sourceTurnId: params.sessionActionOrigin.sourceTurnId, via: 'action' as const },
             ...(params.sessionActionOrigin.workspaceWrites ? { workspaceWrites: params.sessionActionOrigin.workspaceWrites } : {}),
         } : {}),
+        ...(workflowAuthorization ? projectExternalActionWorkflowSessionLeafContextV1(workflowAuthorization) : {}),
         ...(workflowAuthorization && workflowBinding && workflowOrigin && workflowWitness ? {
             surface: 'agent' as const,
             authority: 'account_automation' as const,

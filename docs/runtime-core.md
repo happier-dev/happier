@@ -2763,6 +2763,20 @@ Agent-specific protocol leaves live in `packages/plugins/<agentId>/src/agent/**`
 
 ### Session Account-action authority (0.3 development)
 
+Installed Workflow Session leaves continue definition/trigger child Actions through
+the existing signed Workflow-origin admission. FIN passes its captured
+`InstalledWorkflowSessionLeafAdmission` to
+`prepareInstalledWorkflowActionAuthorizationWithEnvelope`, with the original
+Session caller and a fresh child request id. The issuer matches the captured
+Account, Run and leaf Session, retains accepted authorization and requester
+attribution, and signs the exact child envelope with the installed source key.
+Home verifies that proof and the admitted Run; later calls read only that Run's
+active custody. The receiving daemon restores the Session caller, automation
+authority, permission/workspace ceiling and requester attribution. FIN owns
+capturing and forwarding these admission facts; ordinary host/plugin requester
+invocations cannot manufacture them. This matching-development contract needs
+the server, daemon and FIN relay loaded together.
+
 Experimental native Realtime Start is Session-owner-only in 0.3 development;
 it runs on that owner's Agent account. The canonical Protocol RPC classification
 requires `sessionOwner`, while shared editors retain ordinary input and question

@@ -1,3 +1,7 @@
+import { ExternalActionWorkflowSessionLeafV1Schema } from './workflowSessionChildV1.js';
+export { ExternalActionWorkflowSessionLeafV1Schema, projectExternalActionWorkflowSessionLeafContextV1, type ExternalActionWorkflowSessionLeafV1,
+  type InstalledWorkflowSessionLeafAdmission } from './workflowSessionChildV1.js';
+import { WorkflowActionIdV1Schema } from './actionIds.js';
 import { ExternalActionRequestIdV1Schema, ExternalActionPreOpenFailureCodeSchema } from './externalActionHttpError.js';
 export * from './externalActionHttpError.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
@@ -982,6 +986,7 @@ export const ExternalActionSessionAccountServerPrincipalV1Schema = lazyZodSchema
 /** The installed FIN executor proves this retained Run at Home. */
 export const ExternalActionWorkflowOriginV1Schema = lazyZodSchema(() => z.strictObject({
   runId: ExternalActionTargetIdV1Schema, requestId: ExternalActionRequestIdV1Schema,
+  sessionLeaf: z.optional(ExternalActionWorkflowSessionLeafV1Schema),
   /** Accepted host facts only; Role content stays in the Session content envelope. */
   sessionAuthority: z.optional(z.strictObject({
     authorization: WorkflowAcceptedAuthorizationV1Schema,
@@ -990,11 +995,13 @@ export const ExternalActionWorkflowOriginV1Schema = lazyZodSchema(() => z.strict
     directory: z.string().check(z.minLength(1)),
     workspaceWrites: z.enum(['allow', 'deny']),
   })),
-}));
+}).check(z.refine(value => !value.sessionLeaf || !value.sessionAuthority,
+  'A Workflow origin carries one admitted caller.')));
 
 /** The incumbent Workflow signed-root admission, shared by issuance and rechecks. */
 export function isExternalActionWorkflowActionIdV1(actionId: string): boolean {
-  return ManagedMachineActionIdV1Schema.safeParse(actionId).success
+  return WorkflowActionIdV1Schema.safeParse(actionId).success
+    || ManagedMachineActionIdV1Schema.safeParse(actionId).success
     || actionId.startsWith('session.') && isRoleActionIdV1(actionId);
 }
 export const ExternalActionWorkflowAccountServerPrincipalV1Schema = lazyZodSchema(() => z.strictObject({

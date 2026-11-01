@@ -374,11 +374,20 @@ export async function hasCurrentOriginalSessionActionTargetInTx(
 export async function hasCurrentExternalActionWorkflowOriginInTx(reader: Tx, input: Readonly<{
     accountId: string; machineId: string; actionId: string; requestId: string;
     target: ExternalActionTargetV1;
+    publisherMachineId?: string;
     workflowActionOrigin?: ExternalActionExecutionAuthorizationBindingV1['workflowActionOrigin'];
 }>): Promise<boolean> {
     const origin = input.workflowActionOrigin;
-    if (!origin || origin.requestId !== input.requestId || !isExternalActionWorkflowActionIdV1(input.actionId)
-        || !await isAutomationOriginRunPublisherTx(reader, { accountId: input.accountId, machineId: input.machineId,
+    if (!origin || origin.requestId !== input.requestId || !isExternalActionWorkflowActionIdV1(input.actionId)) return false;
+    if (origin.sessionLeaf) {
+        // The installed FIN producer already admitted the exact leaf/Session.
+        // Home cannot open that E2EE binding; later effects only read Run liveness.
+        return await reader.automationRun.findFirst({ where: { id: origin.runId, accountId: input.accountId,
+            claimedByMachineId: input.publisherMachineId ?? input.machineId,
+            workflowAcceptedSnapshotEnvelope: { not: null }, workflowCustodyState: 'pending',
+            state: { in: ['claimed', 'running'] } }, select: { id: true } }) !== null;
+    }
+    if (!await isAutomationOriginRunPublisherTx(reader, { accountId: input.accountId, machineId: input.machineId,
             runId: origin.runId, requireCurrentScopeEnd: true })) return false;
     if (ManagedMachineActionIdV1Schema.safeParse(input.actionId).success) return input.target.kind === 'machine'
         && input.target.machineId === input.machineId;
@@ -392,6 +401,11 @@ async function readCurrentExternalActionPrincipal(
     reader: Tx,
     purpose?: ExternalActionVerificationPurpose,
 ): Promise<VerifiedExternalActionPrincipal | null> {
+    if (binding.workflowActionOrigin?.sessionLeaf) {
+        if (!('authentication' in binding) || !await hasCurrentExternalActionWorkflowOriginInTx(reader, binding)) return null;
+        return { accountId: binding.accountId, authentication: binding.authentication,
+            authority: 'account_automation', workflowActionOrigin: binding.workflowActionOrigin };
+    }
     if (purpose?.kind === 'issued-managed-acquire-native-fact'
         && !await isIssuedAcquireNativeFactReportInTx(reader, binding, purpose.report)) return null;
     if (purpose?.kind === 'issued-managed-intent-native-fact'
@@ -513,6 +527,7 @@ async function verifyCurrentExternalActionPrincipalForPurpose(
     binding: ExternalActionExecutionAuthorizationBindingV1,
     purpose?: ExternalActionVerificationPurpose,
 ): Promise<VerifiedExternalActionPrincipal | null> {
+    if (binding.workflowActionOrigin?.sessionLeaf) return readCurrentExternalActionPrincipal(binding, db, purpose);
     const principal = await readCurrentExternalActionPrincipal(binding, db, purpose);
     if (!principal) return null;
     const eligibility = await enforceLoginEligibility({ accountId: principal.accountId, env: process.env });
@@ -593,6 +608,9 @@ async function hasCurrentExecutionMachineAdmission(
     });
     if (!machine || classifyMachineAvailabilityState(machine) !== 'available'
         || machine.accountId !== binding.custodianAccountId || machine.installationId !== binding.installationId) return false;
+    // This signed leaf already owns admission. The principal check reads its
+    // active Run; the installation check above authenticates this later call.
+    if (binding.workflowActionOrigin?.sessionLeaf) return true;
     // Only the authenticated handoff tuple proves requester attribution for
     // these otherwise custodian-only methods. Unsigned method admission stays closed.
     if (binding.handoffAdmission) {

@@ -1,3 +1,4 @@
+import { projectExternalActionWorkflowSessionLeafContextV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -209,6 +210,8 @@ export async function executeExternalAction(input: Readonly<{
   const accountPrincipal = 'authentication' in input.principal ? input.principal : null;
   const sessionActionOrigin = accountPrincipal && 'sessionActionOrigin' in accountPrincipal
     ? accountPrincipal.sessionActionOrigin : null;
+  const workflowActionOrigin = accountPrincipal && 'workflowActionOrigin' in accountPrincipal
+    ? accountPrincipal.workflowActionOrigin : null;
   const actionId = apiTokenPrincipal
     ? PublicActionIdSchema.safeParse(externalActionId.data)
     : SignedRootActionIdSchema.safeParse(externalActionId.data);
@@ -229,6 +232,7 @@ export async function executeExternalAction(input: Readonly<{
         && executionAuthorization.data.binding.accountId === accountPrincipal.accountId
         && sameStrictJsonValue(executionAuthorization.data.binding.authentication, accountPrincipal.authentication)
         && sameStrictJsonValue(executionAuthorization.data.binding.sessionActionOrigin, sessionActionOrigin ?? undefined)
+        && sameStrictJsonValue(executionAuthorization.data.binding.workflowActionOrigin, workflowActionOrigin ?? undefined)
       : apiTokenPrincipal && 'credentialId' in executionAuthorization.data.binding
         && executionAuthorization.data.binding.accountId === apiTokenPrincipal.accountId
         && executionAuthorization.data.binding.principalId === apiTokenPrincipal.principalId
@@ -637,6 +641,7 @@ export async function executeExternalAction(input: Readonly<{
       ...(invocation.workspaceWrites ? { workspaceWrites: invocation.workspaceWrites } : {}),
       ...(invocation.defaultSessionId ? { defaultSessionId: invocation.defaultSessionId } : {}),
     } : {}),
+    ...(admittedAuthorization ? projectExternalActionWorkflowSessionLeafContextV1(admittedAuthorization) : {}),
     ...(sessionActionOrigin ? {
       defaultSessionId: sessionActionOrigin.caller.sessionId,
       callerPermissionMode: sessionActionOrigin.callerPermissionMode,

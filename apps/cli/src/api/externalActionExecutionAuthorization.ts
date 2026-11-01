@@ -43,7 +43,6 @@ import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/m
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { MachineEnvironmentApplyInputV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, type MachineEnvironmentApplyInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { refuseExternalActionPhase, traceExternalActionInnerStage, runTracedExternalActionInnerStage, readSessionInputAdmissionDiagnostic } from '@/daemon/externalActions/externalActionPhase';
 import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -829,7 +828,7 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
 }
 
 /** Prepare an original Account invocation; only Home's minted binding admits it. */
-export async function prepareExternalActionRequesterAccountAuthorization(input: Readonly<{
+export async function prepareExternalActionRequesterAccountAuthorizationWithEnvelope(input: Readonly<{
   actionId: string;
   input: unknown;
   requestId: string;
@@ -856,7 +855,7 @@ export async function prepareExternalActionRequesterAccountAuthorization(input: 
   privateKey: ExternalActionMachineRequestSigningKey;
   isCurrent?: () => Promise<boolean>;
   signal?: AbortSignal;
-}>): Promise<ExternalActionExecutionAuthorizationV1 | null> {
+}>): Promise<Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; envelope: ExternalActionRequestEnvelope }> | null> {
   const isCurrent = async (): Promise<boolean> => {
     try {
       if (input.signal?.aborted) return false;
@@ -960,63 +959,28 @@ export async function prepareExternalActionRequesterAccountAuthorization(input: 
     || !externalActionTargetsEqualV1(binding.target, input.target)) return null;
   // The destination daemon owns HTTP effect signatures. A remote source only
   // forwards the same Home proof; it must not impersonate the destination signer.
-  if (sessionActionOrigin && input.sourceMachineId !== input.machineId) return Object.freeze(minted.authorization);
+  if (sessionActionOrigin && input.sourceMachineId !== input.machineId) return { authorization: Object.freeze(minted.authorization), envelope };
   const continuationChecker = input.isContinuationCurrent;
   const continuationCurrent = sessionActionOrigin && continuationChecker
     ? async () => await continuationChecker(minted.authorization)
     : isCurrent;
-  return await projectExternalActionRequesterHttpAuthorization({
+  const authorization = await projectExternalActionRequesterHttpAuthorization({
     authorization: minted.authorization,
     serverId: input.serverId, serverIdentityId: input.serverIdentityId,
     serverHttpBaseUrl: input.serverHttpBaseUrl, target: input.target,
     installationId: input.installationId, privateKey: input.privateKey, isCurrent: continuationCurrent,
     ...(input.signal ? { signal: input.signal } : {}),
   });
+  return authorization ? { authorization, envelope } : null;
 }
 
-/** The installed Workflow executor uses one signer for Machine and Session effects. */
-export async function prepareInstalledWorkflowActionAuthorization(input: Readonly<{
-  credentials: StoredCredentials;
-  context: ActionExecutorContext;
-  actionId: string;
-  input: unknown;
-  target: ExternalActionTargetV1;
-  machineId: string;
-  serverId: string;
-  serverIdentityId: string;
-  serverHttpBaseUrl: string;
-  installationId: string;
-  privateKey: ExternalActionMachineRequestSigningKey;
-  isCurrent?: () => Promise<boolean>;
-}>): Promise<ExternalActionExecutionAuthorizationV1 | null> {
-  const caller = input.context.actionCaller;
-  const requestId = input.context.actionRequestId;
-  const accountId = readAccountIdFromToken(input.credentials.token);
-  if (caller?.kind !== 'workflowRun' || !requestId || !accountId
-    || input.context.executionRunWorkflowRunId !== caller.runId
-    || input.target.kind === 'session' && typeof input.isCurrent !== 'function') return null;
-  const start = input.context.agentStartContext;
-  const sessionAuthority = input.target.kind === 'session' && start?.caller.kind === 'originless'
-    && start.caller.runId === caller.runId && start.baseline.machineId === input.machineId
-    ? { authorization: caller.authorization, runDepth: start.caller.runDepth,
-      ...(start.caller.runOriginSessionId ? { runOriginSessionId: start.caller.runOriginSessionId } : {}),
-      directory: start.baseline.directory, workspaceWrites: input.context.workspaceWrites ?? 'deny' as const }
-    : undefined;
-  if (input.target.kind === 'session' && !sessionAuthority) return null;
-  const payload = decodeJwtPayload(input.credentials.token);
-  const extras = payload?.extras;
-  const tokenEpochHint = payload?.tokenEpoch ?? (extras && typeof extras === 'object' && 'tokenEpoch' in extras ? extras.tokenEpoch : undefined) ?? 0;
-  if (typeof tokenEpochHint !== 'number' || !Number.isSafeInteger(tokenEpochHint) || tokenEpochHint < 0) return null;
-  const encryption = await fetchAccountEncryptionCurrentness({ token: input.credentials.token,
-    serverBaseUrl: input.serverHttpBaseUrl, signal: input.context.signal });
-  const material = input.credentials.encryption?.type === 'legacy'
-    ? { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(input.credentials.encryption.secret) }
-    : input.credentials.encryption;
-  return await prepareExternalActionRequesterAccountAuthorization({ ...input, accountId,
-    requestId, token: input.credentials.token, tokenEpochHint, accountEncryptionMode: encryption.mode,
-    workflowActionOrigin: { runId: caller.runId, requestId, ...(sessionAuthority ? { sessionAuthority } : {}) },
-    ...(material ? { material } : {}), signal: input.context.signal });
+export async function prepareExternalActionRequesterAccountAuthorization(
+  input: Parameters<typeof prepareExternalActionRequesterAccountAuthorizationWithEnvelope>[0],
+): Promise<ExternalActionExecutionAuthorizationV1 | null> {
+  return (await prepareExternalActionRequesterAccountAuthorizationWithEnvelope(input))?.authorization ?? null;
 }
+
+export { prepareInstalledWorkflowActionAuthorization, prepareInstalledWorkflowActionAuthorizationWithEnvelope } from './installedWorkflowActionAuthorization';
 
 export function resolveExternalActionServerRequestHeaders(input: Readonly<{
   context: ActionExecutorContext | undefined;

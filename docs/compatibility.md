@@ -3955,6 +3955,17 @@ Run-on writer or store is added.
 
 ## SDK protocol evolution
 
+The unreleased 0.3 signed Workflow origin accepts a closed `sessionLeaf` variant
+for an admitted Session's Workflow child Actions. Its nested caller, accepted
+authorization and requester-attribution objects are closed; an unknown field
+never acquires authority. It is mutually exclusive with `sessionAuthority`.
+This extends the existing installed-source proof and authorization V1 carrier,
+independently of package SemVer and runtime ABI. It requires matching development
+issuer, Home and daemon readers: older strict readers refuse `sessionLeaf`.
+There is no released predecessor producer, persisted format change, permissive
+fallback or host-caller translation. FIN supplies the retained leaf admission;
+its relay integration is a separate consumer of this producer contract.
+
 The 0.3 development SDK adds `exec.clients.connectJsonRpc` for existing Unix
 WebSocket endpoints. Existing process-client `spawn` operations keep their
 contracts. The new connection handle has no process identity or manufactured
