@@ -5700,7 +5700,9 @@ those identify the spawning Stack daemon, not the native supervisor. They retain
 their own POSIX session/process group and use the existing Linux native scope
 escape so a daemon unit's control-group stop does not own them. macOS uses the
 POSIX detachment; Lima is unavailable on Windows. Lima selects this disposition
-for `start` and `restart`; stop/delete and guest IO stay supervised.
+for `start` and `restart`. Cua selects it for embedded local sandbox/Space
+creation and local sandbox resume, whose runtime can start a background QEMU.
+Stop/delete, observations, cloud calls and guest IO stay supervised.
 Native daemons must redirect inherited streams so captured output can close.
 
 A resolved native command can return `nativeInstance` using the existing

@@ -123,8 +123,15 @@ export function createCuaNativeClient(options: {
     }
     async function run(args: readonly string[], signal?: AbortSignal) {
         signal?.throwIfAborted();
+        // trycua/cua@2bce4442 cua-vmm/qemu/mod.rs backgrounds QEMU from
+        // embedded local launches. The native runtime owns those descendants.
+        const startsLocalRuntime = args[0] === '--embedded'
+            && ((args[1] === 'sandbox' && args[2] === 'resume' && args[3]?.startsWith('local:'))
+                || ((args[1] === 'sandbox' || args[1] === 'spaces') && args[2] === 'create' && args.includes('--on=local')));
         try {
-            const result = await options.exec.run({ executable: options.executable, args: ['--json', ...args], env: environment }, { signal });
+            const result = await options.exec.run({ executable: options.executable, args: ['--json', ...args], env: environment }, {
+                signal, ...(startsLocalRuntime ? { descendantDisposition: 'preserve-on-success' as const } : {}),
+            });
             if (result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 3
                 && result.termination.requestedBy.kind === 'none') {
                 return { kind: 'unknown', reason: 'not_found' } as const;
