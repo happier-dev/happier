@@ -38,7 +38,7 @@ export async function probeRuntimeImport({ entrypoint, args = [], nodeArgs = [],
   const started = performance.now();
   return await new Promise((resolve, reject) => {
     const child = spawn(nodeExecutable, [...nodeArgs, entrypoint, ...args], {
-      cwd, env, signal, stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true, cwd, env, signal, stdio: ['ignore', 'ignore', 'pipe'],
     });
     let stderr = '';
     let timedOut = false;

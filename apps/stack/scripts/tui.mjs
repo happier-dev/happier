@@ -813,6 +813,7 @@ async function main() {
           detached: process.platform !== 'win32',
         })
       : spawn(process.execPath, [happysBin, ...forwardedArgs], {
+          windowsHide: true,
           cwd: rootDir,
           env: childEnv,
           stdio: ['ignore', 'pipe', 'pipe'],

@@ -59,6 +59,7 @@ async function tryStopSandbox({ rootDir, sandboxDir }) {
     cwd: rootDir,
     env: process.env,
     stdio: 'ignore',
+    windowsHide: true,
   });
   await waitForExit(child);
 }
