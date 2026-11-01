@@ -1628,10 +1628,13 @@ describe('managed acquisition durable custody', () => {
             if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
             if (path.endsWith('/actions/get')) return { status: 200, data: retained };
             if (path.endsWith('/report')) {
-                events.push('report');
+                const report = ManagedControllerReportV1Schema.parse(body);
+                // This sequence measures native identity settlement; bootstrap observations are separate row facts.
+                if (!report.observation?.reason?.startsWith('bootstrap.')) events.push('report');
                 reports.push(body);
                 expect(body).toMatchObject({ requestId: 'creation', expectedIntentRevision: 0, result: { kind: 'bound', resource } });
-                retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'bound', resource });
+                retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'bound', resource,
+                    ...(report.observation ? { observation: report.observation } : {}) });
             }
             return { status: 200, data: path.endsWith('/context') ? { machine: retained, requestId: 'creation' } : { machine: retained } };
         });
@@ -1663,9 +1666,9 @@ describe('managed acquisition durable custody', () => {
         else if (passive) await expect(work).rejects.toMatchObject({ code: 'admission_unavailable' });
         else if (withdrawn) await expect(work).rejects.toMatchObject({ code: 'admission_unavailable' });
         else await expect(work).rejects.toBeInstanceOf(Error);
-        expect(events).toEqual(passive ? withdrawn ? ['reconcile'] : ['reconcile', 'report', 'report']
+        expect(events).toEqual(passive ? withdrawn ? ['reconcile'] : ['reconcile', 'report']
             : withdrawn ? ['reconcile', 'report'] : ['reconcile', 'report', 'bootstrap']);
-        if (passive && !withdrawn) expect(reports[1]).toMatchObject({ observation: expect.any(Object) });
+        if (passive && !withdrawn) expect(reports[0]).toMatchObject({ observation: expect.any(Object) });
         if (passive && withdrawn) {
             // Passive recovery requires current origin authority. A withdrawn
             // reader retains the paid handle for a later authorized inspection,
@@ -1825,8 +1828,10 @@ describe('managed acquisition durable custody', () => {
                     expect(verifyExternalActionMachineRequestV1({ ...signedRequest, requestId: actionRequestId })).toBe(true);
                     expect(verifyExternalActionMachineRequestV1({ ...signedRequest, requestId: 'creation' })).toBe(false);
                 }
-                reports.push(body);
+                const report = ManagedControllerReportV1Schema.parse(body);
+                if (!report.observation?.reason?.startsWith('bootstrap.')) reports.push(body);
                 retained = ManagedMachineV1Schema.parse({ ...retained,
+                    ...(report.observation ? { observation: report.observation } : {}),
                     ...(resultKind === 'bound' ? { allocation: 'bound', resource } : { allocation: 'may-exist', nativeOperationRef }),
                     ...(retirement === 'operation-cancel' ? { cleanup: { disposition: 'pending', reason: 'creation_canceled' } } : {}),
                 });
@@ -1860,13 +1865,14 @@ describe('managed acquisition durable custody', () => {
         await expect(work).rejects.toMatchObject({ code: resultKind === 'pending' ? 'native_acquisition_unconfirmed'
             : retirement === 'operation-cancel' ? 'intent_changed' : 'admission_unavailable' });
         if (retirement === 'operation-cancel') expect(cancellation).toEqual({ kind: 'requested' });
-        expect(reports).toEqual([{ homeId: nativeHomeId, managedId: retained.id, expectedIntentRevision: 0,
+        expect(reports).toHaveLength(1);
+        expect(reports[0]).toMatchObject({ homeId: nativeHomeId, managedId: retained.id, expectedIntentRevision: 0,
             requestId: 'creation', controller, result: nativeResult,
-        }]);
+        });
         expect(retained).toMatchObject({ creationState: retirement === 'operation-cancel' ? 'canceled' : 'active',
             ...(resultKind === 'bound' ? { allocation: 'bound', resource } : { allocation: 'may-exist', nativeOperationRef }) });
         if (retirement === 'operation-cancel') expect(retained.cleanup).toMatchObject({ disposition: 'pending' });
-        expect(nativeCalls).toEqual(resultKind === 'bound' && retirement !== 'operation-cancel' ? ['acquire', 'bootstrap'] : ['acquire']);
+        expect(nativeCalls).toEqual(['acquire']);
         expect(await operations.handlers.getV2({ operationId: 'late-resource', waitForTerminal: true })).toMatchObject({ kind: 'found', operation: {
             cancellation: 'supported', domainRef: { kind: 'managedMachine', id: retained.id },
         } });
@@ -2185,7 +2191,8 @@ describe('managed acquisition durable custody', () => {
             }
             if (path.endsWith('/report')) {
                 const report = ManagedControllerReportV1Schema.parse(body);
-                reports.push(report.result);
+                if (!report.observation?.reason?.startsWith('bootstrap.')) reports.push(report.result);
+                if (report.observation) retained = ManagedMachineV1Schema.parse({ ...retained, observation: report.observation });
                 if (report.result.kind === 'bound') retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'bound', resource: report.result.resource });
             }
             return { status: 200, data: path.endsWith('/admit') ? { machine: retained, replayed: false }
