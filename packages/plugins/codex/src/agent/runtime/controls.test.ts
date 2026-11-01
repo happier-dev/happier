@@ -183,7 +183,7 @@ describe('createCodexNativeSessionControls', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  it('uses provider RPC evidence for rollback, continuation, goal, catalog, and usage controls', async () => {
+  it('uses provider RPC evidence for continuation, goal, catalog, and usage controls', async () => {
     clientMocks.request.mockImplementation(async (method: string) => {
       if (method === 'thread/read') return { thread: { turns: [] } };
       if (method === 'thread/goal/get') {

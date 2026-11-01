@@ -40,6 +40,13 @@ describe('resolveCodexStartupRuntimeMode', () => {
       explicitRuntimeMode: undefined,
       startedBy: 'cli',
       hasTtyForTerminal: true,
+      terminalRuntimeEnabled: false,
+    })).toBe('remote');
+
+    expect(resolveCodexStartupRuntimeMode({
+      explicitRuntimeMode: undefined,
+      startedBy: 'cli',
+      hasTtyForTerminal: true,
       terminalRuntimeEnabled: true,
     })).toBe('terminal');
 

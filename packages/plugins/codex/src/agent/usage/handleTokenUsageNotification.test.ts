@@ -140,7 +140,7 @@ describe('handleTokenUsageNotification', () => {
     }));
   });
 
-  it('deduplicates exact retries without colliding distinct updates or sessions', () => {
+  it('assigns stable observation identities to retries and distinct identities to updates and sessions', () => {
     const emit = vi.fn();
     const notify = (
       sessionId: string,

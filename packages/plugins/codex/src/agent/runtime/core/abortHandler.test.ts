@@ -7,7 +7,13 @@ describe('createCodexAbortHandler', () => {
     let storedSessionIdForResume: string | null = 'old-session';
     let storedSessionIdFromLocalControl = true;
 
-    const cancelCurrentTurn = vi.fn(async () => {});
+    let identityAtCancellation: { sessionId: string | null; fromLocalControl: boolean } | undefined;
+    const cancelCurrentTurn = vi.fn(async () => {
+      identityAtCancellation = {
+        sessionId: storedSessionIdForResume,
+        fromLocalControl: storedSessionIdFromLocalControl,
+      };
+    });
     const abortTurn = vi.fn();
     const resetAbortControllers = vi.fn();
 
@@ -29,6 +35,7 @@ describe('createCodexAbortHandler', () => {
 
     expect(storedSessionIdForResume).toBe('thread-123');
     expect(storedSessionIdFromLocalControl).toBe(false);
+    expect(identityAtCancellation).toEqual({ sessionId: 'thread-123', fromLocalControl: false });
     expect(cancelCurrentTurn).toHaveBeenCalledTimes(1);
     expect(abortTurn).toHaveBeenCalledTimes(1);
     expect(resetAbortControllers).toHaveBeenCalledTimes(1);

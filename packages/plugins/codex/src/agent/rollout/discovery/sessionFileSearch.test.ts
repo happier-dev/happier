@@ -38,6 +38,9 @@ describe('Codex rollout session file search', () => {
       expect(isMatchingCodexRolloutFileName(`rollout-2026-06-01T10-00-00-${vendorResumeId}.jsonl`, vendorResumeId)).toBe(true);
       expect(await findCodexRolloutFileById({ sessionsRoot, vendorResumeId })).toBe(rolloutPath);
       expect(findCodexRolloutFileByIdSync({ sessionsRoot, vendorResumeId })).toBe(rolloutPath);
+      await rm(rolloutPath);
+      expect(await findCodexRolloutFileById({ sessionsRoot, vendorResumeId })).toBeNull();
+      expect(findCodexRolloutFileByIdSync({ sessionsRoot, vendorResumeId })).toBeNull();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

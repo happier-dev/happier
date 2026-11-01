@@ -48,7 +48,7 @@ describe('Codex CLI capability policy', () => {
     });
   });
 
-  it('projects Codex ACP load-session probe failures without leaking host error details', () => {
+  it('preserves the failure and timestamp from a Codex ACP load-session probe', () => {
     expect(
       buildCodexCliAcpCapabilitySnapshot({
         ok: false,

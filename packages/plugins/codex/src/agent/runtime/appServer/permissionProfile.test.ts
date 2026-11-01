@@ -58,19 +58,13 @@ describe('Codex app-server permission profile params', () => {
       policy: dangerPolicy,
       support: 'unknown',
       target: 'thread',
-    })).toEqual(buildCodexAppServerLegacyPermissionParams({
-      policy: dangerPolicy,
-      target: 'thread',
-    }));
+    })).toEqual({ approvalPolicy: 'never', sandbox: 'danger-full-access' });
 
     expect(buildCodexAppServerPermissionParams({
       policy: dangerPolicy,
       support: 'unknown',
       target: 'turn',
-    })).toEqual(buildCodexAppServerLegacyPermissionParams({
-      policy: dangerPolicy,
-      target: 'turn',
-    }));
+    })).toEqual({ approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } });
   });
 
   test('falls back to legacy thread and turn fields after permission profiles are unsupported', () => {
@@ -85,10 +79,17 @@ describe('Codex app-server permission profile params', () => {
       policy,
       support: 'legacy',
       target: 'thread',
-    })).toEqual(buildCodexAppServerLegacyPermissionParams({
+    })).toEqual({ approvalPolicy: 'never', approvalsReviewer: 'user', sandbox: 'workspace-write' });
+
+    expect(buildCodexAppServerPermissionParams({
       policy,
-      target: 'thread',
-    }));
+      support: 'legacy',
+      target: 'turn',
+    })).toEqual({
+      approvalPolicy: 'never',
+      approvalsReviewer: 'user',
+      sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/repo'] },
+    });
 
     expect(buildCodexAppServerLegacyPermissionParams({
       policy,

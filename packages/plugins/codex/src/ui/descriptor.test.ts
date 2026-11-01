@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { CODEX_UI_DESCRIPTOR } from './descriptor.js';
 
 describe('CODEX_UI_DESCRIPTOR context window fallback', () => {
-  it('pins the current Codex catalog windows while leaving live snapshots authoritative', () => {
+  it('pins the current Codex catalog fallback windows', () => {
     expect(CODEX_UI_DESCRIPTOR.behavior.contextWindow).toEqual({
       defaultTokens: 372_000,
       modelRules: [

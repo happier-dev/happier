@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveCodexSessionRuntimePreferences } from './runtimePreferences.js';
 
 describe('resolveCodexSessionRuntimePreferences', () => {
-  it('keeps Codex app-server Pending rows claimed until exact provider acceptance', () => {
+  it('selects the app-server backend from account settings', () => {
     expect(resolveCodexSessionRuntimePreferences({
       settings: { codexBackendMode: 'appServer' },
       environment: {},
@@ -13,7 +13,7 @@ describe('resolveCodexSessionRuntimePreferences', () => {
     });
   });
 
-  it('keeps ACP provider acceptance on the default pending delivery path', () => {
+  it('selects the ACP backend from account settings', () => {
     expect(resolveCodexSessionRuntimePreferences({
       settings: { codexBackendMode: 'acp' },
       environment: {},

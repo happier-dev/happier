@@ -126,7 +126,7 @@ describe('Codex connected-service runtime auth application', () => {
         expect(order).toEqual(['refresh-selection', 'login', 'rollback']);
     });
 
-    it('applies direct live auth while a Codex turn is in flight', async () => {
+    it('applies direct live auth and updates the refresh selection', async () => {
         const candidate = buildConnectedServiceCredentialRecord({
             now: 1000,
             serviceId: 'openai-codex',

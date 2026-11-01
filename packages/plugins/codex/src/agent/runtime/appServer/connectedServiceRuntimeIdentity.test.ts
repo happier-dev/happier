@@ -28,14 +28,18 @@ describe('buildCodexLiveAccountRuntimeIdentity', () => {
     });
   });
 
-  it('fails closed when live account and current selection do not match the frozen applied identity', () => {
+  it.each([
+    { field: 'profile', profileId: 'stale', groupId: 'team', generation: 12 },
+    { field: 'group', profileId: 'current', groupId: 'other-team', generation: 12 },
+    { field: 'generation', profileId: 'current', groupId: 'team', generation: 7 },
+  ])('fails closed when only the frozen $field differs from the current selection', ({ profileId, groupId, generation }) => {
     const previousIdentity: CodexConnectedServiceRuntimeIdentity = {
       serviceId: 'openai-codex',
-      providerAccountId: 'acct_stale',
+      providerAccountId: 'acct_live',
       accountLabel: 'stale@example.test',
-      profileId: 'stale',
-      groupId: 'team',
-      generation: 7,
+      profileId,
+      groupId,
+      generation,
       credentialFingerprint: 'sha256:stale001',
       credentialRevision: null,
       source: 'spawn_selection',

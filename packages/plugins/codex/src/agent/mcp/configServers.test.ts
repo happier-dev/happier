@@ -2,9 +2,14 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { readCodexMcpConfigServers } from './configServers.js';
+
+const temporaryRoots: string[] = [];
+afterEach(async () => {
+    await Promise.all(temporaryRoots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+});
 
 describe('readCodexMcpConfigServers', () => {
     it('finds user and project native transports, disabled entries and value names without disclosing values', async () => {
@@ -33,12 +38,14 @@ describe('readCodexMcpConfigServers', () => {
     });
     it('discovers inline tables and preserves escaped arguments through the canonical TOML parser', async () => {
         const configRoot = await mkdtemp(join(tmpdir(), 'codex-mcp-inline-'));
+        temporaryRoots.push(configRoot);
         await writeFile(join(configRoot, 'config.toml'), '[mcp_servers]\ninline = { command = "bridge", args = ["line\\nvalue", "quote\\\"value"], enabled = true }\n');
         const result = await readCodexMcpConfigServers({ env: { CODEX_HOME: configRoot } });
         expect(result.servers).toMatchObject([{ name: 'inline', stdio: { command: 'bridge', args: ['line\nvalue', 'quote"value'] }, enabled: true }]);
     });
     it('reads Codex MCP stdio servers from the final plugin agent path', async () => {
         const configRoot = await mkdtemp(join(tmpdir(), 'codex-mcp-config-'));
+        temporaryRoots.push(configRoot);
         await writeFile(
             join(configRoot, 'config.toml'),
             [
