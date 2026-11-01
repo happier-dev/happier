@@ -1,8 +1,27 @@
 import assert from 'node:assert/strict';
-import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, rename, symlink, writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
-import { readSourceAuthorDependencyIdentity } from './source_author_inputs.mjs';
+import { readSourceAuthorDependencyIdentity, readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs';
+
+test('runtime dependency identity survives identical installed-file replacement but rejects changed bytes', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-runtime-input-content-' });
+  const dependency = fixture.path('node_modules/runtime-input');
+  await mkdir(dependency, { recursive: true });
+  await writeFile(`${dependency}/package.json`, JSON.stringify({ name: 'runtime-input', main: 'index.cjs' }));
+  const entry = `${dependency}/index.cjs`;
+  const contents = 'exports.value = 1;';
+  await writeFile(entry, contents);
+  const readIdentity = () => readSourceRuntimeDependencyIdentity({
+    imports: [{ path: 'runtime-input', resolveFrom: fixture.path('package.json') }],
+  });
+  const before = readIdentity();
+  await writeFile(`${entry}.replacement`, contents);
+  await rename(`${entry}.replacement`, entry);
+  assert.equal(readIdentity(), before, 'a dependency refresh replacing identical bytes preserves the retained runtime');
+  await writeFile(entry, 'exports.value = 2;');
+  assert.notEqual(readIdentity(), before, 'changed same-size runtime code must still invalidate the retained runtime');
+});
 
 test('source author identity ignores module metadata files and follows scoped package directories', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-source-author-inputs-' });
