@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { View, type ViewStyle } from 'react-native';
 
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
@@ -112,6 +113,38 @@ export function HappierChevron(
   );
 }
 
+/**
+ * The disclosure turn: a glyph pointing at the row (right) while collapsed turns a quarter toward what it revealed
+ * (down) while expanded, on the base duration and standard curve; reduced motion keeps the end states without the
+ * travel. Hosts with an icon vocabulary bind their own right-pointing caret here, so every disclosure — the drawn
+ * chevron below and a host's icon caret — shares one rule. Decorative: the pressable around it owns the label and
+ * the expanded state.
+ */
+export function HappierDisclosureTurn(
+  props: Readonly<{
+    expanded: boolean;
+    reducedMotion?: boolean;
+    testID?: string;
+    children: ReactNode;
+  }>,
+) {
+  return (
+    <View
+      testID={props.testID}
+      aria-hidden
+      importantForAccessibility="no-hide-descendants"
+      accessibilityElementsHidden
+      pointerEvents="none"
+      style={[
+        { transform: [{ rotate: props.expanded ? '90deg' : '0deg' }] },
+        props.reducedMotion ? null : TURN_TRANSITION,
+      ]}
+    >
+      {props.children}
+    </View>
+  );
+}
+
 /** A disclosure points to what it reveals: right while collapsed, down while expanded. */
 export function HappierDisclosureChevron(
   props: Readonly<{
@@ -123,12 +156,8 @@ export function HappierDisclosureChevron(
   }>,
 ) {
   return (
-    <HappierChevron
-      direction={props.expanded ? 'down' : 'right'}
-      color={props.color}
-      size={props.size}
-      reducedMotion={props.reducedMotion}
-      testID={props.testID}
-    />
+    <HappierDisclosureTurn expanded={props.expanded} reducedMotion={props.reducedMotion} testID={props.testID}>
+      <HappierChevron direction="right" color={props.color} size={props.size} reducedMotion />
+    </HappierDisclosureTurn>
   );
 }

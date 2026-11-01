@@ -379,8 +379,14 @@ export {
   HAPPIER_DISCLOSURE_CHEVRON_METRICS,
   HappierChevron,
   HappierDisclosureChevron,
+  HappierDisclosureTurn,
   type HappierChevronDirection,
 } from './collection/DisclosureChevron.js';
+export {
+  HappierDisclosureToggle,
+  type HappierDisclosureCaretDensity,
+  type HappierDisclosureToggleProps,
+} from './collection/DisclosureToggle.js';
 export {
   HappierColumns,
   HappierColumn,
