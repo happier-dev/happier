@@ -11,6 +11,7 @@ import {
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 
 const { mockPost, mockGet } = vi.hoisted(() => ({
   mockPost: vi.fn(),
@@ -24,7 +25,7 @@ vi.mock('axios', () => ({
   },
 }));
 
-const currentness = (mode: 'plain' | 'e2ee', key: Uint8Array = new Uint8Array(32).fill(2)) => ({ mode, version: 1, signingKeyFingerprint: null, contentKeyFingerprint: mode === 'plain' ? null : computeAccountEncryptionMigrateKeyFingerprintV1(tweetnacl.box.keyPair.fromSecretKey(key).publicKey), updatedAt: 0 });
+const currentness = (mode: 'plain' | 'e2ee', key: Uint8Array = new Uint8Array(32).fill(2)) => createAccountEncryptionCurrentnessFixture({ mode, version: 1, contentKeyFingerprint: mode === 'plain' ? null : computeAccountEncryptionMigrateKeyFingerprintV1(tweetnacl.box.keyPair.fromSecretKey(key).publicKey) });
 
 describe('approveTerminalAuthRequest', () => {
   beforeEach(() => { mockGet.mockResolvedValue({ status: 200, data: currentness('e2ee') }); });
@@ -815,7 +816,7 @@ describe('approveTerminalAuthRequest', () => {
     });
   });
 
-  it('material decisions follow authenticated Account mode for every persisted credential shape', async () => {
+  it('material decisions follow authenticated Account mode and local custody for every persisted credential shape', async () => {
     const terminalKeypair = tweetnacl.box.keyPair();
     const pairingSecret = new Uint8Array(32).fill(11);
     const pairing = {
@@ -828,6 +829,7 @@ describe('approveTerminalAuthRequest', () => {
     const shapeSetups: Array<{
       label: string;
       mode: 'plain' | 'e2ee';
+      historical?: boolean;
       persist: (persistence: typeof import('@/persistence')) => Promise<void>;
       // Authoritative persisted credential shape inputs for the resolver.
       encryption: null | { type: 'legacy'; secret: Uint8Array } | { type: 'dataKey'; machineKey: Uint8Array };
@@ -857,6 +859,12 @@ describe('approveTerminalAuthRequest', () => {
       },
       {
         label: 'plain-retained-history', mode: 'plain',
+        historical: true,
+        persist: (persistence) => persistence.writeCredentialsLegacy({ secret: legacySecret, token: 'token-1' }),
+        encryption: { type: 'legacy', secret: legacySecret },
+      },
+      {
+        label: 'plain-active-keys', mode: 'plain',
         persist: (persistence) => persistence.writeCredentialsLegacy({ secret: legacySecret, token: 'token-1' }),
         encryption: { type: 'legacy', secret: legacySecret },
       },
@@ -877,10 +885,16 @@ describe('approveTerminalAuthRequest', () => {
         configMod.reloadConfiguration();
         const persistence = await import('@/persistence');
         await setup.persist(persistence);
+        if (setup.historical) {
+          // A′: build retained history through the canonical credential serializer.
+          const credentials = await persistence.readStoredCredentialsForServerId(configMod.configuration.activeServerId);
+          if (!credentials) throw new Error('Test setup invariant: retained credentials must exist');
+          const historicalCredentials = { ...credentials, accountE2eeCustody: 'historical' as const };
+          await persistence.writeStoredCredentialsForServerId(configMod.configuration.activeServerId, historicalCredentials);
+        }
         mockGet.mockResolvedValue({ status: 200, data: currentness(setup.mode, setup.encryption?.type === 'legacy' ? deriveAccountMachineKeyFromRecoverySecret(setup.encryption.secret) : setup.encryption?.machineKey) });
 
-        // This fixture Account mode is authenticated by the GET boundary;
-        // retained material never selects the Account mode.
+        // The GET authenticates the reported mode; local custody admits plain.
         const expectedVariant = resolveTerminalProvisioningVariantV2({
           encryptionMode: setup.mode,
         });
@@ -896,6 +910,13 @@ describe('approveTerminalAuthRequest', () => {
           (error: unknown) => ({ posted: false, error }),
         );
 
+        if (setup.mode === 'plain' && setup.encryption && !setup.historical) {
+          expect(result).toMatchObject({ posted: false, error: { code: 'account_mode_downgrade_unverified', canTryAgain: false } });
+          expect(mockPost).not.toHaveBeenCalled();
+          mockPost.mockReset();
+          vi.resetModules();
+          return;
+        }
         expect(result).toEqual({ posted: true });
         const body = mockPost.mock.calls[0]?.[1] as { response?: string; responseKind?: string } | undefined;
         expect(body?.responseKind).toBe(expectedVariant);
