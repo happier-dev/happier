@@ -20,3 +20,12 @@ export function isDeploymentActionIdV1(value: string): value is DeploymentAction
 export function isDeploymentChildRootActionIdV1(value: string): value is 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' {
   return value === 'deployments.deploy' || value === 'deployments.rollback' || value === 'deployments.promote';
 }
+
+export type DeploymentRootOperationV1 = 'deploy' | 'rollback' | 'promote' | 'teardown';
+export function deploymentOperationForRootActionV1(value: string): DeploymentRootOperationV1 | undefined {
+  if (value === 'deployments.deploy') return 'deploy';
+  if (value === 'deployments.rollback') return 'rollback';
+  if (value === 'deployments.promote') return 'promote';
+  if (value === 'deployments.teardown') return 'teardown';
+  return undefined;
+}

@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { InputPathSchema } from '../inputs/inputPredicates.js';
 import { ComputerSecretFillRequestV1Schema } from '../computer/v1.js';
 import { BrowserAutomationSecretFillRequestV1Schema } from '../browser/automation/v1.js';
 
@@ -23,3 +24,8 @@ export const PrivateSecretContinuationV1Schema = lazyZodSchema(() => {
   ]);
 });
 export type PrivateSecretContinuationV1 = z.infer<typeof PrivateSecretContinuationV1Schema>;
+
+/** Value-free presentation from the declaration owner; private admission rebinds current paths. */
+export const ConfidentialActionInputReviewV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('action_inputs'), paths: z.array(InputPathSchema),
+}));

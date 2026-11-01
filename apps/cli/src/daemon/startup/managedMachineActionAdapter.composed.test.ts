@@ -3,6 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import axios from 'axios';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { resolveApprovalExecutor } from '@happier-dev/protocol/approvals/resolveApprovalExecutor';
+import { ManagedControllerReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema, normalizeActionsSettingsV1, createActionExecutor, deriveSessionCreationTagV1, ExternalActionExecutionAuthorizationRequestV1Schema, type ActionExecuteResult, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -138,6 +142,67 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
 }
 
 describe('daemon managed Machine Action factory', () => {
+    it('replays an offered bootstrap retry on its controller and persists the shared bootstrap failure', async () => {
+        const actionId = 'machines.managed.bootstrap.retry' as const;
+        const input = { homeId: 'srv_home', managedId: 'retained-running-guest', expectedIntentRevision: 1 };
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
+            decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user', decidingAccountId: 'account' },
+            createdBy: { surface: 'system' }, requestedSurface: 'cli', actionId, actionArgs: input,
+            summary: 'Retry guest connection', approval: { flow: 'deferred', result: 'required' },
+            executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', accountId: 'account',
+                machineId: 'controller', target: { kind: 'machine', machineId: 'controller' }, actionId, requestId: 'approved-retry' } });
+        expect(resolveApprovalExecutor(request)).toEqual({ kind: 'daemon', machineId: 'controller' });
+        let machine = ManagedMachineV1Schema.parse({ id: input.managedId, homeId: input.homeId, custodianAccountId: 'account',
+            controller: { machineId: 'controller', installationId: 'installation' },
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            allocation: 'bound', resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            observation: { observedAt: 1, availability: 'present', power: 'running' },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const roles: string[] = [];
+        const nativeCause = { httpStatusClass: '4xx', code: 'forbidden' } as const;
+        const native = nativeFixture({ privateNative: true, credentialPurposes: [], onNativeRole: role => {
+            roles.push(role);
+            if (role === 'bootstrap') throw new PluginError({ code: 'native_access_refused',
+                details: { nativeCause, message: 'private provider response' } });
+        } });
+        // Home persistence and authored provider IO are the external boundaries.
+        // Action admission, operation ownership, driver and shared bootstrap stay real.
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const path = new URL(String(url)).pathname;
+            if (path.endsWith('/context')) return { status: 200, data: { machine, requestId: 'original-acquire' } };
+            if (path.endsWith('/current')) return { status: 200, data: { machine, current: true } };
+            if (path.endsWith('/report')) {
+                const report = ManagedControllerReportV1Schema.parse(body);
+                machine = ManagedMachineV1Schema.parse({ ...machine, observation: report.observation });
+                return { status: 200, data: { machine } };
+            }
+            throw new Error(`Unexpected bootstrap retry HTTP ${path}`);
+        });
+        const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account',
+            generateOperationId: () => 'retry-operation' });
+        const managed = createDaemonManagedMachineActionAdapter({ credentials, machineId: 'controller', serverBaseUrl: serverUrl,
+            serverId: configuration.activeServerId, installationIdentity: { installationId: 'installation', privateKey: nacl.sign.keyPair().secretKey },
+            managedProviderOperationAuthority: authority,
+            resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl,
+                resolveCurrentMachineId: () => 'controller' }),
+            acquireRuntimeRegistryLease: async () => ({ registry: native.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }),
+            observeActionExecution: args => operations.observeExecution(args) });
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), managedMachineAction: managed });
+        expect(await executor.execute(actionId, request.actionArgs, { surface: 'cli', authority: 'present_user',
+            actionCaller: { kind: 'host' }, runtimeAccountId: 'account', serverId: configuration.activeServerId,
+            actionRequestId: request.executionOriginV1.requestId, presentUserConfirmation: { actionId } }))
+            .toMatchObject({ ok: true, result: { managedId: machine.id, operation: { operationId: 'retry-operation' } } });
+        expect(await operations.handlers.getV2({ operationId: 'retry-operation', waitForTerminal: true }))
+            .toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'native_access_refused' } } });
+        expect(machine).toMatchObject({ allocation: 'bound', observation: {
+            availability: 'unavailable', reason: 'bootstrap.native_access_refused', nativeCause } });
+        expect(machine.enrolledMachineId).toBeUndefined();
+        expect(roles).toEqual(['bootstrap']);
+        expect(JSON.stringify(machine)).not.toContain('private provider response');
+    });
+
     it.each([['stop', 'unused'], ['delete', 'unused'], ['stop', 'deadline'], ['delete', 'deadline'], ['stop', 'admission-conflict']] as const)(
         'settles an automatic retention operation after manual %s (%s) without native IO', async (desired, kind) => {
         await storeHome('srv_home');

@@ -13,6 +13,13 @@ setup: an unenrolled guest retains its bootstrap cause; a running guest reports
 incomplete when no prior cause exists. A native absence or newer native failure
 still takes precedence. This is 0.3 development behavior.
 
+Bootstrap retry keeps the retained allocation and reuses the acquisition
+driver's shared bootstrap recipe. A durable retry approval with a captured
+Machine target returns to that controller, including from a public approval
+projection. The controller performs ordinary replay admission and owns the
+new operation; choosing its location grants no authority. Retry failures use
+the same durable bootstrap observations described above.
+
 
 This document describes the Happier CLI (`apps/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.
 
