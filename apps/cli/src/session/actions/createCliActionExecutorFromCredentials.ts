@@ -1438,6 +1438,13 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       const settingsInput = settingsAction ? SettingsDeclarationActionInputSchemasV1[actionId].safeParse(input) : null;
       let admittedInput = settingsInput?.success ? settingsInput.data : input;
       const spec = getActionSpec(ActionIdSchema.parse(actionId));
+      // A local profile is routing state of this CLI. Seal its declared Home
+      // selector as the portable identity before another Machine stores/replays it.
+      const selectedServerId = spec.invocationServerIdForInput?.(admittedInput);
+      if (originalCliCaller && selectedServerId && context.serverIdentityId && selectedServerId === approvalServerId
+        && readRecord(admittedInput)?.serverId === selectedServerId) {
+        admittedInput = { ...readRecord(admittedInput), serverId: context.serverIdentityId };
+      }
       // A show-once result needs the same live invocation that receives the
       // authenticated decision. The daemon already owns exact approval replay;
       // retaining this signed request there also retains its private return path.

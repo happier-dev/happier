@@ -45,6 +45,36 @@ const repository = { provider: { id: 'github', kind: 'github' as const, displayN
   repository: { nameWithOwner: 'happier-dev/happier', cloneUrl: 'https://github.com/happier-dev/happier.git' }, protocol: 'https' as const };
 
 describe('Machine filesystem approval continuity from UI and paired terminal', () => {
+  it('binds a requester-local terminal target to its portable Home before approval and daemon replay', async () => {
+    const homeId = 'srv_portable_home';
+    const profileId = 'requester-local-profile';
+    const h = await createHarness('machines.terminal.open', 'ask', false, homeId);
+    try {
+      expect(await h.runOriginalCli({ serverId: profileId, machineId: 'machine', terminalKey: 'cross-device-profile' },
+        'machines.terminal.open', { serverId: profileId, authority: 'present_user' }))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(h.spawned).toHaveLength(0);
+      const decided = await h.decideFromCli();
+      expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: {
+        status: 'executed', execution: { ok: true, result: { ok: true, terminalId: expect.any(String) } } } });
+      expect(h.spawned).toHaveLength(1);
+    } finally { await h.close(); }
+  });
+  it('refuses a terminal target at a different Home through original CLI approval replay', async () => {
+    const h = await createHarness('machines.terminal.open', 'ask', false, 'srv_portable_home');
+    try {
+      const proposed = await h.runOriginalCli({ serverId: 'srv_different_home', machineId: 'machine',
+        terminalKey: 'wrong-home-terminal' }, 'machines.terminal.open',
+        { serverId: 'requester-local-profile', authority: 'present_user' });
+      const result = proposed.ok ? await h.decideFromCli() : proposed;
+      if (result.ok) {
+        expect(result).toMatchObject({ result: { status: 'failed', execution: { ok: false, errorCode: 'server_target_mismatch' } } });
+      } else {
+        expect(result).toMatchObject({ errorCode: 'server_target_mismatch' });
+      }
+      expect(h.spawned).toHaveLength(0);
+    } finally { await h.close(); }
+  });
   it.each([false, true])('binds signed worker Service preparation to exact SOURCE and destination refs (protected=%s)', async protectedInput => {
     const h = await createHarness('localServices.launcher.start', 'allowed', false, 'srv_portableHome', undefined, true);
     try {

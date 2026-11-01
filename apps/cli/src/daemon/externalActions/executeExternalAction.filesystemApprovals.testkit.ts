@@ -1,3 +1,4 @@
+import { resolveMachineRpcWorkingDirectory } from '@/api/machine/resolveMachineRpcWorkingDirectory';
 import { expect, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { cp, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -173,7 +174,11 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   await writeFile(join(directory, 'outside'), 'outside unchanged');
   const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_MACHINE_RPC_WORKING_DIRECTORY']);
   env.patch({ HAPPIER_HOME_DIR: join(directory, 'srv_n2'), HAPPIER_ACTIVE_SERVER_ID: 'srv_n2',
-    HAPPIER_SERVER_URL: 'https://home.example.test', HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: directory });
+    HAPPIER_SERVER_URL: 'https://home.example.test',
+    // A Machine-only shell uses the host's default directory, outside the
+    // disposable Project tree. Only its OS PTY boundary is substituted below.
+    HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: actionId === 'machines.terminal.open'
+      ? `${directory},${resolveMachineRpcWorkingDirectory()}` : directory });
   reloadConfiguration();
   expect(configuration.activeServerId).toBe('srv_n2');
   const terminalProvenance = AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' });
@@ -518,7 +523,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   const spawned: SetupBoundaryPty[] = [];
   const spawnWaiters = new Map<number, (pty: SetupBoundaryPty) => void>();
   let setupTerminals: TerminalPtySessionManager | undefined;
-  if (setup || worker || Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId)) {
+  if (setup || worker || actionId === 'machines.terminal.open' || Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId)) {
     // Substitute the OS boundary, preserving one installed terminal store for
     // both the finite producer and the authenticated output RPC consumer.
     vi.spyOn(ptyBoundary, 'createNodePtyProvider').mockReturnValue({ spawn(params) {
@@ -1017,13 +1022,15 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         }).execute(actionId, input, { surface: 'cli', authority: 'account_automation', actionRequestId: 'standalone-script' });
       } finally { await app.close(); }
     },
-    async runOriginalCli(input: unknown, requestedActionId: ActionId = 'projects.worker.copy.inspect') {
+    async runOriginalCli(input: unknown, requestedActionId: ActionId = 'projects.worker.copy.inspect',
+      options?: Readonly<{ serverId: string; authority: 'present_user' | 'account_automation' }>) {
       writeDaemonState({ pid: process.pid, startedAt: Date.now(), startedWithCliVersion: 'test',
         httpPort: runtime.controlPort, controlToken: runtime.controlToken, machineId: target.machineId, accountId: 'account' });
       return await createCliActionExecutorFromCredentials({ credentials: cliCredentials,
-        serverId: 'srv_n2', serverApiUrl: params.serverHttpBaseUrl,
+        serverId: options?.serverId ?? 'srv_n2', serverApiUrl: params.serverHttpBaseUrl,
         serverIdentityId: homeId, machineId: target.machineId, externalActionClient: true, actionsSettingsProvider: originalCliSettings,
-        readCredentials: async () => cliCredentials }).execute(requestedActionId, input, { surface: 'cli', authority: 'account_automation' });
+        readCredentials: async () => cliCredentials,
+      }).execute(requestedActionId, input, { surface: 'cli', authority: options?.authority ?? 'account_automation' });
     },
     directCopyPreview: (input: unknown) => rpcInstallation.run(installation, () => rpc.handleRequest({
       method: target.machineId + ':' + RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT,

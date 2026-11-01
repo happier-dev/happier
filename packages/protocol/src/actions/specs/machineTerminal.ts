@@ -11,6 +11,7 @@ import {
 import { TerminalStreamReadRequestSchema, TerminalStreamReadResponseSchema } from '../../terminal/stream.js';
 import { TerminalStreamInputRequestSchema, TerminalStreamInputResponseSchema } from '../../terminal/input.js';
 import type { ApprovalPresentationContext, PreNormalizedActionSpec } from '../actionSpecs.js';
+import { actionInputServerId } from './definition.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 export type MachineTerminalActionId = typeof MACHINE_TERMINAL_ACTION_IDS[number];
@@ -85,6 +86,7 @@ function row<TId extends MachineTerminalActionId>(actionId: TId, title: string, 
     bindings: { rpcMethod, mcpToolName: actionId.replaceAll('.', '_'), voiceClientToolName: actionId.replaceAll('.', '_') },
     cli: { commands: [{ path: actionId.split('.'), visibility: 'canonical' }] },
     inputSchema: MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS[actionId], outputSchema: MACHINE_TERMINAL_ACTION_OUTPUT_SCHEMAS[actionId],
+    invocationServerIdForInput: actionInputServerId<(typeof MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS)[MachineTerminalActionId]>(MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS[actionId], input => input.serverId),
     inputHints: { fields: [
       { path: 'serverId', title: 'Home ID', widget: 'text', required: true },
       { path: 'machineId', title: 'Machine ID', widget: 'text', required: true },

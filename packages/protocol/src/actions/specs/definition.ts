@@ -136,6 +136,14 @@ export const ActionServerTransportSchema = lazyZodSchema(() => z.strictObject({
 }));
 export type ActionServerTransport = z.infer<typeof ActionServerTransportSchema>;
 
+/** A declaration projects its own qualified Home; unrelated nested references are not routes. */
+export function actionInputServerId<TSchema extends z.ZodMiniType>(schema: TSchema, project: (input: z.output<TSchema>) => string | undefined): (input: unknown) => string | undefined {
+  return (input: unknown): string | undefined => {
+    const parsed = z.safeParse(schema, input);
+    return parsed.success ? project(parsed.data) : undefined;
+  };
+}
+
 export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
   id: ActionIdSchema,
   title: z.string().check(z.minLength(1)),
@@ -290,6 +298,8 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
   executionPlacement: z.optional(ActionExecutionPlacementSchema),
   /** Host-only selector for an admitted input whose owner varies; never serialized as caller authority. */
   executionPlacementForInput: z.optional(z.custom<(input: unknown) => ActionExecutionPlacement>((value) => typeof value === 'function')),
+  /** Host-private Home projection; domain schemas admit its operands before Account capture. Never serialized. */
+  invocationServerIdForInput: z.optional(z.custom<(input: unknown) => string | undefined>((value) => typeof value === 'function')),
   /** Placements producible by this input selector; ingress cannot open encrypted operands. */
   executionPlacements: z.optional(z.readonly(z.array(ActionExecutionPlacementSchema).check(z.minLength(1)))),
   /** Host ingress exceptions belong to the declaration, never consumer-maintained ID groups. */
@@ -547,6 +557,7 @@ export type ActionSpecWithoutApproval = Readonly<{
   requiredAuthority?: ParsedActionSpec['requiredAuthority'];
   executionPlacement?: ParsedActionSpec['executionPlacement'];
   executionPlacementForInput?: ParsedActionSpec['executionPlacementForInput'];
+  invocationServerIdForInput?: ParsedActionSpec['invocationServerIdForInput'];
   executionPlacements?: ParsedActionSpec['executionPlacements'];
   originalExecution?: ParsedActionSpec['originalExecution'];
   pluginCallerPolicy?: ParsedActionSpec['pluginCallerPolicy'];
