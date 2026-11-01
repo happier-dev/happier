@@ -1839,7 +1839,15 @@ authorization, report-ID deduplication and durable intake used by local HTTP
 reports. The session-side fast-path drain remains active.
 
 An older failure whose pool has since moved to another member does not by itself
-prove that the interrupted turn resumed. Scheduler retries observe the pool's
+prove that the interrupted turn resumed. A late report with a proven adopted
+successor obtains durable custody through the existing scheduler, including a
+provider-scoped transient failure interrupted by that switch. Intake returns a
+recovering status and arms the normal backoff; it never authors a continuation
+on this superseded source. A different failed-turn report can start a new
+attempt after terminal recovery; replaying the settled report cannot revive it.
+The failed member's attributed evidence is retained
+through the coordinator's existing member-state writer; provider-scoped capacity
+does not penalize an individual member. Scheduler retries observe the pool's
 current member without replaying account selection or spending switch budget.
 Fresh eligible quota evidence is necessary but does not prove that this runner
 adopted the account: when its authorized tuple differs, the existing generation
@@ -1884,7 +1892,9 @@ pending until provider outcome proof arrives.
 Application correlation only carries that guarded context into an early exact
 recipient acknowledgement; it does not decide admission or deduplication. A late
 superseded in-band report cannot author a continuation before durable recovery
-owns the interruption; an existing scheduled recovery uses normal admission.
+owns the interruption; both its first scheduled attempt and replay use normal
+admission. Missing or mismatched source tuples without a proven same-pool
+successor remain superseded and cannot acquire continuation authority.
 
 Provider adapters report quota evidence and optional probe/reset-credit support.
 A reported reset time can drive a continuation without a provider-specific quota

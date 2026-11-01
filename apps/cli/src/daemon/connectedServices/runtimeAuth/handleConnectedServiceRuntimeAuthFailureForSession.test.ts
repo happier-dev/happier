@@ -2003,6 +2003,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
     const continueAfterRuntimeAuthSwitch = vi.fn(async () => {});
     const emitSessionEvent = vi.fn();
     const effects: string[] = [];
+    const recordObservedFailureState = vi.fn(async () => { effects.push('record-failure'); });
     const currentState: ConnectedServiceAuthGroupSwitchState = {
       serviceId: 'openai-codex', groupId: 'main', activeProfileId: 'current',
       generation: 7, runtimeStateRevision: 1,
@@ -2025,7 +2026,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
       nowMs: () => 20_000, quotaFreshnessMs: 60_000,
       loadState: async () => currentState,
       commitSwitch: async () => { effects.push('commit'); return currentState; },
-      recordObservedFailureState: async () => { effects.push('record-failure'); },
+      recordObservedFailureState,
       applyGeneration: async () => { effects.push('apply'); return { mode: 'hot_apply' }; },
     });
 
@@ -2089,7 +2090,10 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
       if (state === 'unknown') expect(result).not.toHaveProperty('result.groupExhausted');
       expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
     }
-    expect(effects).toEqual([]);
+    expect(effects).toEqual(['record-failure']);
+    expect(recordObservedFailureState).toHaveBeenCalledWith(expect.objectContaining({
+      observedProfileId: 'stale_member', reason: 'usage_limit',
+    }));
     expect(restartSession).not.toHaveBeenCalled();
     expect(emitSessionEvent).not.toHaveBeenCalled();
   });

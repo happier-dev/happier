@@ -640,8 +640,7 @@ export async function authorizeConnectedServiceRuntimeAuthFailureSource(input: R
     };
   }
   if (
-    input.recoveryInvocationSource === 'scheduler_retry'
-    && activeTuple.serviceId === classification.serviceId
+    activeTuple.serviceId === classification.serviceId
     && activeTuple.groupId === reportedGroupId
     && activeTuple.groupId !== null
     && activeTuple.generation !== null
@@ -1103,6 +1102,17 @@ async function continueRuntimeAuthRecoveryOnCurrentGroup(input: Readonly<{
     serviceId: input.selection.serviceId,
     groupId: input.selection.groupId,
     observedProfileId: normalizeNullableProfileId(input.classification.profileId),
+    ...(!isTemporaryRetryOwnedConnectedServiceRuntimeFailure(input.classification) ? {
+      failure: {
+        reason: input.classification.kind,
+        limitCategory: input.classification.limitCategory,
+        quotaScope: input.classification.quotaScope,
+        providerLimitId: input.classification.providerLimitId,
+        retryAfterMs: input.classification.retryAfterMs,
+        resetsAtMs: input.classification.resetsAtMs,
+        planType: input.classification.planType,
+      },
+    } : {}),
   }) ?? {
     status: 'quota_proof_unavailable' as const, generation: 0,
     activeProfileId: input.selection.activeProfileId ?? null,

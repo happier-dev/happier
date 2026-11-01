@@ -927,7 +927,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     return null;
   }
 
-  /** Observes an already-selected member without attributing an old failure or replaying a switch. */
+  /** Observes an already-selected member, preserving failed-member evidence without replaying a switch. */
   async observeCurrentGenerationForRecovery(input: Readonly<{
     serviceId: string;
     groupId: string;
@@ -948,6 +948,10 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       });
       return result;
     };
+    if (input.failure && input.observedProfileId && this.deps.recordObservedFailureState) {
+      await this.deps.recordObservedFailureState({ ...input, ...input.failure, loaded: initial });
+      initial = await this.deps.loadState(input);
+    }
     const probe = await this.probeQuotaSnapshotsBeforeSelection({
       trigger: 'classified_failure', request: { ...input, reason: 'usage_limit' },
       loaded: { ...initial, members: initial.members.filter((member) => member.profileId === initial.activeProfileId) },

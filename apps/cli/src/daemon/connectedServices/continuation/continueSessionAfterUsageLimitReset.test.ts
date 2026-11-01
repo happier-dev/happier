@@ -35,6 +35,10 @@ import { createDaemonControlApp } from '@/daemon/controlServer';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import type { ApiClient } from '@/api/api';
 import { ConnectedServiceRefreshCoordinator } from '../refresh/ConnectedServiceRefreshCoordinator';
+import { classifyCodexConnectedServiceAuthFailure } from '@/backends/codex/connectedServices/classifyCodexConnectedServiceAuthFailure';
+import { buildObservedFailureMemberRuntimeState } from '../accountGroups/memberRuntimeState';
+import { resolveConnectedServiceRuntimeAuthFailureStatusMessage } from '../runtimeAuth/resolveConnectedServiceRuntimeAuthFailureStatusMessage';
+import type { ConnectedServiceRuntimeAuthApplyCapability } from '../credentials/lifecycleTypes';
 
 const transport = vi.hoisted(() => ({
   fetchSessionById: vi.fn(),
@@ -265,31 +269,90 @@ describe('continueSessionAfterUsageLimitReset', () => {
     } finally { first.dispose(); replacement?.dispose(); providerFetch?.mockRestore(); await rm(directory, { recursive: true, force: true }); }
   });
 
-  it.each(['newer_work', 'stopped_turn'] as const)('does not author from late adopted-successor intake; durable recovery owns admission (%s)', async (projection) => {
-    fixture({ latestTurnId: 'interrupted-turn', latestTurnStatusObservedAt: 100 });
-    const serviceId = 'openai-codex' as const;
+  it.each([
+    ['codex', 'plan', 'stopped_turn'], ['codex', 'capacity', 'stopped_turn'],
+    ['claude', 'usage_limit', 'stopped_turn'], ['codex', 'plan', 'newer_work'],
+    ['codex', 'plan', 'completed'], ['codex', 'plan', 'cancelled'],
+    ['codex', 'plan', 'not_failed'], ['codex', 'plan', 'archived'],
+    ['codex', 'plan', 'unknown_quota'], ['codex', 'plan', 'exhausted_quota'],
+    ['codex', 'plan', 'provider_unproven'], ['codex', 'plan', 'predecessor'],
+  ] as const)('keeps superseded interrupted reports under durable admission (%s, %s, %s)', async (agentId, kind, projection) => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-superseded-recovery-'));
+    let now = 110;
+    const input = fixture({ latestTurnId: 'interrupted-turn', latestTurnStatus: 'in_progress', lastRuntimeIssue: null,
+      latestTurnStatusObservedAt: 100 });
+    const serviceId = agentId === 'codex' ? 'openai-codex' as const : 'claude-subscription' as const;
     const revision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
     const tracked: TrackedSession = { startedBy: 'daemon', happySessionId: sessionId, pid: 123,
-      activeTurnId: projection === 'newer_work' ? 'new-consumed-user-turn' : 'interrupted-turn',
-      spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, connectedServices: {
-        v: 1, bindingsByServiceId: { [serviceId]: { source: 'connected', selection: 'group', groupId: 'pool', profileId: 'B' } },
+      activeTurnId: 'interrupted-turn',
+      ...(projection === 'predecessor' ? { reattachedFromDiskMarker: true } : {}),
+      spawnOptions: { directory, backendTarget: { kind: 'builtInAgent', agentId }, connectedServices: {
+        v: 1, bindingsByServiceId: { [serviceId]: { source: 'connected', selection: 'group', groupId: 'pool', profileId: 'A' } },
       } } };
-    const classification: ConnectedServiceRuntimeFailureClassification = { kind: 'usage_limit', serviceId, groupId: 'pool', profileId: 'A',
-      groupGeneration: 1, credentialRevision: revision, resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error' };
-    const runtime = { serviceId, groupId: 'pool', profileId: 'B', generation: 2, credentialRevision: revision };
+    let classification: ConnectedServiceRuntimeFailureClassification = agentId === 'codex'
+      ? classifyCodexConnectedServiceAuthFailure({ providerErrorPath: true, serviceId, groupId: 'pool', profileId: 'A',
+          sourceAccountIdentity: { groupGeneration: 1, credentialRevision: revision },
+          error: new Error(kind === 'capacity' ? 'Fatal error: application network permission was revoked'
+            : "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.") })!
+      : { kind: 'usage_limit', serviceId, groupId: 'pool', profileId: 'A', groupGeneration: 1,
+          credentialRevision: revision, resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error' };
+    expect(classification.kind).toBe(kind);
+    if (agentId === 'codex') expect(classification.limitCategory).toBe(kind === 'capacity' ? 'capacity' : 'plan_invalid');
+    if (projection === 'predecessor') classification = { ...classification, credentialRevision: null };
+    // The old member's reset must not defer checking the already-adopted member.
+    if (projection === 'unknown_quota' || projection === 'exhausted_quota') classification = { ...classification, resetsAtMs: 604_800_000 };
+    const runtimeAuthApply = {
+      directLiveHotAuth: {
+        supportsInTurnApply: true, requiresExactRuntimeIdentity: true, refreshSelectionResync: 'required',
+        authMode: { kind: 'external_token_injection', surface: 'superseded-recovery-fixture' },
+      },
+    } satisfies ConnectedServiceRuntimeAuthApplyCapability;
+    let runtime = { serviceId, groupId: 'pool', profileId: 'A', generation: 1, credentialRevision: revision };
+    let state: ConnectedServiceAuthGroupSwitchState = { serviceId, groupId: 'pool', activeProfileId: 'A', generation: 1,
+      credentialRevision: revision, runtimeStateRevision: 0,
+      policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({ autoSwitch: true, strategy: 'priority', softSwitchRemainingPercent: 15 }),
+      members: ['A', 'B'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+      memberStatesByProfileId: new Map([
+        ['A', { quotaSnapshot: { capturedAtMs: now, effectiveRemainingPercent: 10 } }],
+        ['B', { quotaSnapshot: { capturedAtMs: now, effectiveRemainingPercent: 80 } }],
+      ]) };
+    let commits = 0;
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
-      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 110, quotaFreshnessMs: 60_000,
-      loadState: async () => ({ ...runtime, activeProfileId: 'B', runtimeStateRevision: 0,
-        policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({ autoSwitch: true, strategy: 'priority' }),
-        members: [{ profileId: 'B', priority: 0, enabled: true, createdAtMs: 1 }],
-        memberStatesByProfileId: new Map([['B', { quotaSnapshot: { capturedAtMs: 110, effectiveRemainingPercent: 80 } }]]) }),
-      commitSwitch: async () => { throw new Error('already adopted'); }, applyGeneration: async () => ({ mode: 'hot_apply' }),
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => now, quotaFreshnessMs: 60_000,
+      loadState: async () => state,
+      commitSwitch: async value => { commits++; state = { ...state, activeProfileId: value.toProfileId, generation: state.generation + 1 }; return state; },
+      applyGeneration: async value => {
+        runtime = { ...runtime, profileId: value.activeProfileId!, generation: value.generation };
+        return { mode: 'hot_apply' };
+      },
+      // This adapter is the persisted pool-state boundary; the real normalizer builds its state.
+      recordObservedFailureState: async value => {
+        const memberStatesByProfileId = new Map(state.memberStatesByProfileId);
+        memberStatesByProfileId.set(value.observedProfileId!, buildObservedFailureMemberRuntimeState({
+          existing: memberStatesByProfileId.get(value.observedProfileId!) ?? null, policy: state.policy,
+          reason: value.reason, limitCategory: value.limitCategory, quotaScope: value.quotaScope,
+          providerLimitId: value.providerLimitId, retryAtMs: value.resetsAtMs ?? null,
+          planType: value.planType, observedAtMs: now,
+        }));
+        state = { ...state, memberStatesByProfileId };
+      },
     });
+    const consumed = new Set<string>();
+    const sends: string[] = [];
+    transport.enqueuePendingQueueV2MessageViaHttp.mockImplementation(async ({ body }: { body: { localId: string } }) => {
+      sends.push(body.localId);
+      const didWrite = !consumed.has(body.localId);
+      consumed.add(body.localId);
+      return { didWrite, terminal: false };
+    });
+    const file = join(directory, 'recoveries.json');
+    let scheduler: RuntimeAuthRecoveryScheduler;
     const run = async (value: { sessionId: string; switchesThisTurn: number; classification: ConnectedServiceRuntimeFailureClassification;
       interruptedOriginId?: string; source?: 'scheduler_retry'; sourceAuthorization?: Awaited<ReturnType<typeof authorizeConnectedServiceRuntimeAuthFailureSource>> }) => {
       const intent = scheduler.readForSession(sessionId)[0];
       return await handleConnectedServiceRuntimeAuthFailureForSession({ ...value, getChildren: () => [tracked], switchCoordinator: coordinator,
         recoveryInvocationSource: value.source, resolveRegisteredRuntimeAuthFailureSource: () => runtime,
+        runtimeAuthApply, resolveCurrentRuntimeAuthFailureSource: async () => runtime,
         continueAfterRuntimeAuthSwitch: createConnectedServiceContinuationHandler({ credentials, interruptedOriginId: value.interruptedOriginId,
           resumePromptMode: 'standard', resolveInterruption: () => 'provider_failed_turn',
           ...(intent ? { runtimeAuthRecovery: { armedAtMs: intent.armedAtMs,
@@ -298,26 +361,132 @@ describe('continueSessionAfterUsageLimitReset', () => {
         }),
       });
     };
-    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 110, recover: run });
-    const app = createDaemonControlApp({ getChildren: () => [tracked], machineId: 'machine', controlToken: 'token',
+    const createScheduler = () => new RuntimeAuthRecoveryScheduler({ nowMs: () => now, recover: run,
+      durableStore: createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(file), baseBackoffMs: 1_000,
+      jitterMs: () => 0, maxAttempts: 3, maxCoalescedReplays: 1, maxDegradedAttempts: 2 });
+    scheduler = createScheduler();
+    const createApp = () => createDaemonControlApp({ getChildren: () => [tracked], machineId: 'machine', controlToken: 'token',
       stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'unused' }),
       requestShutdown: () => {}, onHappySessionWebhook: () => {}, runtimeAuthRecoveryScheduler: scheduler,
       authorizeConnectedServiceRuntimeAuthFailure: value => authorizeConnectedServiceRuntimeAuthFailureSource({ ...value,
-        getChildren: () => [tracked], resolveRegisteredRuntimeAuthFailureSource: () => runtime }),
+        getChildren: () => [tracked], resolveRegisteredRuntimeAuthFailureSource: () => runtime,
+        runtimeAuthApply, resolveCurrentRuntimeAuthFailureSource: async () => runtime }),
       handleConnectedServiceRuntimeAuthFailure: run,
     });
+    let app = createApp();
     try {
-      const response = await app.inject({ method: 'POST', url: '/connected-service-runtime-auth/failure',
+      // A real soft switch hot-applies while the original provider turn is still running.
+      expect(await coordinator.switchBeforeTurn({ sessionId, serviceId, groupId: 'pool', reason: 'soft_threshold', observedProfileId: 'A' }))
+        .toMatchObject({ status: 'switched', activeProfileId: 'B', generation: 2 });
+      expect(input.rawSession.latestTurnStatus).toBe('in_progress');
+      tracked.activeTurnId = projection === 'newer_work' ? 'new-consumed-user-turn' : 'interrupted-turn';
+      transport.fetchSessionById.mockResolvedValue({ ...input.rawSession,
+        latestTurnStatus: projection === 'not_failed' ? 'in_progress'
+          : projection === 'completed' || projection === 'cancelled' ? projection : 'failed',
+        latestTurnStatusObservedAt: projection === 'completed' || projection === 'cancelled' ? now + 1 : 100,
+        archivedAt: projection === 'archived' ? now : null,
+        lastRuntimeIssue: projection === 'completed' || projection === 'cancelled' || projection === 'not_failed' ? null : issue });
+      if (projection === 'unknown_quota' || projection === 'exhausted_quota') {
+        state = { ...state, memberStatesByProfileId: new Map([['B', projection === 'unknown_quota' ? {} : {
+          quotaSnapshot: { capturedAtMs: now, effectiveRemainingPercent: 0,
+            meters: [{ meterId: 'weekly', limitCategory: 'usage_limit', remainingPct: 0, resetAtMs: 180_000, providerLimitId: null }] },
+        }]]) };
+      }
+      const report = () => app.inject({ method: 'POST', url: '/connected-service-runtime-auth/failure',
         headers: { 'x-happier-daemon-token': 'token' }, payload: { sessionId, classification, reportId: 'late-A-report', switchesThisTurn: 0 } });
+      const [response, duplicate] = await Promise.all([report(), report()]);
       expect(response.statusCode).toBe(200);
-      expect(response.json()).toMatchObject({ ok: true, result: { status: 'recovery_superseded' } });
-      expect(scheduler.readForSession(sessionId)).toHaveLength(0);
-      expect(transport.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
-      await scheduler.beginClassifiedFailure({ reportId: 'late-A-report', sessionId, classification, switchesThisTurn: 0 });
-      await scheduler.wake({ sessionId, reason: 'manual' });
-      expect(transport.enqueuePendingQueueV2MessageViaHttp).toHaveBeenCalledTimes(projection === 'stopped_turn' ? 1 : 0);
-    } finally { scheduler.dispose(); await app.close(); }
+      expect(duplicate.json()).toEqual(response.json());
+      expect(response.json()).toMatchObject({ ok: true, result: { status: 'recovery_retry_scheduled' } });
+      expect(resolveConnectedServiceRuntimeAuthFailureStatusMessage(response.json())?.code).toBe('recovery_retry_scheduled');
+      const initial = scheduler.readForSession(sessionId)[0]!;
+      expect(initial).toMatchObject({ status: 'waiting', lastSettledTransition: 'scheduled', classification });
+      expect(initial.nextRetryAtMs).toBe(1_110);
+      expect(sends).toHaveLength(0);
+      now = initial.nextRetryAtMs!;
+      await scheduler.wake({ sessionId, reason: 'timer' });
+      if (projection === 'unknown_quota' || projection === 'exhausted_quota') {
+        const wait = scheduler.readForSession(sessionId)[0]!;
+        expect(wait.lastError).toBe(projection === 'unknown_quota' ? 'quota_proof_unavailable' : 'no_eligible_member');
+        expect(wait.nextRetryAtMs).toBe(projection === 'unknown_quota' ? now + 30_000 : 180_000);
+        expect(sends).toHaveLength(0);
+        now = wait.nextRetryAtMs!;
+        state = { ...state, memberStatesByProfileId: new Map([...state.memberStatesByProfileId,
+          ['B', { quotaSnapshot: { capturedAtMs: now, effectiveRemainingPercent: 80 } }]]) };
+        await scheduler.wake({ sessionId, reason: 'timer' });
+      }
+      const shouldSend = projection !== 'newer_work' && projection !== 'completed' && projection !== 'cancelled'
+        && projection !== 'not_failed' && projection !== 'archived';
+      expect(consumed.size).toBe(shouldSend ? 1 : 0);
+      if (kind !== 'capacity') {
+        expect(state.memberStatesByProfileId.get('A')).toMatchObject({ lastFailureKind: kind });
+        expect(state.memberStatesByProfileId.get('B')?.lastFailureKind).toBeUndefined();
+      }
+      const firstSends = sends.length;
+      const beforeReplacement = scheduler.readForSession(sessionId)[0]!;
+      scheduler.dispose();
+      scheduler = createScheduler();
+      scheduler.hydratePassive();
+      await app.close();
+      app = createApp();
+      expect(scheduler.readForSession(sessionId)[0]!.attemptId).toBe(initial.attemptId);
+      await report();
+      expect(scheduler.readForSession(sessionId)[0]!.attemptId).toBe(initial.attemptId);
+      now = beforeReplacement.nextRetryAtMs!;
+      await scheduler.wake({ sessionId, reason: 'timer' });
+      expect(consumed.size).toBe(shouldSend ? 1 : 0);
+      if (shouldSend) {
+        expect(sends.length).toBeGreaterThan(firstSends);
+        expect(new Set(sends).size).toBe(1);
+      }
+      if (projection === 'provider_unproven') {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const current = scheduler.readForSession(sessionId)[0]!;
+          if (current.nextRetryAtMs !== null) now = current.nextRetryAtMs;
+          await scheduler.wake({ sessionId, reason: 'timer' });
+        }
+        expect(scheduler.readForSession(sessionId)[0]).toMatchObject({ status: 'exhausted', nextRetryAtMs: null,
+          lastError: 'recovery_unproven_awaiting_provider_outcome' });
+        const terminalSends = sends.length;
+        await scheduler.wake({ sessionId, reason: 'manual' });
+        expect(sends).toHaveLength(terminalSends);
+        // A replay cannot revive exhausted work. A genuinely different failed
+        // turn still needs custody even when it reports the same old account.
+        await app.close();
+        app = createApp();
+        await report();
+        expect(scheduler.readForSession(sessionId)[0]!.status).toBe('exhausted');
+        tracked.activeTurnId = 'next-interrupted-turn';
+        transport.fetchSessionById.mockResolvedValue({ ...input.rawSession, latestTurnId: tracked.activeTurnId,
+          latestTurnStatus: 'failed', latestTurnStatusObservedAt: now, lastRuntimeIssue: { ...issue, occurredAt: now } });
+        const nextReport = await app.inject({ method: 'POST', url: '/connected-service-runtime-auth/failure',
+          headers: { 'x-happier-daemon-token': 'token' }, payload: {
+            sessionId, classification, reportId: 'next-late-A-report', switchesThisTurn: 0,
+          } });
+        expect(nextReport.json()).toMatchObject({ ok: true, result: { status: 'recovery_retry_scheduled' } });
+        const nextRecovery = scheduler.readForSession(sessionId)[0]!;
+        expect(nextRecovery.attemptId).not.toBe(initial.attemptId);
+        expect(nextRecovery.status).toBe('waiting');
+        state = { ...state, memberStatesByProfileId: new Map([...state.memberStatesByProfileId,
+          ['B', { quotaSnapshot: { capturedAtMs: now, effectiveRemainingPercent: 80 } }]]) };
+        now = nextRecovery.nextRetryAtMs!;
+        await scheduler.wake({ sessionId, reason: 'timer' });
+        expect(consumed.size).toBe(2);
+      } else if (shouldSend) {
+        expect(scheduler.readForSession(sessionId)[0]).toMatchObject({ status: 'resumed_awaiting_proof', pendingTargetProfileId: 'B', pendingTargetGeneration: 2 });
+        await scheduler.markProviderOutcomeProofByKey({ recoveryKey: buildRuntimeAuthRecoveryKey({ sessionId, ...classification }),
+          proofKind: 'provider_activity', expectedAttemptId: initial.attemptId });
+        expect(scheduler.readForSession(sessionId)[0]!.status).toBe('recovered');
+        await app.close();
+        app = createApp();
+        await report();
+        await scheduler.wake({ sessionId, reason: 'manual' });
+        expect(scheduler.readForSession(sessionId)[0]!.status).toBe('recovered');
+        expect(consumed.size).toBe(1);
+      }
+      expect(commits).toBe(1);
+    } finally { scheduler.dispose(); await app.close(); await rm(directory, { recursive: true, force: true }); }
   });
 
   it.each([

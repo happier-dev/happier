@@ -205,7 +205,7 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
     }
   });
 
-  it('accepts and retires an exact old-target report after the registered runtime adopted a newer generation', async () => {
+  it('retires a mismatched report when the registered runtime cannot prove a newer adopted generation', async () => {
     resetConnectedServiceRuntimeAuthFailureReportDedupeForTests();
     const outboxDir = await createTempDir('happier-runtime-auth-post-apply-superseded-');
     const beginClassifiedFailure = vi.fn();
@@ -247,7 +247,7 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
             serviceId: 'openai-codex',
             groupId: 'main',
             profileId: 'batiplus',
-            generation: 1225,
+            generation: 1224,
             credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
           }),
           resolveCurrentRuntimeAuthFailureSource: async ({ classification: currentClassification }) =>
@@ -256,17 +256,6 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
               readRuntimeIdentity,
               resolveCurrentCredential: async () => null,
             }),
-          runtimeAuthApply: {
-            directLiveHotAuth: {
-              supportsInTurnApply: true,
-              requiresExactRuntimeIdentity: true,
-              refreshSelectionResync: 'required',
-              authMode: {
-                kind: 'external_token_injection',
-                surface: 'test-codex-runtime',
-              },
-            },
-          },
         }),
       handleConnectedServiceRuntimeAuthFailure,
       runtimeAuthRecoveryScheduler: {

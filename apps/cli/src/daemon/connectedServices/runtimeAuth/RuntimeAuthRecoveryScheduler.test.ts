@@ -502,12 +502,13 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       ]),
     };
     const effects: string[] = [];
+    const recordObservedFailureState = vi.fn(async () => { effects.push('record-failure'); });
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
       leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 20_000,
       quotaFreshnessMs: 60_000, loadState: async () => current,
       commitSwitch: async () => { effects.push('commit'); return current; },
       applyGeneration: async () => { effects.push('apply'); return { mode: 'hot_apply' }; },
-      recordObservedFailureState: async () => { effects.push('record-failure'); },
+      recordObservedFailureState,
     });
     const tracked = {
       startedBy: 'daemon', happySessionId: 'stopped-pool', pid: 123,
@@ -555,7 +556,11 @@ describe('RuntimeAuthRecoveryScheduler', () => {
         status: eligible ? 'resumed_awaiting_proof' : 'waiting',
       });
       expect(continuedProfile).toBe(eligible ? activeProfileId : null);
-      expect(effects).toEqual([]);
+      expect(effects).toEqual(['record-failure']);
+      expect(recordObservedFailureState).toHaveBeenCalledWith(expect.objectContaining({
+        observedProfileId: failure.profileId,
+        reason: failure.kind,
+      }));
     } finally { scheduler.dispose(); }
   });
 

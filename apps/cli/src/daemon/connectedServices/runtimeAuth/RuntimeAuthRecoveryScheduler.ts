@@ -784,8 +784,11 @@ function resolveClassifiedFailureRetryAfterMs(input: Readonly<{
 function buildClassifiedFailureIntakeDecision(input: Readonly<{
   classification: ConnectedServiceRuntimeFailureClassification;
   nowMs: number;
+  deferToScheduler?: boolean;
 }>): RetryDecision {
-  const retryAfterMs = resolveClassifiedFailureRetryAfterMs(input);
+  // A superseding target must establish its own quota/reset evidence. The old
+  // member's reset cannot postpone the scheduler's first current-target check.
+  const retryAfterMs = input.deferToScheduler ? undefined : resolveClassifiedFailureRetryAfterMs(input);
   return {
     retryable: true,
     classification: {
@@ -794,7 +797,7 @@ function buildClassifiedFailureIntakeDecision(input: Readonly<{
       ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
     },
     failurePhase: 'handler',
-    failureReason: 'classified_failure_reported',
+    failureReason: input.deferToScheduler ? 'source_tuple_superseded' : 'classified_failure_reported',
     lastError: input.classification.kind,
   };
 }
@@ -932,7 +935,10 @@ function mergeRuntimeAuthRecoveryIntent(
     // Only a fresh in-band provider report owns a new recovery epoch. A later handler/apply
     // failure without the original attempt id is still fallout from the settled attempt and must
     // not revive it merely because its caller omitted the report id.
-    return next.lastSettledTransition === 'working' ? next : previous;
+    // Adopted-successor intake starts scheduled because it has no in-band
+    // executor. It is still a fresh report, unlike handler/apply retry fallout.
+    return next.lastSettledTransition === 'working' || next.failureReason === 'source_tuple_superseded'
+      ? next : previous;
   }
   // Older observers have no accepted issue association. They cannot erase a
   // current one while repeating otherwise identical evidence.
@@ -2170,6 +2176,7 @@ export class RuntimeAuthRecoveryScheduler {
     switchesThisTurn: number;
     classification: ConnectedServiceRuntimeFailureClassification;
     resumePromptMode?: 'standard' | 'off' | 'custom';
+    deferToScheduler?: boolean;
   }>): Promise<RuntimeAuthRecoveryIntakeResult> {
     const classification = sanitizeConnectedServiceRuntimeFailureClassification(input.classification);
     if (!classification) return { status: 'ignored', retryable: false };
@@ -2180,10 +2187,11 @@ export class RuntimeAuthRecoveryScheduler {
       decision: buildClassifiedFailureIntakeDecision({
         classification,
         nowMs: this.deps.nowMs(),
+        deferToScheduler: input.deferToScheduler,
       }),
-      projectScheduled: false,
+      projectScheduled: input.deferToScheduler === true,
       reportId: input.reportId,
-      transition: 'working',
+      transition: input.deferToScheduler ? 'scheduled' : 'working',
       resumePromptMode: readResumePromptMode(input.resumePromptMode),
     });
   }

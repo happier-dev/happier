@@ -171,6 +171,7 @@ type RuntimeAuthRecoverySchedulerForControlServer = Readonly<{
     switchesThisTurn: number;
     classification: ConnectedServiceRuntimeFailureClassification;
     resumePromptMode?: 'standard' | 'off' | 'custom';
+    deferToScheduler?: boolean;
   }>) => Promise<unknown>;
   enqueueHandlerFailure?: (input: Readonly<{
     reportId?: string;
@@ -305,6 +306,7 @@ async function beginRuntimeAuthRecoveryIntake(input: Readonly<{
   switchesThisTurn: number;
   classification: ConnectedServiceRuntimeFailureClassification;
   resumePromptMode: 'standard' | 'off' | 'custom';
+  deferToScheduler?: boolean;
 }>): Promise<Readonly<{ ok: true; created: boolean; recovery?: unknown }> | Readonly<{ ok: false; error: unknown }>> {
   if (!input.runtimeAuthRecoveryScheduler?.beginClassifiedFailure) return { ok: true, created: false };
   try {
@@ -314,6 +316,7 @@ async function beginRuntimeAuthRecoveryIntake(input: Readonly<{
       switchesThisTurn: input.switchesThisTurn,
       classification: input.classification,
       resumePromptMode: input.resumePromptMode,
+      ...(input.deferToScheduler ? { deferToScheduler: true } : {}),
     });
     return { ok: true, created: true, recovery };
   } catch (error) {
@@ -476,7 +479,6 @@ export function createRuntimeAuthFailureReportIntake({
         },
       };
     }
-    const isRuntimeAuthRecoveryOwnedFailure = !isTemporaryRetryOwnedConnectedServiceRuntimeFailure(classification);
     let sourceAuthorization: Awaited<ReturnType<NonNullable<
       typeof authorizeConnectedServiceRuntimeAuthFailure
     >>> | undefined;
@@ -496,7 +498,12 @@ export function createRuntimeAuthFailureReportIntake({
         errorCode: 'connected_service_runtime_auth_recovery_intake_failed' as const,
       };
     }
-    if (sourceAuthorization && sourceAuthorization.status !== 'authorized') {
+    const adoptedSuccessor = sourceAuthorization?.status === 'recovery_superseded' && 'adoptedTarget' in sourceAuthorization;
+    // An adopted account supersedes source selection, not custody of the failed
+    // turn. Only the scheduler may resume it, through its existing admission.
+    const deferToScheduler = adoptedSuccessor && Boolean(runtimeAuthRecoveryScheduler?.beginClassifiedFailure);
+    const isRuntimeAuthRecoveryOwnedFailure = deferToScheduler || !isTemporaryRetryOwnedConnectedServiceRuntimeFailure(classification);
+    if (sourceAuthorization && sourceAuthorization.status !== 'authorized' && !deferToScheduler) {
       const result = await handleConnectedServiceRuntimeAuthFailure({
         sessionId,
         switchesThisTurn,
@@ -516,7 +523,7 @@ export function createRuntimeAuthFailureReportIntake({
         switchesThisTurn,
         classification,
         resumePromptMode,
-        ...(sourceAuthorization ? { sourceAuthorization } : {}),
+        ...(deferToScheduler ? { deferToScheduler: true } : {}),
       });
       if (!intake.ok) {
         const diagnostic = readSafeDaemonControlErrorDiagnostic(intake.error);
@@ -549,6 +556,11 @@ export function createRuntimeAuthFailureReportIntake({
       recoveryIntakeCreated = intake.created;
       if (intake.created) {
         resumePromptMode = readRuntimeAuthRecoveryResumePromptMode(intake.recovery);
+      }
+      if (deferToScheduler) {
+        return okForRecovery(isScheduledRuntimeAuthRecovery(intake.recovery)
+          ? buildRuntimeAuthRecoveryScheduledResult({ classification, recovery: intake.recovery })
+          : buildRuntimeAuthRecoveryTerminalResult({ classification, recovery: intake.recovery }), intake.recovery);
       }
     }
     const canSettleRecoveryAttempt = isRuntimeAuthRecoveryOwnedFailure
