@@ -75,14 +75,14 @@ describe('native prompts through the existing terminal dialog owner', () => {
     await broker.dispose();
   });
 
-  it('publishes the full hook-owned questions while their native tab header is above the viewport', async () => {
+  it('publishes the full hook-owned questions while their native header and question beginning are above the viewport', async () => {
     const { session, broker, client } = createHarness();
     const screen = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-question-clipped.txt', import.meta.url), 'utf8');
     const input = JSON.parse(readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-question-clipped-input.json', import.meta.url), 'utf8'));
     session.onClaudeSessionHook({ hook_event_name: 'ClaudeNativePrompt', session_id: 'claude-native-session',
       tool_use_id: 'toolu-clipped-question', tool_name: 'AskUserQuestion', tool_input: input,
     });
-    const dialog = broker.resolveVisibleDialog(parseClaudeScreenState(screen));
+    const dialog = broker.resolveVisibleDialog(parseClaudeScreenState(screen.split('\n').slice(1).join('\n')));
     expect(dialog).toMatchObject({ kind: 'native', dialogId: 'ask_user_question' });
     if (!dialog) throw new Error('expected current native question');
     const pending = broker.requestDialogChoice({ dialog });

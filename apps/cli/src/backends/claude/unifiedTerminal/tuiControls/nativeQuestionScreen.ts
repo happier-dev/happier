@@ -66,6 +66,20 @@ function matchesOptionLabel(option: ClaudeNativeQuestionPresentation['options'][
   return matchesRenderedLines([option.label, ...(option.continuationLines ?? []).map((line) => line.trim())], expected, true);
 }
 
+function matchesQuestionHeading(presentation: ClaudeNativeQuestionPresentation, expected: string): boolean {
+  if (presentation.tabs !== null) return matchesClaudeNativeQuestionText(presentation.question ?? '', expected);
+  const lines = (presentation.question ?? '').split('\n').map(normalized).filter(Boolean);
+  const first = lines[0];
+  if (!first) return false;
+  const text = normalized(expected);
+  // The viewport may start in the middle of the question. Match its complete visible
+  // suffix, preserving the same word-wrap rules used for full headings and choices.
+  for (let start = text.indexOf(first); start >= 0; start = text.indexOf(first, start + 1)) {
+    if (matchesRenderedLines(lines, text.slice(start))) return true;
+  }
+  return false;
+}
+
 /** Native question forms characterized against real Claude Code 2.1.304, 309 and 310 tmux captures. */
 export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQuestionPresentation | null {
   let lines = readClaudeNativeDialogScreenLines(rawText);
@@ -217,35 +231,43 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
   return { kind: review ? 'review' : 'question', tabs, question: review ? null : heading.map((line) => line.trim()).join('\n'), multiSelect, nextFocused, freeformIndex: review || previewColumn !== null ? null : options.length - 1, notesDraft, options, reviewClipped, reviewAnswers };
 }
 
-/** Correlates a native presentation with hook-owned questions, independent of selection progress. */
-export function matchesClaudeNativeQuestionScreen(
+/** One page identity for publication and navigation, independent of selection progress. */
+export function resolveClaudeNativeQuestionScreen(
   presentation: ClaudeNativeQuestionPresentation,
   questions: readonly StructuredQuestionLike[],
-): boolean {
+): Readonly<{ kind: 'question'; questionIndex: number }> | Readonly<{ kind: 'review' }> | null {
   const result = normalizeStructuredQuestionDescriptors(questions);
-  if (!result.ok) return false;
+  if (!result.ok) return null;
   const tabs = presentation.tabs;
   if (tabs && (result.questions.length !== tabs.length || !result.questions.every((question, index) => {
     const caption = tabs[index]!.header;
     const header = question.header ?? '';
-    // Claude abbreviates inactive tabs at narrow widths. The full question and
-    // options below remain the authority for identifying the current native page.
+    // Claude abbreviates inactive tabs at narrow widths. The visible question and
+    // complete choices identify the current native page.
     return matchesClaudeNativeQuestionText(caption, header)
       || caption.endsWith('…') && normalized(header).startsWith(normalized(caption.slice(0, -1)));
-  }))) return false;
+  }))) return null;
   if (presentation.kind === 'review') {
     const answered = tabs ? result.questions.filter((_, index) => tabs[index]!.answered) : result.questions;
     const offset = presentation.reviewClipped ? answered.length - presentation.reviewAnswers.length : 0;
-    return offset >= 0 && presentation.reviewAnswers.length === answered.length - offset
+    const matches = offset >= 0 && presentation.reviewAnswers.length === answered.length - offset
       && answered.slice(offset).every((question, index) => matchesClaudeNativeQuestionText(presentation.reviewAnswers[index]?.question ?? '', question.question ?? ''));
+    return matches ? { kind: 'review' } : null;
   }
-  const matches = result.questions.filter((question) => matchesClaudeNativeQuestionText(presentation.question ?? '', question.question ?? ''));
-  if (matches.length !== 1) return false;
-  const question = matches[0]!;
-  const rawQuestion = questions[result.questions.indexOf(question)]!;
-  const hasFreeformRow = !isClaudeNativePreviewQuestion(rawQuestion);
-  return question.multiSelect === presentation.multiSelect
-    && (presentation.freeformIndex !== null) === hasFreeformRow
-    && presentation.options.length === question.options.length + Number(hasFreeformRow)
-    && question.options.every((option, index) => matchesOptionLabel(presentation.options[index]!, option.label));
+  const matches = result.questions.flatMap((question, questionIndex) => {
+    const hasFreeformRow = !isClaudeNativePreviewQuestion(questions[questionIndex]!);
+    return question.multiSelect === presentation.multiSelect
+      && (presentation.freeformIndex !== null) === hasFreeformRow
+      && presentation.options.length === question.options.length + Number(hasFreeformRow)
+      && question.options.every((option, index) => matchesOptionLabel(presentation.options[index]!, option.label))
+      && matchesQuestionHeading(presentation, question.question ?? '') ? [questionIndex] : [];
+  });
+  return matches.length === 1 ? { kind: 'question', questionIndex: matches[0]! } : null;
+}
+
+export function matchesClaudeNativeQuestionScreen(
+  presentation: ClaudeNativeQuestionPresentation,
+  questions: readonly StructuredQuestionLike[],
+): boolean {
+  return resolveClaudeNativeQuestionScreen(presentation, questions) !== null;
 }

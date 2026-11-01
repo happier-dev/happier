@@ -106,7 +106,7 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     expect(parsed).toMatchObject({ kind: 'question', tabs: null });
     expect(matchesClaudeNativeQuestionScreen(parsed!, input.questions)).toBe(true);
     expect(matchesClaudeNativeQuestionScreen(parsed!, [input.questions[0]!, ...input.questions])).toBe(false);
-    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(screen.split('\n').slice(1).join('\n'))!, input.questions)).toBe(false);
+    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(screen.split('\n').slice(1).join('\n'))!, input.questions)).toBe(true);
     const width = screen.split('\n').find((line) => /^─+$/u.test(line))!.length;
     const split = screen.split('\n').map((line) => `${line.padEnd(width + 4)}Unrelated adjacent panel`).join('\n');
     expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(split)!, input.questions)).toBe(true);
@@ -115,17 +115,32 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('native_question');
   });
 
-  it('recognizes a complete question and choices when the terminal clips only its tab header', async () => {
+  it('identifies and answers a clipped question from its visible suffix and complete choices', async () => {
     const clipped = single.slice(single.indexOf('Which probe color?\n\n❯ 1.'));
     const parsed = parseClaudeNativeQuestionScreen(clipped);
     expect(parsed).toMatchObject({ kind: 'question', question: 'Which probe color?' });
     expect(matchesClaudeNativeQuestionScreen(parsed!, questions)).toBe(true);
     expect(matchesClaudeNativeQuestionScreen(parsed!, [{ ...questions[0]!, question: 'Which other probe color?' }])).toBe(false);
     expect(matchesClaudeNativeQuestionScreen(parsed!, [{ ...questions[0]!, options: ['Amber', 'Green'] }])).toBe(false);
-    const port = createFakeControlPort({ captures: [clipped, idle] });
-    await expect(answerClaudeNativeQuestion({ ...controls, port, questions, answers: { 'Which probe color?': ['Amber'] } })).resolves.toEqual({ status: 'answered' });
-    expect(port.sentKeys).toEqual(['Enter']);
-    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(clipped.replace('Which probe color?', 'probe color?'))!, questions)).toBe(false);
+    const suffix = clipped.replace('Which probe color?', 'probe color?');
+    for (const screen of [clipped, suffix]) {
+      const port = createFakeControlPort({ captures: [screen, idle] });
+      await expect(answerClaudeNativeQuestion({ ...controls, port, questions, answers: { 'Which probe color?': ['Amber'] } })).resolves.toEqual({ status: 'answered' });
+      expect(port.sentKeys).toEqual(['Enter']);
+    }
+    const presentation = parseClaudeNativeQuestionScreen(suffix)!;
+    const ambiguous = [
+      { ...questions[0]!, question: 'Which first probe color?' },
+      { ...questions[0]!, question: 'Which second probe color?' },
+    ];
+    expect(matchesClaudeNativeQuestionScreen(presentation, ambiguous)).toBe(false);
+    expect(matchesClaudeNativeQuestionScreen(presentation, [ambiguous[0]!, { ...ambiguous[1]!, options: ['Amber', 'Green'] }])).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(single.replaceAll('Which probe color?', 'probe color?'))!, questions)).toBe(false);
+    const ambiguousPort = createFakeControlPort({ captures: [suffix] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: ambiguousPort, questions: ambiguous,
+      answers: { 'Which first probe color?': ['Amber'], 'Which second probe color?': ['Blue'] },
+    })).resolves.toEqual({ status: 'failed', reason: 'native_question_changed' });
+    expect(ambiguousPort.sentKeys).toEqual([]);
     expect(parseClaudeNativeQuestionScreen(clipped.replace('Enter to select · ↑/↓ to navigate · Esc to cancel', '❯ Next task'))).toBeNull();
   });
 
@@ -249,9 +264,15 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     const apple = wrappedMulti.replace('1. [ ] Apple', '1. [✓] Apple');
     const pearFocus = focus(apple, '1. [✓] Apple', '2. [ ] Pear');
     const pear = pearFocus.replace('2. [ ] Pear', '2. [✓] Pear');
-    const port = createFakeControlPort({ captures: [wrappedMulti, apple, pearFocus, pear, wrappedSize, focus(wrappedSize, '1. Small', '2. Large'), wrappedReview, idle] });
-    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'answered' });
-    expect(port.sentKeys).toEqual(['Enter', 'ArrowDown', 'Enter', 'Tab', 'ArrowDown', 'Enter', 'Enter']);
+    const flow = [wrappedMulti, apple, pearFocus, pear, wrappedSize, focus(wrappedSize, '1. Small', '2. Large'), wrappedReview, idle];
+    const clippedFlow = flow.map((screen) => screen.includes('│ Which probe')
+      ? screen.slice(screen.indexOf('│ Which probe') + '│ Which probe\n'.length)
+      : screen);
+    for (const captures of [flow, clippedFlow, [clippedFlow[4]!, ...clippedFlow]]) {
+      const port = createFakeControlPort({ captures });
+      await expect(answerClaudeNativeQuestion({ ...controls, port, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'answered' });
+      expect(port.sentKeys).toEqual([...(captures.length > flow.length ? ['ShiftTab'] : []), 'Enter', 'ArrowDown', 'Enter', 'Tab', 'ArrowDown', 'Enter', 'Enter']);
+    }
   });
 
   it('correlates provider line breaks and wrapped option labels through the same native identity', async () => {
@@ -302,6 +323,8 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     const input = [{ ...questions[0]!, question: expected }];
     const parsed = parseClaudeNativeQuestionScreen(wrapped);
     expect(matchesClaudeNativeQuestionScreen(parsed!, input)).toBe(true);
+    const clipped = wrapped.slice(wrapped.indexOf(`│ ${expected.slice(0, 38)}`)).replace(`│ ${expected.slice(0, 38)}`, `│ ${expected.slice(6, 38)}`);
+    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(clipped)!, input)).toBe(true);
     const combined = 'e\u0301'.repeat(65);
     const withCombiningMarks = single.replaceAll('Which probe color?', combined);
     expect(parseClaudeNativeQuestionScreen(withCombiningMarks)?.question).toBe(combined);

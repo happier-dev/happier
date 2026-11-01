@@ -5,7 +5,7 @@ import type { TerminalControlPort, TerminalSpecialKey } from '@/integrations/ter
 import { normalizeClaudeAskUserQuestionInputForPublication } from '../../utils/normalizeClaudeAskUserQuestionInput';
 import { buildNativeAskUserQuestionAnswersForClaude } from '../../utils/askUserQuestionAnswersForClaude';
 import { captureScreenState, doesClaudeOwnedTextMatchCapture, hasUnsupportedClaudeNativeTextControls, sendResultToFailure } from './controlRuntime';
-import { matchesClaudeNativeQuestionScreen, matchesClaudeNativeQuestionText, type ClaudeNativeQuestionPresentation } from './nativeQuestionScreen';
+import { resolveClaudeNativeQuestionScreen, matchesClaudeNativeQuestionText, type ClaudeNativeQuestionPresentation } from './nativeQuestionScreen';
 import { DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS } from './types';
 
 export { matchesClaudeNativeQuestionScreen, parseClaudeNativeQuestionScreen, type ClaudeNativeQuestionPresentation } from './nativeQuestionScreen';
@@ -51,6 +51,7 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
   if (unrepresentable) return failed('native_freeform_unrepresentable');
 
   let presentation: ClaudeNativeQuestionPresentation | null = null;
+  let questionIndex = -1;
   let completionVisible = false;
   let captureReason: string | null = null;
   const capture = async (): Promise<boolean> => {
@@ -61,8 +62,10 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
       return false;
     }
     presentation = result.state.nativeQuestionPresentation;
+    const match = presentation ? resolveClaudeNativeQuestionScreen(presentation, params.questions) : null;
+    questionIndex = match?.kind === 'question' ? match.questionIndex : -1;
     completionVisible = result.state.inputBoxInteractive || result.state.generating;
-    if (presentation && !matchesClaudeNativeQuestionScreen(presentation, params.questions)) {
+    if (presentation && !match) {
       captureReason = 'native_question_changed'; return false;
     }
     // Notes belong to the terminal user, including an empty active editor.
@@ -110,7 +113,6 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
           : answer.answer === desired[index]!.rendered;
     })
   );
-  const questionIndex = () => questions.findIndex((question) => matchesClaudeNativeQuestionText(read().question ?? '', question.question ?? ''));
   const conflict = (index: number): boolean => {
     const screen = read();
     const target = desired[index]!;
@@ -124,7 +126,7 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
     // The bound is the exact visible row count, including native multi-select's Next row.
     const steps = read().options.length + Number(read().multiSelect);
     for (let step = 0; step <= steps; step += 1) {
-      if (read().kind !== 'question' || questionIndex() !== index || conflict(index)) { captureReason = 'local_answer_conflict'; return false; }
+      if (read().kind !== 'question' || questionIndex !== index || conflict(index)) { captureReason = 'local_answer_conflict'; return false; }
       const current = read().nextFocused ? read().options.length : read().options.findIndex((option) => option.focused);
       if (current === target) return true;
       if (!await send(target > current ? 'ArrowDown' : 'ArrowUp') || !await refresh()) return false;
@@ -137,11 +139,11 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
   // has browsed ahead or opened Submit, so every answer is matched against its real options.
   if (read().kind === 'review') {
     if (!await send('ShiftTab') || !await refresh()) return failed(captureReason!);
-    if (read().kind !== 'question' || questionIndex() !== questions.length - 1) return failed('native_question_navigation_stalled');
+    if (read().kind !== 'question' || questionIndex !== questions.length - 1) return failed('native_question_navigation_stalled');
   }
-  for (let index = questionIndex(); index > 0; index -= 1) {
+  for (let index = questionIndex; index > 0; index -= 1) {
     if (!await send('ShiftTab') || !await refresh()) return failed(captureReason!);
-    if (read().kind !== 'question' || questionIndex() !== index - 1) return failed('native_question_navigation_stalled');
+    if (read().kind !== 'question' || questionIndex !== index - 1) return failed('native_question_navigation_stalled');
   }
   const seenPages = new Set<number>();
   let submitted = false;
@@ -157,7 +159,7 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
       submitted = true;
       continue;
     }
-    const index = questionIndex();
+    const index = questionIndex;
     if (index < 0 || seenPages.has(index)) return failed('native_question_navigation_stalled');
     seenPages.add(index);
     if (conflict(index)) return failed('local_answer_conflict');
@@ -180,7 +182,7 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
         if (!await send({ text: freeformText })) return failed(captureReason!);
         ownDrafts.set(index, freeformText);
         if (!await refresh()) return failed(captureReason!);
-        if (questionIndex() !== index || conflict(index) || !draftMatches(index, read().options[freeformIndex]?.label ?? '', freeformText)) return failed('native_freeform_not_applied');
+        if (questionIndex !== index || conflict(index) || !draftMatches(index, read().options[freeformIndex]?.label ?? '', freeformText)) return failed('native_freeform_not_applied');
       }
       if (!question.multiSelect || read().options[freeformIndex]!.checked !== true) {
         if (!await send('Enter')) return failed(captureReason!);
@@ -189,10 +191,10 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
         if (question.multiSelect && read().options[freeformIndex]?.checked !== true) return failed('native_selection_not_applied');
       }
     }
-    if (question.multiSelect || read().kind === 'question' && questionIndex() === index) {
+    if (question.multiSelect || read().kind === 'question' && questionIndex === index) {
       if (!await send('Tab') || !await refresh()) return failed(captureReason!);
       // In Claude's multiline editor Tab first leaves text entry for the same page's Next row.
-      if (read().kind === 'question' && questionIndex() === index && read().nextFocused) {
+      if (read().kind === 'question' && questionIndex === index && read().nextFocused) {
         if (conflict(index)) return failed('local_answer_conflict');
         if (!await send('Enter') || !await refresh()) return failed(captureReason!);
       }
