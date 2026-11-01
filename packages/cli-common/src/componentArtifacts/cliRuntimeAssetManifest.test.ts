@@ -125,6 +125,29 @@ describe('CLI runtime asset build manifest', () => {
     });
   });
 
+  it('records and refreshes both the Windows service launcher and managed wrapper without losing either identity', async () => {
+    const runtime = await createRuntimeRoot({ executableName: 'happier-cliproxyapi-managed.exe' });
+    const launcher = 'happier-service-launcher.exe';
+    await writeFile(join(runtime.runtimeRoot, launcher), 'launcher-A');
+    for (const relativePath of [runtime.relativePath, launcher]) {
+      writeCliBinaryArtifactRuntimeAssetBuildManifest({ payloadDir: runtime.runtimeRoot, relativePath });
+    }
+    const integrity = (relativePath: string) => cliDistBuildManifest.readCliRuntimeAssetIntegrity({
+      runtimeRoot: runtime.runtimeRoot, relativePath,
+    });
+    expect(integrity(runtime.relativePath).ok).toBe(true);
+    expect(integrity(launcher).ok).toBe(true);
+    await writeFile(join(runtime.runtimeRoot, launcher), 'launcher-B');
+    expect(integrity(launcher).reason).toBe('runtime_asset_sha256_mismatch');
+    expect(integrity(runtime.relativePath).ok).toBe(true);
+    cliDistBuildManifest.refreshCliRuntimeAssetBuildManifest({ runtimeRoot: runtime.runtimeRoot, entrypoint: runtime.entrypoint });
+    expect(integrity(launcher).ok).toBe(true);
+    expect(integrity(runtime.relativePath).ok).toBe(true);
+    const manifest = cliDistBuildManifest.readCliDistBuildManifest(runtime.entrypoint);
+    expect(manifest.manifest?.runtimeAssets).toHaveLength(2);
+    expect(manifest.manifest?.runtimeAsset).toBeUndefined();
+  });
+
   it('rejects same-length substituted bytes and a missing runtime asset record', async () => {
     const runtime = await createRuntimeRoot({
       executableName: 'happier-cliproxyapi-managed',
@@ -172,7 +195,7 @@ describe('CLI runtime asset build manifest', () => {
     });
   });
 
-  it('rejects non-canonical paths and the superseded plural manifest shape', async () => {
+  it('rejects non-canonical paths and ambiguous mixed manifest shapes', async () => {
     const runtime = await createRuntimeRoot({
       executableName: 'happier-cliproxyapi-managed',
     });
@@ -210,5 +233,11 @@ describe('CLI runtime asset build manifest', () => {
       ok: false,
       reason: 'invalid_runtime_asset_manifest_entry',
     });
+    delete manifest.runtimeAsset;
+    manifest.runtimeAssets = [manifest.runtimeAssets[0], manifest.runtimeAssets[0]];
+    await writeFile(written.manifestPath, JSON.stringify(manifest));
+    expect(cliDistBuildManifest.readCliRuntimeAssetIntegrity({
+      runtimeRoot: runtime.runtimeRoot, relativePath: runtime.relativePath,
+    }).reason).toBe('invalid_runtime_asset_manifest_entry');
   });
 });

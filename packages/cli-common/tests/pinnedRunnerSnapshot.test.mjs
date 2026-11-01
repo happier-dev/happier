@@ -1,3 +1,4 @@
+import cliDistBuildManifest from '../cliDistBuildManifest.cjs';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -233,6 +234,18 @@ test('rejects a newer snapshot whose recorded managed runtime asset is no longer
     workspaceRuntimeIdentity: 'd'.repeat(64),
     mtimeMs: 2_000,
   });
+  // A Windows payload records the GUI task host alongside its managed wrapper.
+  await writeFile(join(newer.snapshotRoot, 'happier-service-launcher.exe'), 'launcher-bytes');
+  cliDistBuildManifest.writeCliRuntimeAssetBuildManifest({
+    runtimeRoot: newer.snapshotRoot,
+    entrypoint: newer.snapshotEntrypoint,
+    relativePath: 'happier-service-launcher.exe',
+  });
+  assert.equal(
+    resolveNewestReadyPinnedRunnerSnapshot(mutableEntrypoint)?.snapshotEntrypoint,
+    newer.snapshotEntrypoint,
+    'a second native asset must preserve the admitted managed wrapper identity',
+  );
   await writeFile(
     join(newer.snapshotRoot, ...PINNED_RUNNER_MANAGED_PROVIDER_RUNTIME_RELATIVE_PATH),
     'corrupt-managed-runtime\n',

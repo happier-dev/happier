@@ -20,7 +20,7 @@ export function isPinnedRunnerSnapshotStructurallyReady(
 export function resolvePinnedRunnerSnapshotManagedProviderRuntimeIdentity(input?: Readonly<{
   entrypoint?: string;
   runtimeRoot?: string;
-  manifest?: Readonly<{ runtimeAsset?: unknown }>;
+  manifest?: Readonly<{ runtimeAsset?: unknown; runtimeAssets?: unknown }>;
 }>): string | null;
 
 /**

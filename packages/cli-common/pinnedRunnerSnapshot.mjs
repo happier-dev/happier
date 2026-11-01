@@ -129,7 +129,7 @@ export function resolvePinnedRunnerSnapshotManagedProviderRuntimeIdentity({
   runtimeRoot,
   manifest = {},
 } = {}) {
-  if (manifest?.runtimeAsset === undefined) {
+  if (manifest?.runtimeAsset === undefined && manifest?.runtimeAssets === undefined) {
     return PINNED_RUNNER_NO_MANAGED_PROVIDER_RUNTIME_SHA256;
   }
   const integrity = cliDistBuildManifest.readCliRuntimeAssetIntegrity({

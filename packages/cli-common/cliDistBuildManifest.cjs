@@ -631,6 +631,32 @@ function parseCliRuntimeAssetManifestEntry(manifest) {
   };
 }
 
+// A single asset keeps the predecessor format; multiple independently consumed
+// native assets share this same owner rather than overwriting one another.
+function parseCliRuntimeAssetManifestEntries(manifest) {
+  const hasSingle = Object.prototype.hasOwnProperty.call(manifest ?? {}, 'runtimeAsset');
+  const hasMultiple = Object.prototype.hasOwnProperty.call(manifest ?? {}, 'runtimeAssets');
+  if (!hasMultiple) {
+    const parsed = parseCliRuntimeAssetManifestEntry(manifest);
+    return { ...parsed, entries: parsed.ok ? [parsed.entry] : [] };
+  }
+  const rawEntries = manifest.runtimeAssets;
+  if (hasSingle || !Array.isArray(rawEntries) || rawEntries.length < 2) {
+    return { ok: false, reason: 'invalid_runtime_asset_manifest_entry', entries: [] };
+  }
+  const entries = [];
+  const paths = new Set();
+  for (const raw of rawEntries) {
+    const parsed = parseCliRuntimeAssetManifestEntry({ runtimeAsset: raw });
+    if (!parsed.ok || paths.has(parsed.entry.relativePath)) {
+      return { ok: false, reason: 'invalid_runtime_asset_manifest_entry', entries: [] };
+    }
+    entries.push(parsed.entry);
+    paths.add(parsed.entry.relativePath);
+  }
+  return { ok: true, reason: 'runtime_asset_manifest', entries };
+}
+
 function resolveCliRuntimeAssetPath(runtimeRoot, relativePath) {
   const normalizedRoot = resolve(String(runtimeRoot ?? ''));
   const normalizedRelativePath = normalizeCliRuntimeAssetRelativePath(relativePath);
@@ -668,9 +694,15 @@ function writeCliRuntimeAssetBuildManifest(params = {}) {
     byteLength: bytes.byteLength,
     sha256: createHash('sha256').update(bytes).digest('hex'),
   };
+  const previous = parseCliRuntimeAssetManifestEntries(manifestResult.manifest);
+  if (!previous.ok && previous.reason !== 'missing_runtime_asset_manifest') {
+    throw new Error(`[cli-dist-manifest] cannot extend invalid runtime asset manifest: ${previous.reason}`);
+  }
+  const entries = [...previous.entries.filter((entry) => entry.relativePath !== relativePath), runtimeAsset];
+  const { runtimeAsset: _previousAsset, runtimeAssets: _previousAssets, ...previousManifest } = manifestResult.manifest;
   const manifest = {
-    ...manifestResult.manifest,
-    runtimeAsset,
+    ...previousManifest,
+    ...(entries.length === 1 ? { runtimeAsset } : { runtimeAssets: entries }),
   };
   writeFileSync(
     manifestResult.manifestPath,
@@ -693,17 +725,17 @@ function refreshCliRuntimeAssetBuildManifest(params = {}) {
       `[cli-dist-manifest] cannot refresh runtime asset from invalid build manifest: ${manifestResult.reason}`,
     );
   }
-  const parsed = parseCliRuntimeAssetManifestEntry(manifestResult.manifest);
-  if (!parsed.ok || !parsed.entry) {
+  const parsed = parseCliRuntimeAssetManifestEntries(manifestResult.manifest);
+  if (!parsed.ok) {
     throw new Error(
       `[cli-dist-manifest] cannot refresh runtime asset from invalid manifest entry: ${parsed.reason}`,
     );
   }
-  return writeCliRuntimeAssetBuildManifest({
-    runtimeRoot,
-    entrypoint,
-    relativePath: parsed.entry.relativePath,
-  });
+  let result;
+  for (const entry of parsed.entries) {
+    result = writeCliRuntimeAssetBuildManifest({ runtimeRoot, entrypoint, relativePath: entry.relativePath });
+  }
+  return result;
 }
 
 function readCliRuntimeAssetIntegrity(params = {}) {
@@ -738,8 +770,8 @@ function readCliRuntimeAssetIntegrity(params = {}) {
       manifestPath: manifestResult.manifestPath,
     };
   }
-  const parsed = parseCliRuntimeAssetManifestEntry(manifestResult.manifest);
-  if (!parsed.ok || !parsed.entry) {
+  const parsed = parseCliRuntimeAssetManifestEntries(manifestResult.manifest);
+  if (!parsed.ok) {
     return {
       ok: false,
       reason: parsed.reason,
@@ -748,8 +780,8 @@ function readCliRuntimeAssetIntegrity(params = {}) {
       manifestPath: manifestResult.manifestPath,
     };
   }
-  const expected = parsed.entry;
-  if (expected.relativePath !== relativePath) {
+  const expected = parsed.entries.find((entry) => entry.relativePath === relativePath);
+  if (!expected) {
     return {
       ok: false,
       reason: 'runtime_asset_not_recorded',

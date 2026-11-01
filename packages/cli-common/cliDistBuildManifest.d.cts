@@ -13,6 +13,7 @@ interface CliDistBuildManifest {
   readonly workspaceRuntimeIdentity?: string;
   readonly workspaceRuntimePackages?: readonly string[];
   readonly runtimeAsset?: CliRuntimeAssetBuildManifestEntry;
+  readonly runtimeAssets?: readonly CliRuntimeAssetBuildManifestEntry[];
   readonly stalePackages?: readonly CliQaTypecheckFailure[];
 }
 
