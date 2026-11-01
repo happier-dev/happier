@@ -4,6 +4,21 @@ import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('managed TypeScript language contribution', () => {
+  it('enables server-side hints for both language sections while clients retain Off/Parameters/All presentation', () => {
+    const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    if (!admitted.ok) throw new Error('TypeScript declaration was not admitted');
+    const server = admitted.manifest.contributes.languageServers[0];
+    // Native TypeScript defaults these preferences off, even when it advertises inlayHintProvider.
+    for (const section of ['js/ts', 'typescript', 'javascript']) {
+      expect(server?.settings ?? {}).toHaveProperty(section, expect.objectContaining({
+        inlayHints: {
+          parameterNames: { enabled: 'all' },
+          variableTypes: { enabled: true },
+          functionLikeReturnTypes: { enabled: true },
+        },
+      }));
+    }
+  });
   it('admits native language intelligence with type acquisition disabled and complete platform archives', () => {
     const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
     expect(admitted).toMatchObject({ ok: true });

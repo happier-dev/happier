@@ -1,5 +1,15 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
+// Native TypeScript advertises inlay hints but defaults their production off.
+// Enable the producer once; each editor's Off/Parameters/All preference owns demand and display.
+const languageSettings = {
+  inlayHints: {
+    parameterNames: { enabled: 'all' },
+    variableTypes: { enabled: true },
+    functionLikeReturnTypes: { enabled: true },
+  },
+};
+
 // The platform archives retain the adjacent standard-library declarations.
 // Digests and layout were measured against the 7.1.0-beta npm platform archives.
 export const LANG_TYPESCRIPT_PLUGIN = definePlugin({
@@ -15,6 +25,7 @@ export const LANG_TYPESCRIPT_PLUGIN = definePlugin({
         userPreferences: { tsserver: { automaticTypeAcquisition: { enabled: false } } },
         disablePushDiagnostics: true,
       },
+      settings: { 'js/ts': languageSettings, typescript: languageSettings, javascript: languageSettings },
     },
   },
   managedDependencies: {
