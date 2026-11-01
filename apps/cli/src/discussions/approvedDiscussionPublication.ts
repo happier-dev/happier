@@ -243,8 +243,8 @@ export async function readApprovedDiscussionPublication(params: Readonly<{
       const input = DiscussionCreateInputV1Schema.safeParse(actionInput);
       if (!input.success || !sameStrictJsonValue(input.data.attachmentSources ?? [], params.request.attachmentSources ?? [])) return null;
       const body = params.request.request;
-      if ((input.data.creationLocalId ?? deriveApprovedDiscussionMutationLocalId({ artifactId: params.artifactId, purpose: 'creation' })) !== body.creationLocalId
-        || (input.data.firstMessage.localId ?? deriveApprovedDiscussionMutationLocalId({ artifactId: params.artifactId, purpose: 'first_message' })) !== body.firstMessage.localId) return null;
+      if ((input.data.creationLocalId ?? deriveApprovedDiscussionMutationLocalId({ requestId: origin.requestId, purpose: 'creation' })) !== body.creationLocalId
+        || (input.data.firstMessage.localId ?? deriveApprovedDiscussionMutationLocalId({ requestId: origin.requestId, purpose: 'first_message' })) !== body.firstMessage.localId) return null;
       const currentness = await fetchAccountEncryptionCurrentness({ token: params.credentials.token,
         serverBaseUrl: params.serverUrl, allowCredentialRecovery: false, signal: params.signal });
       const key = await openResourceDataKey({ credentials: params.credentials, mode: currentness.mode,
@@ -264,7 +264,7 @@ export async function readApprovedDiscussionPublication(params: Readonly<{
       const input = DiscussionPostInputV1Schema.safeParse(actionInput);
       if (!input.success || input.data.discussionId !== params.request.discussionId
         || !sameStrictJsonValue(input.data.attachmentSources ?? [], params.request.attachmentSources ?? [])
-        || (input.data.localId ?? deriveApprovedDiscussionMutationLocalId({ artifactId: params.artifactId, purpose: 'post' })) !== params.request.request.localId) return null;
+        || (input.data.localId ?? deriveApprovedDiscussionMutationLocalId({ requestId: origin.requestId, purpose: 'post' })) !== params.request.request.localId) return null;
       const bound = bindDiscussionActionHttpRequestV1('discussion.get', { discussionId: input.data.discussionId });
       const response = await axios.get(params.serverUrl.replace(/\/+$/, '') + bound.path,
         { headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.credentials.token}` }, validateStatus: () => true, signal: params.signal });

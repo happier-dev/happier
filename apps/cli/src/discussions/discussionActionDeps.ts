@@ -219,9 +219,10 @@ export function createDiscussionActionDeps(options: Readonly<{
     const origin = ApprovalRequestOriginV1Schema.safeParse(context.approvalOrigin);
     const publicationOptions = { ...(signal ? { signal } : {}),
       // Original caller defaults are host-only, not part of the private RPC ABI.
-      ...(context.approvedActionReplay ? { approvedActionReplay: { artifactId: context.approvedActionReplay.artifactId } } : {}) };
+      ...(context.approvedActionReplay?.artifactId ? { approvedActionReplay: { artifactId: context.approvedActionReplay.artifactId } } : {}) };
     const omittedLocalId = (purpose: Parameters<typeof deriveApprovedDiscussionMutationLocalId>[0]['purpose']) =>
-      context.approvedActionReplay ? deriveApprovedDiscussionMutationLocalId({ artifactId: context.approvedActionReplay.artifactId, purpose }) : randomUUID();
+      context.approvedActionReplay && context.actionRequestId
+        ? deriveApprovedDiscussionMutationLocalId({ requestId: context.actionRequestId, purpose }) : randomUUID();
     if (agentOrigin && !(isPost && options.postWorkflowMessage && workflowReturn) && (isPost || actionId === 'discussion.create')
       && (!admittedSessionId || (context.defaultSessionId !== undefined && context.defaultSessionId !== admittedSessionId)
         || (context.approvalOrigin !== undefined && (!origin.success || origin.data.sessionId !== admittedSessionId))

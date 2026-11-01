@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 
-/** Existing approved Artifact custody owns omitted retry keys, not each transport attempt. */
+/** The approved operation owns omitted retry keys, independently of its optional Artifact. */
 export function deriveApprovedDiscussionMutationLocalId(params: Readonly<{
-  artifactId: string;
+  requestId: string;
   purpose: 'creation' | 'first_message' | 'post';
 }>): string {
   return `approved-discussion-v1:${createHash('sha256').update(JSON.stringify([
-    'happier.discussion-approved-mutation.v1', params.artifactId, params.purpose,
+    'happier.discussion-approved-mutation.v1', params.requestId, params.purpose,
   ])).digest('base64url')}`;
 }

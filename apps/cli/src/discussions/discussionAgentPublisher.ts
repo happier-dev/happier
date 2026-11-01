@@ -12,7 +12,7 @@ import { AgentRuntimeDaemonServiceTurnWitnessV1Schema, projectAgentRuntimeDaemon
 import type { RpcAdmissionPredicate, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { RunnerMcpSessionWithContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
-import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/participants';
 import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -80,6 +80,8 @@ function prepareDiscussionAgentPublication(params: Readonly<{
   return { ...publication, sourceSession };
 }
 
+const approvedActionReplaySchema = z.strictObject({ artifactId: z.string().check(z.trim(), z.minLength(1)) });
+
 /** Private payload on the incumbent owner-only Session RPC transport. */
 export const DiscussionAgentPublisherRequestV1Schema = z.union([
   z.strictObject({
@@ -88,7 +90,7 @@ export const DiscussionAgentPublisherRequestV1Schema = z.union([
   }),
   z.strictObject({
     request: asHostProtocolZod(PublisherRequestV1Schema),
-    approvedActionReplay: z.strictObject({ artifactId: z.string().check(z.trim(), z.minLength(1)) }),
+    approvedActionReplay: approvedActionReplaySchema,
   }),
   // Without an executing approval, only the server-validated original reply
   // can outlive its turn. Ordinary posts/create require the active witness.
@@ -98,6 +100,15 @@ export const DiscussionAgentPublisherRequestV1Schema = z.union([
   }),
 ]);
 export type DiscussionAgentPublisherPrivateRequestV1 = z.infer<typeof DiscussionAgentPublisherRequestV1Schema>;
+
+/** The private Session RPC carries recorded approvals, not other host replay context. */
+export function prepareApprovedDiscussionAgentPublication(params: Readonly<{
+  request: DiscussionAgentPublisherRequestV1;
+  replay: NonNullable<ActionExecutorContext['approvedActionReplay']>;
+}>): DiscussionAgentPublisherPrivateRequestV1 | null {
+  const replay = approvedActionReplaySchema.safeParse({ artifactId: params.replay.artifactId });
+  return replay.success ? { request: params.request, approvedActionReplay: replay.data } : null;
+}
 
 /** An Account RPC caller may name an original, but cannot author its terminal result. */
 async function verifyTerminalDiscussionReturn(params: Readonly<{

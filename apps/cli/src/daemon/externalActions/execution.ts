@@ -7,7 +7,7 @@ import type { MachineVitalsSampleV1 } from "@happier-dev/protocol/machines/vital
 import { createOwnServerDeploymentRuntimeForHost } from "@/deployments/targets/ownServer/ownServerDeploymentHostRuntime";
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from "@happier-dev/protocol/actions/executor/agentStartAdmission";
 import { DiscussionAgentPublisherResponseV1Schema } from "@happier-dev/protocol/discussions/api";
-import type { DiscussionAgentPublisherPrivateRequestV1 } from "@/discussions/discussionAgentPublisher";
+import { prepareApprovedDiscussionAgentPublication, type DiscussionAgentPublisherPrivateRequestV1 } from "@/discussions/discussionAgentPublisher";
 import { createApprovedDiscussionAgentPublisher } from "@/discussions/approvedDiscussionAgentPublisher";
 import { createApprovedWorkflowDiscussionPublisher } from "@/discussions/approvedWorkflowDiscussionPublisher";
 import { runTracedExternalActionStage } from "@/daemon/externalActions/externalActionPhase";
@@ -644,7 +644,7 @@ resolveServerFeaturesSnapshot?: () =>
           getClient: () => params.getApiMachineForSessions(),
         }),
         postAgentDiscussionMessage: async (request, options) => {
-          if (options?.approvedActionReplay && !('operation' in request)) {
+          if (options?.approvedActionReplay?.artifactId && !('operation' in request)) {
             const serverHttpBaseUrl = requesterAccountContext?.serverHttpBaseUrl
               ?? requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl;
             if (!invocationApprovalCurrentness) return { v: 1, ok: false, error: 'discussion_post_denied' };
@@ -659,11 +659,13 @@ resolveServerFeaturesSnapshot?: () =>
               ...(executionContext?.requesterApprovalDecision ? { requesterApprovalDecision: executionContext.requesterApprovalDecision } : {}),
             });
           }
-          if (options?.approvedActionReplay) {
+          if (options?.approvedActionReplay?.artifactId) {
+            const publication = prepareApprovedDiscussionAgentPublication({ request, replay: options.approvedActionReplay });
+            if (!publication) return { v: 1, ok: false, error: 'discussion_post_denied' };
             const serverHttpBaseUrl = requesterAccountContext?.serverHttpBaseUrl
               ?? requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl;
             return await relayDiscussionAgentPublication(credentials, serverHttpBaseUrl,
-              { request, approvedActionReplay: options.approvedActionReplay }, options.signal);
+              publication, options.signal);
           }
           return postAgentDiscussionMessage ? await postAgentDiscussionMessage(request, options)
             : { v: 1, ok: false, error: 'discussion_post_denied' };
