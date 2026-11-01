@@ -6,14 +6,16 @@ import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPat
 import { PLUGIN_SDK_PACKAGE_NAME, readPackageJsonRecord, resolvePluginAuthorWorkspaceUiBuilder } from './hostSdkResolution';
 
 /** Package resolution admits hoisted and linked installs; executable bytes stay inside that package. */
-function resolveToolPackage(projectRoot: string, packageName: string) {
+function resolveToolPackage(projectRoot: string, packageName: string, aliasPackageName = packageName) {
   const installed = resolveInstalledRuntimePackage({
     packageName,
     resolveFromPackageJsonPath: join(projectRoot, 'package.json'),
   });
   const packageJsonPath = realpathSync(installed.packageJsonPath);
   const packageJson = readPackageJsonRecord(packageJsonPath, `The resolved ${packageName} package`);
-  if (packageJson.name !== packageName) throw new Error(`Resolved tool must come from ${packageName}`);
+  if (packageJson.name !== packageName && packageJson.name !== aliasPackageName) {
+    throw new Error(`Resolved tool must come from ${packageName}`);
+  }
   return { packageRoot: dirname(packageJsonPath), packageJson };
 }
 
@@ -35,7 +37,8 @@ function resolveContainedBin(tool: ReturnType<typeof resolveToolPackage>, packag
 }
 
 export function resolveNativeTypeScriptBin(projectRoot: string): string {
-  const tool = resolveToolPackage(projectRoot, '@typescript/native');
+  // The pinned npm:typescript alias retains Microsoft's published package name.
+  const tool = resolveToolPackage(projectRoot, '@typescript/native', 'typescript');
   if (typeof tool.packageJson.version !== 'string' || !/^7\./u.test(tool.packageJson.version)) {
     throw new Error('Resolved @typescript/native package must provide TypeScript 7');
   }

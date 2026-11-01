@@ -1311,7 +1311,7 @@ describe('runPluginAuthorToolchain', () => {
     }
   });
 
-  it('resolves an ancestor TypeScript 7 package while refusing a non-TypeScript-7 package', async () => {
+  it.each(['@typescript/native', 'typescript'])('resolves an ancestor TypeScript 7 package named %s while refusing another compiler', async packageName => {
     const parentRoot = await mkdtemp(join(tmpdir(), 'happier-author-typescript-owner-'));
     const projectRoot = join(parentRoot, 'plugin');
     const ancestorPackageRoot = join(parentRoot, 'node_modules', '@typescript', 'native');
@@ -1320,7 +1320,7 @@ describe('runPluginAuthorToolchain', () => {
       await mkdir(join(ancestorPackageRoot, 'bin'), { recursive: true });
       await writeFile(join(projectRoot, 'package.json'), '{"type":"module"}\n', 'utf8');
       await writeFile(join(ancestorPackageRoot, 'package.json'), JSON.stringify({
-        name: '@typescript/native',
+        name: packageName,
         version: '7.0.2',
         bin: { tsc: './bin/tsc' },
       }), 'utf8');
