@@ -15,6 +15,10 @@
       "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
+    },
+    "./happier-plugin-ui/account-runtime": {
+      "happier-source": "./src/manifest.ts",
+      "default": "./dist/manifest.js"
     }
   },
   "files": [

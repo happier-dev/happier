@@ -250,3 +250,5 @@ export const PLUGIN = definePlugin({
   },
 });
 export const PLUGIN_MANIFEST = PLUGIN.manifest;
+export const activateAccount = (api: Parameters<typeof PLUGIN.activateAccount>[0]) =>
+  PLUGIN.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activateAccount' });
