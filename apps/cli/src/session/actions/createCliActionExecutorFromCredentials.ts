@@ -1656,7 +1656,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                 const requester = await dispatchOriginalAccountAction({ actionId: parsedActionId.data, input: admittedInput,
                   requestId: context.actionRequestId ?? randomUUID(), target, credentials,
                   serverHttpBaseUrl: resolveActionServerApiUrl(), serverIdentityId: context.serverIdentityId,
-                  invocation: { caller: { kind: 'host' }, surface: 'cli', authority: originalContext.authority ?? 'account_automation' },
+                  invocation: { caller: { kind: 'host' }, surface: 'cli', authority: originalContext.authority ?? resolveInvocationAuthority({ credential: 'terminal', surface: 'cli' }) },
                   // Accepted legacy publications omit Account identity. Keep their
                   // incumbent own-target bridge while Home still admits foreign work.
                   ...(ordinary && localPublication && !localPublication.accountId ? { foreignTargetOnly: true as const } : {}),
