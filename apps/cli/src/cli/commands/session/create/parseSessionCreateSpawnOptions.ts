@@ -11,6 +11,7 @@ import {
   parseConnectedServicesLaunchAuth,
   type ConnectedServicesLaunchAuthIntent,
 } from '@/cli/connectedServicesLaunchAuth';
+import { readProviderConnectionFlag } from '../shared/readProviderConnectionFlag';
 import { assertSessionCommandArguments } from '../shared/assertSessionCommandArguments';
 
 /**
@@ -23,7 +24,7 @@ export type SessionCreateSpawnRequest = Readonly<{
   title?: string;
   initialInput?: Readonly<{ text: string }>;
   modelId?: string;
-  providerConnectionId?: string;
+  providerConnectionId?: string | null;
   permissionMode?: string;
   agentModeId?: string;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
@@ -237,8 +238,8 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
   const backendTargetKeys = normalizeBackendTargetKeysFromCsv(backendRaw);
   const backendTargetKey = backendTargetKeys.length === 1 ? backendTargetKeys[0] : null;
   const modelId = (readFlagValue(argv, '--model') ?? '').trim();
-  const providerConnectionId = (readFlagValue(argv, '--provider-connection') ?? '').trim();
-  if (providerConnectionId && !modelId) {
+  const providerConnectionId = readProviderConnectionFlag(argv);
+  if (providerConnectionId !== undefined && !modelId) {
     throw new Error('--provider-connection requires --model.');
   }
   const permissionMode = (readFlagValue(argv, '--permission-mode') ?? '').trim();
@@ -325,7 +326,7 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
       ...(title ? { title } : {}),
       ...(initialPrompt ? { initialInput: { text: initialPrompt } } : {}),
       ...(modelId ? { modelId } : {}),
-      ...(providerConnectionId ? { providerConnectionId } : {}),
+      ...(providerConnectionId !== undefined ? { providerConnectionId } : {}),
       ...(permissionMode ? { permissionMode } : {}),
       ...(agentModeId ? { agentModeId } : {}),
       ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),

@@ -1,8 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
+import { readProviderConnectionFlag } from '../shared/readProviderConnectionFlag';
+
 import { parseSessionCreateSpawnOptions } from './parseSessionCreateSpawnOptions';
 
 describe('parseSessionCreateSpawnOptions', () => {
+  it.each(['native', 'pc_work'])('normalizes provider connection %s through the shared flag contract', value => {
+    const argv = ['create', '--model', 'model-a', '--provider-connection', value];
+    expect(parseSessionCreateSpawnOptions(argv).spawnRequest.providerConnectionId)
+      .toBe(readProviderConnectionFlag(argv));
+  });
+
+  it('requires a model for explicit native selection', () => {
+    expect(() => parseSessionCreateSpawnOptions(['create', '--provider-connection', 'native']))
+      .toThrow('--provider-connection requires --model.');
+  });
+
+
   it('accepts repeated capability names for resolution at the Action transport boundary', () => {
     const parsed = parseSessionCreateSpawnOptions([
       'create', '--path', '/workspace', '--skill', 'lint', '--skill', 'review',

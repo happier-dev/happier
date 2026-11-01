@@ -201,6 +201,15 @@ describe('partitionProviderSessionArgs', () => {
     });
   });
 
+  it.each(['native', 'pc_work'])('normalizes direct command provider connection %s', value => {
+    const parsed = partitionProviderSessionArgs({
+      args: ['codex', '--model', 'model-a', '--provider-connection', value, '--sandbox'],
+      providerSubcommand: 'codex',
+    });
+    expect(parsed.providerConnectionId).toBe(value === 'native' ? undefined : value);
+    expect(parsed.providerArgs).toEqual(['--sandbox']);
+  });
+
   it('parses separate provider connection and model identity without forwarding connection identity', () => {
     expect(partitionProviderSessionArgs({
       args: ['codex', '--model', 'model-a', '--provider-connection', 'pc_work', '--sandbox'],

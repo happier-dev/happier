@@ -1,5 +1,7 @@
 import chalk from 'chalk';
 
+import { readProviderConnectionFlag } from '@/cli/commands/session/shared/readProviderConnectionFlag';
+
 import type { AgentId } from '@happier-dev/agents';
 import type { AgentCliSessionCommandBuildInputV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
@@ -201,7 +203,7 @@ export function partitionProviderSessionArgs(
   let sessionModeId: string | undefined;
   let sessionModeUpdatedAt: number | undefined;
   let modelId: string | undefined;
-  let providerConnectionId: string | undefined;
+  let providerConnectionId: string | null | undefined;
   let modelUpdatedAt: number | undefined;
   let modelSelection: SessionModelSelectionV1 | undefined;
   const secretReferenceOverlayBindings: Record<string, { ref: string; revision?: number }> = {};
@@ -403,12 +405,13 @@ export function partitionProviderSessionArgs(
     if (flag === '--provider-connection') {
       const raw = equalsValue ?? readRequiredNext(input, i, '--provider-connection', 'provider connection id');
       if (!equalsValue) i += 1;
-      const parsed = ProviderConnectionIdSchema.safeParse(raw);
-      if (!parsed.success) {
+      try {
+        const value = readProviderConnectionFlag(['--provider-connection', raw]);
+        providerConnectionId = value == null ? value : ProviderConnectionIdSchema.parse(value);
+      } catch {
         console.error(chalk.red('Invalid --provider-connection value'));
         process.exit(1);
       }
-      providerConnectionId = parsed.data;
       continue;
     }
 
@@ -621,11 +624,11 @@ export function partitionProviderSessionArgs(
     providerArgs.push(arg);
   }
 
-  if (providerConnectionId && !modelId) {
+  if (providerConnectionId !== undefined && !modelId) {
     console.error(chalk.red('--provider-connection requires --model'));
     process.exit(1);
   }
-  if (providerConnectionId && modelSelection) {
+  if (providerConnectionId !== undefined && modelSelection) {
     console.error(chalk.red('--provider-connection cannot be combined with --model-selection-v1'));
     process.exit(1);
   }
@@ -696,7 +699,7 @@ export function partitionProviderSessionArgs(
     sessionModeId,
     sessionModeUpdatedAt,
     modelId,
-    providerConnectionId,
+    providerConnectionId: providerConnectionId ?? undefined,
     modelUpdatedAt,
     modelSelection,
     secretReferenceOverlay,
