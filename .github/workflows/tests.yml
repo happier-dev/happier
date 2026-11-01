@@ -2079,7 +2079,7 @@ jobs:
     if: ${{ inputs.select_jobs_explicitly && inputs.run_self_host_schtasks }}
     needs: [trusted_ref_guard]
     name: Self-Host E2E (Windows schtasks)
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 120
     steps:
       - name: Checkout
