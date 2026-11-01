@@ -4,8 +4,10 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, watch, writeFileSync } from 'node:fs';
 import { cp, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { registerHooks } from 'node:module';
+import { dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import ts from 'typescript';
 
 import { buildTypeScriptPackageDist } from './buildTypeScriptPackageDist.mjs';
 import { BUILD_INPUT_RECORD, defaultWorkspaceBuildBoundary, ensureWorkspacePackagesBuiltByName, isWorkspacePackageOutputCurrent } from './ensureWorkspacePackagesBuilt.mjs';
@@ -18,10 +20,99 @@ import { writeFakeBin } from '../../apps/stack/scripts/testkit/core/fake_bin_har
 import { spawnTestProcess } from '../../apps/stack/scripts/testkit/core/spawn_test_process.mjs';
 import { withPatchedProcessEnv } from '../../apps/stack/scripts/testkit/core/env_scope.mjs';
 
+for (const [platform, paths, packageDir, caseSensitive] of [
+  ['Windows', win32, 'C:\\Work\\Package', false],
+  ['Linux', posix, '/work/package', true],
+]) {
+  test(`compiler output pruning retains live ${platform} emits and removes retired files`, async (t) => {
+    const workDir = paths.join(packageDir, '.happier', 'compiler');
+    const outputDir = paths.join(workDir, 'dist');
+    const tsBuildInfoFile = paths.join(workDir, '.tsbuildinfo');
+    const projectPath = paths.join(packageDir, 'tsconfig.json');
+    const fileId = (path) => {
+      const normalized = ts.normalizePath(paths.resolve(path));
+      return caseSensitive ? normalized : normalized.toLowerCase();
+    };
+    const files = new Map();
+    const put = (path, content) => files.set(fileId(path), { path, content });
+    put(paths.join(workDir, 'tsconfig.dist.json'), JSON.stringify({
+      compilerOptions: { rootDir: paths.join(packageDir, 'src'), outDir: outputDir,
+        declaration: true, declarationMap: true, sourceMap: true },
+      files: [paths.join(packageDir, 'src', 'index.ts')],
+    }));
+    // Incremental metadata and directory enumeration can spell the same
+    // Windows path differently. Exercise real TS config/output computation;
+    // substitute only filesystem and platform adapters beneath the prune.
+    const sourceBase = caseSensitive ? packageDir : packageDir.toLowerCase();
+    put(tsBuildInfoFile, JSON.stringify({ fileNames: [
+      paths.join(sourceBase, 'src', 'index.ts'),
+      paths.join(sourceBase, 'src', 'nested', 'module.ts'),
+    ] }));
+    put(paths.join(packageDir, 'src', 'index.ts'), 'export {};');
+    put(paths.join(packageDir, 'src', 'nested', 'module.ts'), 'export {};');
+    const liveOutputs = ['index', paths.join('nested', caseSensitive ? 'module' : 'Module')]
+      .flatMap(name => ['.js', '.js.map', '.d.ts', '.d.ts.map'].map(suffix => paths.join(outputDir, `${name}${suffix}`)));
+    for (const path of liveOutputs) put(path, 'emitted');
+    const retiredPath = paths.join(outputDir, 'nested', 'retired.js');
+    put(retiredPath, 'retired');
+    // Case-sensitive hosts must still retire a stale differently-cased emit.
+    const staleCasePath = paths.join(outputDir, 'Index.js');
+    if (caseSensitive) put(staleCasePath, 'retired');
+    const read = path => files.get(fileId(path))?.content;
+    const removed = [];
+    const boundary = {
+      paths,
+      fs: { existsSync: path => files.has(fileId(path)), readFileSync: read },
+      asyncFs: {
+        async readdir(directory) {
+          const entries = new Map();
+          for (const { path } of files.values()) {
+            const relation = paths.relative(directory, path);
+            if (!relation || relation.startsWith('..') || paths.isAbsolute(relation)) continue;
+            const [name, ...rest] = relation.split(paths.sep);
+            entries.set(name, { name, isDirectory: () => rest.length > 0 });
+          }
+          return [...entries.values()];
+        },
+        async rm(path) { removed.push(path); files.delete(fileId(path)); },
+      },
+      ts: { ...ts, sys: { ...ts.sys, useCaseSensitiveFileNames: caseSensitive,
+        readFile: read, fileExists: path => files.has(fileId(path)),
+        getCurrentDirectory: () => packageDir } },
+    };
+    const boundaryName = `happier.prune-test.${platform}`;
+    globalThis[Symbol.for(boundaryName)] = boundary;
+    const ownerUrl = new URL(`./pruneRetiredCompilerOutputs.mjs?${platform}`, import.meta.url).href;
+    const exports = {
+      'node:path': ['paths', ['dirname', 'join', 'resolve']],
+      'node:fs': ['fs', ['existsSync', 'readFileSync']],
+      'node:fs/promises': ['asyncFs', ['readdir', 'rm']],
+      typescript: ['ts', ['default']],
+    };
+    const hooks = registerHooks({
+      resolve(specifier, context, nextResolve) {
+        if (context.parentURL !== ownerUrl || !exports[specifier]) return nextResolve(specifier, context);
+        const [adapter, names] = exports[specifier];
+        const reference = `globalThis[Symbol.for(${JSON.stringify(boundaryName)})].${adapter}`;
+        const source = names.map(name => name === 'default'
+          ? `export default ${reference};` : `export const ${name} = ${reference}.${name};`).join('\n');
+        return { url: `data:text/javascript,${encodeURIComponent(source)}`, shortCircuit: true };
+      },
+    });
+    t.after(() => { hooks.deregister(); delete globalThis[Symbol.for(boundaryName)]; });
+    const { pruneRetiredCompilerOutputs } = await import(ownerUrl);
+    await pruneRetiredCompilerOutputs({ packageDir, compilerWorkTree: { workDir, outputDir, tsBuildInfoFile, projectPath }, compilerArgs: [] });
+    assert.deepEqual(liveOutputs.filter(path => files.has(fileId(path))), liveOutputs,
+      'pruning must retain every live JavaScript, declaration and map output');
+    assert.deepEqual(removed.sort(), [retiredPath, ...(caseSensitive ? [staleCasePath] : [])].sort());
+  });
+}
+
 async function createNativeDistBuildFixture(t) {
   const packageDir = await createPackageFixture(t, 'native-dist-admission');
   await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built = true;\n');
-  const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root: packageDir });
+  const native = await installNativeAdmissionFixture({ root: packageDir });
+  const { launcher, admissionRoot } = native;
   await Promise.all(['owners', 'waiters'].map(kind => mkdir(join(admissionRoot, kind), { recursive: true })));
   const memoryPath = join(packageDir, 'memory');
   await writeFile(memoryPath, '1 73400320\n');
