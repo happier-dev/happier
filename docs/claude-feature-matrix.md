@@ -4,6 +4,29 @@
 
 The tables must not be used to locate current owners or plan new changes. Re-derive any historical claim from the current plugin contribution, Agent catalog, and Provider contracts before acting on it. The development lifecycle notes below describe current unreleased source; the tables remain historical.
 
+## Idle compaction — unreleased 0.3 development
+
+Claude's selected runtime owns its compaction declaration: unified terminal uses
+native idle compaction; SDK mode uses the Session host's scheduler and a resumed
+`/compact` control query. Both default to enabled with a 200,000-token minimum.
+Unified honors enabled/minimum settings; Claude Code applies its native lower
+clamp. The cache-window override is an SDK host control. Preferences seed new
+Sessions, and the existing unified large-session resume choice remains separate.
+
+SDK turn, transient control and compact queries share `buildClaudeSdkQueryLaunchOptions`
+in `agent/runtime/remote/sdk/launchOptions.ts`. A compact retains the native Session
+identity and publishes canonical compaction lifecycle evidence without starting a
+foreground turn or committing a Happier user prompt. Native measured before/after
+counts pass through `readClaudeCompactionMetadata`; missing counts stay absent.
+
+Both assistant ingress paths use `buildClaudeAssistantUsageObservation`. Only a
+matching live main-chain SDK `message_start` supplies the request clock; detected
+one-hour cache writes add the vendor lifetime. Short/unknown classes carry only
+the clock, allowing the host's deliberate override. Replay, sidechains, missing
+starts and result aggregates cannot supply a fresh clock. Launch parity does not
+prove a warm cache; loaded Session/UI validation remains a separate integration
+check. See [runtime ownership](runtime-core.md#idle-compaction-unreleased-03).
+
 ## Status legend
 
 - `supported`: primary current path

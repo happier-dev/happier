@@ -116,7 +116,15 @@ export function readUsageRequestAttribution(metadata: unknown): UsageRequestAttr
   return parsed.success ? parsed.data : null;
 }
 
+/** Provider request clock, with a detected cache lifetime only when known. */
+export const UsagePromptCacheSchema = lazyZodSchema(() => z.strictObject({
+  lastUseAtMs: z.number().check(z.refine(Number.isFinite, 'Expected a finite request clock')),
+  ttlMs: z.optional(z.number().check(z.refine((value) => Number.isFinite(value) && value > 0, 'Expected a finite positive cache lifetime'))),
+}));
+export type UsagePromptCache = z.infer<typeof UsagePromptCacheSchema>;
+
 export const UsageEventIngestRequestSchema = lazyZodSchema(() => z.strictObject({
+  promptCache: z.optional(UsagePromptCacheSchema),
   sessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   subject: z.optional(UsageNativeAccountingSubjectSchema),
   accounting: z.optional(UsageNativeAccountingEvidenceSchema),

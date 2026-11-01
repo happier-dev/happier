@@ -1,6 +1,7 @@
 import type { ClaudeRuntimeActivityPublisher } from './runtimeActivityPublisher.js';
 import type { ClaudePermissionContext } from '../../permissions/createClaudePermissionEngine.js';
 import type { ClaudeRuntimeLogger } from '../dependencies.js';
+import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { isolateClaudeRuntimeAuthEnv } from '../../auth/services/runtime/env.js';
 import {
@@ -49,6 +50,16 @@ export function readClaudeRuntimeString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+export function readClaudeRuntimeConfigModelUpdate(
+  value: unknown,
+  providerModel?: AgentSessionProviderBinding['model'],
+): string | null | undefined {
+  if (value === null) return null;
+  const modelId = readClaudeRuntimeString(value);
+  if (modelId === null) return undefined;
+  return modelId === 'default' && !providerModel ? null : modelId;
 }
 
 export type ClaudeRuntimeSessionParams = Readonly<{

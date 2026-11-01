@@ -138,6 +138,7 @@ type ClaudeNativePromptCustodyOperations =
   }>;
 
 export type ClaudeNativeSessionOperations = ClaudeRuntimeTurnOperations & Readonly<{
+  compact?: AgentSessionRuntime['compact'];
   refreshSkills?: AgentSessionRuntime['refreshSkills'];
   prepareTerminalPresentation?: AgentSessionRuntime['prepareTerminalPresentation'];
   observeTerminalExecution?: AgentSessionRuntime['observeTerminalExecution'];
@@ -302,6 +303,9 @@ function mapEvent(event: ClaudeProviderEvent, runtimeAuthServiceId: string | nul
       return { kind: event.kind, commands: event.commands };
     case 'context-compaction':
       return { kind: event.kind, compactionId: event.compactionId, phase: event.phase, trigger: event.trigger,
+        ...(event.tokenCountBefore === undefined ? {} : { tokenCountBefore: event.tokenCountBefore }),
+        ...(event.tokenCountAfter === undefined ? {} : { tokenCountAfter: event.tokenCountAfter }),
+        ...(event.tokenCountSource === undefined ? {} : { tokenCountSource: event.tokenCountSource }),
         ...(event.turnId ? { turnId: event.turnId } : {}) };
     case 'turn-start':
       return {
@@ -634,13 +638,9 @@ export function createClaudeNativeSessionRuntimeFromOperations(
     if (mapped) enqueueOrEmit(mapped, event.emittedAtMs);
   });
   const unsubscribeActivity = operations.subscribeCanonicalAgentSessionEvents?.((event) => {
-    if (event.kind !== 'runtime-activity-snapshot') return;
-    currentActivity = event;
-    enqueueOrEmit({
-      kind: event.kind,
-      state: event.state,
-      activeCount: event.activeCount,
-    }, event.emittedAtMs);
+    if (event.kind === 'runtime-activity-snapshot') currentActivity = event;
+    const { sequence: _sequence, sessionId: _sessionId, emittedAtMs, ...input } = event;
+    enqueueOrEmit(input, emittedAtMs);
   }) ?? (() => undefined);
   const unsubscribeEffectiveModel = operations.subscribeEffectiveModel?.((evidence: ClaudeEffectiveModelEvidence) => {
     const modelId = evidence.modelId.trim();
@@ -688,6 +688,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
         tokens: observation.tokens,
         ...(observation.cost ? { cost: observation.cost } : {}),
         ...(observation.contextSnapshot ? { context: observation.contextSnapshot } : {}),
+        ...(observation.promptCache ? { promptCache: observation.promptCache } : {}),
       }, observation.observedAtMs);
     },
   ) ?? (() => undefined);
@@ -776,6 +777,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
 
   return {
     nativeGoalControlsSupported: typeof operations.setGoal === 'function' && typeof operations.clearGoal === 'function',
+    ...(operations.compact ? { compact: operations.compact } : {}),
     ...(request.skills ? { skillsDelivered: true } : {}),
     ...(operations.refreshSkills ? {
       refreshSkills: async (...args: Parameters<NonNullable<AgentSessionRuntime['refreshSkills']>>) => {

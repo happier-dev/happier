@@ -20,7 +20,7 @@ import { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from './eventKindsV1.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { AgentRuntimeDiagnosticDataV1Schema } from './agentRuntimeDiagnosticV1.js';
 import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
-import { UsageRequestAttributionSchema } from '../usage/usageAnalyticsContracts.js';
+import { UsagePromptCacheSchema, UsageRequestAttributionSchema } from '../usage/usageAnalyticsContracts.js';
 import { McpToolLaunchPoliciesV1Schema, type McpToolLaunchPolicyV1 } from '../mcp/servers/tools/resolveMcpToolDecisionV1.js';
 import { TranscriptPeerSenderV1Schema } from '../sessions/messages/transcriptPeerSenderV1.js';
 
@@ -252,6 +252,7 @@ const ContextUsageSchema = lazyZodSchema(() => z.strictObject({
 }));
 
 const UsageMeasurementShape = {
+  promptCache: z.optional(UsagePromptCacheSchema),
   tokens: z.optional(UsageTokensSchema),
   cost: z.optional(UsageCostSchema),
   context: z.optional(ContextUsageSchema),

@@ -1,3 +1,4 @@
+export { type IdleCompactionPreference } from './idleCompactionPreferences.js';
 import { backfillClaudeUnifiedTerminalResponseLocations } from '../../agents/claude/settingsPolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { normalizeScmBackendQualifiedId } from '../../scm/backendIdentity.js';

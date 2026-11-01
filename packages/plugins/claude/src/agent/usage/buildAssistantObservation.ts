@@ -1,4 +1,4 @@
-import { estimateUsageModelCost } from '@happier-dev/plugin-sdk/agents/runtime';
+import { estimateUsageModelCost, PROMPT_CACHE_DURATIONS } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
     ClaudeTokenUsage,
     ClaudeUsageModelSource,
@@ -19,6 +19,7 @@ export function buildClaudeAssistantUsageObservation(params: Readonly<{
     nativeSessionId?: string | null;
     turnId?: string | null;
     observedAtMs?: number;
+    requestStartedAtMs?: number;
     usage: ClaudeTokenUsage;
 }>): ClaudeUsageObservation | null {
     const inputTokens = asFiniteNonNegativeNumber(params.usage.input_tokens);
@@ -60,6 +61,11 @@ export function buildClaudeAssistantUsageObservation(params: Readonly<{
         ...(params.nativeSessionId ? { nativeSessionId: params.nativeSessionId } : {}),
         ...(params.turnId ? { turnId: params.turnId } : {}),
         ...(params.observedAtMs === undefined ? {} : { observedAtMs: params.observedAtMs }),
+        ...(params.requestStartedAtMs === undefined ? {} : { promptCache: {
+            lastUseAtMs: params.requestStartedAtMs,
+            ...((asFiniteNonNegativeNumber(params.usage.cache_creation?.ephemeral_1h_input_tokens) ?? 0) > 0
+                ? { ttlMs: PROMPT_CACHE_DURATIONS.anthropic.longTtlMs } : {}),
+        } }),
         modelId: typeof params.modelId === 'string' && params.modelId.trim().length > 0 ? params.modelId.trim() : null,
         tokens,
         cost: costs

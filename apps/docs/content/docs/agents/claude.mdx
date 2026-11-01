@@ -227,6 +227,23 @@ For the full user-facing MCP guide in Happier, see:
 
 - [MCP servers](/extending/mcp-servers)
 
+## Idle compaction (unreleased 0.3 development)
+
+New Claude Sessions default to idle compaction above a 200,000-token minimum.
+Unified terminal uses Claude Code's native idle behavior and honors the enabled
+and minimum-size preferences. Claude Code applies its own minimum clamp. The SDK
+runner uses Happier's Session scheduler; its cache-window override replaces a
+detected lifetime, or supplies one when a live request clock is available.
+Without that clock, an override cannot schedule idle work. Changes apply to new
+Sessions.
+
+Idle compaction keeps the same native conversation and adds one quiet compaction
+row, with before/after token counts when Claude supplies both. It does not create
+a user prompt or a foreground turn, unread activity, or a ready notification.
+The next prompt continues the compacted conversation. **Large-session resume**
+still controls Claude's separate unified-terminal resume question; SDK idle
+compaction has no resume-return dialog.
+
 ## Environment variables
 
 Happier does not have a Claude-specific “env var” CLI flag. To set environment variables for Claude:

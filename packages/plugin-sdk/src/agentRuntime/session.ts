@@ -413,6 +413,8 @@ export type AgentSessionRuntimeEvent =
       sessionId: string;
       emittedAtMs: number;
       kind: 'usage-observed';
+      /** Conservative provider request clock; an observed lifetime is optional. */
+      promptCache?: Readonly<{ lastUseAtMs: number; ttlMs?: number }>;
       observationId: string;
       /** Native request evidence; the host validates it against the accepted source and matching turn. */
       attribution?: Readonly<{

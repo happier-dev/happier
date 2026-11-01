@@ -943,3 +943,5 @@ export type RuntimeOutboundTranscriptToolNormalizationV1 = Readonly<{
 /** Canonical terminal paste framing; Agent runtimes must not copy escape sequences. */
 export const TERMINAL_BRACKETED_PASTE_START: string = canonicalTerminalBracketedPasteStart;
 export const TERMINAL_BRACKETED_PASTE_END: string = canonicalTerminalBracketedPasteEnd;
+
+export { PROMPT_CACHE_DURATIONS } from '@happier-dev/protocol/usage/coach/coachVendorFacts';

@@ -17,6 +17,7 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { resolveCurrentExternalSessionAgentRoutingId } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
+import { readSessionLiveWorkEligibility } from '@/agent/runtime/session/input/sessionLiveWorkEligibility';
 
 export type SessionEligibilityReason = Readonly<{
   kind: 'working' | 'waiting_for_you' | 'subagents_running' | 'unsent_draft' | 'draft_unknown'
@@ -32,19 +33,7 @@ export type SessionEligibility = Readonly<
 export function readSessionActivityEligibility(tracked: TrackedSession, inventory: LiveWorkInventoryV1): Readonly<
   { eligible: true; settledAt: number } | { eligible: false; reasons: readonly SessionEligibilityReason[] }
 > {
-  const items = inventory.items.filter(item => item.ownerRef === tracked);
-  const settledAt = items.find(item => item.category === 'session')?.settledAt;
-  const reasons: SessionEligibilityReason[] = [];
-  if (items.some(item => item.state === 'unknown') || settledAt === undefined
-    || !Number.isSafeInteger(settledAt) || settledAt < 0) reasons.push({ kind: 'activity_unknown' });
-  for (const item of items) {
-    if (item.state !== 'active') continue;
-    const reason: SessionEligibilityReason = item.category === 'attention' ? { kind: 'waiting_for_you' }
-      : item.category === 'agents' ? { kind: 'subagents_running', ...(item.activeCount !== undefined ? { count: item.activeCount } : {}) }
-      : { kind: 'working' };
-    if (!reasons.some(existing => existing.kind === reason.kind)) reasons.push(reason);
-  }
-  return reasons.length || settledAt === undefined ? { eligible: false, reasons } : { eligible: true, settledAt };
+  return readSessionLiveWorkEligibility(inventory.items.filter(item => item.ownerRef === tracked));
 }
 
 export async function readCurrentSessionEligibility(input: Readonly<{

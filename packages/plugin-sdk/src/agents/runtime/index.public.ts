@@ -463,3 +463,5 @@ export { resolveTerminalPromptWriteTimeoutMs } from '../../runtime/promptWriteTi
 export { isSessionPermissionShellToolName, matchSessionPermissionToolIdentifier, parseSessionPermissionToolIdentifier } from '../../agentRuntime/projections.js';
 
 export { TERMINAL_BRACKETED_PASTE_START, TERMINAL_BRACKETED_PASTE_END } from '../../agentRuntime/projections.js';
+
+export { PROMPT_CACHE_DURATIONS } from '../../agentRuntime/projections.js';

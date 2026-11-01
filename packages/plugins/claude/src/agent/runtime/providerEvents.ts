@@ -44,7 +44,10 @@ export const ClaudeProviderEventSchema = z.discriminatedUnion('kind', [
     kind: z.literal('context-compaction'),
     compactionId: z.string().check(z.trim(), z.minLength(1)),
     phase: z.literal('completed'),
-    trigger: z.enum(['manual', 'automatic', 'unknown']),
+    trigger: z.enum(['manual', 'automatic', 'idle', 'unknown']),
+    tokenCountBefore: z.optional(z.number().check(z.int(), z.nonnegative())),
+    tokenCountAfter: z.optional(z.number().check(z.int(), z.nonnegative())),
+    tokenCountSource: z.optional(z.literal('providerReported')),
     turnId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   }),
   z.extend(ProviderTurnEventBaseSchema, {

@@ -3,6 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { buildClaudeAssistantUsageObservation } from './buildAssistantObservation.js';
 
 describe('buildClaudeAssistantUsageObservation', () => {
+    it.each([
+        { cache_creation: { ephemeral_1h_input_tokens: 20, ephemeral_5m_input_tokens: 10 }, ttlMs: 3_600_000 },
+        { cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 30 }, ttlMs: undefined },
+        { cache_creation: undefined, ttlMs: undefined },
+    ])('uses only the live request clock and detected long-write class ($ttlMs)', ({ cache_creation, ttlMs }) => {
+        const observation = buildClaudeAssistantUsageObservation({
+            requestStartedAtMs: 100, observedAtMs: 900,
+            usage: { input_tokens: 5, cache_creation_input_tokens: 30, cache_creation },
+        });
+        expect(observation?.promptCache).toEqual({ lastUseAtMs: 100, ...(ttlMs === undefined ? {} : { ttlMs }) });
+        expect(observation?.tokens.cacheWrite).toBe(30);
+    });
+
+    it('never turns receipt time or a long-write total without a request clock into cache evidence', () => {
+        const observation = buildClaudeAssistantUsageObservation({ observedAtMs: 900,
+            usage: { input_tokens: 5, cache_creation: { ephemeral_1h_input_tokens: 30 } } });
+        expect(observation?.promptCache).toBeUndefined();
+    });
+
     it('carries the native record identity for replayable assistant usage', () => {
         expect(buildClaudeAssistantUsageObservation({
             nativeSessionId: 'native-session-exact',

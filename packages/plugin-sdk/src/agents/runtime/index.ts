@@ -459,3 +459,5 @@ export { resolveRecoverableTurnFailureRetryDecision } from '../../agentRuntime/p
 export { resolveRecoverableTurnFailureSecondFailure } from '../../agentRuntime/projections.js';
 export { resolveTerminalPromptWriteTimeoutMs } from '../../runtime/promptWriteTimeout.js';
 export { resolveUsageTokenCategories } from '../../agentRuntime/projections.js';
+
+export { PROMPT_CACHE_DURATIONS } from '../../agentRuntime/projections.js';

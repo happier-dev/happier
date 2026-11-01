@@ -27,13 +27,35 @@ const PluginAgentGoalsV2Schema = lazyZodSchema(() => z.strictObject({
   source: z.string().check(z.trim(), z.minLength(1)),
 }).check(z.refine((value) => value.active !== undefined || value.inactive !== undefined, 'At least one activity capability is required.')));
 
+export const PluginAgentSessionCompactionCapabilityV2Schema = lazyZodSchema(() => z.strictObject({
+  events: z.literal(true),
+  manual: z.optional(z.literal(true)),
+  idle: z.optional(z.discriminatedUnion('mode', [
+    z.strictObject({
+      mode: z.literal('host'),
+      defaultEnabled: z.boolean(),
+      defaultMinContextTokens: z.optional(z.number().check(z.int(), z.gte(0))),
+    }),
+    z.strictObject({
+      mode: z.literal('native'),
+      defaultEnabled: z.boolean(),
+      defaultMinContextTokens: z.optional(z.number().check(z.int(), z.gte(0))),
+      nativeHonorsMinimum: z.optional(z.literal(true)),
+    }).check(z.refine((value) => value.defaultMinContextTokens === undefined || value.nativeHonorsMinimum === true,
+      'A native minimum default requires nativeHonorsMinimum.')),
+  ])),
+}));
+export type PluginAgentSessionCompactionCapabilityV2 = z.infer<typeof PluginAgentSessionCompactionCapabilityV2Schema>;
+export type AgentSessionCompactionCapability = PluginAgentSessionCompactionCapabilityV2;
+export type AgentSessionCompactionIdleCapability = NonNullable<AgentSessionCompactionCapability['idle']>;
+
 export const PluginAgentSessionCapabilitiesV2Schema = lazyZodSchema(() => z.strictObject({
   open: z.array(z.enum(['create', 'resume', 'fork'])).check(z.minLength(1), z.refine((values) => new Set(values).size === values.length, 'Entries must be unique.')),
   delivery: z.array(z.enum(['newTurn', 'steer', 'followUp'])).check(z.minLength(1), z.refine((values) => new Set(values).size === values.length, 'Entries must be unique.')),
   cancel: z.boolean(), configuration: z.optional(z.boolean()),
   /** Native filesystem enforcement of configuration.workspaceWrites='deny'. Absence is unsupported. */
   workspaceWrites: z.optional(z.literal('deny')),
-  compaction: z.optional(z.strictObject({ events: z.literal(true), manual: z.optional(z.literal(true)) })),
+  compaction: z.optional(PluginAgentSessionCompactionCapabilityV2Schema),
   conversationRollback: z.optional(z.literal(true)),
   goals: z.optional(PluginAgentGoalsV2Schema),
   /** Publishes token usage to Happier's Session accounting. Omission is undeclared. */

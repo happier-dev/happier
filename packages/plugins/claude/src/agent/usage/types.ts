@@ -1,4 +1,5 @@
 import type {
+    AgentSessionRuntimeEvent,
     SessionContextUsageSnapshotV1,
     UsageObservationCost,
     UsageObservationTokens,
@@ -9,6 +10,10 @@ export type ClaudeTokenUsage = Readonly<{
     output_tokens?: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
+    cache_creation?: Readonly<{
+        ephemeral_1h_input_tokens?: number;
+        ephemeral_5m_input_tokens?: number;
+    }>;
 }>;
 
 export type ClaudeUsageModelSource = 'claude-native' | 'provider';
@@ -24,6 +29,7 @@ export type ClaudeUsageObservation = {
     /** Explicit foreground request ownership, absent for replay and unbound sidechains. */
     turnId?: string;
     observedAtMs?: number;
+    promptCache?: Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' }>['promptCache'];
     modelId: string | null;
     tokens: UsageObservationTokens;
     cost: UsageObservationCost | null;

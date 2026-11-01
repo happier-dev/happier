@@ -4,6 +4,58 @@ The host owns the executable Session and turn lifecycle. An Agent plugin supplie
 
 This page describes **0.3 development source**, not a shipped release or a completed live-validation gate. It is the standing architecture reference; approved plans remain the execution contract for their assigned work.
 
+## Idle compaction (unreleased 0.3)
+
+Idle compaction belongs to the Session host. One compaction descriptor, authored
+with the Agent definition and resolved for the opened runtime, declares manual
+control and native- or host-owned idle support. The host resolves three deliberate
+per-Agent Account preferences once at Session start: enabled, minimum conversation
+size, and an optional cache-window override. These use the existing settings
+Actions; plugins do not add their own settings or watch the preference store.
+Changes apply to newly started Sessions.
+
+For host mode, the latest attributed `usage-observed.promptCache` supplies
+`lastUseAtMs` and optional `ttlMs`. A clock without a lifetime is useful when the
+person chooses a cache window; an override replaces the detected lifetime.
+Missing clock remains ineligible even with an override. The host owns the single
+Session timer, its fire-time idle decision and `compact({ trigger: 'idle' })`
+admission; plugins own only the native operation and its lifecycle evidence.
+There is no plugin timer, polling, restart re-arm or retry.
+
+Codex App Server, Pi RPC and OpenCode server map live turn start and non-model
+item completion into the public SDK's `resolvePromptCacheLastUseAtMs` helper.
+It selects the last non-model item's completion, otherwise turn start; model
+completion, usage receipt and historical accounting recovery are not request
+clocks. Claude uses its observed native request-start clock directly. Lifetimes
+come from the canonical vendor facts only when the route/request evidence makes
+them applicable. Codex's GPT-5.6+ lifetime additionally requires a positive live
+probe for the route in use. The 2026-11-01 installed-native probe retained the
+measured prefix after about 25 minutes on `chatgpt` authentication, native
+`modelProvider: openai`, and effective model `gpt-6.1-sol`; API and compatible
+routes were not exercised. The recipe and sanitized evidence pointers are in
+[the approved research](../.project/plans/2026-11-01-idle-compaction/research/PLUGINS.md#11-codex-actual-route-cache-probe-recipe).
+
+Claude SDK controls resume the existing native Session through the same launch
+options as a turn. Their owned query publishes compaction evidence, without
+acquiring foreground turn ownership. A matching main-chain `message_start`
+supplies its usage clock; replay, sidechains and result totals cannot refresh it.
+Claude unified terminal instead delegates idle scheduling to Claude Code and
+retains its existing large-session resume choice. Both selected modes default
+to enabled at 200,000 tokens; only SDK host mode honors a cache-window override.
+
+These three host integrations are default-off. Codex's default minimum is
+180,000 tokens; Pi/OpenCode's proposed minimum is 100,000. OpenCode ACP and the
+other surveyed ACP Agents gain no idle capability merely by sharing usage or
+transcript readers. Finite Execution Runs have no persistent Session idle flow.
+
+The canonical compaction event projector folds lifecycle events into one row.
+The shared attention classifier makes only idle-origin compaction quiet across
+plain and encrypted Sessions: no unread, meaningful list activity, foreground
+turn or ready/push notification. Measured before/after counts remain optional;
+Codex, Pi and OpenCode currently have no characterized measured pair. Coach
+cache-expiry diagnosis and remedies are deferred. This section describes the
+unreleased development contract, not loaded-runtime or release certification.
+
 ## Session input and inline references
 
 The composer persists token-bearing text. Protocol's
