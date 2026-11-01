@@ -143,7 +143,13 @@ async function discardMachineAddThroughActions(execute: MachineAddActionExecute)
     return true;
 }
 
-export function useMachineAddFlow(options: Readonly<{ serverId?: string; initialPath?: MachineAddPathId; runner?: SystemTaskRunner }> = {}): {
+export function useMachineAddFlowServerId(requestedServerId?: string): string {
+    const draftServerId = useMachineAddFlowDraftSelector(draft => draft.serverId);
+    const active = useActiveServerSnapshot();
+    return draftServerId ?? requestedServerId ?? active.serverId;
+}
+
+export function useMachineAddFlow(options: Readonly<{ serverId?: string; initialPath?: MachineAddPathId; initialCreating?: boolean | null; runner?: SystemTaskRunner }> = {}): {
     serverId: string;
     homeName: string;
     paths: ReturnType<typeof useMachineAddPaths>;
@@ -188,7 +194,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
 } {
     const { draft, update, notSeeing } = useMachineAddFlowDraft();
     const active = useActiveServerSnapshot();
-    const serverId = draft.serverId ?? options.serverId ?? active.serverId;
+    const serverId = useMachineAddFlowServerId(options.serverId);
     const isActiveHome = areServerProfileIdentifiersEquivalent(active.serverId, serverId);
     const profile = useHomeProfile(serverId);
     const runner = draft.thisComputerTask?.runner ?? draft.sshTask?.runner ?? options.runner ?? getSystemTasksRunner();
@@ -198,13 +204,19 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     const detectedOs = detectClientCommandOs();
     const initialized = React.useRef(false);
     React.useEffect(() => {
-        if (initialized.current || !serverId || paths.length === 0) return;
+        // The page's Account setting may still be deciding Create versus Connect.
+        // Publish that initial choice together, rather than briefly admitting a connection draft.
+        if (initialized.current || !serverId || options.initialCreating === null || (paths.length === 0 && !options.initialCreating)) return;
         initialized.current = true;
-        update((current) => current.path !== null ? current : { ...current, serverId,
-            path: resolveMachineAddInitialPath(paths, options.initialPath), os: detectedOs ?? current.os,
-            sshDraft: runner.mode === 'native' && !current.sshDraft.host ? createDefaultSshCredentialsDraft('password') : current.sshDraft,
+        update((current) => {
+            const creating = current.creating || (options.initialCreating === true && !current.sshTask && !current.thisComputerTask);
+            if (current.path !== null && creating === current.creating) return current;
+            return { ...current, serverId, creating,
+                path: current.path ?? resolveMachineAddInitialPath(paths, options.initialPath), os: detectedOs ?? current.os,
+                sshDraft: runner.mode === 'native' && !current.sshDraft.host ? createDefaultSshCredentialsDraft('password') : current.sshDraft,
+            };
         });
-    }, [detectedOs, options.initialPath, paths, runner.mode, serverId, update]);
+    }, [detectedOs, options.initialPath, options.initialCreating, paths, runner.mode, serverId, update]);
     const descriptor = React.useMemo(() => profile ? buildHomeConnectionDescriptorForProfile(profile) : null, [profile]);
     const localTask = useThisComputerSetupTask({ runner, taskId: draft.thisComputerTask?.taskId ?? null,
         onTaskIdChange: (id) => replaceTaskId('thisComputer', draft.thisComputerTask?.taskId ?? null, id),

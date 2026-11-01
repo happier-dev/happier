@@ -253,6 +253,30 @@ describe('machine add flow lifetime', () => {
             storage.setState(previous); vi.unstubAllGlobals();
         }
     });
+    it('publishes the initial Create choice atomically without a temporary connection draft', async () => {
+        const serverId = await harness.addHome({ serverUrl: 'https://initial-create.example.test', name: 'Create', accountId: 'alice' });
+        const { t } = await import('@/text');
+        const manual = createManualSystemTaskRunner('native');
+        const frames: (ReturnType<typeof useMachineAddDraftRow>)[] = [];
+        const rail = await renderHook(() => { const row = useMachineAddDraftRow(); frames.push(row); return row; });
+        let initialCreating: boolean | null = null;
+        const flow = await renderHook(() => {
+            const options = { serverId, runner: manual.runner, initialCreating };
+            return useMachineAddFlow(options);
+        });
+        try {
+            expect(readMachineAddFlowDraft().path).toBeNull();
+            expect(rail.getCurrent()).toBeNull();
+            initialCreating = true;
+            await flow.rerender();
+            expect(rail.getCurrent()).toMatchObject({ status: t('managedMachines.add.choosingCreate'), tone: 'draft' });
+            expect(frames.filter(row => row !== null).every(row => row.status === t('managedMachines.add.choosingCreate'))).toBe(true);
+            await flow.unmount();
+            await rail.rerender();
+            expect(rail.getCurrent()).toMatchObject({ status: t('managedMachines.add.choosingCreate'), tone: 'draft' });
+        } finally { await flow.unmount(); await rail.unmount(); }
+    });
+
     it('keeps an idle add draft idle across rail remounts until arrival watching starts', async () => {
         const { t } = await import('@/text');
         await act(async () => updateMachineAddFlowDraft((draft) => ({ ...draft, path: 'anotherComputer' })));

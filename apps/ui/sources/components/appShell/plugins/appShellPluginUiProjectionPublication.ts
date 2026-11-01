@@ -331,7 +331,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         for (const machineId of sources.selectableMachineIds) {
             const current = currentness.get(machineId);
             const projection = current?.connectedAccountProjection;
-            if (!projection || (projection.kind === 'ready' && current?.phase !== 'current')) {
+            // Descriptor success is independent of unrelated Machine UI establishment.
+            if (!projection || (projection.kind === 'ready' && current?.phase !== 'current' && current?.phase !== 'establishing')) {
                 descriptorInputs.push({ kind: 'loading' });
             } else if (projection.kind !== 'ready') {
                 descriptorInputs.push(projection);

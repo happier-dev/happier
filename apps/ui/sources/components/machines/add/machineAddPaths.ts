@@ -32,6 +32,14 @@ export function resolveMachineAddPaths(input: MachineAddPathsInput): readonly Ma
     return paths;
 }
 
+/**
+ * Which way in leads when the person has not chosen one (58d §D2): a phone or a browser leads with Create
+ * one in the cloud, where it is offered; a desktop leads with this computer.
+ */
+export function machineAddLeadsWithCreate(device: MachineAddDevice): boolean {
+    return device !== 'desktop';
+}
+
 /** Prefer this computer where supported; phones start with the link for another computer, not SSH. */
 export function resolveMachineAddInitialPath(paths: readonly MachineAddPath[], preferred?: MachineAddPathId, skipConnected = false): MachineAddPathId | null {
     const available = skipConnected ? paths.filter((path) => !path.connectedMachineId) : paths;

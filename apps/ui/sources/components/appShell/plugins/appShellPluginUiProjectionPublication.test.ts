@@ -30,6 +30,25 @@ function currentness(projection: PluginUiProjectionModel): PluginUiProjectionCur
 }
 
 describe('AppShell projection source publication', () => {
+    it('settles the restored Machine descriptor answer while unrelated UI establishment is still pending', () => {
+        const owner = createAppShellPluginUiProjectionPublication();
+        const sources = { accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false, activeServerId: null,
+            serverProfilesGeneration: 0, activeInventoryLoaded: true,
+            onlineMachineIds: ['machine'], selectableMachineIds: ['machine'] };
+        const report = { ...currentness(translationProjection(1, 'Confirmed')), phase: 'establishing' as const, interactionEnabled: false };
+        try {
+            owner.publishSources(sources);
+            owner.publishMachineCurrentness('machine', null, { ...report, phase: 'unavailable',
+                connectedAccountProjection: { kind: 'error', reason: 'transport' } });
+            expect(owner.getSnapshot().connectedAccountResolution.kind).toBe('error');
+            owner.publishMachineCurrentness('machine', null, { ...report, connectedAccountProjection: { kind: 'loading' } });
+            expect(owner.getSnapshot().connectedAccountResolution.kind).toBe('loading');
+            owner.publishMachineCurrentness('machine', null, { ...report, connectedAccountProjection: { kind: 'ready', descriptors: [] } });
+            expect(owner.getSnapshot().projectionUnion.phase).toBe('establishing');
+            expect(owner.getSnapshot().connectedAccountResolution).toMatchObject({ kind: 'ready', descriptors: [] });
+        } finally { owner.dispose(); }
+    });
+
     it('publishes selected origins only when the origin report changes, not on unrelated Machine reports', () => {
         const owner = createAppShellPluginUiProjectionPublication();
         const pluginId = 'acme.publication';

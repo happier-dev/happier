@@ -17,8 +17,9 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { MachineAddFormWithFlow } from './MachineAddForm';
-import type { MachineAddPathId } from './machineAddPaths';
-import { useMachineAddFlow } from './useMachineAddFlow';
+import { machineAddLeadsWithCreate, type MachineAddPathId } from './machineAddPaths';
+import { readMachineAddDevice } from './useMachineAddPaths';
+import { useMachineAddFlow, useMachineAddFlowServerId } from './useMachineAddFlow';
 import { useMachineAddFlowDraftSelector } from './machineAddFlowStore';
 import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
 import { useManagedControllerScope } from '@/components/settings/machines/managed/useManagedControllerScope';
@@ -39,14 +40,22 @@ function readPath(value: string | string[] | undefined): MachineAddPathId | unde
 export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen() {
     const router = useRouter();
     const params = useLocalSearchParams<{ path?: string | string[] }>();
-    const flow = useMachineAddFlow({ initialPath: readPath(params.path) });
-    const draftRow = flow.draftRow;
     // The machine joins the Home this device uses (the flow's default target).
-    const serverId = flow.serverId;
+    const serverId = useMachineAddFlowServerId();
     const homeName = resolveHomeDisplayName(getServerProfileById(serverId));
     // One read of the Account's opt-out serves the header's promise and the form's Create one.
     const accountScope = useServerCredentialAccountScopeBinding(serverId);
-    const canCreate = useManagedMachineAccountSettings(accountScope.binding, accountScope.resolution).settings?.managedMachineCreationEnabled === true;
+    const accountSettings = useManagedMachineAccountSettings(accountScope.binding, accountScope.resolution);
+    const canCreate = accountSettings.settings?.managedMachineCreationEnabled === true;
+    // `?path=create` (Home's Machines widget, "Create one in the cloud") opens Create one, as its tab would. Without
+    // a path, a phone or a browser opens on it too (58d §D2), unless a setup is already running from this draft.
+    const pathParam = Array.isArray(params.path) ? params.path[0] : params.path;
+    const initialCreating = pathParam === 'create' ? true
+        : pathParam || !machineAddLeadsWithCreate(readMachineAddDevice()) ? false
+        : !accountSettings.settings && !accountSettings.error && (accountScope.resolution.kind === 'resolving' || accountScope.resolution.kind === 'bound') ? null
+        : canCreate;
+    const flow = useMachineAddFlow({ serverId, initialPath: readPath(params.path), initialCreating });
+    const draftRow = flow.draftRow;
     // Create one's "Managed from" scope: the form shows its chip beside the ways in while Create one is open,
     // and the catalog below reads the machine it names.
     const creating = useMachineAddFlowDraftSelector((draft) => draft.creating) && canCreate;

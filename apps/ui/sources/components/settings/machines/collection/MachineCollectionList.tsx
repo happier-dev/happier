@@ -724,12 +724,12 @@ const MachineDraftRow = React.memo(function MachineDraftRow(props: Readonly<{ se
     const router = useRouter();
     const row = useMachineAddDraftRow();
     if (!row && !props.selected) return null;
-    const tone = row?.tone ?? 'waiting';
+    const tone = row?.tone ?? 'draft';
     return (
         <Item
             testID="settings.machines.rail.draft"
             title={row?.title ?? t('machineAdd.newMachine')}
-            subtitle={row?.status ?? t('common.draft')}
+            subtitle={row?.status ?? undefined}
             subtitleLeading={row ? (
                 <StatusDot
                     color={tone === 'failed' ? theme.colors.status.error : tone === 'arrived' ? theme.colors.status.connected : theme.colors.status.connecting}
