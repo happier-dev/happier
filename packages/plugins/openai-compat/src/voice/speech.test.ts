@@ -82,6 +82,40 @@ const TTS_REQUEST = Object.freeze({
 });
 
 describe('OpenAI-compatible public batch speech runtimes', () => {
+  it.each(['transcribe', 'synthesize'] as const)('keeps pending %s under caller cancellation without a guessed deadline', async operation => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let entered!: () => void;
+    const reading = new Promise<void>(resolve => { entered = resolve; });
+    let settled = false;
+    const operationContext = context({ settings: { baseUrl: 'https://speech.example.test/v1' },
+      signal: controller.signal,
+      request: async (input, options) => await new Promise<never>((_resolve, reject) => {
+        const timer = typeof input.timeoutMs === 'number'
+          ? setTimeout(() => reject(new Error('HTTP deadline')), input.timeoutMs) : null;
+        options?.signal?.addEventListener('abort', () => {
+          if (timer !== null) clearTimeout(timer);
+          reject(options.signal?.reason);
+        }, { once: true });
+        entered();
+      }),
+    });
+    const pending = operation === 'transcribe'
+      ? createOpenAiCompatSttRuntime().transcribe!(STT_REQUEST, operationContext)
+      : createOpenAiCompatTtsRuntime().synthesize!(TTS_REQUEST, operationContext);
+    const outcome = pending.then(() => { settled = true; return null; }, error => { settled = true; return error; });
+    try {
+      await reading;
+      await vi.advanceTimersByTimeAsync(60_001);
+      expect(settled).toBe(false);
+    } finally {
+      controller.abort(new DOMException('Speech cancelled', 'AbortError'));
+      await outcome;
+      vi.useRealTimers();
+    }
+    expect(await outcome).toBe(controller.signal.reason);
+  });
+
   it('uses the fresh invocation settings, bounded host HTTP service, and exact STT credential grant', async () => {
     const request = vi.fn(async (input: HttpRequest, options?: Readonly<{ signal?: AbortSignal }>) => {
       expect(input.url).toBe('https://stt.example.test/v1/audio/transcriptions');

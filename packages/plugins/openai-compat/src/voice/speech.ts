@@ -19,7 +19,6 @@ import {
   OPENAI_COMPAT_TTS_CREDENTIAL_ENVIRONMENT_KEY,
 } from '../speechIdentity.js';
 
-const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_AUDIO_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_TRANSCRIPT_CHARACTERS = 1_000_000;
 
@@ -195,7 +194,6 @@ async function transcribe(
     },
     body: multipart.body,
     redirect: 'error',
-    timeoutMs: REQUEST_TIMEOUT_MS,
   }, { signal: context.signal });
   assertSuccessfulResponse(response, bearerToken);
   const contentType = readHeader(response.headers, 'content-type')?.split(';', 1)[0]?.trim().toLowerCase();
@@ -266,7 +264,6 @@ async function synthesize(
       ...(request.speakingRate === null ? {} : { speed: request.speakingRate }),
     })),
     redirect: 'error',
-    timeoutMs: REQUEST_TIMEOUT_MS,
   }, { signal: context.signal });
   assertSuccessfulResponse(response, bearerToken);
   const expectedMimeType = request.format === 'wav' ? 'audio/wav' as const : 'audio/mpeg' as const;
