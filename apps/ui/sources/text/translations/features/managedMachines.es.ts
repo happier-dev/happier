@@ -285,6 +285,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             refused: ({ name }: { name: string }) => `No tienes permiso para gestionar ${name}.`,
         },
         inspect: {
+            notCreated: "Esta máquina no se ha creado",
+            checkFailed: "No se ha podido confirmar esta máquina",
             checkNow: "Comprobar ahora",
         },
         actions: {

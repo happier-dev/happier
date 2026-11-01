@@ -1,3 +1,4 @@
+import { describeManagedNativeFailureDiagnostic, describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
 import * as React from 'react';
 import { View, type ViewStyle } from 'react-native';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -59,7 +60,21 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     // Native identity is for finding a resource Happier may have lost; a healthy one is already named by its size and image.
     const needsRecovery = Boolean(machine.recovery) || machine.creationState !== 'active' || machine.allocation === 'may-exist' || Boolean(machine.cleanup);
     const installationRetryOnly = !(operation && status) && canRetryInstallation && Boolean(props.handlers?.reinstall);
-    const operationCard = Boolean(operation && status && status.tone !== 'success') || installationRetryOnly && !(showStateRow && !lifecycle.banner);
+    const observation = machine.observation;
+    const operationTime = operation?.snapshot.settledAt ?? operation?.snapshot.startedAt ?? operation?.snapshot.createdAt ?? 0;
+    // A newer check supersedes the old error even when it reports no diagnostic.
+    const newerObservation = !prompt && !heldAsk && observation
+        && (!operation || observation.observedAt > operationTime) ? observation : null;
+    const error = !prompt && !heldAsk && !newerObservation ? operation?.snapshot.error : undefined;
+    const observationDiagnostic = newerObservation && (newerObservation.reason || newerObservation.nativeCause) ? newerObservation : null;
+    const failure = observationDiagnostic ? {
+        title: machine.allocation === 'confirmed-absent' ? t('managedMachines.inspect.notCreated') : t('managedMachines.inspect.checkFailed'),
+        detail: describeManagedNativeFailureDiagnostic(observationDiagnostic.reason ?? 'provider_unavailable', observationDiagnostic.nativeCause),
+    } : error ? {
+        title: describeManagedInstallationFailure(error, operation?.snapshot.progress) ?? t('managedMachines.creation.installFailedTitle', { name }),
+        detail: describeManagedOperationDiagnostic(error),
+    } : null;
+    const operationCard = Boolean(observationDiagnostic) || Boolean(operation && status && status.tone !== 'success' && !(newerObservation && operation.snapshot.error)) || installationRetryOnly && !(showStateRow && !lifecycle.banner);
     // While the install task tells the story, a quiet creation state would be a second, contradicting card:
     // the task's stage is the state, and the resource's freshness joins its card.
     const operationTells = operationCard && !lifecycle.banner && QUIET_UNDER_OPERATION.has(state.kind);
@@ -68,13 +83,8 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     // Freshness qualifies the state it dates: on the state row's own sheet, or standing alone with Check now.
     // A failed re-read is said here too, not in a second "As of" line above the page: one freshness per page.
     const staleRead = props.staleRead;
-    const error = !prompt && !heldAsk ? operation?.snapshot.error : undefined;
-    const failure = error ? {
-        title: describeManagedInstallationFailure(error, operation?.snapshot.progress) ?? t('managedMachines.creation.installFailedTitle', { name }),
-        detail: [error.errorCode, error.error].filter((part, index, parts) => part && parts.indexOf(part) === index).join(' · '),
-    } : null;
     // A failure that can't be retried yet carries Check now itself; the freshness row must not offer it twice.
-    const failureChecks = Boolean(failure && !(canRetryInstallation && props.handlers?.reinstall) && props.handlers?.checkNow);
+    const failureChecks = Boolean(failure && !(!observationDiagnostic && canRetryInstallation && props.handlers?.reinstall) && props.handlers?.checkNow);
     const observationRow = machine.observation || staleRead ? <Item testID="managed-machine.observation" mode="info" showChevron={false}
         title={machine.observation ? t('surfaceState.asOf', { time: formatAsOfTime(machine.observation.observedAt) })
             : t('managedMachines.detail.loadFailed')}
@@ -108,7 +118,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 <SurfaceStateCard kind="error" size="details" layout="inline" title={failure.title}
                     diagnosticCode={failure.detail} testID="managed-machine.installation-error"
                     // Retry when the failed install is confirmed; while its history can't be read, Check now re-reads it.
-                    action={canRetryInstallation && props.handlers?.reinstall ? { label: t('managedMachines.creation.retryInstall'),
+                    action={!observationDiagnostic && canRetryInstallation && props.handlers?.reinstall ? { label: t('managedMachines.creation.retryInstall'),
                         onPress: props.handlers.reinstall, testID: 'managed-machine.installation-retry' }
                         : props.handlers?.checkNow ? { label: t('managedMachines.inspect.checkNow'), onPress: props.handlers.checkNow,
                             testID: 'managed-machine.installation-check' } : undefined} />

@@ -81,6 +81,7 @@ export const ProviderObservationV1Schema = lazyDefinition(() => z.strictObject({
   prices: z.optional(z.array(ProviderPriceV1Schema)),
   nativeExpiry: z.optional(instant()),
   reason: z.optional(id()),
+  nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema),
 }).check(z.superRefine((value, context) => {
   if (value.availability !== 'present' && value.power !== undefined && value.power !== 'unknown') {
     context.addIssue({ code: 'custom', path: ['power'], message: 'Unavailable resources cannot confirm power.' });
@@ -124,6 +125,41 @@ export const ManagedRefusalCodeV1Schema = lazyDefinition(() => z.enum([
   'preset_not_found', 'preset_archived', 'preset_limit_reached',
 ]));
 export const ManagedNativeOperationReferenceV1Schema = lazyDefinition(() => z.strictObject({ contributionRef: asProtocolZod(PluginContributionIdentityV1Schema), schemaVersion: z.int().check(z.gt(0)), value: PluginJsonValueV2Schema }));
+// Native stderr is a diagnostic excerpt bounded to the existing Action-operation
+// error-text envelope (10,000 characters), after the canonical privacy projection.
+export const MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 = 10_000;
+/** Native failure facts; process stderr must pass the canonical privacy projection. */
+// REST v1 CreateServerRequest field vocabulary (docs.hetzner.cloud/cloud.spec.json,
+// inspected 2026-10-26). Closed names prevent reflected input from becoming diagnostics.
+const nativeRejectedFields = ['name', 'location', 'server_type', 'start_after_create', 'image', 'placement_group',
+  'ssh_keys', 'volumes', 'networks', 'firewalls', 'user_data', 'labels', 'automount', 'public_net'] as const;
+export const MachineProvisionerNativeCauseV1Schema = lazyDefinition(() => z.union([
+  z.strictObject({ localCause: z.literal('native_command_failed'), command: z.enum(['start', 'restart', 'stop', 'create', 'run', 'up']),
+    exitCode: z.nullable(z.int()),
+    stderr: z.optional(z.string().check(z.minLength(1), z.maxLength(MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1))),
+    stderrTruncated: z.optional(z.literal(true)),
+  }),
+  z.strictObject({ localCause: z.enum(['native_options_changed', 'native_ssh_network_unavailable', 'native_route_unavailable', 'native_lease_ended']) }),
+  z.strictObject({ localCause: z.literal('native_route_not_found'),
+    route: z.enum(['inspect', 'run', 'stop', 'delete', 'pull', 'configure']), httpStatus: z.literal(404) }),
+  z.strictObject({ localCause: z.enum(['native_configure_refused', 'native_delete_refused']), httpStatus: z.literal(400) }),
+  z.strictObject({ httpStatusClass: z.enum(['3xx', '4xx', '5xx', 'other']), code: z.optional(z.enum([
+    'json_error', 'unauthorized', 'forbidden', 'maintenance', 'resource_limit_exceeded', 'not_found',
+    'method_not_allowed', 'uniqueness_error', 'conflict', 'deprecated_api_endpoint', 'resource_unavailable',
+    'invalid_input', 'service_error', 'unsupported_error', 'locked', 'protected', 'rate_limit_exceeded',
+    'server_error', 'bad_gateway', 'unavailable', 'timeout', 'placement_error',
+    'bad_request', 'unprocessable_entity', 'too_many_requests',
+    'unknown', 'insufficient_capacity', 'volume_placement_capacity', 'name_taken',
+  ])), fields: z.optional(z.array(z.enum(nativeRejectedFields)).check(z.maxLength(nativeRejectedFields.length)))
+  }).check(z.refine(value => value.fields === undefined || value.code === 'invalid_input' || value.code === 'uniqueness_error')),
+  z.strictObject({ grpcStatusCode: z.union([
+    z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6), z.literal(7), z.literal(8),
+    z.literal(9), z.literal(10), z.literal(11), z.literal(12), z.literal(13), z.literal(14), z.literal(15), z.literal(16),
+  ]) }),
+  z.strictObject({ sdkError: z.enum(['AlreadyExistsError', 'NotFoundError', 'InvalidError', 'ResourceExhaustedError',
+    'TimeoutError', 'SandboxTimeoutError', 'InternalFailure', 'ExecutionError', 'RemoteError', 'ConflictError', 'ClientClosedError']) }),
+]));
+export type MachineProvisionerNativeCauseV1 = z.infer<typeof MachineProvisionerNativeCauseV1Schema>;
 export const ManagedRecoveryHintV1Schema = lazyDefinition(() => z.strictObject({ reference: id(), reason: id(), consoleUrl: z.optional(z.url().check(z.refine((value) => { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password; }))) }));
 export const AcquireResultV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('bound'), resource: ManagedResourceV1Schema }),

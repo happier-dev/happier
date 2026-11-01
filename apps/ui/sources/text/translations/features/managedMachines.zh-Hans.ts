@@ -285,6 +285,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             refused: ({ name }: { name: string }) => `你没有管理 ${name} 的权限。`,
         },
         inspect: {
+            notCreated: "此机器未创建",
+            checkFailed: "无法确认此机器的状态",
             checkNow: "立即检查",
         },
         actions: {

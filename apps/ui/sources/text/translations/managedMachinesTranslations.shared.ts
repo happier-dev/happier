@@ -291,6 +291,8 @@ export const managedMachinesEn = {
             refused: ({ name }: { name: string }) => `You don’t have permission to manage ${name}.`,
         },
         inspect: {
+            notCreated: "This machine wasn’t created",
+            checkFailed: "Couldn’t confirm this machine",
             checkNow: "Check now",
         },
         actions: {
