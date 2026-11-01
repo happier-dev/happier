@@ -19,6 +19,7 @@ import { writeConsoleErrorBestEffort, writeConsoleLogBestEffort } from '../utils
 import { BufferedFileAppender } from './logFileAppender'
 import { isFileLogLevelEnabled, resolveFileLogLevel, type FileLogLevel } from './logFileLevel'
 import { pruneLogs } from '@/utils/logs/pruneLogs'
+import { createTimestampForFilename } from '@/utils/logs/logFileName'
 import {
   DAEMON_LOG_SUFFIX,
   LOG_FILE_SUFFIX,
@@ -187,18 +188,6 @@ function recordMatchesPluginInvocationLogQuery(
 /**
  * Consistent date/time formatting functions
  */
-function createTimestampForFilename(date: Date = new Date()): string {
-  return date.toLocaleString('sv-SE', { 
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    year: 'numeric',
-    month: '2-digit', 
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).replace(/[: ]/g, '-').replace(/,/g, '') + '-pid-' + process.pid
-}
-
 function createLogEntryTimestampFormatter() {
   return new Intl.DateTimeFormat('en-US', {
     hour12: false,
