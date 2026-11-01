@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-
 import { describe, expect, it } from 'vitest';
 
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
@@ -18,12 +16,6 @@ function createRpcHarness() {
 }
 
 describe('session permission RPC handlers', () => {
-  it('does not own a static RPC binding table', async () => {
-    const source = await readFile(new URL('./sessionPermissions.ts', import.meta.url), 'utf8');
-
-    expect(source).not.toContain('SESSION_PERMISSION_RPC_BINDINGS');
-  });
-
   it('dispatches canonical permission RPC methods through the ActionSpec adapter', async () => {
     const calls: unknown[] = [];
     const actionExecutor: RpcActionExecutor = {

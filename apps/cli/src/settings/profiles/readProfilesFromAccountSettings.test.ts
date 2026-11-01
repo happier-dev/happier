@@ -196,10 +196,13 @@ describe('readProfilesFromAccountSettings', () => {
       }],
     }, undefined, { lastUsedProfile: 'azure-openai' }, undefined, providerSettings);
 
-    expect(result.visibleProfiles.map((profile) => profile.id)).not.toEqual(expect.arrayContaining([
+    const visibleIds = result.visibleProfiles.map((profile) => profile.id);
+    for (const excludedId of [
       'anthropic', 'codex', 'gemini', 'deepseek', 'gemini-api-key', 'gemini-vertex',
-    ]));
-    expect(result.visibleProfiles.map((profile) => profile.id)).toEqual(expect.arrayContaining(['azure-openai', 'focused']));
+    ]) {
+      expect(visibleIds).not.toContain(excludedId);
+    }
+    expect(visibleIds).toEqual(expect.arrayContaining(['azure-openai', 'focused']));
     expect(result.terminalMigratedProfileIds?.has('deepseek')).toBe(true);
   });
 });

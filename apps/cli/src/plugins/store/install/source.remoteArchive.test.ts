@@ -344,22 +344,17 @@ describe('inspectPluginSource remote archive downloads', () => {
     });
     reloadConfiguration();
 
-    const pluginSourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-'));
-    const rootName = `sample-plugin-${randomUUID()}`;
-    const archiveRoot = join(pluginSourceRoot, rootName);
+    const { pluginSourceRoot, archivePath } = await createArchivedSamplePluginFixture();
+    const archiveRoot = join(pluginSourceRoot, 'package');
     const outsidePath = join(pluginSourceRoot, 'outside-secret.txt');
-    const archivePath = join(pluginSourceRoot, `${rootName}.tar.gz`);
-    await materializeSamplePluginFixture(archiveRoot);
-    await writeFile(outsidePath, 'secret', 'utf8');
-    await symlink(outsidePath, join(archiveRoot, 'escape.txt'));
-    await tar.c({
-      gzip: true,
-      file: archivePath,
-      cwd: pluginSourceRoot,
-      portable: true,
-    }, [rootName]);
 
     try {
+      await expect(inspectPluginSource({ happyHomeDir: home, locator: archivePath, sourceKind: 'archive' }))
+        .resolves.toMatchObject({ ok: true, pluginId: SAMPLE_PLUGIN_ID });
+      await writeFile(outsidePath, 'secret', 'utf8');
+      await symlink(outsidePath, join(archiveRoot, 'escape.txt'));
+      await tar.c({ gzip: true, file: archivePath, cwd: pluginSourceRoot, portable: true }, ['package']);
+
       const result = await inspectPluginSource({
         happyHomeDir: home,
         locator: archivePath,
@@ -370,6 +365,8 @@ describe('inspectPluginSource remote archive downloads', () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.errorCode).toBe('plugin_install_failed');
+
+      expect(result.errorMessage).toContain('SymbolicLink');
 
       const store = createPluginRegistryStateStore({ happyHomeDir: home });
       const state = await store.read();

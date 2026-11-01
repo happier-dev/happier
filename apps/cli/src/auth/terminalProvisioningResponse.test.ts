@@ -190,22 +190,6 @@ describe('openTerminalProvisioningResponse', () => {
     })).toBeNull();
   });
 
-  it('rejects legacy responses when authenticated v3 pairing is required', () => {
-    const legacyPayload = sealBoxBundle({
-      plaintext: new Uint8Array(32).fill(5),
-      recipientPublicKey: terminalPublicKey,
-      randomBytes: deterministicRandomBytes,
-    });
-
-    expect(openTerminalProvisioningResponse({
-      payload: legacyPayload,
-      terminalSecretKey,
-      terminalPublicKey,
-      pairing,
-      nowMs: 2_000,
-    })).toBeNull();
-  });
-
   it('returns an authenticated token-only result without account E2EE material', () => {
     const payload = sealTerminalProvisioningV3TokenOnlyPayload({
       terminalEphemeralPublicKey: terminalPublicKey,

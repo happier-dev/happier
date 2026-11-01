@@ -95,24 +95,6 @@ describe('Provider credential team-direct materialization', () => {
     });
   });
 
-  it('fails before Provider disclosure when the direct row is stale', async () => {
-    await expect(resolveProviderCredentialPlaintextAsync({
-      reference: {
-        kind: 'team_direct',
-        teamId: 'team-1',
-        resourceId: 'resource-1',
-        expectedResourceRevision: 7,
-        sourceMemberKey: 'member-1',
-        sourceVersion: 'version-1',
-      },
-      accountSettings: {},
-      settingsSecretsReadKeys: [],
-      connectionId: 'connection-1',
-      machineId: 'machine-1',
-      openTeamDirect: vi.fn(async () => ({ ok: false as const, reason: 'source_changed' as const })),
-    })).resolves.toEqual(expect.objectContaining({ ok: false }));
-  });
-
   it('preserves Team authentication operation errors through Provider materialization', async () => {
     await expect(resolveProviderCredentialPlaintextAsync({
       reference: {

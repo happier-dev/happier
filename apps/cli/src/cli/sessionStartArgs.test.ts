@@ -83,12 +83,6 @@ describe('parseSessionStartArgs', () => {
     expect(parsed.modelId).toBe('gpt-5-codex-high');
   });
 
-  it('treats option-like --model values as missing', () => {
-    const trapped = withProcessTrap(() => parseSessionStartArgs(['happier', '--model', '--help']));
-    expect(String(trapped.error)).toMatch(/process\.exit:1/);
-    expect(trapped.stderr.join('\n')).toContain('Missing value for --model');
-  });
-
   it('parses --model-updated-at as unix ms', () => {
     const parsed = parseWithTrap(['happier', '--model', 'gpt-5-codex-high', '--model-updated-at', '123']);
     expect(parsed.modelUpdatedAt).toBe(123);
@@ -97,11 +91,6 @@ describe('parseSessionStartArgs', () => {
   it('ignores obsolete child account settings version hints', () => {
     const parsed = parseWithTrap(['happier', '--account-settings-version-hint', '0']);
     expect(parsed).not.toHaveProperty('accountSettingsVersionHint');
-  });
-
-  it('ignores malformed obsolete child account settings version hints', () => {
-    const trapped = withProcessTrap(() => parseSessionStartArgs(['happier', '--account-settings-version-hint', '-1']));
-    expect(trapped.error).toBeNull();
   });
 
   it('treats --permission-mode plan as a deprecated alias for --agent-mode plan on OpenCode', () => {

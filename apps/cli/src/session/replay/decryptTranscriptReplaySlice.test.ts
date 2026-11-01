@@ -56,7 +56,7 @@ describe('decryptTranscriptReplaySlice', () => {
               meta: {
                 happier: {
                   kind: 'session_synopsis.v1',
-                  payload: { v: 1, seqTo: 10, updatedAtMs: 10, synopsis: 'OLD' },
+                  payload: { v: 1, seqTo: 10, updatedAtMs: 99, synopsis: 'NEW' },
                 },
               },
             },
@@ -73,7 +73,7 @@ describe('decryptTranscriptReplaySlice', () => {
               meta: {
                 happier: {
                   kind: 'session_synopsis.v1',
-                  payload: { v: 1, seqTo: 20, updatedAtMs: 99, synopsis: 'NEW' },
+                  payload: { v: 1, seqTo: 20, updatedAtMs: 10, synopsis: 'OLD' },
                 },
               },
             },

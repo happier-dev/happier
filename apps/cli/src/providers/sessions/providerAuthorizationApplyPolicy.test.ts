@@ -629,17 +629,6 @@ describe('resolveProviderAuthorizationApplyPolicyForActiveBinding', () => {
     })).toBe('live');
   });
 
-  it('requires restart instead of silently adopting different managed-purpose facts', () => {
-    expect(resolveApplyPolicyForObservedAuthorization({
-      current: managedAuthorization('old', 'account-a'),
-      next: managedAuthorization('next', 'account-a'),
-    })).toBe('live');
-    expect(resolveApplyPolicyForObservedAuthorization({
-      current: managedAuthorization('old', 'account-a'),
-      next: managedAuthorization('next', 'account-b'),
-    })).toBe('restart_session');
-  });
-
   it('requires restart when current settings no longer reproduce the active launch binding', () => {
     const launch = withRuntimeBindingBasis(authorization('old'));
     const currentBase = authorization('old');

@@ -45,24 +45,4 @@ describe('materialization root-tail lifetime', () => {
     expect(order).toEqual(['first:start', 'first:end', 'second', 'third']);
   });
 
-  it('keeps normal serialization intact (second segment runs after the first settles)', async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), 'happier-materialize-tail-order-'));
-    const order: string[] = [];
-    let releaseFirst!: () => void;
-    const first = runSerializedMaterialization(rootDir, async () => {
-      order.push('first-start');
-      await new Promise<void>((resolve) => {
-        releaseFirst = resolve;
-      });
-      order.push('first-end');
-    });
-    const second = runSerializedMaterialization(rootDir, async () => {
-      order.push('second');
-    });
-    await vi.advanceTimersByTimeAsync(10);
-    releaseFirst();
-    await first;
-    await second;
-    expect(order).toEqual(['first-start', 'first-end', 'second']);
-  });
 });

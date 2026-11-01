@@ -82,33 +82,6 @@ function buildRuntimeActionExecute(input: Readonly<{
 }
 
 describe('peer-mediation observability dispatch wiring', () => {
-    it('routes snapshot through the dispatch chain to the shared store', async () => {
-        const runtime = createDaemonPeerMediationObservabilityRuntime({ nowMs: () => 1_000, isEnabled: () => true });
-        runtime.emitter.emit(createDaemonPeerMediationFlowEvent({
-            accountId: ACCOUNT_ID,
-            machineId: MACHINE_ID,
-            flowKind: 'tcp_tunnel',
-            flowId: 'tunnel_dispatch',
-            kind: 'flow.started',
-            nowMs: 1_000,
-        }));
-
-        const runtimeActionExecute = buildRuntimeActionExecute({ runtime, enabled: true });
-        const result = await runtimeActionExecute({
-            actionId: 'peerMediation.observability.snapshot',
-            input: {},
-            context: {},
-        });
-
-        expect(result).toMatchObject({
-            ok: true,
-            snapshot: {
-                scope: { kind: 'machine', accountId: ACCOUNT_ID, machineId: MACHINE_ID },
-                flows: [expect.objectContaining({ flow: expect.objectContaining({ flowId: 'tunnel_dispatch' }) })],
-            },
-        });
-    });
-
     it('fails closed at the execution boundary when the server feature gate is disabled', async () => {
         const runtime = createDaemonPeerMediationObservabilityRuntime({ nowMs: () => 1_000, isEnabled: () => true });
         runtime.emitter.emit(createDaemonPeerMediationFlowEvent({

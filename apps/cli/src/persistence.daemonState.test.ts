@@ -428,7 +428,7 @@ describe('readDaemonState', () => {
                 import('./persistence'),
             ]);
 
-            const legacyStarted = new Date().toISOString();
+            const legacyStarted = '2020-01-02T03:04:05.678Z';
             writeFileSync(
                 configuration.daemonStateFile,
                 JSON.stringify(
@@ -446,7 +446,7 @@ describe('readDaemonState', () => {
 
             const state = await readDaemonState();
             expect(state?.pid).toBe(123);
-            expect(typeof state?.startedAt).toBe('number');
+            expect(state?.startedAt).toBe(Date.parse(legacyStarted));
         });
     });
 });

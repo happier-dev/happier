@@ -665,16 +665,32 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
                 protocol: 'codex',
             });
 
-            await lifecycle.onBeforePromptDispatch?.({ messageId: 'message-1', prompt: 'change nothing' });
+            await writeFile(join(repoRoot, 'tracked.txt'), 'before prompt\n', 'utf8');
+            await lifecycle.onBeforePromptDispatch?.({ messageId: 'message-1', prompt: 'change tracked.txt' });
+            await writeFile(join(repoRoot, 'tracked.txt'), 'changed\n', 'utf8');
             await lifecycle.onTurnFinal?.({ messageId: 'message-1', turnId: 'turn-1', status: 'completed' });
 
-            expect(messages).toEqual([]);
+            expect(messages.find((message) => message.type === 'tool-call')).toMatchObject({
+                input: {
+                    files: [{
+                        file_path: 'tracked.txt',
+                        unified_diff: expect.stringContaining('-before prompt\n+changed'),
+                    }],
+                },
+            });
+            expect(readCheckpointMeta(messages)).toMatchObject({
+                baseRefSource: 'message_start',
+                receipts: expect.arrayContaining([
+                    expect.objectContaining({ id: 'checkpoint.captured', phase: 'message-start' }),
+                    expect.objectContaining({ id: 'checkpoint.diff_computed' }),
+                ]),
+            });
         } finally {
             await rm(repoRoot, { recursive: true, force: true });
         }
     });
 
-    it('projects alias failure checkpoint metadata when the message-start ref disappears', async () => {
+    it('emits no standalone diff for alias failure without file evidence', async () => {
         const repoRoot = await createGitRepo();
         try {
             const { session, messages } = createMessageCapturingSession('session-alias');
@@ -701,7 +717,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         }
     });
 
-    it('projects final capture failure checkpoint metadata', async () => {
+    it('emits no standalone diff for final capture failure without file evidence', async () => {
         const repoRoot = await createGitRepo();
         try {
             const { session, messages } = createMessageCapturingSession('session-final');
@@ -723,7 +739,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         }
     });
 
-    it('projects diff failure checkpoint metadata', async () => {
+    it('emits no standalone diff for diff failure without file evidence', async () => {
         const repoRoot = await createGitRepo();
         try {
             const { session, messages } = createMessageCapturingSession('session-diff');

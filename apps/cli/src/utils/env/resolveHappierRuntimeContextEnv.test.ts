@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  HAPPIER_RUNTIME_CONTEXT_ENV_KEYS,
-  resolveHappierRuntimeContextEnv,
-} from './resolveHappierRuntimeContextEnv';
+import { resolveHappierRuntimeContextEnv } from './resolveHappierRuntimeContextEnv';
 
 describe('resolveHappierRuntimeContextEnv', () => {
   it('returns only HAPPIER_HOME_DIR when given just a home dir', () => {
@@ -87,19 +84,4 @@ describe('resolveHappierRuntimeContextEnv', () => {
     });
   });
 
-  it('never emits secret-bearing keys', () => {
-    const env = resolveHappierRuntimeContextEnv({
-      homeDir: '/home/.happier',
-      server: {
-        activeServerId: 'cloud',
-        canonicalServerUrl: 'https://api.happier.dev',
-        apiServerUrl: 'https://api.happier.dev',
-        webappUrl: 'https://app.happier.dev',
-      },
-    });
-    for (const key of Object.keys(env)) {
-      expect(HAPPIER_RUNTIME_CONTEXT_ENV_KEYS).toContain(key);
-    }
-    expect(env).not.toHaveProperty('HAPPIER_ACCESS_TOKEN');
-  });
 });

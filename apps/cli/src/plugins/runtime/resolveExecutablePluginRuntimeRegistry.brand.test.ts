@@ -174,11 +174,12 @@ describe('executable plugin portable brand Resource projection', () => {
                 kind: 'managed',
                 immutableGenerationId: inputs.admitted.record.immutableGenerationId,
             });
-            runtime.retirePluginConsumers?.([PLUGIN_ID]);
+            const retirement = runtime.retirePluginConsumers?.([PLUGIN_ID]);
             expect(runtime.getPluginBrandAsset?.(PLUGIN_ID)).toEqual({ state: 'retired' });
             expect(runtime.readPluginOccurrenceId?.(PLUGIN_ID)).toBeNull();
             expect(runtime.readPluginSourceCustody?.(PLUGIN_ID)).toBeNull();
             expect(runtime.isPluginOccurrenceCurrent?.(PLUGIN_ID, occurrenceId!)).toBe(false);
+            await retirement;
         } finally {
             await runtime?.dispose();
             await rm(fixture.happyHomeDir, { recursive: true, force: true });
@@ -186,7 +187,7 @@ describe('executable plugin portable brand Resource projection', () => {
         }
     }, 60_000);
 
-    it('retains a runnable plugin and reports a neutral fallback when its declared brand file is unavailable', async () => {
+    it('reports a neutral fallback without diagnostics when its declared brand file is unavailable', async () => {
         const fixture = await seedFixture(false);
         let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
         try {

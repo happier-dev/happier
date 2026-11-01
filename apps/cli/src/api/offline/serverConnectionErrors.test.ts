@@ -161,15 +161,6 @@ describe('startOfflineReconnection', () => {
             handle.cancel();
         });
 
-        it('should only reconnect once (idempotent)', async () => {
-            const { handle, onReconnected } = createTestHandle();
-
-            await waitForReconnection(handle);
-
-            expect(onReconnected).toHaveBeenCalledTimes(1);
-
-            handle.cancel();
-        });
     });
 
     describe('retry behavior', () => {

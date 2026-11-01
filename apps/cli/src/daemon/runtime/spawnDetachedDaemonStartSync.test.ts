@@ -42,31 +42,6 @@ describe('spawnDetachedDaemonStartSync', () => {
     }
   });
 
-  it('propagates the public release channel to the detached daemon so state files are scoped per lane', async () => {
-    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
-    envScope.patch({
-      HAPPIER_RELEASE_RING: 'dev',
-      HAPPIER_PUBLIC_RELEASE_CHANNEL: undefined,
-      HAPPIER_HOME_DIR: '/tmp/happier-cli-test-home',
-      HAPPIER_DAEMON_SERVICE_MANAGED_BY: 'desktop',
-      HAPPIER_DAEMON_SERVICE_BUNDLE_ID: 'dev.happier.app',
-      HAPPIER_DAEMON_SERVICE_AUTOSTART: 'on-demand',
-    });
-    vi.resetModules();
-
-    const mod = await import('./spawnDetachedDaemonStartSync');
-    await mod.spawnDetachedDaemonStartSync();
-
-    expect(spawnMock).toHaveBeenCalledTimes(1);
-    const [, , options] = spawnMock.mock.calls[0] as any[];
-    expect(options?.env?.HAPPIER_PUBLIC_RELEASE_CHANNEL).toBe('dev');
-    expect(options?.env?.HAPPIER_DAEMON_STARTUP_SOURCE).toBe('manual');
-    expect(options?.env?.HAPPIER_DAEMON_SERVICE_MANAGED_BY).toBeUndefined();
-    expect(options?.env?.HAPPIER_DAEMON_SERVICE_BUNDLE_ID).toBeUndefined();
-    expect(options?.env?.HAPPIER_DAEMON_SERVICE_AUTOSTART).toBeUndefined();
-    expect(process.env.HAPPIER_DAEMON_SERVICE_BUNDLE_ID).toBe('dev.happier.app');
-  });
-
   it('resolves the launch spec from the requested successor environment', async () => {
     Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
     const successorEnv: NodeJS.ProcessEnv = {

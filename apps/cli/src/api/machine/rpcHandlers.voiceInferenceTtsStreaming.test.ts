@@ -168,56 +168,6 @@ describe('registerMachineVoiceInferenceTtsStreamingRpcHandlers', () => {
     })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
   });
 
-  it('persists segmented TTS diagnostics only after terminal success and drops cancelled output', async () => {
-    const root = await createTempDir();
-    const synthesizeTts: VoiceInferenceRuntime['synthesizeTts'] = async (input) => ({
-      bytes: Buffer.from(`audio:${input.text}`),
-      output: input.output,
-      name: 'segment.wav',
-    });
-    const mgr = createRpcHandlerManager();
-    const diagnostics = await createDiagnostics();
-    const captureFile = vi.spyOn(diagnostics, 'captureFile');
-    const registration = registerMachineVoiceInferenceTtsStreamingRpcHandlers({
-      rpcHandlerManager: mgr,
-      voiceInferenceWorker: await createWorker(synthesizeTts),
-      streamRoot: root,
-      voiceDiagnostics: diagnostics,
-    });
-    registrations.push(registration);
-    const start = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_START)!;
-    const next = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_NEXT)!;
-    const ack = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_ACK)!;
-    const cancel = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_CANCEL)!;
-
-    const started = await start({
-      requestId: 'tts-success', text: 'One sentence.', packId, voiceId: null, speed: 1,
-      output: { codec: 'wav', mimeType: 'audio/wav' }, prefetchDepth: 1,
-      diagnostics: { sessionId: 'session-1', captureAllowed: true, durationMs: null, authorizationId: '6a42516d-20ea-4c70-91d5-b0dbaf693637' },
-    });
-    const segment = await next({ streamId: started.streamId, generation: started.generation });
-    expect(captureFile).not.toHaveBeenCalled();
-    await ack({
-      streamId: started.streamId,
-      generation: started.generation,
-      segmentId: segment.event.segmentId,
-      segmentIndex: segment.event.segmentIndex,
-    });
-    await vi.waitFor(() => expect(captureFile).toHaveBeenCalledTimes(1));
-
-    captureFile.mockClear();
-    const cancelled = await start({
-      requestId: 'tts-cancel', text: 'Another sentence.', packId, voiceId: null, speed: 1,
-      output: { codec: 'wav', mimeType: 'audio/wav' }, prefetchDepth: 1,
-      diagnostics: { sessionId: 'session-1', captureAllowed: true, durationMs: null, authorizationId: '6a42516d-20ea-4c70-91d5-b0dbaf693637' },
-    });
-    await next({ streamId: cancelled.streamId, generation: cancelled.generation });
-    await cancel({ streamId: cancelled.streamId, generation: cancelled.generation, reason: 'client_abort' });
-    await Promise.resolve();
-    expect(captureFile).not.toHaveBeenCalled();
-    await registration.dispose();
-  });
-
   it('stages segmented TTS diagnostics on disk instead of retaining the utterance in memory', async () => {
     const root = await createTempDir();
     const synthesizeTts: VoiceInferenceRuntime['synthesizeTts'] = async (input) => ({

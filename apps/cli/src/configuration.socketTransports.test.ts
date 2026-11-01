@@ -45,11 +45,11 @@ describe('configuration socket transports', () => {
     const homeDir = createTempDirSync('happier-cli-config-');
     tempDirs.push(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_SOCKET_TRANSPORTS = 'polling, websocket, nope, polling';
+    process.env.HAPPIER_SOCKET_TRANSPORTS = 'websocket, polling, nope, websocket';
     delete process.env.HAPPIER_SOCKET_FORCE_WEBSOCKET;
 
     const configMod = await import('./configuration');
     configMod.reloadConfiguration();
-    expect(configMod.configuration.socketIoTransports).toEqual(['polling', 'websocket']);
+    expect(configMod.configuration.socketIoTransports).toEqual(['websocket', 'polling']);
   });
 });

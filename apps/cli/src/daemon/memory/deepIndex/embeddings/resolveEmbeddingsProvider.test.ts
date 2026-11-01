@@ -158,13 +158,14 @@ describe('resolveEmbeddingsProvider', () => {
   });
 
   it('retries provider initialization after a previous failure', async () => {
-    const { resolveEmbeddingsProvider } = await import('./resolveEmbeddingsProvider');
+    const { createEmbeddingsProviderCache, resolveEmbeddingsProvider } = await import('./resolveEmbeddingsProvider');
+    const cache = createEmbeddingsProviderCache();
 
     transformersState.failPipelineInit = true;
-    const failed = await resolveEmbeddingsProvider({ settings: createPresetOperationalSettings(), cacheDir: '/tmp/happier-memory-embeddings-test' });
+    const failed = await resolveEmbeddingsProvider({ settings: createPresetOperationalSettings(), cacheDir: '/tmp/happier-memory-embeddings-test', cache });
 
     transformersState.failPipelineInit = false;
-    const recovered = await resolveEmbeddingsProvider({ settings: createPresetOperationalSettings(), cacheDir: '/tmp/happier-memory-embeddings-test' });
+    const recovered = await resolveEmbeddingsProvider({ settings: createPresetOperationalSettings(), cacheDir: '/tmp/happier-memory-embeddings-test', cache });
 
     expect(failed.provider).toBeNull();
     expect(failed.runtimeState).toBe('error');
@@ -547,9 +548,11 @@ describe('resolveEmbeddingsProvider', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const { resolveEmbeddingsProvider } = await import('./resolveEmbeddingsProvider');
+    const { createEmbeddingsProviderCache, resolveEmbeddingsProvider } = await import('./resolveEmbeddingsProvider');
+    const cache = createEmbeddingsProviderCache();
 
     const first = await resolveEmbeddingsProvider({
+      cache,
       settings: createRemoteOperationalSettings(),
       cacheDir: '/tmp/happier-memory-embeddings-test',
       settingsSecretsReadKeys: [],
@@ -573,6 +576,7 @@ describe('resolveEmbeddingsProvider', () => {
     }
 
     const second = await resolveEmbeddingsProvider({
+      cache,
       settings: secondSettings,
       cacheDir: '/tmp/happier-memory-embeddings-test',
       settingsSecretsReadKeys: [],
@@ -620,9 +624,11 @@ describe('resolveEmbeddingsProvider', () => {
   });
 
   it('refreshes the cached local provider when custom query prefixes change', async () => {
-    const { resolveEmbeddingsProvider } = await import('./resolveEmbeddingsProvider');
+    const { createEmbeddingsProviderCache, resolveEmbeddingsProvider } = await import('./resolveEmbeddingsProvider');
+    const cache = createEmbeddingsProviderCache();
 
     const first = await resolveEmbeddingsProvider({
+      cache,
       settings: createCustomLocalOperationalSettings('query: '),
       cacheDir: '/tmp/happier-memory-embeddings-test',
     });
@@ -630,6 +636,7 @@ describe('resolveEmbeddingsProvider', () => {
     expect(transformersState.lastInputs[0]).toBe('query:hello');
 
     const second = await resolveEmbeddingsProvider({
+      cache,
       settings: createCustomLocalOperationalSettings('search: '),
       cacheDir: '/tmp/happier-memory-embeddings-test',
     });

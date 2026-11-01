@@ -99,9 +99,11 @@ describe('buildSessionMetadataEnvelopeCreateFields', () => {
     expect(projection).toMatchObject({ v: 1, sourceMetadataVersion: 0, metadataLayoutVersion: 1 });
     expect(projection.shared.t).toBe(sessionMode === 'plain' ? 'plain' : 'encrypted');
     expect(projection.owner?.t).toBe(accountMode === 'plain' ? 'plain' : 'encrypted');
+    expect(fields.ownerMetadata.t).toBe(accountMode === 'plain' ? 'plain' : 'encrypted');
     const sharedMetadata = SessionSharedMetadataV1Schema.parse(sessionMode === 'plain'
       ? JSON.parse(fields.sharedMetadata.ciphertext)
       : decrypt(sessionKey, 'dataKey', decodeBase64(fields.sharedMetadata.ciphertext)));
+    expect(sharedMetadata.summary).toEqual(metadata.summary);
     const openedOwner = openSessionOwnerMetadataEnvelopeV1({ accountMode, envelope: fields.ownerMetadata,
       material: { type: 'legacy', secret: credentials.encryption.secret } });
     if (!openedOwner.ok) throw new Error('Expected the actual create owner tuple to open');
@@ -209,27 +211,4 @@ describe('buildSessionMetadataEnvelopeCreateFields', () => {
     )).toEqual({ privateAgentState: 'owner-only' });
   });
 
-  it('selects the Account-owned envelope independently from Session stored-content mode', () => {
-    const accountPlainSessionE2ee = buildSessionMetadataEnvelopeCreateFields({
-      credentials,
-      accountEncryptionMode: 'plain',
-      metadata,
-      agentState: null,
-      storedContentMode: 'e2ee',
-      encryptionKey: credentials.encryption.secret,
-      encryptionVariant: 'legacy',
-    });
-    const accountE2eeSessionPlain = buildSessionMetadataEnvelopeCreateFields({
-      credentials,
-      accountEncryptionMode: 'e2ee',
-      metadata,
-      agentState: null,
-      storedContentMode: 'plain',
-    });
-
-    expect(accountPlainSessionE2ee.ownerMetadata.t).toBe('plain');
-    expect(accountE2eeSessionPlain.ownerMetadata.t).toBe('encrypted');
-    expect(JSON.parse(accountE2eeSessionPlain.sharedMetadata.ciphertext))
-      .toMatchObject({ v: 1, summary: metadata.summary });
-  });
 });

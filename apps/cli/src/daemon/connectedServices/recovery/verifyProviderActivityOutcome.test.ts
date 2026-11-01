@@ -142,9 +142,16 @@ describe('verifyProviderActivityOutcome', () => {
       reportedSelectionsEnvRaw: withoutRevision,
       event: 'task_started',
       loadAdapter: async () => ({
-        verifyProviderOutcome: async () => ({ status: 'verified', targets: [] }),
+        verifyProviderOutcome: async () => ({
+          status: 'verified',
+          targets: [{
+            serviceId: 'happier.agent.gemini/gemini-account',
+            profileId: 'work',
+            credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+          }],
+        }),
       } as never),
-    })).resolves.toMatchObject({ status: 'unavailable' });
+    })).resolves.toEqual({ status: 'unavailable', reason: 'runtime_selection_revision_missing' });
 
     await expect(verifyProviderActivityOutcome({
       target: target(),

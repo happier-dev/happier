@@ -63,18 +63,6 @@ const credentialSubject = {
 } as const satisfies PluginPermissionSubjectV1;
 
 describe('plugin permission grant evaluator', () => {
-  it('matches ordinary general grants without install-principal coupling', () => {
-    const existing = grant(GENERAL_PLUGIN_PERMISSION_SUBJECT_V1);
-    expect(evaluatePluginPermissionGrant({
-      grant: existing,
-      pluginId: existing.pluginId,
-      capability: existing.capability,
-      targetScope: existing.targetScope,
-      subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
-      currentAuthoritySource: machineA,
-    })).toBe(true);
-  });
-
   it('requires the exact disclosed credential authority', () => {
     const existing = grant(credentialSubject);
     const base = {
@@ -110,7 +98,7 @@ describe('plugin permission grant evaluator', () => {
     })).toBe(false);
   });
 
-  it('refuses a grant approved under another machine or a replaced installation', () => {
+  it('lets one approval cover the Account\'s other Machines and replaced installations, never an unidentified one', () => {
     const approvedOnMachineA = grant(credentialSubject, machineA);
     const base = {
       grant: approvedOnMachineA,
@@ -121,11 +109,11 @@ describe('plugin permission grant evaluator', () => {
     } as const;
 
     expect(evaluatePluginPermissionGrant({ ...base, currentAuthoritySource: machineA })).toBe(true);
-    expect(evaluatePluginPermissionGrant({ ...base, currentAuthoritySource: machineB })).toBe(false);
+    expect(evaluatePluginPermissionGrant({ ...base, currentAuthoritySource: machineB })).toBe(true);
     expect(evaluatePluginPermissionGrant({
       ...base,
       currentAuthoritySource: replacedInstallationOnMachineA,
-    })).toBe(false);
+    })).toBe(true);
     expect(evaluatePluginPermissionGrant({ ...base, currentAuthoritySource: null })).toBe(false);
     expect(evaluatePluginPermissionGrant({
       ...base,
@@ -141,7 +129,7 @@ describe('plugin permission grant evaluator', () => {
     })).toBe(false);
   });
 
-  it('binds general grants to the approving machine installation too', () => {
+  it('applies the same Account-wide rule to general grants', () => {
     const existing = grant(GENERAL_PLUGIN_PERMISSION_SUBJECT_V1, machineA);
     const base = {
       grant: existing,
@@ -152,7 +140,7 @@ describe('plugin permission grant evaluator', () => {
     } as const;
 
     expect(evaluatePluginPermissionGrant({ ...base, currentAuthoritySource: machineA })).toBe(true);
-    expect(evaluatePluginPermissionGrant({ ...base, currentAuthoritySource: machineB })).toBe(false);
+    expect(evaluatePluginPermissionGrant({ ...base, currentAuthoritySource: machineB })).toBe(true);
     expect(evaluatePluginPermissionGrant({ ...base, currentAuthoritySource: null })).toBe(false);
   });
 });

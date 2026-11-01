@@ -5,7 +5,7 @@ import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryCatalogKeyV1Schema, PromptLi
 import type { PromptInvocationEntryV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 import type { PromptExternalLinkEntryV1 } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
 import { AccountSettingsV2UpdateRequestSchema, type AccountSettingsV2UpdateRequest } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import type { RegistrySourceV1 } from '@happier-dev/protocol/registries';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -146,7 +146,22 @@ describe('CLI Action prompt catalog admission', () => {
                 data = { id: written.id, headerVersion: 1, bodyVersion: 1 };
             }
             else if (path === '/v1/artifacts' && request.method === 'GET') data = [...createdArtifacts.values()];
-            else if (path.startsWith('/v1/artifacts/') && createdArtifacts.has(path.split('/').at(-1)!)) data = createdArtifacts.get(path.split('/').at(-1)!);
+            else if (path.startsWith('/v1/artifacts/') && createdArtifacts.has(path.split('/').at(-1)!)) {
+                const id = path.split('/').at(-1)!;
+                const stored = createdArtifacts.get(id)!;
+                if (request.method === 'POST') {
+                    const mutation: unknown = JSON.parse(body);
+                    if (!mutation || typeof mutation !== 'object' || !('header' in mutation) || !('body' in mutation)
+                        || !('expectedHeaderVersion' in mutation) || !('expectedBodyVersion' in mutation)) throw new Error('Invalid Artifact update');
+                    if (mutation.expectedHeaderVersion !== stored.headerVersion || mutation.expectedBodyVersion !== stored.bodyVersion) {
+                        data = { success: false, error: 'version-mismatch' };
+                    } else {
+                        const headerVersion = Number(stored.headerVersion) + 1, bodyVersion = Number(stored.bodyVersion) + 1;
+                        createdArtifacts.set(id, { ...stored, header: mutation.header, body: mutation.body, headerVersion, bodyVersion });
+                        data = { success: true, headerVersion, bodyVersion };
+                    }
+                } else data = stored;
+            }
             else if (path === '/v1/artifacts/body') {
                 if (retireDuringBody) {
                     publication.clearActiveAccountSettingsSnapshot();
@@ -191,6 +206,39 @@ describe('CLI Action prompt catalog admission', () => {
     const publish = () => publication.setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(rawSettings), rawSettings,
         settingsVersion, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: scope.resolveAccountSettingsScopeKey(credentials) });
     const createDeps = () => factory.createCliActionDeps({ token, credentials, sessionId: 'session', mode: 'plain', ctx: null, serverId: 'alpha', serverHttpBaseUrl: url });
+    it.each(['doc', 'bundle'] as const)('persists authenticated %s updates through the real CLI dependency and Artifact transport', async kind => {
+        const id = `prompt-${kind}`;
+        createdArtifacts.set(id, { id, ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain',
+            header: encodePlainArtifactStoredContent({ v: 1, kind: `prompt_${kind}.v2`, title: 'Original',
+                ...(kind === 'bundle' ? { bundleSchemaId: 'skills.skill_md_v1' } : {}) }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, createdAtMs: 1, updatedAtMs: 1,
+                ...(kind === 'doc' ? { markdown: 'old' } : { entries: [{ path: 'SKILL.md', contentBase64: 'b2xk', contentKind: 'utf8' }] }) }) }),
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+        publish();
+        const deps = createDeps();
+        const request = { artifactId: id, title: 'Updated', expectedRevision: { headerVersion: 1, bodyVersion: 1 } };
+        const result = kind === 'doc' ? await deps.promptDocUpdate!({ ...request, markdown: 'new' })
+            : await deps.promptBundleUpdate!({ ...request, skillMarkdown: 'new' });
+        expect(result).toMatchObject({ ok: true, artifactId: id, revision: { headerVersion: 2, bodyVersion: 2 } });
+        const stored = createdArtifacts.get(id)!;
+        expect(decodePlainArtifactStoredContent(String(stored.header))).toMatchObject({ title: 'Updated' });
+        const content = decodePlainArtifactStoredContent(String(stored.body));
+        if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') throw new Error('Missing persisted Artifact body');
+        expect(JSON.parse(content.body)).toMatchObject(kind === 'doc' ? { markdown: 'new' }
+            : { entries: [{ path: 'SKILL.md', contentBase64: 'bmV3', contentKind: 'utf8' }] });
+        expect(settingsWrites).toEqual([]);
+    });
+
+    it('routes registry installation through the real current source catalog before creating an Artifact', async () => {
+        registrySources = { v: 2, disabledSourceIds: [], sources: [] };
+        publish();
+        const deps = createDeps();
+        await expect(deps.promptRegistryInstall!({ machineId: 'local-machine', sourceId: 'missing-source', itemId: 'missing-item' }, { surface: 'cli' }))
+            .rejects.toMatchObject({ code: 'invalid_source' });
+        expect(requests).toContain(PROMPT_LIBRARY_ROWS_ROUTE_V1);
+        expect(createdArtifacts.size).toBe(0);
+    });
+
     it('F8 routes Account stack Actions through the real captured keyless catalog transport and refuses stale edits', async () => {
         const retained = { id: 'instructions', ref: { kind: 'doc' as const, artifactId: 'body' }, enabled: true,
             placement: 'system_append' as const };

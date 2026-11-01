@@ -56,13 +56,16 @@ describe('simulator quality scalar translator (X3 fps/scale → set_quality fold
         expect(event.control).not.toHaveProperty('maxFramesPerSecond');
     });
 
-    it('rounds and clamps the scalar to the positive-integer the set_quality control requires', () => {
+    it.each([
+        { value: 0.4, expected: 1 },
+        { value: 1.6, expected: 2 },
+    ])('rounds and clamps $value to $expected', ({ value, expected }) => {
         const event = translateSimulatorQualityScalarRuntimeAction({
             actionId: 'devices.simulator.stream.fps.set',
-            scalar: { simulatorId: 'sim_1', streamId: 'stream_1', sourceId: 'source_1', value: 0.4 },
+            scalar: { simulatorId: 'sim_1', streamId: 'stream_1', sourceId: 'source_1', value },
             createEventId: () => 'event_fps',
         });
 
-        expect(event.control).toMatchObject({ kind: 'set_quality', maxFramesPerSecond: 1 });
+        expect(event.control).toMatchObject({ kind: 'set_quality', maxFramesPerSecond: expected });
     });
 });

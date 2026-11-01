@@ -137,21 +137,12 @@ describe('voice inference worker ipc protocol', () => {
   });
 
   it('accepts a frame exactly at the custom ceiling but rejects one byte over on encode (M2)', () => {
-    const small: VoiceInferenceWorkerFrame = { kind: 'abort', id: 'abort-1', targetId: 'request-1' };
-    const encoded = encodeVoiceInferenceWorkerFrame(small, 64);
-    expect(createVoiceInferenceWorkerFrameDecoder(64).push(encoded)).toEqual([small]);
-
-    const big: VoiceInferenceWorkerFrame = {
-      kind: 'result',
-      id: 'tts',
-      result: {
-        kind: 'synthesize',
-        output: { codec: 'wav', mimeType: 'audio/wav' },
-        bytesBase64: 'a'.repeat(64),
-        name: null,
-      },
-    };
-    expect(() => encodeVoiceInferenceWorkerFrame(big, 32)).toThrow(/too_large/);
+    const frame: VoiceInferenceWorkerFrame = { kind: 'abort', id: 'abort-é', targetId: 'request-1' };
+    const payloadBytes = Buffer.byteLength(JSON.stringify(frame), 'utf8');
+    const encoded = encodeVoiceInferenceWorkerFrame(frame, payloadBytes);
+    expect(createVoiceInferenceWorkerFrameDecoder(payloadBytes).push(encoded)).toEqual([frame]);
+    expect(() => encodeVoiceInferenceWorkerFrame(frame, payloadBytes - 1)).toThrow(/too_large/);
+    expect(() => createVoiceInferenceWorkerFrameDecoder(payloadBytes - 1).push(encoded)).toThrow(/too_large/);
   });
 
   describe('response frame schema validation (L4)', () => {

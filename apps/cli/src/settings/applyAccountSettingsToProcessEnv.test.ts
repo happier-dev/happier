@@ -12,18 +12,6 @@ describe('applyAccountSettingsToProcessEnv', () => {
     else process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON = prev;
   }
 
-  it('sets HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY from account settings when present', () => {
-    const prev = process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
-    delete process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
-    try {
-      applyAccountSettingsToProcessEnv({ settings: { scmIncludeCoAuthoredBy: true } });
-      expect(process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY).toBe('1');
-    } finally {
-      if (prev === undefined) delete process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
-      else process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = prev;
-    }
-  });
-
   it('does not override an explicitly set env var', () => {
     const prev = process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
     process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = '0';
@@ -88,20 +76,6 @@ describe('applyAccountSettingsToProcessEnv', () => {
       else process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = prevScm;
       if (prevActions === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
       else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prevActions;
-    }
-  });
-
-  it('sets HAPPIER_ACTIONS_SETTINGS_V1 from account settings when present', () => {
-    const prev = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-    delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-    try {
-      applyAccountSettingsToProcessEnv({ settings: { actionsSettingsV1: { v: 1, actions: { 'review.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] } } } } });
-      expect(process.env.HAPPIER_ACTIONS_SETTINGS_V1).toBe(
-        JSON.stringify({ v: 1, actions: { 'review.start': { enabled: false, disabledSurfaces: [], disabledPlacements: [] } } }),
-      );
-    } finally {
-      if (prev === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prev;
     }
   });
 

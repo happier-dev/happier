@@ -102,6 +102,10 @@ describe('createSessionHandleAuthService runtime auth refresh', () => {
         });
 
         const input = refreshActiveProfile.mock.calls[0]?.[0];
+        expect(input).toMatchObject({
+            target: { agentId: 'claude' },
+            selection: { serviceId: 'happier.agent.claude/claude-subscription' },
+        });
         expect(input).not.toHaveProperty('targetMaterializedEnv');
         expect(input).not.toHaveProperty('env');
         expect(input).not.toHaveProperty('materializedEnv');

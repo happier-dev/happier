@@ -79,11 +79,13 @@ describe('registerMachineConnectedServiceQuotaRpcHandlers', () => {
     });
   });
 
-  it('returns stable invalid-parameter errors before daemon dispatch', async () => {
+  it('rejects an empty profile even with valid idempotency before daemon dispatch', async () => {
     await registerHandlers();
     const handler = handlers.get(RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME);
 
-    await expect(handler?.({ serviceId: 'not-real', profileId: '' })).resolves.toEqual({
+    await expect(handler?.({
+      serviceId: 'openai-codex', profileId: '', idempotencyKey: 'consume:invalid-profile',
+    })).resolves.toEqual({
       ok: false,
       error: 'invalid_parameters',
       errorCode: 'invalid_parameters',

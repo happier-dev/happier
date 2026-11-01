@@ -38,6 +38,16 @@ describe('browser storage partition owner', () => {
 
     expect(first).toBe(second);
     expect(first).not.toBe(different);
+    expect(first).not.toBe(deriveBrowserStoragePartitionId({
+      profileId: 'profile_1',
+      originKey: 'https://other.example',
+      targetKind: 'localServicePreview',
+    }));
+    expect(first).not.toBe(deriveBrowserStoragePartitionId({
+      profileId: 'profile_1',
+      originKey: 'https://example.com',
+      targetKind: 'externalUrl',
+    }));
     // Non-secret: no raw origin or profile id leaked into the id.
     expect(first).not.toContain('example.com');
     expect(first).not.toContain('profile_1');
@@ -59,13 +69,21 @@ describe('browser storage partition owner', () => {
       const partitionDir = owner.resolvePartitionDirectory(partition.partitionId);
       await mkdir(partitionDir, { recursive: true });
       await writeFile(join(partitionDir, 'cookies.db'), 'cookie-bytes');
+      const retained = owner.register({
+        ...partition,
+        profileId: 'profile_keep',
+      });
+      const retainedDir = owner.resolvePartitionDirectory(retained.partitionId);
+      await mkdir(retainedDir, { recursive: true });
+      await writeFile(join(retainedDir, 'cookies.db'), 'retained-cookie-bytes');
 
       const result = await owner.purgePartitionsForProfiles(new Set(['profile_1']));
 
       expect(result.purgedPartitionIds).toEqual([partition.partitionId]);
       expect(result.failures).toEqual([]);
       expect(await pathExists(partitionDir)).toBe(false);
-      expect(owner.listPartitions()).toEqual([]);
+      expect(owner.listPartitions()).toEqual([retained]);
+      await expect(readFile(join(retainedDir, 'cookies.db'), 'utf8')).resolves.toBe('retained-cookie-bytes');
     } finally {
       await rm(root, { recursive: true, force: true });
     }

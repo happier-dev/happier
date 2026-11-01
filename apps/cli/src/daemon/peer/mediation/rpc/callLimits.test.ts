@@ -1,18 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-async function importCallLimits() {
-    return await import('./callLimits').catch((error: unknown) => ({ importError: error }));
-}
+import { createPeerMachineRpcCallLimiter } from './callLimits';
 
 describe('direct machine RPC call limits', () => {
-    it('caps concurrent calls per grant scope at the smaller scope and local peer limits', async () => {
-        const module = await importCallLimits();
-        expect(module).toHaveProperty('createPeerMachineRpcCallLimiter');
-        if ('importError' in module) throw module.importError;
-
-        const limiter = module.createPeerMachineRpcCallLimiter({
+    it.each([
+        { localLimit: 8, scopeLimit: 1 },
+        { localLimit: 1, scopeLimit: 8 },
+    ])('uses the smaller concurrent limit (local=$localLimit, scope=$scopeLimit)', ({ localLimit, scopeLimit }) => {
+        const limiter = createPeerMachineRpcCallLimiter({
             nowMs: () => 2_000,
-            localPerPeerMaxConcurrentCalls: 8,
+            localPerPeerMaxConcurrentCalls: localLimit,
         });
         const key = {
             accountId: 'account_1',
@@ -22,11 +19,11 @@ describe('direct machine RPC call limits', () => {
         };
         const first = limiter.tryAcquire({
             key,
-            scope: { maxCalls: 1, maxIdleMs: 10_000 },
+            scope: { maxCalls: scopeLimit, maxIdleMs: 10_000 },
         });
         const second = limiter.tryAcquire({
             key,
-            scope: { maxCalls: 1, maxIdleMs: 10_000 },
+            scope: { maxCalls: scopeLimit, maxIdleMs: 10_000 },
         });
 
         expect(first.ok).toBe(true);
@@ -34,17 +31,13 @@ describe('direct machine RPC call limits', () => {
         if (first.ok) first.release();
         expect(limiter.tryAcquire({
             key,
-            scope: { maxCalls: 1, maxIdleMs: 10_000 },
+            scope: { maxCalls: scopeLimit, maxIdleMs: 10_000 },
         }).ok).toBe(true);
     });
 
-    it('returns a dedicated idle-expired reason and evicts stale grant activity', async () => {
-        const module = await importCallLimits();
-        expect(module).toHaveProperty('createPeerMachineRpcCallLimiter');
-        if ('importError' in module) throw module.importError;
-
+    it('returns a dedicated idle-expired reason and evicts stale grant activity', () => {
         let nowMs = 1_000;
-        const limiter = module.createPeerMachineRpcCallLimiter({
+        const limiter = createPeerMachineRpcCallLimiter({
             nowMs: () => nowMs,
             localPerPeerMaxConcurrentCalls: 8,
         });

@@ -38,8 +38,13 @@ describe('TurnAssistantTextSnapshotStore', () => {
       seq: 6,
       provider: 'opencode',
     });
+    expect(store.getCurrentTurnSnapshot({ turnToken: 'turn-1' })).toMatchObject({
+      normalizedText: 'Previous answer',
+      seq: 6,
+    });
 
     store.beginTurn({ turnToken: 'turn-2', startSeqExclusive: 6, startedAtMs: 200 });
+    expect(store.getCurrentTurnSnapshot()).toBeNull();
     store.observe({
       text: 'Stale echo',
       source: 'socket',
@@ -47,7 +52,13 @@ describe('TurnAssistantTextSnapshotStore', () => {
       provider: 'opencode',
     });
 
+    expect(store.getCurrentTurnSnapshot({ turnToken: 'turn-2' })).toBeNull();
     expect(store.getSnapshotAfter({ turnToken: 'turn-2', startSeqExclusive: 6 })).toBeNull();
+    store.observe({ text: 'Current answer', source: 'committed', seq: 7, provider: 'opencode' });
+    expect(store.getSnapshotAfter({ turnToken: 'turn-2', startSeqExclusive: 6 })).toMatchObject({
+      normalizedText: 'Current answer',
+      seq: 7,
+    });
   });
 
   it('ignores empty and sidechain assistant text for parent ready notifications', () => {
@@ -65,6 +76,7 @@ describe('TurnAssistantTextSnapshotStore', () => {
 
     store.beginTurn({ turnToken: 'turn-1', startSeqExclusive: 20, startedAtMs: 100 });
     store.observe({ text: 'Wrong turn', source: 'streaming', turnToken: 'turn-2' });
+    expect(store.getCurrentTurnSnapshot()).toBeNull();
     store.observe({ text: 'Current live answer', source: 'streaming', turnToken: 'turn-1' });
 
     expect(store.getSnapshotAfter({ turnToken: 'turn-1', startSeqExclusive: 20 })?.normalizedText)

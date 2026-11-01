@@ -20,15 +20,4 @@ describe('execution-run runtime path closure', () => {
   it('does not recreate the retired CLI provider backend root', () => {
     expect(existsSync(repoPath('apps/cli/src/backends'))).toBe(false);
   });
-
-  it('does not retain Claude host execution-run runtime owners', () => {
-    expect(existsSync(repoPath('apps/cli/src/backends/claude'))).toBe(false);
-    expect(existsSync(repoPath('apps/cli/src/backends/claude/executionRuns/executionRunBackendFactory.ts'))).toBe(false);
-    expect(existsSync(repoPath('apps/cli/src/backends/claude/sdkAgentBackend/ClaudeSdkAgentBackend.ts'))).toBe(false);
-  });
-
-  it('does not retain the drained Pi host backend folder', () => {
-    expect(existsSync(repoPath('apps/cli/src/backends/pi'))).toBe(false);
-    expect(existsSync(repoPath('apps/cli/src/backends/pi/index.ts'))).toBe(false);
-  });
 });

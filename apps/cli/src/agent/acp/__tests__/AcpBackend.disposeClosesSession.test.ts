@@ -50,8 +50,19 @@ describe('AcpBackend disposal session/close', () => {
   });
 
   it('releases the Agent-owned session with the exact opaque id after cancelling', async () => {
+    let cancellationSettled = false;
+    let closeSawCancellationSettled: boolean | undefined;
     const { backend, cancel, closeSession, connectionClose } = backendWithActiveSession({
       closeNegotiated: true,
+      closeSession: async () => {
+        closeSawCancellationSettled = cancellationSettled;
+        return {};
+      },
+    });
+    cancel.mockImplementation(async () => {
+      await Promise.resolve();
+      cancellationSettled = true;
+      return {};
     });
 
     await backend.dispose();
@@ -59,6 +70,7 @@ describe('AcpBackend disposal session/close', () => {
     expect(cancel).toHaveBeenCalledWith({ sessionId: ' sess_remote ' });
     // Byte-exact identifier: the Agent must be able to match the session it handed us.
     expect(closeSession).toHaveBeenCalledWith({ sessionId: ' sess_remote ' });
+    expect(closeSawCancellationSettled).toBe(true);
     expect(connectionClose).toHaveBeenCalled();
   });
 

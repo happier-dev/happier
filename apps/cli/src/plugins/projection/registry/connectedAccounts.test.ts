@@ -91,6 +91,9 @@ describe('connectedAccountProjectionFamily', () => {
           definition: {
             id: 'bitbucket-account', title: 'Bitbucket account',
             authentication: manualAuthentication(),
+            hostAdapter: { clientSecret: 'PRIVATE_ADAPTER_SECRET' },
+            clientSecret: 'PRIVATE_DESCRIPTOR_SECRET',
+            executableHook: () => 'PRIVATE_EXECUTABLE_HOOK',
           },
         }],
         scmHostingProviders: [{ id: 'bitbucket', pluginId: 'happier.scm.forge.bitbucket', definition: { authService: 'bitbucket-account' } }],
@@ -100,9 +103,12 @@ describe('connectedAccountProjectionFamily', () => {
     expect(Object.values(projected.entriesById)).toEqual([
       expect.objectContaining({ id: 'bitbucket-account', serviceId: 'bitbucket', pluginId: 'happier.scm.forge.bitbucket' }),
     ]);
-    expect(JSON.stringify(projected)).not.toContain('hostAdapter');
-    expect(JSON.stringify(projected)).not.toContain('clientSecret');
-    expect(JSON.stringify(projected)).not.toContain('function');
+    const entry = projected.entriesById['happier.scm.forge.bitbucket/bitbucket-account'];
+    expect(entry).not.toHaveProperty('hostAdapter');
+    expect(entry).not.toHaveProperty('clientSecret');
+    expect(entry).not.toHaveProperty('executableHook');
+    expect(JSON.stringify(projected)).not.toContain('PRIVATE_ADAPTER_SECRET');
+    expect(JSON.stringify(projected)).not.toContain('PRIVATE_DESCRIPTOR_SECRET');
   });
 
   it('preserves localized copy, provenance, auth shape, capabilities, availability, and diagnostics', () => {

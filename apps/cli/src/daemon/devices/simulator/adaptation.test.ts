@@ -6,16 +6,6 @@ import {
 } from './adaptation';
 
 describe('createSimulatorBitrateAdaptationController', () => {
-    it('starts at the configured initial bitrate and surfaces it as the current target', () => {
-        const controller = createSimulatorBitrateAdaptationController({
-            initialBitrateBps: 4_000_000,
-            minBitrateBps: 500_000,
-            maxBitrateBps: 8_000_000,
-        });
-
-        expect(controller.currentTargetBitrateBps()).toBe(4_000_000);
-    });
-
     it('reduces target bitrate on sustained backpressure and clamps to the floor', () => {
         const controller = createSimulatorBitrateAdaptationController({
             initialBitrateBps: 4_000_000,
@@ -23,6 +13,7 @@ describe('createSimulatorBitrateAdaptationController', () => {
             maxBitrateBps: 8_000_000,
         });
 
+        expect(controller.currentTargetBitrateBps()).toBe(4_000_000);
         // Sustained backpressure (frames dropped / cap breaches) must pull the target DOWN.
         const first = controller.observe({
             nowMs: 1_000,

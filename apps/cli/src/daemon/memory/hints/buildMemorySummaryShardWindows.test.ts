@@ -36,7 +36,10 @@ describe('buildMemorySummaryShardWindows', () => {
     ]);
   });
 
-  it('treats targetShardChars as a soft target and maxShardChars as a hard cap', () => {
+  it.each([
+    { minShardMessages: 2, maxShardChars: 200, expected: [[1, 2], [3, 3]] },
+    { minShardMessages: 3, maxShardChars: 100, expected: [[1, 1], [2, 2], [3, 3]] },
+  ])('splits with minShardMessages=$minShardMessages and maxShardChars=$maxShardChars', ({ minShardMessages, maxShardChars, expected }) => {
     const windows = buildMemorySummaryShardWindows({
       items: [
         createItem(1, 'a'.repeat(60)),
@@ -44,14 +47,11 @@ describe('buildMemorySummaryShardWindows', () => {
         createItem(3, 'c'.repeat(60)),
       ],
       targetShardMessages: 10,
-      minShardMessages: 2,
+      minShardMessages,
       targetShardChars: 100,
-      maxShardChars: 200,
+      maxShardChars,
     });
 
-    expect(windows.map((window) => [window.seqFrom, window.seqTo])).toEqual([
-      [1, 2],
-      [3, 3],
-    ]);
+    expect(windows.map((window) => [window.seqFrom, window.seqTo])).toEqual(expected);
   });
 });

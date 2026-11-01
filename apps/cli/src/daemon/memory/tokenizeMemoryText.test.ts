@@ -40,12 +40,16 @@ describe('tokenizeMemoryText', () => {
 
   it('produces overlapping tokens for unspaced CJK documents and queries', () => {
     const documentTerms = new Set(tokenizeMemoryText('メモリ検索機能を実装した'));
-    for (const term of tokenizeMemoryText('検索')) {
+    const japaneseQueryTerms = tokenizeMemoryText('検索');
+    expect(japaneseQueryTerms.length).toBeGreaterThan(0);
+    for (const term of japaneseQueryTerms) {
       expect(documentTerms.has(term), term).toBe(true);
     }
 
     const hanDocument = new Set(tokenizeMemoryText('我们讨论了内存搜索'));
-    for (const term of tokenizeMemoryText('搜索')) {
+    const hanQueryTerms = tokenizeMemoryText('搜索');
+    expect(hanQueryTerms.length).toBeGreaterThan(0);
+    for (const term of hanQueryTerms) {
       expect(hanDocument.has(term), term).toBe(true);
     }
   });

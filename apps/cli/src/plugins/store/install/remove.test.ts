@@ -2,18 +2,20 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { createPluginStateStore, PluginStateFileV1Schema } from '@/plugins/store/state.testkit';
-import type { UserPluginChangeResult } from '@/plugins/daemon/changeClient';
+import type { PluginChangeRequestResult } from '@/plugins/daemon/changeContract';
 
 import { removeInstalledPlugin } from './remove';
 
-const changeClient = vi.hoisted(() => ({
-  requestUserPluginChange: vi.fn(async (): Promise<UserPluginChangeResult> => ({
+const daemonControl = vi.hoisted(() => ({
+  requestDaemonPluginChange: vi.fn(async (): Promise<PluginChangeRequestResult> => ({
     kind: 'unavailable',
     code: 'unexpected_test_call',
   })),
 }));
 
-vi.mock('@/plugins/daemon/changeClient', () => changeClient);
+// Keep the user-change client real; substitute only daemon transport and process startup.
+vi.mock('@/daemon/controlClient', () => daemonControl);
+vi.mock('@/daemon/ensureDaemon', () => ({ ensureDaemonRunningForSessionCommand: vi.fn(async () => undefined) }));
 
 describe('removeInstalledPlugin', () => {
   it('routes uninstall through the daemon without deleting registry state locally', async () => {
@@ -38,7 +40,7 @@ describe('removeInstalledPlugin', () => {
         },
       },
     }));
-    changeClient.requestUserPluginChange.mockResolvedValueOnce({
+    daemonControl.requestDaemonPluginChange.mockResolvedValueOnce({
       kind: 'committed' as const,
       pluginId: 'acme.example',
       desiredGeneration: null,
@@ -50,10 +52,7 @@ describe('removeInstalledPlugin', () => {
       await expect(removeInstalledPlugin({ happyHomeDir, pluginId: 'acme.example' }))
         .resolves.toMatchObject({ ok: true, pluginId: 'acme.example' });
 
-      expect(changeClient.requestUserPluginChange).toHaveBeenCalledWith({
-        request: { kind: 'uninstall', pluginId: 'acme.example' },
-        approval: 'none',
-      });
+      expect(daemonControl.requestDaemonPluginChange).toHaveBeenCalledWith({ kind: 'uninstall', pluginId: 'acme.example' });
       expect((await store.read()).plugins['acme.example']).toBeDefined();
     } finally {
       await removeTempDir(happyHomeDir);

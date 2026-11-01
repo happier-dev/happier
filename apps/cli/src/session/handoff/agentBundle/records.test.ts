@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 const { resolveCurrentExecutionSurfacesForCatalogAgent } = vi.hoisted(() => ({
   resolveCurrentExecutionSurfacesForCatalogAgent: vi.fn(),
@@ -115,6 +115,7 @@ describe('readSessionHandoffAgentBundleRecords', () => {
 
   it('streams file-backed JSONL bundle fields through the generic shape fallback', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-handoff-records-'));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
     const filePath = join(root, 'rollout.jsonl');
     const contents = '{"id":"file-backed-message-1"}\nnot-json\n';
     await writeFile(filePath, contents, 'utf8');

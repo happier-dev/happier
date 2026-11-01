@@ -1,41 +1,45 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
+import { MessageQueue2 } from './modeMessageQueue';
 import { pushMessageToQueueWithSpecialCommands } from './queueSpecialCommands';
 
 describe('pushMessageToQueueWithSpecialCommands', () => {
-  it('pushes clear commands via isolate+clear', () => {
-    const queue = {
-      push: vi.fn(),
-      pushIsolate: vi.fn(),
-      pushIsolateAndClear: vi.fn(),
-    };
+  it('clears earlier input and isolates the clear command from later input', async () => {
+    const queue = new MessageQueue2<string>((mode) => mode);
+    queue.push('discard me', 'default');
 
     pushMessageToQueueWithSpecialCommands({
       queue,
       message: '/clear',
       text: '/clear',
-      mode: { permissionMode: 'default' },
+      mode: 'default',
     });
+    queue.push('keep me', 'default');
 
-    expect(queue.push).not.toHaveBeenCalled();
-    expect(queue.pushIsolateAndClear).toHaveBeenCalledWith('/clear', { permissionMode: 'default' });
+    await expect(queue.waitForMessagesAndGetAsString()).resolves.toMatchObject({ message: '/clear', mode: 'default' });
+    await expect(queue.waitForMessagesAndGetAsString()).resolves.toMatchObject({ message: 'keep me', mode: 'default' });
+    expect(queue.size()).toBe(0);
   });
 
-  it('pushes non-special text normally', () => {
-    const queue = {
-      push: vi.fn(),
-      pushIsolate: vi.fn(),
-      pushIsolateAndClear: vi.fn(),
-    };
+  it.each([false, true])('preserves neighboring input for ordinary text with isolate=%s', async (isolate) => {
+    const queue = new MessageQueue2<string>((mode) => mode);
+    queue.push('before', 'default');
 
     pushMessageToQueueWithSpecialCommands({
       queue,
       message: 'hello',
       text: 'hello',
-      mode: { permissionMode: 'default' },
+      mode: 'default',
+      isolate,
     });
+    queue.push('after', 'default');
 
-    expect(queue.pushIsolateAndClear).not.toHaveBeenCalled();
-    expect(queue.push).toHaveBeenCalledWith('hello', { permissionMode: 'default' });
+    const messages: string[] = [];
+    while (queue.size() > 0) {
+      const batch = await queue.waitForMessagesAndGetAsString();
+      expect(batch?.mode).toBe('default');
+      if (batch) messages.push(batch.message);
+    }
+    expect(messages).toEqual(isolate ? ['before', 'hello', 'after'] : ['before\nhello\nafter']);
   });
 });

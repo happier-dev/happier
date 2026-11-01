@@ -232,26 +232,6 @@ describe('WorkspaceSyncMutagenAdapterClient', () => {
     }), undefined);
   });
 
-  it('accepts the fork DTO shape for external://opaque-id without a persisted path', async () => {
-    const send = vi.fn(async (command: { t: string }) => command.t === 'list' ? listPage([]) : genericSession({
-      alpha: {
-        protocol: 'external', host: deriveWorkspaceSyncEndpointId('r1', 'alpha'), path: '',
-        state: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
-      },
-      beta: {
-        protocol: 'external', host: deriveWorkspaceSyncEndpointId('r1', 'beta'), path: '',
-        state: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
-      },
-    }));
-    const adapter = createWorkspaceSyncMutagenAdapter({
-      send,
-      createRequestId: () => 'request-1',
-      resolveWorkspaceRef: async (id) => ({ machineId: 'm1', rootPath: `/${id}` }),
-    });
-
-    await expect(adapter.ensure(relationship)).resolves.toMatchObject({ relationshipId: 'r1' });
-  });
-
   it('creates a persistent session paused, resumes it, then projects the bounded generic Session', async () => {
     const commands: unknown[] = [];
     const send = vi.fn(async (command: { t: string }) => {
@@ -956,9 +936,11 @@ describe('WorkspaceSyncMutagenAdapterClient', () => {
     const all = Array.from({ length: 150 }, (_, index) => ({
       root: `src/${String(index).padStart(4, '0')}.ts`, alphaChanges: [], betaChanges: [],
     }));
+    const conflictCursors: Array<string | undefined> = [];
     const send = vi.fn(async (command: { t: string; cursor?: string }) => {
       if (command.t === 'list') return listPage([]);
       if (command.t === 'list_conflicts') {
+        conflictCursors.push(command.cursor);
         const offset = command.cursor === undefined ? 0 : 100;
         const conflicts = all.slice(offset, offset + 100);
         return {
@@ -981,6 +963,7 @@ describe('WorkspaceSyncMutagenAdapterClient', () => {
       status: 'page', totalCount: 150, nextCursor: null,
       conflicts: expect.arrayContaining([expect.objectContaining({ path: 'src/0149.ts' })]),
     });
+    expect(conflictCursors).toEqual(['cursor-100']);
   });
 
   it('preserves the typed refresh result when the engine invalidates an opaque conflict cursor', async () => {

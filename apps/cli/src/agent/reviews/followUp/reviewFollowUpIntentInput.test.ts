@@ -1,12 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import { ExecutionRunStructuredRunRefSchema } from '@happier-dev/protocol';
-
 import { ReviewFollowUpIntentInputSchema } from './reviewFollowUpIntentInput';
 
 describe('ReviewFollowUpIntentInputSchema', () => {
-  it('reuses the shared execution-run structured run ref contract for parentRunRef', () => {
-    expect(ReviewFollowUpIntentInputSchema.shape.parentRunRef).toBe(ExecutionRunStructuredRunRefSchema);
+  it('accepts a parent run identity and refuses empty identity fields', () => {
+    const parentRunRef = { runId: 'run_1', callId: 'call_1', backendId: 'coderabbit' };
+    const input = {
+      kind: 'review_follow_up.v1',
+      parentRunRef,
+      threadId: 'thread_1',
+      messageMarkdown: 'Please follow up.',
+      summary: 'Summary',
+      overviewMarkdown: 'Overview',
+    };
+    expect(ReviewFollowUpIntentInputSchema.parse(input).parentRunRef).toEqual(parentRunRef);
+    for (const field of ['runId', 'callId', 'backendId']) {
+      expect(ReviewFollowUpIntentInputSchema.safeParse({
+        ...input, parentRunRef: { ...parentRunRef, [field]: '' },
+      }).success).toBe(false);
+    }
   });
 
   it('preserves additive fields on follow-up intent payloads and the shared parent run ref', () => {
@@ -36,9 +48,9 @@ describe('ReviewFollowUpIntentInputSchema', () => {
       },
     });
 
-    expect((parsed as any).futureFollowUpField).toEqual({
-      kind: 'review_follow_up.v2',
+    expect(parsed).toMatchObject({
+      futureFollowUpField: { kind: 'review_follow_up.v2' },
+      parentRunRef: { futureParentField: 'keep-me' },
     });
-    expect((parsed.parentRunRef as any).futureParentField).toBe('keep-me');
   });
 });

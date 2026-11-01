@@ -116,6 +116,14 @@ describe('hosted-web static asset resolver', () => {
             relativePath: 'hosted-web/preview-web/assets/index.js.map',
             contentType: 'application/json; charset=utf-8',
         });
+        await expect(resolveHostedWebStaticAssetRequest(baseRequest({
+            requestPath: '/assets/index.js.map',
+            sourceMaps: { enabled: true, allowedDigests: new Set(['sha256:revoked']) },
+        }))).resolves.toEqual({
+            ok: false,
+            code: 'source_map_unavailable',
+            status: 404,
+        });
     });
 
     it('applies SPA fallback only for path-fallback roots and rejects symlink escapes by realpath containment', async () => {

@@ -44,42 +44,29 @@ describe('inspectPluginSource', () => {
     const pluginId = 'acme.review-required';
     const pluginRoot = await materializeInstallCandidate(pluginId);
 
-    const inspected = await inspectPluginSource({
-      happyHomeDir,
-      locator: pluginRoot,
-    });
+    try {
+      const inspected = await inspectPluginSource({
+        happyHomeDir,
+        locator: pluginRoot,
+      });
 
-    expect(inspected).toMatchObject({
-      ok: true,
-      pluginId,
-      installedPath: null,
-      source: { trustPolicy: 'prompt' },
-    });
-    expect(inspected).not.toHaveProperty('manifestDigest');
-    if (inspected.ok) {
-      expect(inspected.source).not.toHaveProperty('resolvedDigest');
+      expect(inspected).toMatchObject({
+        ok: true,
+        pluginId,
+        installedPath: null,
+        source: { trustPolicy: 'prompt' },
+      });
+      expect(inspected).not.toHaveProperty('manifestDigest');
+      if (inspected.ok) {
+        expect(inspected.source).not.toHaveProperty('resolvedDigest');
+      }
+
+      const state = await createPluginRegistryStateStore({ happyHomeDir }).read();
+      expect(state.plugins[pluginId]).toBeUndefined();
+    } finally {
+      await rm(pluginRoot, { recursive: true, force: true });
+      await rm(happyHomeDir, { recursive: true, force: true });
     }
-
-    const state = await createPluginRegistryStateStore({ happyHomeDir }).read();
-    expect(state.plugins[pluginId]).toBeUndefined();
-  });
-
-  it('has no publication mode, so the daemon change owner remains the only mutator', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-install-owner-home-'));
-    const pluginId = 'acme.daemon-owner';
-    const pluginRoot = await materializeInstallCandidate(pluginId);
-
-    const result = await inspectPluginSource({
-      happyHomeDir,
-      locator: pluginRoot,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      pluginId,
-      installedPath: null,
-    });
-    expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]).toBeUndefined();
   });
 
   it('keeps a dev plugin under a workspace when its path begins with two dots', async () => {

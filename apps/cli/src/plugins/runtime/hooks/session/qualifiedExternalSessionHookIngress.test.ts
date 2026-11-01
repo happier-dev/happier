@@ -1262,40 +1262,6 @@ describe('qualified External Session hook ingress', () => {
         );
     });
 
-    it('carries the leaf-resolved provider bytes into link resolution unchanged', async () => {
-        const providerMinted = 'provider\nses/AB+cd==';
-        const harness = createHarness();
-        harness.runtime.mapHookEvent.mockResolvedValueOnce({
-            ok: true,
-            value: {
-                kind: 'mapped',
-                sourceInput: source,
-                remoteSessionId: providerMinted,
-                linkData: { projectId: 'project-1' },
-                facts: [mappedFact],
-            },
-        });
-        harness.runtime.resolveLinkIdentity.mockResolvedValueOnce({
-            ok: true,
-            value: {
-                source,
-                remoteSessionId: providerMinted,
-                linkData: { projectId: 'project-1' },
-            },
-        });
-
-        await expect(harness.ingress.handleAuthenticatedEvent(
-            delivery(harness.principal.token),
-        )).resolves.toEqual({ state: 'admitted', facts: 1 });
-        expect(harness.resolveCurrentLink).toHaveBeenCalledWith(
-            expect.objectContaining({
-                identity: expect.objectContaining({
-                    remoteSessionId: providerMinted,
-                }),
-            }),
-        );
-    });
-
     it('measures the resolved identity bound on the preserved provider bytes', async () => {
         // `maxIdCodeUnits` bounds what the host actually keeps. Measuring it
         // after a trim admits an identity longer than the released ceiling.

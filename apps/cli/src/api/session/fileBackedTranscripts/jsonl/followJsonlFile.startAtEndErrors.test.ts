@@ -38,15 +38,15 @@ describe('JsonlFollower startAtEnd error handling', () => {
         const errors: Array<NodeJS.ErrnoException | unknown> = [];
         const follower = new JsonlFollower({
             filePath,
+            startAtEnd: true,
             pollIntervalMs: 5,
             onLine: (line) => {
                 received.push(JSON.parse(line) as unknown);
             },
             onError: (error: unknown) => errors.push(error),
         });
-        await follower.start();
-
         try {
+            await follower.start();
             await writeFile(filePath, '{"created":true}\n');
             await waitFor(() => {
                 expect(received).toEqual([{ created: true }]);

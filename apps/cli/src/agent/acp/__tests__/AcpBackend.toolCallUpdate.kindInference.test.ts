@@ -134,9 +134,15 @@ describe('AcpBackend tool_call_update kind inference', () => {
         // Without inference this would be 'unknown'.
         expect(last.toolName).toBe('execute');
 
-        // Without output extraction fallback this would be ''.
-        expect(last.result).not.toBe('');
-        expect(Array.isArray((last.result as any)?.output)).toBe(true);
+        expect(last.result).toMatchObject({
+          output: [{
+            type: 'content',
+            content: {
+              type: 'text',
+              text: 'Command: echo hi\nDirectory: (root)\nOutput: (empty)\nError: (none)\nExit Code: 0',
+            },
+          }],
+        });
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
       }

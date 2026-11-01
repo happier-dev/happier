@@ -468,22 +468,6 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
         );
     });
 
-    it('prefers the runtime snapshot root derived from argv[1] when running under node', () => {
-        Object.defineProperty(process, 'execPath', {
-            value: '/usr/local/bin/node',
-            configurable: true,
-        });
-        process.argv = ['/usr/local/bin/node', '/runtime/current/cli/package-dist/index.mjs'];
-        vi.mocked(existsSync).mockImplementation((pathLike) => {
-            const path = String(pathLike);
-            return path === '/runtime/current/cli/package-dist/backends/codex/happyMcpStdioBridge.mjs';
-        });
-
-        expect(resolvePackagedRuntimeEntrypoint('backends/codex/happyMcpStdioBridge.mjs')).toBe(
-            '/runtime/current/cli/package-dist/backends/codex/happyMcpStdioBridge.mjs',
-        );
-    });
-
     it('prefers the runtime snapshot root derived from any packaged argv entrypoint', () => {
         Object.defineProperty(process, 'execPath', {
             value: 'C:\\Program Files\\Bun\\bun.exe',

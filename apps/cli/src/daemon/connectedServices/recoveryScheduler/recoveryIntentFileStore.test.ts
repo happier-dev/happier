@@ -128,14 +128,15 @@ describe('createRecoveryIntentFileStore', () => {
   it('removes cleared recovery intents from the persisted snapshot', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-recovery-intents-'));
     try {
-      const store = createRecoveryIntentFileStore<TestIntent>(join(dir, 'intents.json'));
+      const path = join(dir, 'intents.json');
+      const store = createRecoveryIntentFileStore<TestIntent>(path);
 
       await store.write('session_a', { v: 1, status: 'waiting', nextRetryAtMs: 1_000 });
       await store.write('session_b', { v: 1, status: 'waiting', nextRetryAtMs: 2_000 });
       await store.remove?.('session_a');
 
       expect(store.read('session_a')).toBeNull();
-      expect(Object.fromEntries(store.readAll?.() ?? [])).toEqual({
+      expect(Object.fromEntries(createRecoveryIntentFileStore<TestIntent>(path).readAll?.() ?? [])).toEqual({
         session_b: { v: 1, status: 'waiting', nextRetryAtMs: 2_000 },
       });
     } finally {
@@ -146,7 +147,8 @@ describe('createRecoveryIntentFileStore', () => {
   it('prunes matching recovery intents from the persisted snapshot', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-recovery-intents-'));
     try {
-      const store = createRecoveryIntentFileStore(join(dir, 'intents.json'));
+      const path = join(dir, 'intents.json');
+      const store = createRecoveryIntentFileStore(path);
 
       await store.write('active-session', { status: 'waiting', attempt: 1 });
       await store.write('old-terminal-session', { status: 'cancelled', terminalAtMs: 1_000 });
@@ -160,7 +162,7 @@ describe('createRecoveryIntentFileStore', () => {
         && value.terminalAtMs < 5_000
       ))).resolves.toEqual(['old-terminal-session']);
 
-      expect(Object.fromEntries(store.readAll?.() ?? [])).toEqual({
+      expect(Object.fromEntries(createRecoveryIntentFileStore(path).readAll?.() ?? [])).toEqual({
         'active-session': { status: 'waiting', attempt: 1 },
         'fresh-terminal-session': { status: 'exhausted', terminalAtMs: 9_500 },
       });

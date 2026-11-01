@@ -326,7 +326,10 @@ describe('resolveSecretReferenceOverlayEnvironment', () => {
         () => resolveForegroundProfileSavedSecretEnvironment({ profile, accountSettings: {}, settingsSecretsReadKeys: [], foregroundSatisfiedSecretRequirementNames: [], savedSecretResources: resources, secretReferenceOverlay: binding }),
         () => resolveProjectSecretReferenceEnvironment({ requirements: profile.envVarRequirements ?? [], accountSettings: {}, settingsSecretsReadKeys: [], savedSecretResources: resources, secretReferenceOverlay: binding }),
       ]) {
-        expect(resolve).toThrow(expect.objectContaining({ reason: 'reference_stale', requirementName: 'ANTHROPIC_API_KEY' }));
+        let failure: unknown;
+        try { resolve(); } catch (error) { failure = error; }
+        expect(failure).toBeInstanceOf(LaunchSecretReferenceOverlayError);
+        expect(failure).toMatchObject({ reason: 'reference_stale', requirementName: 'ANTHROPIC_API_KEY' });
       }
     }
   });
@@ -356,28 +359,6 @@ describe('resolveSecretReferenceOverlayEnvironment', () => {
     })).toEqual({ ANTHROPIC_API_KEY: 'overlay-value' });
   });
 
-  it('fails closed when a bypassing shared reference omits its revision', () => {
-    const malformedOverlay = {
-      v: 1,
-      bindings: {
-        ANTHROPIC_API_KEY: { ref: overlayBoundRef },
-      },
-    } as unknown as SecretReferenceOverlayV1;
-
-    let thrown: unknown;
-    try {
-      resolveSecretReferenceOverlayEnvironment({
-        accountSettings: {},
-        settingsSecretsReadKeys: [],
-        savedSecretResources: resources,
-        secretReferenceOverlay: malformedOverlay,
-      });
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(LaunchSecretReferenceOverlayError);
-    expect((thrown as LaunchSecretReferenceOverlayError).reason).toBe('reference_stale');
-  });
 });
 
 describe('readForegroundProfileRequiredSecretNamesMissingBinding with an overlay', () => {

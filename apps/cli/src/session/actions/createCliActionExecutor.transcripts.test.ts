@@ -1,8 +1,8 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 
 import { createHttpStatusError } from '@/api/client/httpStatusError';
@@ -67,9 +67,10 @@ function createTranscriptExecutor(params: Partial<TranscriptExecutorTestParams>)
 }
 
 describe('createCliActionExecutor transcript actions', () => {
-  it('releases a followed transcript through the canonical Action boundary for abort or iterator cleanup', async () => {
+  it('releases an explicitly unfollowed transcript exactly once through the Action boundary', async () => {
     const unsubscribe = vi.fn();
     const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 1000 });
+    onTestFinished(() => registry.dispose());
     const executor = createTranscriptExecutor({
       transcriptStore: createTranscriptStore({
         readAfter: async () => ({ items: [], nextCursor: 'tail', truncated: false }),
@@ -121,9 +122,11 @@ describe('createCliActionExecutor transcript actions', () => {
       truncated: false,
     }));
     const store = createTranscriptStore({ pageOlder, readAfter });
+    const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 1000 });
+    onTestFinished(() => registry.dispose());
     const executor = createTranscriptExecutor({
       transcriptStore: store,
-      transcriptFollowLeaseRegistry: createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 1000 }),
+      transcriptFollowLeaseRegistry: registry,
     });
 
     await expect(executor.execute('transcript.page', {
@@ -333,6 +336,7 @@ describe('createCliActionExecutor transcript actions', () => {
 
   it('tails session logs with offset and maxBytes bounds', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-session-log-tail-'));
+    onTestFinished(() => rm(dir, { recursive: true, force: true }));
     const logPath = join(dir, 'session.log');
     await writeFile(logPath, '0123456789abcdef', 'utf8');
     const executor = createTranscriptExecutor({

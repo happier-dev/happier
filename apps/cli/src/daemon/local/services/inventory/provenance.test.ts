@@ -178,10 +178,6 @@ describe('redactsProcessArgs capability is earned', () => {
         'npm_000000000000000000000000000000000000',
     ];
 
-    it('still advertises redactsProcessArgs: true', () => {
-        expect(DEFAULT_LOCAL_SERVICE_CAPABILITIES.inventory.redactsProcessArgs).toBe(true);
-    });
-
     it('redacts every advertised provider-key family when the bit is true', () => {
         expect(DEFAULT_LOCAL_SERVICE_CAPABILITIES.inventory.redactsProcessArgs).toBe(true);
         for (const token of ADVERTISED_PROVIDER_TOKENS) {

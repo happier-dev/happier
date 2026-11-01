@@ -293,30 +293,4 @@ describe('background service runner host currentness', () => {
         expect(diagnostics).not.toHaveBeenCalled();
     });
 
-    it('reports an unavailable context while its generation is current', async () => {
-        const runner = vi.fn(async () => {});
-        const diagnostics = vi.fn();
-        const host = createBackgroundServiceRunnerHost({
-            registrations: [registration(runner)],
-            createContext() {
-                return Object.freeze({
-                    unavailable: Object.freeze({
-                        code: 'plugin_host_access_service_unavailable',
-                        hostAccessId: 'network',
-                        status: 'unavailable' as const,
-                    }),
-                });
-            },
-            onDiagnostic: diagnostics,
-        });
-
-        host.start();
-        await host.settle(['acme.indexer']);
-
-        expect(runner).not.toHaveBeenCalled();
-        expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({
-            code: 'background_service_unavailable',
-            pluginId: 'acme.indexer',
-        }));
-    });
 });

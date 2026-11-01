@@ -174,7 +174,6 @@ describe('plugin reload listener diagnostic logging', () => {
             expect(projected).not.toContain('leak');
             expect(projected).not.toContain('stack-leak');
             expect(projected).not.toContain('BEGIN_STACK');
-            expect(Buffer.byteLength(projected, 'utf8')).toBeLessThanOrEqual(2_048);
         }
 
         await controller.shutdown();

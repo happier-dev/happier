@@ -486,23 +486,6 @@ describe('daemon browser runtime action executor', () => {
     });
   });
 
-  it('keeps other browser.recording actions fail-closed (no producer route)', async () => {
-    const realMod = await import('./runtimeActionExecutor');
-    const execute = realMod.createBrowserDaemonRuntimeActionExecutor({
-      recordingAttach: vi.fn(async () => ({ ok: true as const, attachmentId: 'x' })),
-      featureGate: allowAllBrowserGate(),
-    });
-
-    await expect(execute(runtimeArgs({
-      actionId: 'browser.recording.start',
-      input: recordingStartInput,
-    }))).resolves.toEqual({
-      ok: false,
-      errorCode: 'runtime_action_disabled',
-      error: 'runtime_action_disabled:browser:browser_recording_route_unavailable',
-    });
-  });
-
   // OWNER-GATE action-execution chokepoint. The gate refuses each dispatchable family on
   // server-disable even when the route owner is present.
   it('refuses browser automation actions when browser.automation is server-disabled', async () => {

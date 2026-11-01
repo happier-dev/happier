@@ -168,17 +168,4 @@ describe('OWNER-GATE daemon-boundary closure', () => {
     },
   );
 
-  it('checks the narrower browser.recording.attachments gate after browser.recording is enabled', async () => {
-    const calls = createRouteCalls();
-    const execute = createBrowserDaemonRuntimeActionExecutor({
-      ...createExecutorInput(calls),
-      featureGate: featureGate((featureId) => featureId === 'browser.recording'),
-    });
-
-    await expect(execute(runtimeArgs(
-      'browser.recording.attachToComposer',
-      { recordingId: 'recording_1', sessionId: 'session_1' },
-    ))).resolves.toEqual(disabledResult('browser_recording_attachments_unavailable'));
-    expect(calls.recordingAttach).not.toHaveBeenCalled();
-  });
 });

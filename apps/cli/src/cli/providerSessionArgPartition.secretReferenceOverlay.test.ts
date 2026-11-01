@@ -35,11 +35,6 @@ describe('--secret-ref one-shot Saved Secret selection', () => {
       .toEqual({ ref: 'happier:shared-secret:v1:res@a', revision: 11 });
   });
 
-  it('carries no plaintext value vocabulary', () => {
-    const result = partition(['--secret-ref', 'KEY=personal-secret-1']);
-    expect(JSON.stringify(result.secretReferenceOverlay)).not.toContain('value');
-  });
-
   it('refuses a shared resource reference without its exact revision', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null): never => {

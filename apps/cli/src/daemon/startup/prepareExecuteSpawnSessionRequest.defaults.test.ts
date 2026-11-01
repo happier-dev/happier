@@ -133,12 +133,6 @@ describe('fresh daemon spawn Account purpose defaults', () => {
     });
   });
 
-  it('refuses unavailable default authority instead of silently selecting native sign-in', async () => {
-    installHome('unavailable');
-    expect(await prepare()).toMatchObject({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
-      errorMessage: 'connected_account_purpose_catalog_unavailable' });
-  });
-
   it('carries default-admission refusal through the real daemon spawn composition before launch', async () => {
     installHome('unavailable');
     const beforeSessionRunnerLaunch = vi.fn(async () => false);

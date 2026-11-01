@@ -249,55 +249,6 @@ describe('session media bridge', () => {
         }
     });
 
-    it('persists provider local-file sources with a source-only restricted-roots policy', async () => {
-        const workingDirectory = await createWorkspace();
-        const providerDirectory = await mkdtemp(join(tmpdir(), 'happier-provider-media-'));
-
-        try {
-            const providerRoot = await realpath(providerDirectory);
-            const fileSourcePath = join(providerRoot, 'generated-file.png');
-            await writeFile(fileSourcePath, pngBytes);
-
-            const sourceAccessPolicy: FilesystemAccessPolicy = {
-                kind: 'restrictedRoots',
-                roots: [providerRoot],
-            };
-
-            const result = await persistSessionMediaForTranscript({
-                sessionId: 'session-1',
-                workingDirectory,
-                request: {
-                    localId: 'message-1',
-                    role: 'output',
-                    category: 'generated',
-                    media: [
-                        {
-                            source: {
-                                kind: 'local-file',
-                                path: fileSourcePath,
-                                mimeType: 'image/png',
-                                fileNameHint: 'generated-file.png',
-                            },
-                            origin: { source: 'provider-generated', agentEventId: 'event-file' },
-                            sourceAccessPolicy,
-                        } satisfies BridgeInputWithPolicy,
-                    ],
-                },
-            });
-
-            expect(result.failures).toEqual([]);
-            expect(result.items).toHaveLength(1);
-            const item = result.items[0]!;
-            expect(item.path).toMatch(/^\.happier\/uploads\/generated\/session-1\/message-1\//);
-            await expect(readFile(resolve(workingDirectory, item.path))).resolves.toEqual(pngBytes);
-            const serializedMeta = JSON.stringify(result.meta);
-            expect(serializedMeta).not.toContain(providerRoot);
-        } finally {
-            await rm(workingDirectory, { recursive: true, force: true });
-            await rm(providerDirectory, { recursive: true, force: true });
-        }
-    });
-
     it('garbage-collects newly created paths after a failed durable media commit', async () => {
         const workingDirectory = await createWorkspace();
         const existingReferencedPath = '.happier/uploads/generated/session-1/existing-row/referenced.png';

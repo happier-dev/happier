@@ -35,10 +35,17 @@ describe('backendTargetRouting', () => {
       backendId: 'customAcp',
       configuredBackendId: 'review-bot',
       sourceKind: 'configured',
-    } as never;
+    } as const;
 
-    expect(resolveDaemonCatalogAgentIdFromBackendTarget(target)).toBeNull();
-    expect(resolveDaemonCliSubcommandFromBackendTarget(target)).toBe('acp-catalog');
+    const admittedTarget = normalizeDaemonBackendTargetV2Input(target) ?? undefined;
+    expect(admittedTarget).toMatchObject({
+      kind: 'backend',
+      backendId: 'review-bot',
+      configuredBackendId: 'review-bot',
+      sourceKind: 'configured',
+    });
+    expect(resolveDaemonCatalogAgentIdFromBackendTarget(admittedTarget)).toBeNull();
+    expect(resolveDaemonCliSubcommandFromBackendTarget(admittedTarget)).toBe('acp-catalog');
   });
 
   it('routes known built-in backend targets directly', () => {

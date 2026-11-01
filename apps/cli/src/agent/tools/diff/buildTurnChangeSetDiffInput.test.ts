@@ -123,5 +123,10 @@ describe('buildTurnChangeSetDiffInput', () => {
             })],
             _happier: expect.objectContaining({ confidence: 'best_effort', turnDiffTruncatedFileCount: 1 }),
         }));
+        const [file] = input.files as Array<{ unified_diff?: string; oldText?: string; newText?: string }>;
+        expect(file?.unified_diff).toContain('-old\n+new');
+        expect(Buffer.byteLength(file?.unified_diff ?? '', 'utf8')).toBeLessThanOrEqual(256);
+        expect(file?.oldText).toBeUndefined();
+        expect(file?.newText).toBeUndefined();
     });
 });

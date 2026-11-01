@@ -108,11 +108,14 @@ describe('plugin invocation structured file sink', () => {
         expect(stderr).not.toHaveBeenCalled();
     });
 
-    it('isolates a file write failure without using stderr even in debug mode', () => {
+    it('isolates a file write failure without using stderr even in debug mode', async () => {
+        const blockedPath = join(tmpdir(), `happier-plugin-blocked-${process.pid}-${Date.now()}`);
+        paths.push(blockedPath);
+        await writeFile(blockedPath, 'not a directory');
         process.env.DEBUG = '1';
         const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-        const logger = new Logger('/dev/null/plugin-invocation.log');
+        const logger = new Logger(join(blockedPath, 'plugin-invocation.log'));
 
         expect(() => {
             logger.appendPluginInvocationLogRecord(Object.freeze({
@@ -124,6 +127,7 @@ describe('plugin invocation structured file sink', () => {
         }).not.toThrow();
         expect(stderr).not.toHaveBeenCalled();
         expect(consoleError).not.toHaveBeenCalled();
+        await expect(readFile(blockedPath, 'utf8')).resolves.toBe('not a directory');
     });
 
     it('reads only the exact plugin and correlation from interleaved structured records', async () => {
@@ -182,69 +186,38 @@ describe('plugin invocation structured file sink', () => {
         });
     });
 
-    it('advances past an oversized generic line and retrieves the next structured record', async () => {
+    it.each([1, 2])('advances through a generic line spanning %i read windows before retrieving the next record', async (windows) => {
         const path = join(tmpdir(), `happier-plugin-log-${process.pid}-${Date.now()}.log`);
         paths.push(path);
-        await writeFile(path, `${'x'.repeat(1024 * 1024 + 64)}\n`);
+        await writeFile(path, `${'x'.repeat(1024 * 1024 * windows + 64)}\n`);
         const logger = new Logger(path);
 
         logger.appendPluginInvocationLogRecord(pluginInvocationRecord('after oversized generic line'));
 
-        const first = logger.readPluginInvocationLogRecords({ pluginId: 'acme.example' });
-        expect(first.kind).toBe('available');
-        if (first.kind !== 'available') throw new Error('Expected canonical plugin logs');
-        expect(first.records).toEqual([]);
-        expect(first.cursor).toBeGreaterThan(0);
-        expect(first.hasMore).toBe(true);
+        let cursor = 0;
+        for (let page = 0; page < windows; page += 1) {
+            const result = logger.readPluginInvocationLogRecords({ pluginId: 'acme.example', cursor });
+            expect(result.kind).toBe('available');
+            if (result.kind !== 'available') throw new Error('Expected canonical plugin logs');
+            expect(result.records).toEqual([]);
+            expect(result.cursor).toBeGreaterThan(cursor);
+            expect(result.hasMore).toBe(true);
+            cursor = result.cursor;
+        }
 
         const second = logger.readPluginInvocationLogRecords({
             pluginId: 'acme.example',
-            cursor: first.cursor,
+            cursor,
         });
         expect(second.kind).toBe('available');
         if (second.kind !== 'available') throw new Error('Expected canonical plugin logs');
-        expect(second.cursor).toBeGreaterThan(first.cursor);
+        expect(second.cursor).toBeGreaterThan(cursor);
         expect(second.records).toHaveLength(1);
         expect(second.records[0]).toMatchObject({
             message: 'after oversized generic line',
             context: { plugin: { id: 'acme.example' } },
         });
-    });
-
-    it('advances through a generic line exceeding two read windows before retrieving the next record', async () => {
-        const path = join(tmpdir(), `happier-plugin-log-${process.pid}-${Date.now()}.log`);
-        paths.push(path);
-        await writeFile(path, `${'x'.repeat((1024 * 1024 * 2) + 64)}\n`);
-        const logger = new Logger(path);
-        logger.appendPluginInvocationLogRecord(pluginInvocationRecord('after two oversized windows'));
-
-        const first = logger.readPluginInvocationLogRecords({ pluginId: 'acme.example' });
-        expect(first.kind).toBe('available');
-        if (first.kind !== 'available') throw new Error('Expected canonical plugin logs');
-        expect(first.records).toEqual([]);
-        expect(first.cursor).toBeGreaterThan(0);
-        expect(first.hasMore).toBe(true);
-
-        const second = logger.readPluginInvocationLogRecords({
-            pluginId: 'acme.example',
-            cursor: first.cursor,
-        });
-        expect(second.kind).toBe('available');
-        if (second.kind !== 'available') throw new Error('Expected canonical plugin logs');
-        expect(second.records).toEqual([]);
-        expect(second.cursor).toBeGreaterThan(first.cursor);
-        expect(second.hasMore).toBe(true);
-
-        const third = logger.readPluginInvocationLogRecords({
-            pluginId: 'acme.example',
-            cursor: second.cursor,
-        });
-        expect(third.kind).toBe('available');
-        if (third.kind !== 'available') throw new Error('Expected canonical plugin logs');
-        expect(third.records).toHaveLength(1);
-        expect(third.records[0]).toMatchObject({ message: 'after two oversized windows' });
-        expect(third.cursor).toBeGreaterThan(second.cursor);
-        expect(third.hasMore).toBe(false);
+        expect(second.hasMore).toBe(false);
     });
 
     it('retries a short partial record after the remaining bytes are appended', async () => {

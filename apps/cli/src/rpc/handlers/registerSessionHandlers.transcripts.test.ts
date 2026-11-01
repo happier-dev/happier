@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -39,12 +37,6 @@ const TRANSCRIPT_RPC_CASES = [
 ] as const;
 
 describe('session transcript RPC handlers', () => {
-  it('does not own a transcript-local RPC binding table', async () => {
-    const source = await readFile(new URL('./registerSessionHandlers.ts', import.meta.url), 'utf8');
-
-    expect(source).not.toContain('TRANSCRIPT_RPC_BINDINGS');
-  });
-
   it('dispatches transcript RPC methods through the ActionSpec adapter', async () => {
     const module = await import('./registerSessionHandlers');
     const calls: unknown[] = [];

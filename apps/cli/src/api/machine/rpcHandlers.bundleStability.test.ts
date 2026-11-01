@@ -14,10 +14,6 @@ describe('rpcHandlers bundle stability', () => {
     expect(text).not.toMatch(/import\([^)]*hydrateReplayDialogFromForkChain/);
   });
 
-  it('can import the machine rpc handler module without stale backend leaf paths', async () => {
-    expect(typeof machineRpcModule.registerMachineRpcHandlers).toBe('function');
-  });
-
   it('preserves native sign-in and terminal operations in ordinary daemon composition', async () => {
     const { registerMachineRpcHandlers } = machineRpcModule;
     const manager = new RpcHandlerManager({ scopePrefix: 'machine-sign-in', encryptionMode: 'plain' });

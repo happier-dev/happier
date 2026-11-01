@@ -107,8 +107,10 @@ it.each(['custodian', 'guest'] as const)('installs the admitted %s Account pin i
     if (ready.kind !== 'ready') return;
     expect(JSON.parse(await readFile(join(dirname(dirname(ready.command)), 'workspace', 'package.json'), 'utf8')))
       .toMatchObject({ happierManagedAcp: { definitionId: definition.id, version: '2.2.2' } });
+    const jobsBeforeStaleRequest = owner.list(accountId);
     await expect(start({ ...input, expectedDefinitionVersion: '1.0.0' }, context))
       .resolves.toMatchObject({ ok: false, errorCode: 'definition_version_changed' });
+    expect(owner.list(accountId)).toEqual(jobsBeforeStaleRequest);
     catalogAvailable = false;
     await expect(start(input, context)).resolves.toMatchObject({ ok: false, errorCode: 'install_unavailable' });
     catalogAvailable = true;

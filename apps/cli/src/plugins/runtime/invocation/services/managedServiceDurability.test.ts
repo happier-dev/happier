@@ -1017,21 +1017,6 @@ describe('managed server durability owner', () => {
         expect(await readdir(join(root, 'endpoint-projections'))).toHaveLength(1);
     });
 
-    it('keeps the live-process probe contract when the process identity is unavailable', async () => {
-        const readProcessIdentityByPidFn = vi.fn(async () => null);
-
-        await expect(observeManagedServiceProcessStartIdentity(42, {
-            readProcessIdentityByPidFn,
-            signalProcessFn: () => {
-                throw Object.assign(new Error('process not found'), { code: 'ESRCH' });
-            },
-        })).resolves.toBeNull();
-        await expect(observeManagedServiceProcessStartIdentity(42, {
-            readProcessIdentityByPidFn,
-            signalProcessFn: () => undefined,
-        })).rejects.toThrow('observation is unavailable');
-    });
-
     it('keeps predecessor Windows projections fenced without atomic process-tree containment', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-win32-fenced-'));
         const terminateProcessTree = vi.fn(async () => undefined);

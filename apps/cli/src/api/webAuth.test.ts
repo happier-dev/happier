@@ -28,6 +28,7 @@ describe('generateWebAuthUrl', () => {
   it('includes the server URL in the web terminal connect link', async () => {
     process.env.HAPPIER_SERVER_URL = 'https://stack.example.test';
     process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
+    delete process.env.HAPPIER_PUBLIC_SERVER_URL;
 
     vi.resetModules();
     const { generateWebAuthUrl } = await import('./webAuth');

@@ -64,7 +64,7 @@ describe('Agent Session runner binding', () => {
   });
 
   it('retains direct host-declarative identity without a digest envelope', () => {
-    const binding = createHostDeclarativeAcpRunnerBinding({
+    const input = {
       kind: 'host_declarative_acp_v1',
       v: 1,
       pluginId: 'happier.agent.codex',
@@ -79,15 +79,17 @@ describe('Agent Session runner binding', () => {
           snapshotId: 'runner-snapshot-codex',
         },
       },
-    });
+    } as const;
+    const binding = createHostDeclarativeAcpRunnerBinding(input);
 
+    expect(binding).toEqual(input);
     expect(binding).not.toHaveProperty('manifestDigest');
     expect(binding).not.toHaveProperty('runtimeBindingDigest');
     expect(binding).not.toHaveProperty('immutableGenerationId');
   });
 
   it('rejects generation-shaped bundled custody and process-local occurrence identity', () => {
-    expect(() => verifyAgentSessionRunnerBindingV1({
+    const input = {
       kind: 'host_declarative_acp_v1',
       v: 1,
       pluginId: 'happier.agent.codex',
@@ -95,8 +97,17 @@ describe('Agent Session runner binding', () => {
       agentId: 'codex',
       qualifiedAgentId: 'happier.agent.codex/agents/codex',
       localAgentId: 'codex',
-      immutableGenerationId: 'legacy-generation',
-      occurrenceId: 'process-local-occurrence',
-    })).toThrow();
+      sourceCustody: {
+        kind: 'bundled_first_party',
+        packagedRuntime: { kind: 'pinned_runner_snapshot', snapshotId: 'runner-snapshot-codex' },
+      },
+    } as const;
+    expect(verifyAgentSessionRunnerBindingV1(input)).toEqual(input);
+    for (const forbidden of [
+      { immutableGenerationId: 'legacy-generation' },
+      { occurrenceId: 'process-local-occurrence' },
+    ]) {
+      expect(() => verifyAgentSessionRunnerBindingV1({ ...input, ...forbidden })).toThrow();
+    }
   });
 });

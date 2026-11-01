@@ -29,11 +29,14 @@ describe('getExecutionRunAvailableActionIds', () => {
       } }, status: 'succeeded',
     } as ExecutionRunState;
     expect(getExecutionRunAvailableActionIds(run, null, catalog)).not.toContain('reviews.comments.create');
-    expect(getExecutionRunAvailableActionIds({
-      ...run, status: 'running', structuredMeta: { ...run.structuredMeta!, payload: {
+    const matchingRun: ExecutionRunState = {
+      ...run, structuredMeta: { ...run.structuredMeta!, payload: {
         ...(run.structuredMeta!.payload as object), runRef: { runId: 'run_1', callId: 'call_1', backendId: 'coderabbit' },
       } },
-    }, null, catalog)).not.toContain('reviews.comments.create');
+    };
+    expect(getExecutionRunAvailableActionIds(matchingRun, null, catalog)).toContain('reviews.comments.create');
+    expect(getExecutionRunAvailableActionIds({ ...matchingRun, status: 'running' }, null, catalog))
+      .not.toContain('reviews.comments.create');
   });
   it('uses contributed execution-run profiles through the profile-id catalog lookup', () => {
     const catalog = buildExecutionRunProfileCatalog([

@@ -15,6 +15,7 @@ afterEach(async () => { for (const close of cleanups.splice(0)) await close(); v
 async function harness() {
   const fixture = await createSavedSecretsCliHttpFixture();
   cleanups.push(fixture.close);
+  const stdout: string[] = [];
   async function run(leaf: string, rest: readonly string[], value: string, tty = false) {
     const stdin = Readable.from([Buffer.from(value)]);
     Object.defineProperty(stdin, 'isTTY', { value: tty });
@@ -25,10 +26,11 @@ async function harness() {
     const output = captureConsoleJsonOutput();
     try {
       await fixture.inHome(() => runCompiledActionCliCommand({ command, argv: [...path, ...rest, '--server-id', 'home-fixture', '--json'], deps: fixture.deps }));
+      stdout.push(...output.logs);
       return output.json();
     } finally { output.restore(); }
   }
-  return { ...fixture, run };
+  return { ...fixture, run, stdout };
 }
 
 describe('compiled secret input custody', () => {
@@ -47,6 +49,7 @@ describe('compiled secret input custody', () => {
     const h = await harness();
     expect(await h.run('create', ['Acme', '--kind', 'token'], '  stdin-value\r\n')).toMatchObject({ ok: true });
     expect(h.opened(h.writes[0]!)).toMatchObject({ name: 'Acme', kind: 'token', value: '  stdin-value' });
+    expect(h.stdout.join('\n')).not.toContain('stdin-value');
     expect(terminal.promptInput).not.toHaveBeenCalled();
   });
   it('uses the canonical hidden prompt on a terminal', async () => {

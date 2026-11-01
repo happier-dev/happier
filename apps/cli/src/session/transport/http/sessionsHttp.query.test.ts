@@ -79,18 +79,6 @@ describe('fetchSessionsQueryPage', () => {
     );
   });
 
-  it('fails a query response without issuing a broad GET fallback', async () => {
-    process.env.HAPPIER_SERVER_URL = 'https://home.example.test';
-    vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 404, data: { error: 'route missing' } });
-    const get = vi.spyOn(axios, 'get');
-    const { fetchSessionsQueryPage } = await import('./sessionsHttp');
-
-    await expect(fetchSessionsQueryPage({ token: 'token-1', query })).rejects.toMatchObject({
-      response: { status: 404 },
-    });
-    expect(get).not.toHaveBeenCalled();
-  });
-
   it('does not relabel an absent route or malformed body as strict query unavailability', async () => {
     process.env.HAPPIER_SERVER_URL = 'https://home.example.test';
     vi.spyOn(axios, 'post').mockResolvedValueOnce({

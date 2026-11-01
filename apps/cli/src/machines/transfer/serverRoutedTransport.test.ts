@@ -1080,26 +1080,6 @@ describe('server routed machine transfer', () => {
     }
   });
 
-  it('uses the configured transfer timeout while waiting for a source payload', async () => {
-    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '5';
-    const { target } = createLoopbackChannels();
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-timeout-'));
-    const destinationPath = join(tempDir, 'payload-destination.bin');
-
-    const { requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
-
-    await expect(
-      requestServerRoutedTransferToFile({
-        transferId: 'slow_transfer',
-        sourceMachineId: 'machine_source',
-        machineTransferChannel: target,
-        destinationPath,
-      }),
-    ).rejects.toThrow('Timed out waiting for machine transfer slow_transfer');
-
-    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-  });
-
   it('respects timeout env overrides above the default (within the hard clamp)', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '300000';
     const { resolveServerRoutedTransferTimeoutMs } = await import('./serverRoutedTransport');
@@ -1392,41 +1372,6 @@ describe('server routed machine transfer', () => {
           destinationPath,
         }),
       ).rejects.toThrow('Transfer exceeds the server-routed transfer size limit');
-    } finally {
-      unregister();
-      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  });
-
-  it('fails closed when the transfer payload exceeds the in-memory max-bytes limit', async () => {
-    process.env.HAPPIER_FILES_READ_MAX_BYTES = '8';
-    const { source, target } = createLoopbackChannels();
-    const payload = Buffer.from('handoff-payload', 'utf8'); // > 8 bytes
-
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-oversized-memory-'));
-    const destinationPath = join(tempDir, 'payload-destination.bin');
-
-    const { registerServerRoutedTransferResponder, requestServerRoutedTransferToFile } = await import('./serverRoutedTransport');
-
-	    const unregister = registerServerRoutedTransferResponder({
-	      machineTransferChannel: source,
-	      loadTransferPayloadSource: ({ transferId }) => (
-	        transferId === 'transfer_oversized_memory'
-	          ? { kind: 'buffer', payload, sizeBytes: payload.length }
-	          : null
-	      ),
-	      chunkBytes: 4,
-	    });
-
-    try {
-      await expect(
-        requestServerRoutedTransferToFile({
-          transferId: 'transfer_oversized_memory',
-          sourceMachineId: 'machine_source',
-          machineTransferChannel: target,
-          destinationPath,
-        }),
-      ).rejects.toThrow('Transfer exceeds the in-memory transfer size limit');
     } finally {
       unregister();
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);

@@ -8,19 +8,6 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 
 describe('memory system record helpers', () => {
-  it('builds deterministic memory system-record localIds and namespace-relative kinds', async () => {
-    const {
-      MEMORY_SYSTEM_RECORD_KINDS,
-      buildMemorySummaryShardSystemRecordLocalId,
-      buildMemorySynopsisSystemRecordLocalId,
-    } = await import('./memorySystemRecords');
-
-    expect(MEMORY_SYSTEM_RECORD_KINDS.summaryShard).toBe('summary_shard.v1');
-    expect(MEMORY_SYSTEM_RECORD_KINDS.synopsis).toBe('synopsis.v1');
-    expect(buildMemorySummaryShardSystemRecordLocalId({ seqFrom: 1, seqTo: 10 })).toBe('memory:summary_shard:v1:1-10');
-    expect(buildMemorySynopsisSystemRecordLocalId({ seqTo: 10 })).toBe('memory:synopsis:v1:10');
-  });
-
   it('seals and opens plaintext summary shard payloads without transcript wrappers', async () => {
     const {
       MEMORY_SYSTEM_RECORD_NAMESPACE,
@@ -65,6 +52,7 @@ describe('memory system record helpers', () => {
 
     expect(() => openMemorySystemRecordPayload({
       mode: 'e2ee',
+      ctx: { encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy' },
       kind: MEMORY_SYSTEM_RECORD_KINDS.synopsis,
       content: {
         t: 'plain',

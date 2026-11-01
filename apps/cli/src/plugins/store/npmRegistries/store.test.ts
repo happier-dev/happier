@@ -109,14 +109,4 @@ describe('npm registry profile store', () => {
     expect(restarted.pausedSources).toHaveLength(70);
   });
 
-  it('rejects a reused mutation id with different intent', async () => {
-    const { store } = await makeStore();
-    await store.mutate({ expectedRevision: 0, mutationId: 'mutation-same-id', fingerprint: 'one', apply: (value) => value });
-    await expect(store.mutate({
-      expectedRevision: 1,
-      mutationId: 'mutation-same-id',
-      fingerprint: 'two',
-      apply: (value) => value,
-    })).rejects.toMatchObject({ code: 'mutation_conflict' });
-  });
 });

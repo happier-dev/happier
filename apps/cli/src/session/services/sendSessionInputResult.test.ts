@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 import axios from 'axios';
@@ -99,6 +99,7 @@ describe('waitForSessionInputResult', () => {
 
   async function arrange(params: Readonly<{
     rowsAfterInput: () => readonly unknown[];
+    beforeReadInput?: () => Promise<void>;
   }>) {
     const inputRow = {
       id: 'input-row',
@@ -131,7 +132,10 @@ describe('waitForSessionInputResult', () => {
       } };
       if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session:
         createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active: true, metadata: '{}' }) } };
-      if (url.includes('/messages/by-local-id/')) return { status: 200, data: { message: inputRow } };
+      if (url.includes('/messages/by-local-id/')) {
+        await params.beforeReadInput?.();
+        return { status: 200, data: { message: inputRow } };
+      }
       // These retained inputs predate the Turn ledger. A current empty ledger
       // would authoritatively mean that this input has not begun a turn yet.
       if (url.endsWith('/turns')) return { status: 404, data: { error: 'Not found' } };
@@ -177,11 +181,28 @@ describe('waitForSessionInputResult', () => {
   }
 
   it('observes without an authored deadline instead of normalizing omission to one millisecond', async () => {
+    let releaseInput!: () => void;
+    const inputHeld = new Promise<void>(resolve => { releaseInput = resolve; });
+    let markReadStarted!: () => void;
+    const readStarted = new Promise<void>(resolve => { markReadStarted = resolve; });
     const { waitWithObservation, httpGet } = await arrange({
       rowsAfterInput: () => [rawAssistantText('completed without a workflow deadline'), rawLifecycle('task_complete')],
+      beforeReadInput: async () => { markReadStarted(); await inputHeld; },
     });
-
-    await expect(waitWithObservation({ kind: 'no_deadline' })).resolves.toEqual({
+    vi.useFakeTimers();
+    onTestFinished(() => { vi.useRealTimers(); });
+    let settled = false;
+    const pending = waitWithObservation({ kind: 'no_deadline' }).then(result => { settled = true; return result; });
+    try {
+      await readStarted;
+      // Cross the specific former one-millisecond cutoff while the HTTP read is held.
+      await vi.advanceTimersByTimeAsync(2);
+      expect(settled).toBe(false);
+    } finally {
+      releaseInput();
+      await pending;
+    }
+    await expect(pending).resolves.toEqual({
       ok: true,
       sessionId,
       localId: 'automation:run:run-1',

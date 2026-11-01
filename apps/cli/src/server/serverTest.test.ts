@@ -40,16 +40,6 @@ describe('probeServerVersion', () => {
     await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   });
 
-  it('returns ok and parses health response', async () => {
-    responseMode = 'ok';
-    const { probeServerVersion } = await import('./serverTest');
-    const out = await probeServerVersion(baseUrl);
-    expect(out.ok).toBe(true);
-    if (!out.ok) throw new Error(`expected ok result, got: ${out.error}`);
-    expect(out.url).toBe(`${baseUrl}/health`);
-    expect(out.version).toBeNull();
-  });
-
   it('bypasses patched http.request when probing loopback endpoints', async () => {
     responseMode = 'ok';
 

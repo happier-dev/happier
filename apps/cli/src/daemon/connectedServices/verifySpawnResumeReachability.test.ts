@@ -53,7 +53,7 @@ function makeEnvWithLegacyFallbackOnly(singleAbsoluteValue: string): Readonly<Re
 }
 
 describe('verifySpawnResumeReachability — wrapper unit (P3-2)', () => {
-  it('(b) returns ok when the session file exists in the materialized target (real dispatch, explicit root key)', async () => {
+  it('prefers the explicit materialized root over a conflicting ambient Agent directory', async () => {
     const tmpRoot = await mkdtemp(join(tmpdir(), 'vssrr-ok-'));
     const sessionId = 'vssrr-hit-session';
     try {
@@ -64,7 +64,10 @@ describe('verifySpawnResumeReachability — wrapper unit (P3-2)', () => {
       const result = await verifySpawnResumeReachability({
         agentId: 'pi',
         vendorResumeId: sessionId,
-        materializedEnv: makeEnvWithExplicitRoot(tmpRoot),
+        materializedEnv: {
+          ...makeEnvWithExplicitRoot(tmpRoot),
+          PI_CODING_AGENT_DIR: join(tmpRoot, 'ambient', 'pi-agent-dir'),
+        },
       });
 
       expect(result).toMatchObject({ ok: true });

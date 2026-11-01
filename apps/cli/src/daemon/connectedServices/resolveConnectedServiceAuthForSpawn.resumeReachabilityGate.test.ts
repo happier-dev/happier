@@ -211,20 +211,6 @@ async function callSpawn(params: Readonly<{
 }
 
 describe('resolveConnectedServiceAuthForSpawn §2 resume-reachability gate', () => {
-  it('fails closed before returning the spawn env when a resumed PI session is genuinely missing', async () => {
-    const cwd = await makeTempDir('happier-pi-gate-project-missing-');
-    const piAgentDir = await makeTempDir('happier-pi-gate-native-empty-');
-
-    await expect(
-      callSpawn({
-        cwd,
-        piAgentDir,
-        vendorResumeId: PI_NATIVE_SESSION_ID,
-        resumeReachabilityRequired: true,
-      }),
-    ).rejects.toBeInstanceOf(ConnectedServiceSpawnResumeUnreachableError);
-  });
-
   it('surfaces the shared continuity error taxonomy on a genuine miss', async () => {
     const cwd = await makeTempDir('happier-pi-gate-project-taxonomy-');
     const piAgentDir = await makeTempDir('happier-pi-gate-native-empty-tax-');

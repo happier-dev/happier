@@ -1,10 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { isPidPresent } from '@happier-dev/cli-common/process';
 
 import {
   completeStartupCancellationCleanup,
 } from './startupLaunchCancellation';
 
+// OS liveness is the boundary; cleanup and tracked-session ownership stay real.
+vi.mock('@happier-dev/cli-common/process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@happier-dev/cli-common/process')>(),
+  isPidPresent: vi.fn(),
+}));
+
 describe('completeStartupCancellationCleanup', () => {
+  beforeEach(() => {
+    vi.mocked(isPidPresent).mockReset();
+    vi.mocked(isPidPresent).mockReturnValue(false);
+  });
+
   it('retries the same tracked object at its promoted runner PID', async () => {
     const wrapperPid = 4_242;
     const runnerPid = 4_243;
@@ -54,5 +66,20 @@ describe('completeStartupCancellationCleanup', () => {
       reason: 'exit_cleanup_incomplete',
     });
     expect(pidToTrackedSession.get(pid)).toBe(tracked);
+  });
+
+  it.skipIf(process.platform === 'win32')('retains custody without cleanup while the POSIX runner is still present', async () => {
+    vi.mocked(isPidPresent).mockReturnValue(true);
+    const tracked = { pid: 4_242, startedBy: 'daemon' as const };
+    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+    const onChildExited = vi.fn(async () => undefined);
+
+    await expect(completeStartupCancellationCleanup({
+      trackedSession: tracked,
+      pidToTrackedSession,
+      onChildExited,
+    })).resolves.toEqual({ status: 'incomplete', reason: 'process_still_running' });
+    expect(pidToTrackedSession.get(tracked.pid)).toBe(tracked);
+    expect(onChildExited).not.toHaveBeenCalled();
   });
 });

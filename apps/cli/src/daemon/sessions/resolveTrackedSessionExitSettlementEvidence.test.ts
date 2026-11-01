@@ -29,6 +29,9 @@ describe('resolveTrackedSessionExitSettlementEvidence', () => {
       reattachedInterruptedTurnId: 'old-turn',
     } satisfies TrackedSession;
 
-    expect(resolveTrackedSessionExitSettlementEvidence(tracked)).toBe(tracked);
+    const settlement = resolveTrackedSessionExitSettlementEvidence(tracked);
+    expect(settlement).toBe(tracked);
+    expect(settlement.activeTurnId).toBe('current-turn');
+    expect(tracked.activeTurnId).toBe('current-turn');
   });
 });

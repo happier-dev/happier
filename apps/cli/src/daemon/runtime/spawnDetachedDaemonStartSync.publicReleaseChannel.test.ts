@@ -12,11 +12,16 @@ const envScope = createEnvKeyScope([
   'HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT',
   'HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT',
   'HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH',
+  'HAPPIER_DAEMON_SERVICE_MANAGED_BY',
+  'HAPPIER_DAEMON_SERVICE_BUNDLE_ID',
+  'HAPPIER_DAEMON_SERVICE_AUTOSTART',
 ]);
+const originalArgv = process.argv;
 
 describe('spawnDetachedDaemonStartSync', () => {
   afterEach(() => {
     envScope.restore();
+    process.argv = originalArgv;
     vi.restoreAllMocks();
     vi.resetModules();
   });
@@ -31,6 +36,9 @@ describe('spawnDetachedDaemonStartSync', () => {
       HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: undefined,
       HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: undefined,
       HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: undefined,
+      HAPPIER_DAEMON_SERVICE_MANAGED_BY: 'desktop',
+      HAPPIER_DAEMON_SERVICE_BUNDLE_ID: 'dev.happier.app',
+      HAPPIER_DAEMON_SERVICE_AUTOSTART: 'on-demand',
     });
     // Simulate invoking the CLI via the dev shim name.
     process.argv = ['node', '/Users/alice/.happier/bin/hdev', 'daemon', 'start'];
@@ -47,5 +55,10 @@ describe('spawnDetachedDaemonStartSync', () => {
     expect(spawnMock).toHaveBeenCalled();
     const opts = spawnMock.mock.calls[0]?.[2] as { env?: Record<string, string> } | undefined;
     expect(opts?.env?.HAPPIER_PUBLIC_RELEASE_CHANNEL).toBe('dev');
+    expect(opts?.env?.HAPPIER_DAEMON_STARTUP_SOURCE).toBe('manual');
+    expect(opts?.env?.HAPPIER_DAEMON_SERVICE_MANAGED_BY).toBeUndefined();
+    expect(opts?.env?.HAPPIER_DAEMON_SERVICE_BUNDLE_ID).toBeUndefined();
+    expect(opts?.env?.HAPPIER_DAEMON_SERVICE_AUTOSTART).toBeUndefined();
+    expect(process.env.HAPPIER_DAEMON_SERVICE_BUNDLE_ID).toBe('dev.happier.app');
   });
 });

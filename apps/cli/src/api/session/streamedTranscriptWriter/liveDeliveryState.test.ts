@@ -5,6 +5,7 @@ import {
   createLiveDeliveryState,
   disposeLiveDeliveryState,
   markLiveDeliveryFailure,
+  markLiveDeliveryRewrite,
   queueLiveDeliveryIntent,
   shouldPublishLiveDelta,
   takePendingLiveDeliveryIntent,
@@ -48,7 +49,15 @@ describe('liveDeliveryState', () => {
       supportsDelta: true,
     })).toBe(true);
 
-    markLiveDeliveryFailure(state);
+    expect(shouldPublishLiveDelta(state, {
+      state: 'streaming',
+      nowMs: 102,
+      epoch: 4,
+      liveCheckpointIntervalMs: 1_000,
+      supportsDelta: true,
+    })).toBe(false);
+
+    markLiveDeliveryRewrite(state);
     expect(shouldPublishLiveDelta(state, {
       state: 'streaming',
       nowMs: 102,
@@ -56,12 +65,16 @@ describe('liveDeliveryState', () => {
       liveCheckpointIntervalMs: 1_000,
       supportsDelta: true,
     })).toBe(false);
-    expect(shouldPublishLiveDelta(createLiveDeliveryState(), {
-      state: 'streaming',
-      nowMs: 102,
-      epoch: 4,
-      liveCheckpointIntervalMs: 1_000,
-      supportsDelta: true,
+
+    acceptLivePublication(state, {
+      text: 'rewritten', tick: 2, epoch: 3, acceptedAtMs: 103, wasCheckpoint: true,
+    });
+    expect(shouldPublishLiveDelta(state, {
+      state: 'streaming', nowMs: 104, epoch: 3, liveCheckpointIntervalMs: 1_000, supportsDelta: true,
+    })).toBe(true);
+    markLiveDeliveryFailure(state);
+    expect(shouldPublishLiveDelta(state, {
+      state: 'streaming', nowMs: 104, epoch: 3, liveCheckpointIntervalMs: 1_000, supportsDelta: true,
     })).toBe(false);
   });
 

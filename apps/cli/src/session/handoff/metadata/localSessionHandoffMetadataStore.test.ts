@@ -1,12 +1,13 @@
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 
 import { createLocalSessionHandoffMetadataStore } from './localSessionHandoffMetadataStore';
 
 async function createStore() {
   const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-local-resume-'));
+  onTestFinished(() => rm(activeServerDir, { recursive: true, force: true }));
   return { activeServerDir, store: createLocalSessionHandoffMetadataStore({ activeServerDir }) };
 }
 
@@ -14,12 +15,6 @@ const CLAUDE_IDENTITY = { v: 1, vendorResumeId: 'claude-1' } as const;
 const DEPARTURE_SEQ = 412;
 
 describe('localSessionHandoffMetadataStore — inactive Agent native record', () => {
-  const cleanups: Array<() => Promise<void>> = [];
-
-  afterEach(async () => {
-    for (const cleanup of cleanups.splice(0)) await cleanup();
-  });
-
   it('round-trips the id and the departure boundary for one Session and Agent', async () => {
     const { store } = await createStore();
 

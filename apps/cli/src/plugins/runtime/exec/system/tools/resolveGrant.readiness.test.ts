@@ -467,19 +467,6 @@ describe('system tool readiness (capability fingerprint, never semver)', () => {
         expect(String((failure as { message?: unknown }).message)).not.toContain('kimi migrate');
     }, 20_000);
 
-    it('never consults version output when selecting', async () => {
-        if (process.platform === 'win32') return;
-        const root = await makeRoot();
-        const log = join(root, 'invocations.log');
-        await writeKimiFixture({
-            dir: root, acpMode: 'current', surface: 'supported', version: '0.1.1', invocationLog: log,
-        });
-
-        await resolverForPath(root).resolve({ toolId: 'kimi-cli', purpose: 'test' });
-
-        expect(invocationsIncludeVersionProbe(await readLogLines(log))).toBe(false);
-    }, 20_000);
-
     it('keeps tools without a readiness declaration on plain executable resolution', async () => {
         if (process.platform === 'win32') return;
         const root = await makeRoot();

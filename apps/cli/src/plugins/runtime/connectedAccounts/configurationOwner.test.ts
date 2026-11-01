@@ -187,30 +187,6 @@ describe('ConnectedAccountConfigurationOwner', () => {
             .rejects.toMatchObject({ code: 'connected_account_configuration_stale' });
     });
 
-    it('keeps a captured configuration current across runtime replacement until its record changes', async () => {
-        const mode = configuredMode('service');
-        const target = { kind: 'service' as const, service, modeId: mode.id };
-        const record = {
-            revision: 'revision-1',
-            values: { endpoint: 'https://api.example.test' },
-            secretRefs: { clientSecret: 'saved-secret-1' },
-        };
-        const harness = createHarness([{ target, record }]);
-        const admission = await harness.owner.admit({
-            intent: 'connect', service, mode, ...generation,
-        });
-        if (admission.status !== 'ready') throw new Error('Expected a ready configuration');
-
-        harness.setGenerationCurrent(false);
-        expect(await harness.owner.isCurrent(admission.snapshot)).toBe(true);
-        expect(await admission.snapshot.getSecret('clientSecret')).toBe('super-secret');
-
-        harness.setRecord(target, { ...record, revision: 'revision-2' });
-        expect(await harness.owner.isCurrent(admission.snapshot)).toBe(false);
-        await expect(admission.snapshot.getSecret('clientSecret')).rejects.toMatchObject({
-            code: 'connected_account_configuration_stale',
-        });
-    });
     it('accepts schema-valid nested objects without imposing a duplicate field budget', () => {
         const nested = Object.fromEntries(
             Array.from({ length: 65 }, (_value, index) => [`field-${index}`, index]),
@@ -427,6 +403,7 @@ describe('ConnectedAccountConfigurationOwner', () => {
         });
 
         harness.setGenerationCurrent(false);
+        await expect(harness.owner.isCurrent(admission.snapshot)).resolves.toBe(true);
         await expect(admission.snapshot.getSecret('clientSecret')).resolves.toBe('super-secret');
         harness.setRecord(target, {
             revision: 'revision-8',

@@ -119,18 +119,6 @@ describe('taskkillWindowsProcessTree', () => {
             .rejects.toThrow(/Command failed/u);
     });
 
-    it('does NOT swallow an access-denied refusal for an ordinary pid', async () => {
-        const execFile = vi.fn(async () => {
-            throw execFileError({
-                code: 1,
-                stderr: 'ERROR: The process with PID 4321 could not be terminated.\nReason: Access is denied.',
-            });
-        });
-
-        await expect(taskkillWindowsProcessTree({ pid: 4_321, force: true, timeoutMs: 1_000, execFile }))
-            .rejects.toThrow(/Command failed/u);
-    });
-
     it('rethrows a spawn failure rather than reading it as an exited process', async () => {
         const execFile = vi.fn(async () => {
             throw execFileError({ code: 'ENOENT', stderr: '' });

@@ -37,10 +37,6 @@ describe('AcpBackend ACP FS capability experiment', () => {
     clearActiveAccountSettingsSnapshot();
   });
 
-  it('exposes buildInitializeRequest to allow ACP capabilities to be unit-tested', () => {
-    expect(typeof buildInitializeRequest).toBe('function');
-  });
-
   it('advertises fs.readTextFile/fs.writeTextFile when HAPPIER_ACP_FS is enabled', () => {
     envScope.patch({ HAPPIER_ACP_FS: '1' });
 

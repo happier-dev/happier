@@ -36,6 +36,7 @@ describe('resolveHappierRuntimeContextEnvFromConfiguration', () => {
       // public != server -> split local/public stack
       HAPPIER_PUBLIC_SERVER_URL: 'https://public.happier.example',
       HAPPIER_SERVER_URL: 'http://127.0.0.1:48999',
+      HAPPIER_LOCAL_SERVER_URL: undefined,
       HAPPIER_WEBAPP_URL: 'https://app.happier.example',
       HAPPIER_ACCESS_TOKEN: 'secret-token-that-must-not-leak',
     });
@@ -44,21 +45,15 @@ describe('resolveHappierRuntimeContextEnvFromConfiguration', () => {
     const { resolveHappierRuntimeContextEnvFromConfiguration } = await import(
       './resolveHappierRuntimeContextEnvFromConfiguration'
     );
-    const { HAPPIER_RUNTIME_CONTEXT_ENV_KEYS } = await import('./resolveHappierRuntimeContextEnv');
-
     const env = resolveHappierRuntimeContextEnvFromConfiguration();
-
-    // Home dir flows through from configuration (the credential anchor).
-    expect(env.HAPPIER_HOME_DIR).toBe(home);
-    // A resolved server URL is always present.
-    expect(env.HAPPIER_SERVER_URL).toBeTruthy();
-    expect(env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID).toBe('stack_repo-current__id_default');
-
-    // Only allowed, non-secret context keys are emitted.
-    for (const key of Object.keys(env)) {
-      expect(HAPPIER_RUNTIME_CONTEXT_ENV_KEYS).toContain(key);
-    }
-    expect(env).not.toHaveProperty('HAPPIER_ACCESS_TOKEN');
-    expect(JSON.stringify(env)).not.toContain('secret-token-that-must-not-leak');
+    expect(env).toEqual({
+      HAPPIER_HOME_DIR: home,
+      HAPPIER_ACTIVE_SERVER_ID: 'preview',
+      HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'stack_repo-current__id_default',
+      HAPPIER_SERVER_URL: 'http://127.0.0.1:48999',
+      HAPPIER_LOCAL_SERVER_URL: 'http://127.0.0.1:48999',
+      HAPPIER_PUBLIC_SERVER_URL: 'https://public.happier.example',
+      HAPPIER_WEBAPP_URL: 'https://app.happier.example',
+    });
   });
 });
