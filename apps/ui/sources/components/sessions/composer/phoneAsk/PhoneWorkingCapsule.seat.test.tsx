@@ -112,7 +112,8 @@ describe('the phone working capsule takes the seat above the page bottom bar', (
         />
       </Page>,
     );
-    await layout(screen, 'file-review-bar', 60);
+    // The review seat's measured box includes the bottom chrome it reserves in flow.
+    await layout(screen, 'file-review-bar', TAB_BAR + 60);
     expect(capsuleBottom(screen)).toBeGreaterThan(TAB_BAR + 60);
     await screen.update(<Page>{null}</Page>);
     expect(capsuleBottom(screen)).toBe(TAB_BAR);

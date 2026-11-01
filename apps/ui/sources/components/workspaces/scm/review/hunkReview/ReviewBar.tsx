@@ -43,7 +43,9 @@ export function ReviewBar(props: ReviewBarProps) {
   const insets = useSafeAreaInsets();
   // Under the phone's floating tab bar the bar floats just above it (rvp P1), never beneath it.
   const chromeClearance = useFloatingChromeClearance();
-  const onSeatLayout = useReportPageBottomBar(true, chromeClearance);
+  // This in-flow seat reserves both the capsule and the chrome beneath it, so the diff's last
+  // line and inline comment actions can scroll completely above the review controls.
+  const onSeatLayout = useReportPageBottomBar(true, 0);
   const completeRef = React.useRef(false);
   React.useEffect(() => {
     const complete = Boolean(props.complete);
@@ -158,7 +160,7 @@ export function ReviewBar(props: ReviewBarProps) {
   );
 
   return (
-    <View testID={props.testID} pointerEvents="box-none" onLayout={onSeatLayout} style={[styles.anchor, chromeClearance > 0 ? { bottom: chromeClearance } : null]}>
+    <View testID={props.testID} pointerEvents="box-none" onLayout={onSeatLayout} style={[styles.anchor, { paddingBottom: chromeClearance }]}>
       {/* Controls at both ends (‹ 2 of 7 › … Discard · Keep): the capsule spans the gutters, like the File page bar. */}
       <FloatingTabBarSurface bottomInset={chromeClearance > 0 ? 0 : insets.bottom} stretch>
         {body}
@@ -169,10 +171,7 @@ export function ReviewBar(props: ReviewBarProps) {
 
 const styles = StyleSheet.create((theme) => ({
   anchor: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
+    flexShrink: 0,
   },
   row: {
     flexDirection: 'row',

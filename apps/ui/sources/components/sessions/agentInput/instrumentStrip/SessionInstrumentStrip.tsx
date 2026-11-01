@@ -28,6 +28,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 import { instrumentStripStyles } from './instrumentStripStyles';
 import { useInstrumentStripModel } from './useInstrumentStripModel';
+import { InstrumentFrame } from './InstrumentFrame';
 
 /** Below this available width, instruments drop their labels/icons to icon-only. */
 const COMPACT_WIDTH = 360;
@@ -419,7 +420,7 @@ function InstrumentEntrance(props: Readonly<{ index: number; enabled: boolean; c
         opacity: progress.value,
         transform: [{ translateY: (1 - progress.value) * 4 }],
     }));
-    return <Animated.View style={[instrumentStripStyles.instrumentEntrance, style]}>{props.children}</Animated.View>;
+    return <InstrumentFrame style={[instrumentStripStyles.instrumentEntrance, style]}>{props.children}</InstrumentFrame>;
 }
 
 /** Overflow collapse (<300px): a "•••" chip opening a full-size instrument list. */

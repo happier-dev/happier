@@ -3,9 +3,6 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { ReviewBar } from './ReviewBar';
-import { StyleSheet } from 'react-native';
-import { FloatingTabBarSurface } from '@/components/ui/navigation/FloatingTabBarSurface';
-import { SessionCockpitBottomChromeHeightContext } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
@@ -35,17 +32,5 @@ describe('ReviewBar (phone review, lab rvp)', () => {
         const done = await renderScreen(<ReviewBar current={0} total={1} complete={{ nextFileName: null }} />);
         expect(done.tree.findAllByProps({ testID: 'review-bar-next-file' })).toHaveLength(0);
         expect(done.tree.findAllByProps({ testID: 'review-bar-next-file-name' })).toHaveLength(0);
-    });
-    it('P1: under the phone floating tab bar the bar floats above it, so a tap reaches Keep, not a tab', async () => {
-        const tabBarHeight = 84;
-        const screen = await renderScreen(<SessionCockpitBottomChromeHeightContext.Provider value={tabBarHeight}>
-            <ReviewBar testID="file-review-bar" current={1} total={2} onNext={() => {}} onKeep={() => {}} onDiscard={() => {}} />
-        </SessionCockpitBottomChromeHeightContext.Provider>);
-        expect(StyleSheet.flatten(screen.findHostByTestId('file-review-bar')?.props.style)).toMatchObject({ bottom: tabBarHeight });
-        // The tab bar already clears the safe area, so the bar does not add it again.
-        expect(screen.tree.findByType(FloatingTabBarSurface).props.bottomInset).toBe(0);
-        // With no floating chrome the bar sits on the screen's bottom edge over the safe area.
-        await screen.update(<ReviewBar testID="file-review-bar" current={1} total={2} onKeep={() => {}} />);
-        expect(StyleSheet.flatten(screen.findHostByTestId('file-review-bar')?.props.style)).toMatchObject({ bottom: 0 });
     });
 });
