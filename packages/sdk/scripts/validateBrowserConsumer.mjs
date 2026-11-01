@@ -32,7 +32,7 @@ function browserSourcesPlugin() {
   };
 }
 
-export async function validateBrowserConsumer() {
+export async function validateBrowserConsumer({ loadOnly = false } = {}) {
   const bundle = await build({
     entryPoints: [resolve(sdkDir, 'src/index.public.ts')],
     absWorkingDir: sdkDir,
@@ -56,7 +56,12 @@ export async function validateBrowserConsumer() {
       return requestHandler ? requestHandler(url, options) : responseBody();
     },
   };
+  // This fixture exercises cloning JSON Schema documents only. Keep this Web
+  // platform boundary in the VM realm: a host structuredClone returns host
+  // prototypes, which are not plain objects in the simulated browser realm.
+  runInNewContext('globalThis.structuredClone = value => JSON.parse(JSON.stringify(value));', context);
   runInNewContext(bundle.outputFiles[0].text, context);
+  if (loadOnly) return { bytes: bundle.outputFiles[0].contents.byteLength, inputs: inputs.length };
   const client = context.HappierSdk.connect({ endpoint: 'https://api.example.test/', token });
   try {
     assert.deepEqual(Array.from(await client.actions.execute('machines.list', {})), []);
