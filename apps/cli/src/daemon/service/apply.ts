@@ -1,6 +1,6 @@
 import { statSync, utimesSync } from 'node:fs';
 import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises';
-import { basename, dirname } from 'node:path';
+import { dirname } from 'node:path';
 import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
 
 import { buildServiceCommandEnv, isBenignServiceAbsenceFailure } from '@happier-dev/cli-common/service';
@@ -104,18 +104,6 @@ function isBenignLaunchctlFailure(
 
   if (action === 'kickstart') {
     return output.includes('could not find service');
-  }
-
-  if (action === 'bootstrap' && output.includes('input/output error')) {
-    const domain = String(command.args[1] ?? '').trim();
-    const plistPath = String(command.args.at(-1) ?? '').trim();
-    const label = plistPath.endsWith('.plist') ? basename(plistPath, '.plist') : '';
-    if (domain && label) {
-      return runCommand({
-        cmd: 'launchctl',
-        args: ['print', `${domain}/${label}`],
-      }).ok;
-    }
   }
 
   return false;

@@ -243,7 +243,7 @@ describe('runDaemonServiceCommands', () => {
     ], { failureMode: 'strict' })).not.toThrow();
   });
 
-  it('treats a launchctl bootstrap I/O error as non-fatal when the label is already materialized in launchd', async () => {
+  it('reports a failed bootstrap even when the preceding job is still visible during teardown', async () => {
     const { runDaemonServiceCommands } = await import('./apply');
 
     spawnSyncMock.mockImplementation((_command: string, args: readonly string[] = []) => {
@@ -261,15 +261,6 @@ describe('runDaemonServiceCommands', () => {
         cmd: 'launchctl',
         args: ['bootstrap', 'gui/501', '/tmp/com.happier.cli.daemon.default.plist'],
       },
-    ], { failureMode: 'strict' })).not.toThrow();
-
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      'launchctl',
-      ['print', 'gui/501/com.happier.cli.daemon.default'],
-      expect.objectContaining({
-        env: expect.any(Object),
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }),
-    );
+    ], { failureMode: 'strict' })).toThrow(/Background service command failed: launchctl bootstrap/);
   });
 });

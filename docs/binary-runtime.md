@@ -136,6 +136,10 @@ In current development source, macOS install/start/restart select kickstart-only
 only when the native launchd activity reader confirms that the service-owned
 daemon's job is loaded. A surviving process marker alone cannot skip bootstrap.
 This correction requires an updated guest CLI payload and retains GUI placement.
+The command executor requires bootstrap itself to succeed before kickstart. A
+successful job lookup after a bootstrap I/O failure can describe the previous
+job while bootout drains it; it does not prove the new job was admitted. Bootstrap
+therefore uses the existing retry cadence within the containing service deadline.
 The consent prompt ends at the earlier recipe deadline or Home request expiry,
 with `auth_enrollment_timeout` or `auth_request_expired` and a request to Retry
 setup; late consent cannot authorize the expired request. Finite `auth wait`
