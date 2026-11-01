@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import fs from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -43,6 +44,7 @@ function startWriter(board, entryFile) {
   let notifyWait;
   let rejectWait;
   const waiting = new Promise((resolve, reject) => { notifyWait = resolve; rejectWait = reject; });
+  waiting.catch(() => {});
   child.stderr.on('data', (bytes) => {
     output += bytes.toString();
     if (output.includes('Waiting for board lock')) notifyWait();
@@ -56,7 +58,7 @@ function startWriter(board, entryFile) {
       else reject(new Error(`Writer exit ${code}: ${output}`));
     });
   });
-  return { waiting, done };
+  return { waiting, done, child };
 }
 
 test('two concurrent processes reread under the lock and both entries land', async (t) => {
@@ -65,7 +67,9 @@ test('two concurrent processes reread under the lock and both entries land', asy
   const secondEntry = path.join(directory, 'second.md');
   await fs.writeFile(secondEntry, '### 2026-10-31 13:01 UTC — second\nSecond body.\n\n');
   const lock = `${board}.lock`;
-  await fs.writeFile(lock, 'held by test\n', { flag: 'wx' });
+  await fs.mkdir(lock);
+  const holder = path.join(lock, 'test-holder.json');
+  await fs.writeFile(holder, JSON.stringify({ pid: process.pid, hostname: hostname() }));
   const first = startWriter(board, entryFile);
   const second = startWriter(board, secondEntry);
   const holderPost = Buffer.from('### 2026-10-29 12:00 UTC — lock holder\nLatest locked write.\n');
@@ -74,7 +78,7 @@ test('two concurrent processes reread under the lock and both entries land', asy
     assert.deepEqual(await fs.readFile(board), before);
     await fs.appendFile(board, holderPost);
   } finally {
-    await fs.unlink(lock);
+    await fs.rename(lock, `${lock}.released`);
     await Promise.all([first.done, second.done]);
   }
   const entries = [await fs.readFile(entryFile), await fs.readFile(secondEntry)];
@@ -85,6 +89,93 @@ test('two concurrent processes reread under the lock and both entries land', asy
   ]));
   assert.ok(possibilities.some((expected) => actual.equals(expected)));
   assert.equal((await fs.readdir(directory)).includes(path.basename(lock)), false);
+});
+
+for (const format of ['directory', 'legacy PID file']) {
+  test(`two writers racing from the same base recover a dead ${format} holder and preserve both posts`, { timeout: 10000 }, async (t) => {
+    const { directory, board, entryFile } = await fixture(t);
+    const before = await fs.readFile(board);
+    // Use the PID of an actually exited process rather than guessing an unused PID.
+    const { stdout } = await run(process.execPath, ['-e', 'console.log(process.pid)']);
+    const lock = `${board}.lock`;
+    if (format === 'directory') {
+      await fs.mkdir(lock);
+      await fs.writeFile(path.join(lock, 'dead-holder.json'), JSON.stringify({ pid: Number(stdout.trim()), hostname: hostname() }));
+    } else {
+      await fs.writeFile(lock, stdout);
+    }
+    const secondEntry = path.join(directory, 'second.md');
+    await fs.writeFile(secondEntry, '### 2026-10-31 13:01 UTC — second\nSecond body.\n\n');
+    const writers = [startWriter(board, entryFile), startWriter(board, secondEntry)];
+    t.after(() => { for (const { child } of writers) child.kill(); });
+    await Promise.all(writers.map(({ done }) => done));
+    const entries = [await fs.readFile(entryFile), await fs.readFile(secondEntry)];
+    const actual = await fs.readFile(board);
+    assert.ok([entries, entries.toReversed()].some(([a, b]) => actual.equals(Buffer.concat([
+      Buffer.from(header), a, b, before.subarray(Buffer.byteLength(header)),
+    ]))));
+    assert.equal((await fs.readdir(directory)).includes(path.basename(lock)), false);
+  });
+}
+
+test('an unidentified legacy lock refuses publication without deleting the lock or board', async (t) => {
+  const { board, entryFile } = await fixture(t);
+  const before = await fs.readFile(board);
+  const lock = `${board}.lock`;
+  await fs.writeFile(lock, '');
+  await assert.rejects(postBoardEntry(board, entryFile), /no verifiable local holder/i);
+  assert.deepEqual(await fs.readFile(board), before);
+  assert.equal(await fs.readFile(lock, 'utf8'), '');
+});
+
+test('a waiting writer recovers when the live holder exits without releasing', { timeout: 10000 }, async (t) => {
+  const { board, entryFile } = await fixture(t);
+  const holder = spawn(process.execPath, ['--input-type=module', '-e', `
+    import fs from 'node:fs/promises';
+    import { hostname } from 'node:os';
+    const lock = process.argv[1] + '.lock';
+    await fs.mkdir(lock);
+    await fs.writeFile(lock + '/exiting-holder.json', JSON.stringify({pid: process.pid, hostname: hostname()}));
+    process.stdin.resume();
+    process.stdout.write('ready');
+  `, board], { stdio: ['pipe', 'pipe', 'inherit'] });
+  t.after(() => holder.kill());
+  await once(holder.stdout, 'data');
+  const writer = startWriter(board, entryFile);
+  t.after(() => writer.child.kill());
+  await writer.waiting;
+  const exited = once(holder, 'exit');
+  holder.kill();
+  await exited;
+  await writer.done;
+  assert.ok((await fs.readFile(board)).includes(await fs.readFile(entryFile)));
+});
+
+test('same-size temporary heading corruption cannot drop an existing post', async (t) => {
+  const { board, entryFile } = await fixture(t);
+  const before = await fs.readFile(board);
+  const writeFile = fs.writeFile.bind(fs);
+  t.mock.method(fs, 'writeFile', (target, bytes, options) => {
+    if (!String(target).endsWith('.tmp')) return writeFile(target, bytes, options);
+    const output = Buffer.from(bytes);
+    output[output.indexOf(Buffer.from('### 2026-10-30'))] = 88;
+    return writeFile(target, output, options);
+  });
+  await assert.rejects(postBoardEntry(board, entryFile), /heading|byte verification/i);
+  assert.deepEqual(await fs.readFile(board), before);
+});
+
+test('a post arriving outside the lock before publication is preserved by refusing the stale write', async (t) => {
+  const { board, entryFile } = await fixture(t);
+  const arrival = Buffer.from('### 2026-11-01 07:25 UTC — outside writer\nKeep this post.\n');
+  const before = await fs.readFile(board);
+  const writeFile = fs.writeFile.bind(fs);
+  t.mock.method(fs, 'writeFile', async (target, bytes, options) => {
+    await writeFile(target, bytes, options);
+    if (String(target).endsWith('.tmp')) await fs.appendFile(board, arrival);
+  });
+  await assert.rejects(postBoardEntry(board, entryFile), /heading|changed/i);
+  assert.deepEqual(await fs.readFile(board), Buffer.concat([before, arrival]));
 });
 
 test('rotation archives the exact tail before trimming, preserving every byte', async (t) => {
