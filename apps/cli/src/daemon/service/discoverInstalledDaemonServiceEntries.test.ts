@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildLaunchdPlistXml,
   renderSystemdServiceUnit,
@@ -49,6 +49,8 @@ function ranFullScheduledTaskEnumeration(): boolean {
 }
 
 describe('discoverInstalledDaemonServiceEntries', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   beforeEach(async () => {
     readdirSyncMock.mockReset();
     const fs = await vi.importActual<typeof import('node:fs')>('node:fs');
@@ -1108,7 +1110,11 @@ describe('discoverInstalledDaemonServiceEntries', () => {
     })).rejects.toMatchObject({ code: 'service_inventory_unavailable' });
   });
 
-  it('applies a timeout to Windows schtasks discovery calls', async () => {
+  it.each([
+    { configuredTimeout: undefined, expectedTimeout: 0 },
+    { configuredTimeout: '2300', expectedTimeout: 2300 },
+  ])('honors only configured Windows discovery deadlines ($configuredTimeout)', async ({ configuredTimeout, expectedTimeout }) => {
+    vi.stubEnv('HAPPIER_WINDOWS_SCHTASKS_TIMEOUT_MS', configuredTimeout);
     await withTempDir('happier-discover-service-entry-windows-timeout-', async (homeDir) => {
       const happierHomeDir = join(homeDir, '.happier');
       mkdirSync(join(happierHomeDir, 'services'), { recursive: true });
@@ -1150,7 +1156,7 @@ describe('discoverInstalledDaemonServiceEntries', () => {
       });
 
       expect(observedTimeouts.length).toBeGreaterThan(0);
-      expect(observedTimeouts.every((timeout) => timeout > 0)).toBe(true);
+      expect(observedTimeouts.every((timeout) => timeout === expectedTimeout)).toBe(true);
     });
   });
 });

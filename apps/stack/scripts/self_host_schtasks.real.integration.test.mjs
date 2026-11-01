@@ -263,11 +263,28 @@ test(
     const schtasksQueryAfter = run('schtasks', ['/Query', '/TN', taskName], { label: 'self-host-schtasks', allowFail: true, timeoutMs: 20_000 });
     assert.equal(schtasksQueryAfter.status, 0, 'schtasks query should succeed after install');
 
-    run(
+    const uninstallResult = run(
       hstackPath,
       ['self-host', 'uninstall', '--channel=preview', '--mode=user', '--yes', '--purge-data', '--json'],
-      { label: 'self-host-schtasks', env: commonEnv, timeoutMs: 180_000, cwd: sandboxDir }
+      { label: 'self-host-schtasks', env: commonEnv, timeoutMs: 180_000, cwd: sandboxDir, allowFail: true }
     );
+    // Run after the real uninstall so warming ScheduledTasks cannot mask its
+    // first-query behavior. The containing test's deadline bounds diagnostics.
+    const { taskName: inspectionTaskName, taskPath: inspectionTaskPath } = splitQualifiedWindowsScheduledTaskName(taskName);
+    const inspectionStartedAt = new Date().toISOString();
+    const inspectionProbe = run('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+      [
+        '[Console]::Error.WriteLine("powershell_ready=" + [DateTime]::UtcNow.ToString("o"))',
+        buildReadWindowsScheduledTaskStatusPowerShellCommand({ taskName: inspectionTaskName, taskPath: inspectionTaskPath }),
+      ].join('; '),
+    ], { label: 'self-host-schtasks-inspection', env: commonEnv, cwd: sandboxDir, deadlineAtMs, allowFail: true });
+    console.log([
+      `[self-host-schtasks] post-uninstall inspection: started=${inspectionStartedAt} completed=${new Date().toISOString()} status=${String(inspectionProbe.status)}`,
+      String(inspectionProbe.stdout ?? '').trim(),
+      String(inspectionProbe.stderr ?? '').trim(),
+    ].join('\n'));
+    assert.equal(uninstallResult.status, 0, `self-host uninstall failed:\n${String(uninstallResult.error ?? '')}\n${String(uninstallResult.stdout ?? '')}\n${String(uninstallResult.stderr ?? '')}`);
     installSucceeded = false;
 
     const schtasksAfterUninstall = run('schtasks', ['/Query', '/TN', taskName], { label: 'self-host-schtasks', allowFail: true, timeoutMs: 20_000 });

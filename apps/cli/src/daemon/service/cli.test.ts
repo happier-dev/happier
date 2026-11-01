@@ -2064,13 +2064,13 @@ describe('runDaemonServiceCliCommand', () => {
     });
   });
 
-  it.each([false, true])('bounds native Windows action verification across install and retry (query timeout: %s)', async (queryTimesOut) => {
+  it.each([false, true])('honors configured Windows action verification deadlines across install and retry (query timeout: %s)', async (queryTimesOut) => {
     await withTempDir('happier-service-install-win32-same-owner-', async (homeDir) => {
       const happierHomeDir = `${homeDir}/.happier`;
       const lifecycleEvents: string[] = [];
       const observedQueryTimeouts: Array<number | undefined> = [];
       const observedTaskStatusTimeouts: Array<number | undefined> = [];
-      const expectedQueryTimeout = queryTimesOut ? 7_300 : 15_000;
+      const expectedQueryTimeout = queryTimesOut ? 7_300 : undefined;
       let writeDaemonStateImpl: ((state: DaemonLocallyPersistedState) => void) | null = null;
       envScope.patch({
         HAPPIER_HOME_DIR: happierHomeDir,
@@ -2172,8 +2172,7 @@ describe('runDaemonServiceCliCommand', () => {
             .rejects.toThrow(/did not become the active daemon/i);
           expect(observedQueryTimeouts.length).toBeGreaterThan(0);
           expect(new Set(observedQueryTimeouts)).toEqual(new Set([expectedQueryTimeout]));
-          expect(observedTaskStatusTimeouts).not.toContain(undefined);
-          expect(observedTaskStatusTimeouts).toContain(expectedQueryTimeout);
+          expect(new Set(observedTaskStatusTimeouts)).toEqual(new Set([expectedQueryTimeout]));
           return;
         }
         await runDaemonServiceCliCommand({ argv: ['install', '--yes', '--json'] });
@@ -2202,8 +2201,7 @@ describe('runDaemonServiceCliCommand', () => {
       }
       expect(observedQueryTimeouts.length).toBeGreaterThan(0);
       expect(new Set(observedQueryTimeouts)).toEqual(new Set([expectedQueryTimeout]));
-      expect(observedTaskStatusTimeouts).not.toContain(undefined);
-      expect(observedTaskStatusTimeouts).toContain(expectedQueryTimeout);
+      expect(new Set(observedTaskStatusTimeouts)).toEqual(new Set([expectedQueryTimeout]));
     });
   });
 

@@ -169,9 +169,9 @@ describe('collectWindowsServiceLaunchDiagnostics', () => {
   });
 
   it.each([
-    [undefined, 15_000, false],
+    [undefined, undefined, false],
     ['2300', 2_300, true],
-  ])('bounds diagnostic queries and keeps log context after timeout (configured budget: %s)', async (configuredTimeout, expectedTimeout, fallbackTimesOut) => {
+  ])('honors configured query deadlines and keeps diagnostic log context (configured budget: %s)', async (configuredTimeout, expectedTimeout, fallbackTimesOut) => {
     forceWindowsPlatform();
     vi.stubEnv('HAPPIER_WINDOWS_SCHTASKS_TIMEOUT_MS', configuredTimeout);
     const observedTimeouts: Array<number | undefined> = [];
