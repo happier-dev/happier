@@ -1,7 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { access } from 'node:fs/promises';
-import { describe, expect, it } from 'vitest';
+import { access, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { resolveExecutableCommand } from '@happier-dev/cli-common/process';
+import { describe, expect, it, vi } from 'vitest';
 import { createComputerDesktop } from './desktop';
 import { openNativeComputerTransport } from './driver/nativeTransport';
 
@@ -9,6 +12,29 @@ const executablePath = process.env.HAPPIER_TEST_NATIVE_EXECUTABLE;
 const fixturePath = process.env.HAPPIER_TEST_NATIVE_ACCESSIBILITY_FIXTURE;
 
 describe.skipIf(process.platform !== 'linux' || !executablePath || !fixturePath)('managed Linux desktop', () => {
+  it('settles a missing window manager with the recipe remedy and admits the next explicit request after installation', async () => {
+    const installedPath = process.env.PATH;
+    const prerequisites = await mkdtemp(join(tmpdir(), 'happier-desktop-prerequisites-'));
+    const desktop = createComputerDesktop();
+    try {
+      for (const name of ['Xvfb', 'dbus-daemon', 'gdbus']) {
+        const executable = resolveExecutableCommand(name);
+        if (!executable) throw new Error(`Integration prerequisite missing: ${name}`);
+        await symlink(executable, join(prerequisites, name));
+      }
+      vi.stubEnv('PATH', prerequisites);
+      await expect(desktop.ensure()).rejects.toMatchObject({ code: 'computer_display_unavailable',
+        message: expect.stringContaining('virtual-display') });
+      vi.stubEnv('PATH', installedPath);
+      const connection = await desktop.ensure();
+      expect(connection.displayId).toMatch(/^:\d+$/);
+      expect(desktop.current()).toBe(connection);
+    } finally {
+      vi.unstubAllEnvs();
+      await desktop.dispose();
+      await rm(prerequisites, { recursive: true, force: true });
+    }
+  });
   it('keeps one private accessibility desktop discoverable by explicit DISPLAY and retires its processes', async () => {
     const inheritedDisplay = process.env.DISPLAY;
     const inheritedBus = process.env.DBUS_SESSION_BUS_ADDRESS;

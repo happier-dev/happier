@@ -54,7 +54,7 @@ export function createComputerDesktop() {
     };
     stream.on('data', data); stream.once('end', fail); child.once('error', fail); child.once('exit', fail);
   });
-  const start = async (xvfb: string, dbus: string, gdbus: string): Promise<ComputerDesktopConnection> => {
+  const start = async (xvfb: string, dbus: string, gdbus: string, wm: string): Promise<ComputerDesktopConnection> => {
     try {
       runtimeDirectory = await mkdtemp(join(tmpdir(), 'happier-desktop-'));
       // Enable only this session, without changing the person's persistent desktop preferences.
@@ -80,11 +80,8 @@ export function createComputerDesktop() {
         '--method', 'org.a11y.Bus.GetAddress'], { ...environment, ...desktopEnvironment }, false, false);
       const [readyCode] = await once(ready, 'exit');
       if (readyCode !== 0) throw unavailable();
-      const wm = resolveExecutableCommand('openbox');
-      if (wm) {
-        const windowManager = launch(wm, ['--sm-disable'], { ...environment, ...desktopEnvironment });
-        await once(windowManager, 'spawn');
-      }
+      const windowManager = launch(wm, ['--sm-disable'], { ...environment, ...desktopEnvironment });
+      await once(windowManager, 'spawn');
       if (closed) throw unavailable();
       connection = { displayId, environment: desktopEnvironment };
       return connection;
@@ -103,8 +100,9 @@ export function createComputerDesktop() {
       const xvfb = resolveExecutableCommand('Xvfb');
       const dbus = resolveExecutableCommand('dbus-daemon');
       const gdbus = resolveExecutableCommand('gdbus');
-      if (!xvfb || !dbus || !gdbus) throw unavailable();
-      return initialization = start(xvfb, dbus, gdbus);
+      const wm = resolveExecutableCommand('openbox');
+      if (!xvfb || !dbus || !gdbus || !wm) throw unavailable();
+      return initialization = start(xvfb, dbus, gdbus, wm);
     },
     async dispose() {
       closed = true;

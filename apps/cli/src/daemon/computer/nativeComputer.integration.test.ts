@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ActionIdSchema, ComputerCaptureResponseV1Schema, ComputerTargetsListResponseV1Schema, createActionExecutor, type ActionExecutorDeps, type ApprovalRequest, type MachineLiveStreamFrameV1 } from '@happier-dev/protocol';
 import { ComputerSelectedTargetResponseV1Schema } from '@happier-dev/protocol/computer/v1';
 import { createComputerRoutes } from './routes';
+import { createManagedComputerDriver } from './driver/managedComputerDriver';
 import { createDaemonRuntimeActionExecutor } from '../runtimeActionExecutor';
 import { createMachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
 import { createDaemonMachineLiveStreamCaptureAdapter } from '../peer/mediation/stream/captureAdapter';
@@ -84,7 +85,12 @@ describe.skipIf(!executablePath || !fixturePath || process.platform !== 'linux')
         { ...context, authority: 'present_user' }));
       expect(preview.targets.find(entry => entry.target.kind === 'display')?.thumbnail).toMatchObject({ mimeType: 'image/png' });
       fixture = spawn(fixturePath!, [], { env: { ...process.env, DISPLAY: target.displayId }, stdio: ['ignore', 'pipe', 'pipe'] });
-      await line(fixture.stdout!);
+      const windowId = Number((await line(fixture.stdout!)).split(':')[1]);
+      const windowDriver = await createManagedComputerDriver({ displayId: target.displayId, executablePath });
+      let windowGeometry;
+      try {
+        windowGeometry = (await windowDriver.capture({ kind: 'window', displayId: target.displayId, pid: fixture.pid!, windowId })).geometry;
+      } finally { await windowDriver.close(); }
       expect(await routes.dispatch('computer.target.select', { ...machine, target, access: 'use' }, context))
         .toMatchObject({ selectedTarget: target });
       const capture = ComputerCaptureResponseV1Schema.parse(await routes.dispatch('computer.capture', machine, context));
@@ -92,7 +98,10 @@ describe.skipIf(!executablePath || !fixturePath || process.platform !== 'linux')
       expect(capture.geometry.captureWidth).toBeGreaterThan(0);
       const click = line(fixture.stdout!);
       expect(await routes.dispatch('computer.input', { ...machine, captureId: capture.captureId,
-        operation: { kind: 'click', x: 50, y: 70 } }, context)).toMatchObject({ status: 'dispatched' });
+        operation: { kind: 'click',
+          x: (windowGeometry.originX + windowGeometry.nativeWidth / 2 - capture.geometry.originX) / capture.geometry.scaleX,
+          y: (windowGeometry.originY + windowGeometry.nativeHeight / 2 - capture.geometry.originY) / capture.geometry.scaleY,
+        } }, context)).toMatchObject({ status: 'dispatched' });
       expect(await click).toBe('clicks:1');
       await routes.closeSession(context.defaultSessionId);
       await expect(access(displaySocket)).resolves.toBeUndefined();

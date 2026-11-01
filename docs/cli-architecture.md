@@ -11,8 +11,8 @@ executables without installing software. Missing prerequisites settle as
 `computer_display_unavailable` with the recipe name.
 
 Xvfb chooses a free display through `-displayfd` with TCP disabled. A private
-session D-Bus and runtime/config directory enable accessibility; Openbox starts
-when installed. List and select use this display as an ordinary Computer target,
+session D-Bus and runtime/config directory enable accessibility; a small window
+manager is required and starts in that session. List and select use this display as an ordinary Computer target,
 including its explicit display id. Apps must target that display deliberately:
 Agent shells do not inherit `DISPLAY` or the private bus environment. The desktop
 survives Session closure and ends with daemon disposal, including its D-Bus
