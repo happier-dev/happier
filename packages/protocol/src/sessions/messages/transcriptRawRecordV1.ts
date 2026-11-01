@@ -271,7 +271,7 @@ const ContextCompactionShape = {
   lifecycleId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   backendId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   agentId: z.optional(z.string().check(z.trim(), z.minLength(1))),
-  trigger: z.optional(z.enum(['manual', 'auto', 'threshold', 'overflow', 'unknown'])),
+  trigger: z.optional(z.enum(['manual', 'auto', 'idle', 'threshold', 'overflow', 'unknown'])),
   source: z.optional(ContextCompactionSourceSchema),
   agentEventId: z.optional(z.string()),
   agentSessionId: z.optional(z.string()),
@@ -1082,7 +1082,7 @@ export function buildAgentEventLocalId(
 function readAgentEventLocalIdType(value: string | null | undefined): TranscriptRawAgentEventV1['type'] | null {
   if (typeof value !== 'string') return null;
   const candidateType = value.trim().split(':', 1)[0];
-  if (candidateType === 'connected-service-runtime-auth-recovery') {
+  if (candidateType === 'connected-service-runtime-auth-recovery' || candidateType === 'context-compaction') {
     return candidateType;
   }
   return AGENT_EVENT_TYPES_WITHOUT_USER_ATTENTION.has(candidateType as TranscriptRawAgentEventV1['type'])
@@ -1115,6 +1115,10 @@ export function agentEventAttentionImpact(
   localId?: unknown,
 ): SessionMessageAttentionImpact {
   const type = readAgentEventType(event);
+  if (type === 'context-compaction' && event && typeof event === 'object'
+    && (event as Readonly<Record<string, unknown>>).trigger === 'idle') {
+    return SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT;
+  }
   // The same-Session transition divider is a boundary marker, not news. It rides
   // the passthrough `message` arm, whose type-keyed default is attention-bearing
   // and must stay that way for every other passthrough event, so the exemption is
@@ -1145,6 +1149,13 @@ export function agentEventAttentionImpact(
 export function agentEventLocalIdAttentionImpact(localId: string | null | undefined): SessionMessageAttentionImpact | null {
   const type = readAgentEventLocalIdType(localId);
   if (type === null || typeof localId !== 'string') return null;
+  if (type === 'context-compaction') {
+    const parts = localId.trim().split(':');
+    const phase = ContextCompactionPhaseSchema.safeParse(parts[3]);
+    const idle = parts.length === 5 && parts[1] === 'idle' && /^[A-Za-z0-9_-]+$/.test(parts[2] ?? '')
+      && phase.success && /^(0|[1-9][0-9]*)$/.test(parts[4] ?? '') && Number.isSafeInteger(Number(parts[4]));
+    return agentEventAttentionImpact({ type, ...(idle ? { trigger: 'idle' } : {}) }, localId);
+  }
   if (type === 'connected-service-runtime-auth-recovery') {
     return agentEventAttentionImpact({
       type,

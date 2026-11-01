@@ -2,10 +2,30 @@ import {
     SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
     SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT,
     SESSION_MESSAGE_USER_ATTENTION_IMPACT,
+    buildAgentEventLocalId,
+    agentEventLocalIdAttentionImpact,
 } from "@happier-dev/protocol";
 import { describe, expect, it } from "vitest";
 
 import { resolveMessageAttentionImpact } from "./messageAttentionImpact";
+
+describe('idle compaction attention at the server content boundary', () => {
+    it.each(['started', 'progress', 'completed', 'failed', 'cancelled'])(
+        'keeps plain and opaque encrypted %s writes quiet without suppressing ordinary compaction', (phase) => {
+            const localId = buildAgentEventLocalId('context-compaction', ['idle', 'native-compact', phase, 1]);
+            expect(resolveMessageAttentionImpact({
+                content: storedAgentEvent({ type: 'context-compaction', trigger: 'idle', phase }), localId,
+            })).toEqual(SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT);
+            expect(resolveMessageAttentionImpact({
+                content: { t: 'encrypted', c: 'opaque' } as PrismaJson.SessionMessageContent, localId,
+                explicitAttentionImpact: agentEventLocalIdAttentionImpact(localId) ?? undefined,
+            })).toEqual(SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT);
+            expect(resolveMessageAttentionImpact({
+                content: storedAgentEvent({ type: 'context-compaction', trigger: 'auto', phase }), localId: 'ordinary-compact',
+            })).toEqual(SESSION_MESSAGE_USER_ATTENTION_IMPACT);
+        },
+    );
+});
 
 function storedAgentEvent(data: unknown): PrismaJson.SessionMessageContent {
     return {

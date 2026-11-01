@@ -506,7 +506,7 @@ export type AgentSessionRuntimeEvent =
       kind: 'context-compaction';
       compactionId: string;
       turnId?: string;
-      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      trigger: 'manual' | 'idle' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
       retryAttempt?: number;
       phase: 'started';
       tokenCountBefore?: number;
@@ -519,7 +519,7 @@ export type AgentSessionRuntimeEvent =
       kind: 'context-compaction';
       compactionId: string;
       turnId?: string;
-      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      trigger: 'manual' | 'idle' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
       retryAttempt?: number;
       phase: 'progress';
     }>
@@ -530,7 +530,7 @@ export type AgentSessionRuntimeEvent =
       kind: 'context-compaction';
       compactionId: string;
       turnId?: string;
-      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      trigger: 'manual' | 'idle' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
       retryAttempt?: number;
       phase: 'completed';
       tokenCountBefore?: number;
@@ -546,7 +546,7 @@ export type AgentSessionRuntimeEvent =
       kind: 'context-compaction';
       compactionId: string;
       turnId?: string;
-      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      trigger: 'manual' | 'idle' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
       retryAttempt?: number;
       phase: 'failed';
       diagnostic: PluginDiagnosticData;
@@ -558,7 +558,7 @@ export type AgentSessionRuntimeEvent =
       kind: 'context-compaction';
       compactionId: string;
       turnId?: string;
-      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      trigger: 'manual' | 'idle' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
       retryAttempt?: number;
       phase: 'cancelled';
       diagnostic?: PluginDiagnosticData;
@@ -570,7 +570,7 @@ export type AgentSessionRuntimeEvent =
       kind: 'context-compaction';
       compactionId: string;
       turnId?: string;
-      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      trigger: 'manual' | 'idle' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
       retryAttempt?: number;
       phase: 'outcomeUnknown';
       diagnostic: PluginDiagnosticData;
@@ -850,7 +850,7 @@ export type AgentSessionConfigurationResult =
 
 export type AgentSessionCompactRequest = {
   compactionId: string;
-  trigger: 'manual';
+  trigger: 'manual' | 'idle';
   instructions?: string;
 };
 

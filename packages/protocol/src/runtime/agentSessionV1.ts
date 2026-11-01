@@ -455,7 +455,7 @@ const CompactionCommonShape = {
   kind: lazyZodSchema(() => z.literal('context-compaction')),
   compactionId: HostIdSchema,
   turnId: z.optional(HostIdSchema),
-  trigger: lazyZodSchema(() => z.enum(['manual', 'automatic', 'threshold', 'overflow', 'unknown'])),
+  trigger: lazyZodSchema(() => z.enum(['manual', 'idle', 'automatic', 'threshold', 'overflow', 'unknown'])),
   retryAttempt: z.optional(SafeIntegerSchema),
 };
 
@@ -542,7 +542,7 @@ export const AgentSessionSendRequestV1Schema = lazyZodSchema(() => z.strictObjec
 
 export const AgentSessionCompactRequestV1Schema = lazyZodSchema(() => z.strictObject({
   compactionId: HostIdSchema,
-  trigger: z.literal('manual'),
+  trigger: z.enum(['manual', 'idle']),
   instructions: z.optional(z.string().check(maxCodeUnits(COMPACT_INSTRUCTIONS_MAX))),
 }));
 

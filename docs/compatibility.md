@@ -2,6 +2,32 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Idle compaction records and capabilities (unreleased 0.3)
+
+This is an in-place development SDK contraction: one strict compaction
+descriptor replaces the old SupportLevel shape and duplicated bundled manifest
+literals. External plugins targeting this development API must update their
+Agent declaration and return the capability of the runtime actually opened.
+An unsupported opened mode cannot inherit support from another mode.
+
+Stored `context-compaction` events add `trigger: 'idle'` and optional measured
+`tokenCountBefore` / `tokenCountAfter`. Existing manual, auto, threshold,
+overflow and unknown triggers remain readable. Historical raw compaction
+readers remain for retained transcripts; live runtime events use the canonical
+typed writer. Runtime `outcomeUnknown` remains outside the stored phase grammar.
+Only idle origin is newly quiet, including the owner-produced encrypted local
+identity understood by the server's existing write admission.
+
+The approved policy is a one-way upgrade. The predecessor 0.2 reader's closed
+trigger enum rejects new idle records, so reverse mixed-version reading and
+rollback to that reader are unsupported after these records are written. There
+is no dual writer, rewritten trigger or old-reader alias. The observed predecessor
+basis is `c16edc75540e5f8819932f9d90495564b9b2db7f`, scoped to its unchanged
+`packages/protocol/src/sessionMessages/transcriptRawRecordV1.ts` trigger grammar.
+The three optional Account preference maps preserve missing-as-inherited values
+and require no stored-data migration. This is development-source compatibility,
+not a release certification.
+
 ## Trigger
 
 Apply this policy when a change affects a cross-component wire shape or semantic, persisted/session/settings data, schema or migration, feature/capability negotiation, installer or service state, upgrade/coexistence, or rollback. Routine internal refactors that leave these seams unchanged do not need a compatibility matrix or shim.
