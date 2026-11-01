@@ -453,9 +453,10 @@ async function ensureWorkspacePackagesBuiltWithPluginIsolation({
  * `pluginWorkspaceNames` selection) may name any CLI bundled workspace; the
  * selection owner intersects it with this checkout's bundled plugin
  * workspaces, so host names such as `protocol` or `agents` never reach the
- * plugin-only generator CLI. Returns false — without invoking the publisher —
- * when the selection contains no bundled plugin workspace; throws when the
- * publisher does not complete for a non-empty selection.
+ * plugin-only generator CLI. UI preparation uses the full selected source
+ * scope, even when its TypeScript outputs no longer need rebuilding. Returns
+ * false when neither scope contains a bundled plugin workspace; throws when
+ * semantic publication or UI preparation does not complete.
  */
 export async function publishBundledPluginArtifactsAfterWorkspaceBuild(opts = {}) {
   const pluginFailures = opts.pluginFailures ?? [];
@@ -468,11 +469,18 @@ export async function publishBundledPluginArtifactsAfterWorkspaceBuild(opts = {}
       ...pluginFailures.map((failure) => failure.packageName.replace(/^@happier-dev\//, '')),
     ],
   });
-  if (pluginWorkspaceNames.length === 0 && pluginFailures.length === 0) return false;
+  const sourcePluginUiWorkspaceNames = opts.workspaceNames === undefined
+    ? pluginWorkspaceNames
+    : resolveSelectedBundledPluginWorkspaceNames({ repoRoot: opts.repoRoot, workspaceNames: opts.workspaceNames });
+  if (pluginWorkspaceNames.length === 0 && pluginFailures.length === 0 && sourcePluginUiWorkspaceNames.length === 0) return false;
 
   const repoRoot = resolveRepoRootOption(opts.repoRoot);
   const publish = opts.publishBundledPluginArtifactsImpl ?? runCanonicalBundledPluginArtifactPublisher;
-  const published = await publish({
+  const mode = opts.bundledPluginArtifactPublication?.mode
+    ?? (String(opts.env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1' ? 'check' : 'write');
+  const aggregateOnly = pluginWorkspaceNames.length === 0
+    || opts.bundledPluginArtifactPublication?.aggregateOnly === true;
+  const published = pluginWorkspaceNames.length === 0 && pluginFailures.length === 0 ? true : await publish({
     repoRoot,
     workspaceNames: pluginWorkspaceNames,
     pluginFailures,
@@ -480,16 +488,16 @@ export async function publishBundledPluginArtifactsAfterWorkspaceBuild(opts = {}
     env: opts.env ?? process.env,
     quiet: opts.quiet === true,
     progress: opts.progress === true,
-    mode: opts.bundledPluginArtifactPublication?.mode
-      ?? (String(opts.env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1'
-        ? 'check'
-        : 'write'),
-    aggregateOnly: pluginWorkspaceNames.length === 0
-      || opts.bundledPluginArtifactPublication?.aggregateOnly === true,
+    mode,
+    aggregateOnly,
     targetOwnedOnly: opts.bundledPluginArtifactPublication?.targetOwnedOnly === true,
   });
   if (published === false) {
     throw new Error('Canonical bundled plugin artifact publisher did not complete');
+  }
+  if (mode === 'write' && opts.bundledPluginArtifactPublication?.aggregateOnly !== true) {
+    const { prepareSourceCliPluginUiArtifacts } = await import('./prepareSourcePluginUiArtifacts.mjs');
+    await prepareSourceCliPluginUiArtifacts({ repoRoot, workspaceNames: sourcePluginUiWorkspaceNames, pluginFailures });
   }
   return true;
 }
@@ -2108,16 +2116,14 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
   // projections describing the package. A rebuilt compiled tree invalidates those
   // projections, so refresh publication after a selected plugin rebuild. The publisher's own
   // re-entrant dependency sync (`publishBundledPluginArtifacts: false`) is exempt.
-  if (
-    shouldPublishBundledPluginArtifacts
-    && (includeRuntimeDependencies || bundledPluginWorkspaceNamesToPublish.length > 0 || pluginFailures.length > 0)
-  ) {
+  if (shouldPublishBundledPluginArtifacts) {
     reportSourceDevSharedDepsProgress(reportProgress, {
       stage: 'bundled-plugin-publish',
       event: 'start',
     });
     publishedBundledPluginArtifacts = await publishBundledPluginArtifactsAfterWorkspaceBuild({
       repoRoot,
+      workspaceNames: workspaceNames.filter((workspaceName) => !sourceChangedWorkspaceNames.has(workspaceName)),
       // E2 reports the actual rebuilt closure after its package locks and
       // post-lock currentness checks, so a plugin another owner made current
       // while we waited is not treated as changed.
@@ -2608,7 +2614,8 @@ async function publishPreparedBundledWorkspaceDependenciesForCli(prepared, opts 
   try {
     bundledPluginPublicationAttempted = await publishBundledPluginArtifactsAfterWorkspaceBuild({
       repoRoot: resolvedRepoRoot,
-      workspaceNames: rebuiltPluginWorkspaceNames,
+      workspaceNames,
+      pluginWorkspaceNames: rebuiltPluginWorkspaceNames,
       pluginFailures: prepared.failedPluginBuilds,
       publicationMode: prepared.publicationMode,
       syncId: opts.syncId ?? `build-shared-publish.${process.pid}`,
