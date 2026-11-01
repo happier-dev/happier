@@ -300,6 +300,43 @@ export const MACHINE_CONNECTION_ACTION_SPECS = [
     bindings: { mcpToolName: 'machines_managed_bootstrap_respond' },
     inputSchema: MachineManagedInstallationRespondInputSchema, outputSchema: MachineAddSshTaskOutputSchema,
     approvalInputCustody: 'live_only', projectObservationInput: redactObservationInputPaths('password'),
+    approvalPresentation: {
+      projectInput: (value: unknown) => {
+        const input = MachineManagedInstallationRespondInputSchema.parse(value);
+        const { serverId, homeId, managedId, operationId, taskId, purpose } = input;
+        return { serverId, homeId, managedId, operationId, taskId, purpose,
+          ...(input.purpose === 'establish' ? { promptId: input.promptId } : {
+            question: input.prompt.message, approved: input.approved,
+            ...(input.prompt.kind === 'ssh.trustHost' || input.prompt.kind === 'ssh.replaceHostKey' ? {
+              host: input.prompt.host, fingerprint: input.prompt.fingerprint,
+              ...(input.prompt.existingFingerprint ? { existingFingerprint: input.prompt.existingFingerprint } : {}),
+            } : {}),
+          }),
+        };
+      },
+      inputSchema: lazyZodSchema(() => z.strictObject({
+        serverId: id, homeId: id, managedId: id, operationId: id, taskId: id,
+        purpose: z.enum(['approve', 'establish']), question: z.optional(z.string()),
+        approved: z.optional(z.boolean()), host: z.optional(z.string()), fingerprint: z.optional(z.string()),
+        existingFingerprint: z.optional(z.string()), promptId: z.optional(id),
+      })),
+      inputHints: { fields: [
+        { path: 'serverId', title: 'Home profile', widget: 'text', required: true },
+        { path: 'homeId', title: 'Home identity', widget: 'text', required: true },
+        { path: 'operationId', title: 'Creation operation ID', widget: 'text', required: true },
+        { path: 'taskId', title: 'Installation task ID', widget: 'text', required: true },
+        { path: 'purpose', title: 'Response purpose', widget: 'text', required: true },
+        { path: 'promptId', title: 'Administrator prompt', widget: 'text' },
+        { path: 'managedId', title: 'Machine', widget: 'text', required: true },
+        { path: 'question', title: 'Installation question', widget: 'text' },
+        { path: 'host', title: 'Host', widget: 'text' },
+        { path: 'fingerprint', title: 'Fingerprint', widget: 'text' },
+        { path: 'existingFingerprint', title: 'Previous fingerprint', widget: 'text' },
+        { path: 'approved', title: 'Approve this installation step', widget: 'boolean' },
+      ] },
+      technicalInputPaths: ['serverId', 'homeId', 'operationId', 'taskId', 'purpose', 'promptId', 'approved'],
+      summary: () => 'Answer managed machine installation prompt.',
+    },
     inputHints: { fields: [
       { path: 'serverId', title: 'Home profile', widget: 'text', required: true },
       { path: 'homeId', title: 'Home identity', widget: 'text', required: true },

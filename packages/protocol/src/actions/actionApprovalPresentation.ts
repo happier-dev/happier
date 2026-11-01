@@ -902,8 +902,8 @@ export function describeApprovalActionFields(input: Readonly<{
       entries = describeApprovalConnectedServices(values[0]) ?? entries;
     }
     if (kindValue !== null) entries = undefined;
-    const technical = !reference && (isTechnicalApprovalKey(field.path.split('.').at(-1))
-      || technicalPaths.includes(field.path)
+    const technical = technicalPaths.includes(field.path)
+      || !reference && (isTechnicalApprovalKey(field.path.split('.').at(-1))
       || values.length > 0 && values.every(isEmptyApprovalValue) && !(rulesAction && field.path === 'change.rules')
       // The visual summary already names this item. Preserve its exact identity
       // in Details, rather than adding an opaque id to that first reading.
