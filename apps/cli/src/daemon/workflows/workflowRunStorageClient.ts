@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
+import type { WorkflowRunStorageOperation } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
+export type { WorkflowRunStorageOperation } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { resolveWorkflowRunFollowEventV1 } from '@happier-dev/protocol/workflows/composeWorkflowRunWorkerUpdateV1';
 import type { notifyDaemonSessionActivityChanged } from '@/daemon/controlClient';
@@ -15,15 +17,6 @@ import {
 } from '@/plugins/installations/publisherProof';
 
 export const WORKFLOW_RUN_STORAGE_HTTP_PATH = '/v3/automations/runs/workflow-storage';
-
-export type WorkflowRunStorageOperation = Readonly<Record<string, unknown> & {
-  operation:
-    | 'admit' | 'accepted-snapshot.resolve' | 'initialize' | 'get' | 'wait' | 'pause' | 'resume' | 'cancel' | 'list' | 'summaries' | 'recovery.list'
-    | 'invocations.list' | 'invocations.admit' | 'invocations.get' | 'invocations.current' | 'invocations.fact'
-    | 'invocations.publish_draft' | 'invocations.complete_review'
-    | 'transition' | 'invocations.recover' | 'delete' | 'delivery.pull' | 'delivery.ack' | 'origin-input.withdrawn'
-    | 'run-key.census' | 'run-key.commit';
-}>;
 
 /** Thin transport to the server's opaque workflow Run storage owner. */
 export function createWorkflowRunStorageClient(params: Readonly<{

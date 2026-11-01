@@ -176,7 +176,7 @@ function normalizeProjectTargetForComparison(target: NonNullable<WorkflowMachine
 type Storage = Readonly<{
   /** Existing Account feed, including a current-facts invalidation on reconnect. */
   observeChanges?: (runId: string, onChange: () => void, onError: (error: unknown) => void) => Readonly<{ dispose(): void | Promise<void> }>;
-  execute: (operation: Readonly<Record<string, unknown>>, options?: Readonly<{
+  execute: (operation: import('../../workflows/workflowRunStorageV1.js').WorkflowRunStorageOperation, options?: Readonly<{
     signal?: AbortSignal;
     /** Host-only witness emitted by the delete transport, never storage input. */
     onTransportIssued?: () => void;
@@ -2413,7 +2413,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     if (args.actionId === 'workflow.run.pause' || args.actionId === 'workflow.run.cancel' || args.actionId === 'workflow.run.delete') {
       try {
-        return WorkflowActionOutputSchemasV1[args.actionId].parse(await deps.storage.execute({ operation: args.actionId.slice('workflow.run.'.length), ...args.input }, {
+        const operation = { 'workflow.run.pause': 'pause', 'workflow.run.cancel': 'cancel', 'workflow.run.delete': 'delete' } as const;
+        return WorkflowActionOutputSchemasV1[args.actionId].parse(await deps.storage.execute({ operation: operation[args.actionId], ...args.input }, {
           ...(args.context.signal ? { signal: args.context.signal } : {}),
           ...(args.actionId === 'workflow.run.delete' && args.context.onTransportIssued
             ? { onTransportIssued: args.context.onTransportIssued } : {}),
