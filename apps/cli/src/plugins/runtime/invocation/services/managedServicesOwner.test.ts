@@ -3228,7 +3228,7 @@ describe('managed-services SVC09 owner', () => {
         expect(JSON.stringify(handle.snapshot())).not.toContain(downstreamBearer!);
     });
 
-    it('projects exact endpoint-bounded authenticated fetch without disclosing its host bearer', async () => {
+    it('projects repeatable authenticated endpoint access without restricting trusted requests to declared paths', async () => {
         const hostFetch = vi.fn<typeof globalThis.fetch>(async (
             _input: string | URL | Request,
             _init?: RequestInit,
@@ -3296,14 +3296,20 @@ describe('managed-services SVC09 owner', () => {
         expect(JSON.stringify(projection.access)).not.toContain(
             privateAuthorization!,
         );
-        await expect(projection.access.request({
+        const undeclaredPath = await projection.access.request({
             pathAndQuery: '/admin',
             method: 'GET',
             timeoutMs: 5_000,
-        })).rejects.toMatchObject({
-            code: 'plugin_managed_service_unavailable',
         });
-        expect(hostFetch).toHaveBeenCalledTimes(1);
+        expect(undeclaredPath.status).toBe(200);
+        const repeated = await harness.owner.projectManagedProviderEndpointAccess!({
+            service: handle,
+            endpoints: [{ endpointTemplateId: 'responses', servicePath: '/v1' }],
+            signal: new AbortController().signal,
+            isCurrent: () => true,
+        });
+        expect(repeated?.access.endpointUrl('responses')).toBe('http://127.0.0.1:4312/v1');
+        expect(hostFetch).toHaveBeenCalledTimes(2);
 
         harness.moveHealthyEndpoint('http://127.0.0.1:4312', 4312, 2);
         expect(projection.access.endpointUrl('responses')).toBeNull();
@@ -3314,7 +3320,7 @@ describe('managed-services SVC09 owner', () => {
         })).rejects.toMatchObject({
             code: 'plugin_managed_service_unavailable',
         });
-        expect(hostFetch).toHaveBeenCalledTimes(1);
+        expect(hostFetch).toHaveBeenCalledTimes(2);
 
         await projection.cleanup();
         expect(projection.isCurrent()).toBe(false);

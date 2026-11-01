@@ -2463,25 +2463,6 @@ function resolveManagedProviderEndpointUrls(
     return resolved;
 }
 
-function isWithinEndpointPath(
-    target: URL,
-    endpoints: ReadonlyMap<string, URL>,
-): boolean {
-    for (const endpoint of endpoints.values()) {
-        if (target.origin !== endpoint.origin) continue;
-        if (endpoint.pathname === '/') return true;
-        if (
-            target.pathname === endpoint.pathname
-            || target.pathname.startsWith(
-                endpoint.pathname.endsWith('/')
-                    ? endpoint.pathname
-                    : `${endpoint.pathname}/`,
-            )
-        ) return true;
-    }
-    return false;
-}
-
 function composeAbortSignals(
     signals: readonly (AbortSignal | null | undefined)[],
 ): Readonly<{ signal: AbortSignal; cleanup(): void }> {
@@ -2924,7 +2905,6 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             signal?: AbortSignal,
         ) => Promise<Readonly<Record<string, string>>>
     >();
-    const projectedEndpointAccess = new WeakSet<ManagedServiceHandle>();
     const semanticEntries = new Map<
         string,
         ManagedServicesSemanticEntry
@@ -4995,7 +4975,6 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             const facts = endpointAccessByService.get(service);
             if (
                 !facts
-                || projectedEndpointAccess.has(service)
                 || signal.aborted
                 || facts.scope.signal?.aborted
                 || !readsCurrent(facts.scope.isOccurrenceCurrent)
@@ -5024,7 +5003,6 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 endpoints,
             );
             if (!endpointUrls) return null;
-            projectedEndpointAccess.add(service);
             const lifetime = new AbortController();
             let active = true;
             const readsAccessCurrent = (): boolean => {
@@ -5082,7 +5060,6 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                         || target.username !== ''
                         || target.password !== ''
                         || target.hash !== ''
-                        || !isWithinEndpointPath(target, endpointUrls)
                     ) return unavailable();
                     // The response body outlives this call frame, so the
                     // composed signal must too: `composeAbortSignals` needs a
