@@ -59,6 +59,8 @@ export async function handleAuthLogin(args: string[], signal?: AbortSignal): Pro
 
   if (waitTimeoutSeconds !== null) {
     process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS = String(waitTimeoutSeconds * 1000);
+    console.log(chalk.gray(`Terminal wait timeout: ${waitTimeoutSeconds}s (this CLI will wait this long for approval)`));
+    console.log(chalk.gray(`Note: The approval link's server-side expiry is separate and typically ~15 minutes.`));
   }
 
   if (forceAuth) {
