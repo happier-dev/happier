@@ -4,6 +4,10 @@
 
 This file must not be used to locate current owners or plan new changes. Re-derive any historical claim from the current plugin contribution, Agent catalog, and Provider contracts before acting on it.
 
+For the unreleased 0.3 Pi RPC manual and opt-in idle compaction contract, see
+[Pi compaction](../apps/docs/content/docs/agents/pi.mdx#compaction) and the
+[shared runtime owner](runtime-core.md#idle-compaction-unreleased-03).
+
 ## Audit evidence snapshot
 
 - Happier source audited in `remote-dev` on 2026-05-20.

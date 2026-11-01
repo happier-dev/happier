@@ -16,6 +16,7 @@ function createExecutionRunConversationHarness(): Readonly<{
       for (const listener of listeners) listener(event);
     },
     runtime: {
+      compact: async () => ({ status: 'admitted' }),
       identity: { read: () => ({ providerSessionId: null }) },
       events: {
         subscribe(listener) {

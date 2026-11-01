@@ -1,4 +1,5 @@
 import type { OpenCodeRuntimeEvent } from './runtimeEvents.js';
+import type { AgentSessionCompactRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { OpenCodePreflightModel } from '../../preflight/models.js';
 
 export type OpenCodeModelCatalogSnapshot = Readonly<{
@@ -53,10 +54,7 @@ export type OpenCodeRuntimeTurnOperations = Readonly<{
   waitForTurnCompletion(): Promise<void>;
   subscribeRuntimeEvents(handler: (message: OpenCodeRuntimeEvent) => void): () => void;
   cancelTurn(): Promise<void>;
-  compactContext(request: Readonly<{
-    compactionId: string;
-    instructions?: string;
-  }>): Promise<void>;
+  compactContext(request: Readonly<AgentSessionCompactRequest>): Promise<void>;
   listSkills(input?: Readonly<{ directory?: string | null }>): Promise<unknown>;
   readSessionIdentity(): Readonly<{ sessionId: string | null }>;
   readModelCatalog(): OpenCodeModelCatalogSnapshot;

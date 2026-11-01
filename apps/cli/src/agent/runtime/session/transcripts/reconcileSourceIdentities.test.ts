@@ -127,7 +127,7 @@ describe('native cold history reconciliation at the admitted Session scope', () 
           sessionFork: { conversation: 'supported', fromMessage: 'unsupported' },
           sessionRollback: { conversation: 'unsupported' },
           usageLimitRecovery: { checkNow: 'unsupported' },
-          compaction: { manual: 'supported' },
+          compaction: { events: true, manual: true },
         },
         tools: { delivery: 'native_mcp', support: 'supported' },
       } });

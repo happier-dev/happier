@@ -1,5 +1,5 @@
 import { readOpenCodeNativeChildOutcome, type OpenCodeNativeChildStatus } from './nativeChildOutcome.js';
-import { isSessionModeSelectionUnavailable } from '@happier-dev/plugin-sdk/agents/runtime';
+import { isSessionModeSelectionUnavailable, resolvePromptCacheLastUseAtMs } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { randomUUID } from 'node:crypto';
 import { normalizeOpenCodePaidUsage } from '../../usage/paidUsage.js';
@@ -210,7 +210,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   const pendingPermissionRequestKeys = new Set<string>();
   const pendingPermissionDecisionAbortControllers = new Set<AbortController>();
   const observedAutomaticCompactionMessageIds = new Set<string>();
-  let activeManualCompactionId: string | null = null;
+  let activeHostCompaction: (Parameters<OpenCodeRuntimeTurnOperations['compactContext']>[0] & { terminal: boolean }) | null = null;
   let currentTurnPermissionRejectionMessage: string | null = null;
   // Lane H/S2: in-memory dedupe gate for externally-authored (e.g. OpenCode TUI) user messages
   // mirrored into the Happier transcript while no Happier turn is active. Assistant dedupe reuses the
@@ -390,28 +390,47 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     publishMessage(event);
   };
   const paidUsageFingerprints = new Map<string, string>();
-  const publishPaidUsage = (info: Readonly<Record<string, unknown>> | null): void => {
+  let turnStartedAtMs: number | undefined;
+  let lastNonModelItemCompletedAtMs: number | undefined;
+  const currentTurnCacheMessageIds = new Set<string>();
+  const publishPaidUsage = (info: Readonly<Record<string, unknown>> | null, live = false): void => {
     if (!info || info.role !== 'assistant') return;
     const nativeSessionId = readNonBlankOpaqueIdentifier(info.sessionID);
     const inferenceId = readNonBlankOpaqueIdentifier(info.id);
     const time = asRecord(info.time);
+    const createdAtMs = typeof time?.created === 'number' && Number.isFinite(time.created) && time.created >= 0
+      ? time.created : undefined;
+    const ownsLiveInference = live && state.turnInFlight && nativeSessionId === state.providerSessionId
+      && info.summary !== true && state.currentTurnProviderUserMessageIds.has(readNonBlankOpaqueIdentifier(info.parentID) ?? '');
+    if (ownsLiveInference && inferenceId && createdAtMs !== undefined) {
+      turnStartedAtMs ??= createdAtMs;
+      currentTurnCacheMessageIds.add(inferenceId);
+    }
+    const lastUseAtMs = ownsLiveInference ? resolvePromptCacheLastUseAtMs({
+      turnStartedAtMs,
+      ...(lastNonModelItemCompletedAtMs !== undefined && createdAtMs !== undefined && lastNonModelItemCompletedAtMs <= createdAtMs
+        ? { lastNonModelItemCompletedAtMs } : {}),
+    }) : undefined;
+    const promptCache = lastUseAtMs !== undefined ? { lastUseAtMs } : undefined;
     if (!nativeSessionId || !inferenceId || (!time?.completed && !info.finish && !info.error && info.nativeAccountingComplete !== true)) return;
     const usage = normalizeOpenCodePaidUsage(info, params.dialect ?? 'v1'); if (!usage) return;
     const modelId = readNonBlankOpaqueIdentifier(info.modelID);
     const key = JSON.stringify([nativeSessionId, inferenceId]);
-    const fingerprint = JSON.stringify([modelId, usage]);
+    const fingerprint = JSON.stringify([modelId, usage, promptCache]);
     if (paidUsageFingerprints.get(key) === fingerprint) return;
     paidUsageFingerprints.set(key, fingerprint);
     publishRuntimeEvent({ kind: 'usage-observed', ...projectOpenCodeRuntimeScope(params.scope), emittedAtMs: Date.now(),
       observationId: key, source: 'opencode-native-accounting', scope: 'turn_delta', ...(modelId ? { modelId } : {}),
+      ...(promptCache ? { promptCache } : {}),
       accounting: { nativeSessionId, inferenceId, inputIncludesCache: usage.inputIncludesCache, outputIncludesReasoning: usage.outputIncludesReasoning,
         historyComplete: false },
       tokens: usage.tokens, ...(usage.cost ? { cost: usage.cost } : {}) });
   };
   const refreshSettledNativeAccounting = async (nativeSessionId: string): Promise<void> => {
     try {
-      for (const message of await client.sessionMessages({ sessionId: nativeSessionId })) {
-        publishPaidUsage(asRecord(asRecord(message)?.info));
+      const messages = await client.sessionMessages({ sessionId: nativeSessionId });
+      for (const message of messages) {
+        publishPaidUsage(asRecord(asRecord(message)?.info), true);
       }
     } catch (error) {
       params.ctx.logger.debug('[OpenCodeServer] settled native accounting read failed (non-fatal)', { error });
@@ -493,6 +512,9 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   };
 
   const resetCurrentTurnObservations = (): void => {
+    turnStartedAtMs = undefined;
+    lastNonModelItemCompletedAtMs = undefined;
+    currentTurnCacheMessageIds.clear();
     abortPendingPermissionDecisions('OpenCode turn no longer owns pending permission decisions');
     retirePendingQuestions();
     state.currentTurnObservedMessageIds.clear();
@@ -1818,10 +1840,10 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         type === 'session.next.compaction.started'
         || type === 'session.next.compaction.ended'
       ) {
-        if (activeManualCompactionId) {
-          if (type.endsWith('.ended')) {
-            const compactionId = activeManualCompactionId;
-            activeManualCompactionId = null;
+        if (activeHostCompaction) {
+          if (type.endsWith('.ended') && !activeHostCompaction.terminal) {
+            const { compactionId, trigger } = activeHostCompaction;
+            activeHostCompaction.terminal = true;
             const error = asRecord(properties.error);
             publishRuntimeEvent({
               kind: 'context-compaction',
@@ -1829,7 +1851,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
               emittedAtMs: Date.now(),
               compactionId,
               phase: error ? 'failed' : 'completed',
-              trigger: 'manual',
+              trigger,
               ...(error ? { diagnostic: {
                 code: 'opencode_compaction_failed',
                 severity: 'error',
@@ -1940,6 +1962,12 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       observeCurrentTurnMessageId(readNonBlankOpaqueIdentifier(rawPart?.messageID) ?? '');
       const part = readOpenCodeToolPart(rawPart);
       if (!part) return;
+      const completedAtMs = asRecord(asRecord(rawPart?.state)?.time)?.end;
+      if (state.turnInFlight && !part.nativeChildLaunch && part.sessionID === state.providerSessionId
+        && currentTurnCacheMessageIds.has(messageId) && isTerminalOpenCodeToolPartStatus(part.state.status)
+        && typeof completedAtMs === 'number' && Number.isFinite(completedAtMs) && completedAtMs >= 0) {
+        lastNonModelItemCompletedAtMs = completedAtMs;
+      }
       const childMetadata = asRecord(part.state.metadata);
       const providerNativeChildSessionId = readNonBlankOpaqueIdentifier(childMetadata?.sessionId) ?? readNonBlankOpaqueIdentifier(childMetadata?.sessionID);
       if (providerNativeChildSessionId) {
@@ -1972,7 +2000,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
 
     if (type === 'message.updated') {
       const info = asRecord(properties.info);
-      publishPaidUsage(info);
+      publishPaidUsage(info, true);
       const messageId = readNonBlankOpaqueIdentifier(info?.id) ?? '';
       const messageProjection = classifyOpenCodeMessageForProjection({ info });
       if (messageId && messageProjection.kind === 'assistant_transcript'
@@ -1991,6 +2019,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         && !observedAutomaticCompactionMessageIds.has(messageId)
       ) {
         observedAutomaticCompactionMessageIds.add(messageId);
+        if (activeHostCompaction) return;
         const emittedAtMs = Date.now();
         publishRuntimeEvent({
           kind: 'context-compaction',
@@ -2169,6 +2198,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     status: unknown,
     options: Readonly<{ forceHistoryRefresh?: boolean }> = {},
   ): Promise<void> => {
+    if (activeHostCompaction && !state.turnInFlight) return;
     await managedServerTurnInterruptionSupervisor.observeManagedServiceSnapshot();
     await maybeFailOnOpenCodeRetryStatus({
       ctx: params.ctx,
@@ -2209,7 +2239,8 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   };
 
   const beginProviderTurnIfNeeded = (): void => {
-    if (state.disposed || state.turnInFlight || !state.providerSessionId) return;
+    if (activeHostCompaction?.terminal) activeHostCompaction = null;
+    if (state.disposed || state.turnInFlight || activeHostCompaction || !state.providerSessionId) return;
     state.activeTurnId = randomUUID();
     state.turnInFlight = true;
     resetCurrentTurnObservations();
@@ -2230,6 +2261,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
 
   return {
     beginTurnLifecycle(turnId) {
+      if (activeHostCompaction?.terminal) activeHostCompaction = null;
       state.activeTurnId = turnId;
       state.turnInFlight = true;
       resetCurrentTurnObservations();
@@ -2741,35 +2773,40 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         emittedAtMs: Date.now(),
         compactionId: request.compactionId,
         phase: 'started',
-        trigger: 'manual',
+        trigger: request.trigger,
       });
+      const compaction = { ...request, terminal: false };
+      activeHostCompaction = compaction;
       try {
-        activeManualCompactionId = request.compactionId;
         await client.sessionSummarize({
           sessionId: providerSessionId,
           model,
           auto: false,
         });
         if ((params.dialect ?? 'v1') === 'v1') {
-          activeManualCompactionId = null;
+          if (activeHostCompaction !== compaction || compaction.terminal) return;
+          // HTTP and native summary events can arrive in either order. Keep this
+          // operation's origin until the next real turn or compaction admission.
+          compaction.terminal = true;
           publishRuntimeEvent({
             kind: 'context-compaction',
             ...projectOpenCodeRuntimeScope(params.scope),
             emittedAtMs: Date.now(),
             compactionId: request.compactionId,
             phase: 'completed',
-            trigger: 'manual',
+            trigger: request.trigger,
           });
         }
       } catch (error) {
-        activeManualCompactionId = null;
+        if (activeHostCompaction !== compaction || compaction.terminal) throw error;
+        compaction.terminal = true;
         publishRuntimeEvent({
           kind: 'context-compaction',
           ...projectOpenCodeRuntimeScope(params.scope),
           emittedAtMs: Date.now(),
           compactionId: request.compactionId,
           phase: 'failed',
-          trigger: 'manual',
+          trigger: request.trigger,
           diagnostic: {
             code: 'opencode_compaction_failed',
             severity: 'error',
@@ -2781,6 +2818,13 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     },
     handleProviderEvent,
     async resetOrDisposeRuntime() {
+      if (activeHostCompaction && !activeHostCompaction.terminal) {
+        const { compactionId, trigger } = activeHostCompaction;
+        activeHostCompaction = null;
+        publishRuntimeEvent({ kind: 'context-compaction', ...projectOpenCodeRuntimeScope(params.scope),
+          emittedAtMs: Date.now(), compactionId, trigger, phase: 'cancelled' });
+      }
+      activeHostCompaction = null;
       paidUsageFingerprints.clear();
       state.disposed = true;
       state.subscriptionAbort?.abort('disposed');

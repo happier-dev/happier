@@ -950,4 +950,4 @@ export type RuntimeOutboundTranscriptToolNormalizationV1 = Readonly<{
 export const TERMINAL_BRACKETED_PASTE_START: string = canonicalTerminalBracketedPasteStart;
 export const TERMINAL_BRACKETED_PASTE_END: string = canonicalTerminalBracketedPasteEnd;
 
-export { PROMPT_CACHE_DURATIONS } from '@happier-dev/protocol/usage/coach/coachVendorFacts';
+export { OPENAI_GPT56_PROMPT_CACHE_QUALIFICATION, PROMPT_CACHE_DURATIONS } from '@happier-dev/protocol/usage/coach/coachVendorFacts';

@@ -342,6 +342,7 @@ function projectCompactionEvent(
 type ActivePiCompaction = {
   compactionId: string;
   trigger: ContextCompactionTrigger;
+  nativeTrigger: ContextCompactionTrigger;
   terminal: boolean;
 };
 
@@ -484,13 +485,14 @@ export function createPiRuntimeEventProjector(): Readonly<{
           compactionId: expectedHostCompaction?.compactionId
             ?? `pi:${context.agentSessionId ?? 'session'}:${context.turnId ?? 'turn'}:compaction:${compactionOrdinal}`,
           trigger: expectedHostCompaction?.trigger ?? trigger,
+          nativeTrigger: trigger,
           terminal: false,
         };
         expectedHostCompaction = null;
         return projectCompactionEvent(raw, context, activeCompaction);
       }
 
-      if (!activeCompaction || activeCompaction.terminal || activeCompaction.trigger !== trigger) return [];
+      if (!activeCompaction || activeCompaction.terminal || activeCompaction.nativeTrigger !== trigger) return [];
       const events = projectCompactionEvent(raw, context, activeCompaction);
       activeCompaction.terminal = true;
       return events;

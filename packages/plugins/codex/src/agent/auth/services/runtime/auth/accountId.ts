@@ -29,6 +29,7 @@ export type CodexAuthStoreProviderAccountIdProof =
   | Readonly<{ status: 'conflict'; accountIds: readonly string[] }>;
 
 export type CodexActiveProviderAccount = Readonly<{
+  authType?: 'chatgpt' | 'apiKey';
   providerAccountId: string | null;
   providerEmail: string | null;
   accountScope?: 'personal' | 'workspace';
@@ -122,6 +123,7 @@ export function readCodexActiveProviderAccount(value: unknown): CodexActiveProvi
   const classifiedScope = account?.type === 'chatgpt' ? classifyCodexUsageAccountScope(account.planType) : undefined;
   const accountScope = classifiedScope === 'unknown' ? undefined : classifiedScope;
   return {
+    ...(account?.type === 'chatgpt' || account?.type === 'apiKey' ? { authType: account.type } : {}),
     ...(accountScope ? { accountScope } : {}),
     providerAccountId: readString(workspaceRouting?.chatgptAccountId)
       ?? readString(record.chatgptAccountId)

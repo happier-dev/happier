@@ -653,6 +653,7 @@ describe('createOpenCodeSessionRuntime', () => {
 
     await expect(runtime.compact?.({
       compactionId: 'compact-1',
+      trigger: 'manual',
       instructions: 'Keep the release evidence.',
     })).resolves.toMatchObject({
       status: 'unsupported',

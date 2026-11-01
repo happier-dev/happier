@@ -16,6 +16,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { JsonValue, PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { AGENT_DEFINITION } from '../../definition.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { SessionAuthService } from '@happier-dev/plugin-sdk/sessions';
 import {
@@ -587,6 +588,7 @@ function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventI
         ...(event.tokens ? { tokens: event.tokens } : {}),
         ...(event.cost ? { cost: event.cost } : {}),
         ...(event.context ? { context: event.context } : {}),
+        ...(event.promptCache ? { promptCache: event.promptCache } : {}),
       };
     case 'turn-rollback-boundary-observed':
       return {
@@ -638,13 +640,18 @@ export function createCodexNativeAppServerSessionRuntime(
   onDispose?: () => void | Promise<void>,
   initialMcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'],
 ): AgentSessionRuntime {
-  return createCodexNativeAppServerConversationRuntime(
-    appServer,
-    { kind: 'session', sessionId },
-    realtimeConversation,
-    onDispose,
-    initialMcpToolPolicy,
-  ) as AgentSessionRuntime;
+  return {
+    ...createCodexNativeAppServerConversationRuntime(
+      appServer,
+      { kind: 'session', sessionId },
+      realtimeConversation,
+      onDispose,
+      initialMcpToolPolicy,
+    ) as AgentSessionRuntime,
+    runtimeCapabilities: {
+      sessionCapabilities: AGENT_DEFINITION.core.sessionCapabilities,
+    },
+  };
 }
 
 export function createCodexNativeAppServerExecutionRunConversationRuntime(
@@ -728,6 +735,11 @@ function createCodexNativeAppServerConversationRuntime(
   const nativeRuntime: NativeConversationRuntimeCore = {
     ...(realtimeConversation ? { realtimeConversation } : {}),
     ...(appServer.runtimeAuth ? { runtimeAuth: appServer.runtimeAuth } : {}),
+    async compact(request) {
+      if (disposed) return { status: 'unavailable', retryable: false,
+        diagnostic: diagnostic('codex_runtime_disposed', 'Codex runtime is disposed.') };
+      return await appServer.compact(request);
+    },
     conversationRollback: {
       async rollback(request) {
         return await appServer.rollbackNativeConversation(request);
@@ -939,10 +951,13 @@ function createCodexNativeAppServerConversationRuntime(
       bufferedEvents?.dispose();
       bufferedEvents = null;
       bufferedEventFailure = null;
-      subscription();
-      listeners.clear();
-      await onDispose?.();
-      await appServer.dispose('session_closed');
+      try {
+        await onDispose?.();
+        await appServer.dispose('session_closed');
+      } finally {
+        subscription();
+        listeners.clear();
+      }
     },
   };
   if (scope.kind === 'session') {

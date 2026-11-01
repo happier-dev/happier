@@ -29,9 +29,11 @@ export const COACH_RESEARCH_SOURCES = {
     modelEvaluation: { url: 'https://arxiv.org/abs/2407.01502', sourceKind: 'research_paper' as const, asOf },
 } as const;
 
-/** Vendor durations and evidenced qualifications; Agents map their native route/model facts. */
+/** Vendor durations only, suitable for cache-window choices. */
 export const PROMPT_CACHE_DURATIONS = {
     anthropic: { shortTtlMs: COACH_VENDOR_FACTS.cache.shortTtlMs, longTtlMs: COACH_VENDOR_FACTS.cache.longTtlMs },
-    openai: { gpt56MinTtlMs: COACH_VENDOR_FACTS.requestCache.gpt56MinTtlMs,
-        gpt56MinTtlQualification: COACH_VENDOR_FACTS.requestCache.gpt56MinTtlQualification },
+    openai: { gpt56MinTtlMs: COACH_VENDOR_FACTS.requestCache.gpt56MinTtlMs },
 } as const;
+
+/** Evidenced route/model qualification, separate from numeric cache-window choices. */
+export const OPENAI_GPT56_PROMPT_CACHE_QUALIFICATION = COACH_VENDOR_FACTS.requestCache.gpt56MinTtlQualification;

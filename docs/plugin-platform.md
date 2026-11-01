@@ -6841,3 +6841,34 @@ canonical Protocol freshness and a fresh subprocess module cache.
 ## Related
 
 [Runtime core](runtime-core.md), [Agent catalog](agents-catalog.md), [Providers](providers.md), [Actions](actions.md), [feature gating](feature-gating.md), [encryption](encryption.md), [binary runtime](binary-runtime.md), [Collection presentation](collection-presentation.md), [surface states](surface-states.md).
+
+### Idle compaction (unreleased 0.3)
+
+An Agent opts in through the canonical Session compaction descriptor, not an
+Agent-id allowlist or a plugin settings field. Author it once with the Agent
+definition, then publish the opened runtime's resolved capability through the
+existing runtime-kind projection. `manual` requires a real `compact()` control;
+`idle.mode: 'host'` requires that control to accept `trigger: 'idle'`. A native
+mode declares the supported defaults it can honor and receives them through the
+host's existing Session-open input. Unsupported modes remain explicitly absent.
+
+Plugins report `usage-observed.promptCache.lastUseAtMs` from live request facts
+and add `ttlMs` only when the last request's route/lifetime class is known.
+Codex, Pi and OpenCode use the public SDK's
+`resolvePromptCacheLastUseAtMs({ turnStartedAtMs, lastNonModelItemCompletedAtMs })`:
+the last non-model item completion wins, otherwise turn start, otherwise no
+clock. They do not substitute receipt/model completion, reconstruct a live clock
+from historical usage, or copy the selection rule into each plugin. Durations
+come from the shared vendor-facts export, never a local TTL table. A GPT-5.6+
+model qualifies for Codex's detected lifetime only with positive route-probe
+evidence; model/auth identity and cache totals alone are insufficient.
+
+The host owns preference resolution, the effective window, one Session timer,
+idle admission and quiet transcript projection. A clock-only observation can use
+the person's cache-window override; missing clock cannot. The three host defaults
+are exposed through existing settings Actions and apply to new Sessions, not
+through plugin-specific Actions or setting subscriptions. See
+[runtime ownership](runtime-core.md#idle-compaction-unreleased-03) and the
+[public author guide](../apps/docs/content/docs/plugins/agent-runtimes/index.mdx#idle-compaction-unreleased-03).
+This is an unreleased development contract; a declaration alone does not prove a
+loaded native operation or provider cache lifetime.

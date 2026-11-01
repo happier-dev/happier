@@ -470,4 +470,4 @@ export { isSessionPermissionShellToolName, matchSessionPermissionToolIdentifier,
 export { TERMINAL_BRACKETED_PASTE_START, TERMINAL_BRACKETED_PASTE_END } from '../../agentRuntime/projections.js';
 
 export { resolvePromptCacheLastUseAtMs } from '../../agentRuntime/promptCacheClock.js';
-export { PROMPT_CACHE_DURATIONS } from '../../agentRuntime/projections.js';
+export { OPENAI_GPT56_PROMPT_CACHE_QUALIFICATION, PROMPT_CACHE_DURATIONS } from '../../agentRuntime/projections.js';

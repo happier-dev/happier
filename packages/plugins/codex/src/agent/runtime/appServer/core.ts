@@ -1,4 +1,6 @@
 import type {
+  AgentSessionCompactRequest,
+  AgentSessionCompactResult,
   AgentSessionConversationRollbackRequest,
   AgentSessionConversationRollbackResult,
   AgentSessionConversationRollbackReconciliationResult,
@@ -39,15 +41,18 @@ type NativeUsageObservation = Omit<
   'sequence' | 'sessionId' | 'emittedAtMs'
 >;
 
+type NativeCompactionObservation = Extract<AgentSessionRuntimeEvent, { kind: 'context-compaction' }> extends infer Event
+  ? Event extends { kind: 'context-compaction' }
+    ? Omit<Event, 'sequence' | 'sessionId' | 'emittedAtMs'>
+    : never
+  : never;
+
 export type CodexAppServerEvent =
   | (CodexAppServerTurnEventBase & Readonly<{
       kind: 'skill-usage';
       skills: Extract<AgentSessionRuntimeEvent, { kind: 'skill-usage' }>['skills'];
     }>)
-  | (CodexAppServerEventBase & Readonly<{
-      kind: 'context-compaction'; compactionId: string; turnId?: string;
-      phase: 'started' | 'completed'; trigger: 'unknown';
-    }>)
+  | (CodexAppServerEventBase & NativeCompactionObservation)
   | (CodexAppServerEventBase & Readonly<{
       kind: 'message-delta';
       turnId?: string;
@@ -194,6 +199,7 @@ export type CodexAppServerSession = Readonly<{
     options?: CodexAppServerSendOptions,
   ): Promise<CodexAppServerSendResult>;
   cancel?(expectedTurnId?: string): Promise<CodexAppServerCancelResult>;
+  compact(request: AgentSessionCompactRequest): Promise<AgentSessionCompactResult>;
   permissions?: Readonly<{ capability: 'inline' }>;
   updateConfig?(update: Readonly<{
     modelId?: string;

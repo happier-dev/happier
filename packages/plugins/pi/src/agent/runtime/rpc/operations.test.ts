@@ -323,6 +323,65 @@ function configuration(options: Readonly<Record<string, string>>): AgentSessionC
 }
 
 describe('createPiRuntimeOperations', () => {
+  it.each(['dispose', 'exit'] as const)('settles idle compaction once on %s', async (boundary) => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch(event => events.push(event));
+    const compact = runtime.compact!({ compactionId: 'interrupted-idle', trigger: 'idle' });
+    await waitForWrittenCount(capture, 1);
+    await emit(capture, { type: 'compaction_start', reason: 'manual' });
+    await ackLastCommand(capture);
+    await expect(compact).resolves.toMatchObject({ status: 'admitted' });
+    if (boundary === 'exit') {
+      await emitExit(capture, { exitCode: 17, signal: null, stdout: '', stderr: '' });
+    }
+    await runtime.dispose();
+    await runtime.dispose();
+    expect(events.filter(event => event.kind === 'context-compaction')).toMatchObject([
+      { compactionId: 'interrupted-idle', trigger: 'idle', phase: 'started' },
+      { compactionId: 'interrupted-idle', trigger: 'idle', phase: boundary === 'exit' ? 'failed' : 'cancelled' },
+    ]);
+    expect(events.some(event => event.kind === 'turn-start' || event.kind === 'turn-complete')).toBe(false);
+  });
+
+  it('host idle compaction settles native manual completion and accepts the next prompt', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createRuntime(capture);
+    expect(runtime.runtimeCapabilities?.sessionCapabilities?.compaction).toMatchObject({
+      events: true, manual: true, idle: { mode: 'host', defaultEnabled: false },
+    });
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch(event => events.push(event));
+    const compact = runtime.compact!({ compactionId: 'idle-compact', trigger: 'idle' });
+    await waitForWrittenCount(capture, 1);
+    expect(capture.written.map(command => isRecord(command) ? command.type : undefined)).toEqual(['compact']);
+    await emit(capture, { type: 'compaction_start', reason: 'manual' });
+    await ackLastCommand(capture);
+    await expect(compact).resolves.toMatchObject({ status: 'admitted' });
+    await emit(capture, { type: 'compaction_end', reason: 'manual', aborted: false,
+      result: { summary: 'compacted', firstKeptEntryId: 'kept-entry', tokensBefore: 150000, tokensAfter: 10000 } });
+    expect(parseEvents(events).filter(event => event.kind === 'context-compaction')).toMatchObject([
+      { phase: 'started', trigger: 'idle', compactionId: 'idle-compact' },
+      { phase: 'completed', trigger: 'idle', compactionId: 'idle-compact' },
+    ]);
+    expect(events.some(event => event.kind === 'turn-start' || event.kind === 'turn-complete')).toBe(false);
+    const again = runtime.compact!({ compactionId: 'manual-after-idle', trigger: 'manual' });
+    await waitForWrittenCount(capture, 2);
+    expect(capture.written.map(command => isRecord(command) ? command.type : undefined)).toEqual(['compact', 'compact']);
+    await emit(capture, { type: 'compaction_start', reason: 'manual' });
+    await ackLastCommand(capture);
+    await expect(again).resolves.toMatchObject({ status: 'admitted' });
+    await emit(capture, { type: 'compaction_end', reason: 'manual', aborted: true });
+    const prompt = sendPrompt(runtime, 'next prompt');
+    await waitForWrittenCount(capture, 3);
+    await ackLastCommand(capture);
+    await expect(prompt).resolves.toMatchObject({ status: 'admitted' });
+    await emit(capture, { type: 'agent_end', willRetry: false });
+    await runtime.dispose();
+  });
+
+
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -1607,7 +1666,8 @@ describe('createPiRuntimeOperations', () => {
     ]));
   });
 
-  it('publishes canonical context usage after a completed Pi turn', async () => {
+  it.each([false, true])('publishes settled Pi usage with a conservative clock (tool: %s)', async (hasTool) => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(100);
     const capture: Capture = {
       specs: [],
       written: [],
@@ -1623,17 +1683,28 @@ describe('createPiRuntimeOperations', () => {
     await waitForWrittenCount(capture, 1);
     await ackLastCommand(capture);
     await expect(prompt).resolves.toEqual({ status: 'admitted' });
+    await emit(capture, { type: 'message_start', message: { role: 'assistant', content: [] } });
+    if (hasTool) {
+      clock.mockReturnValue(200);
+      await emit(capture, { type: 'tool_execution_end', toolCallId: 'clock-tool', toolName: 'Read', result: {} });
+      clock.mockReturnValue(300);
+      await emit(capture, { type: 'message_start', message: { role: 'assistant', content: [] } });
+    }
+    clock.mockReturnValue(1000);
     await emit(capture, { type: 'agent_end', willRetry: false });
     await vi.waitFor(() => expect(events.some((event) => event.kind === 'usage-observed')).toBe(true));
 
     expect(parseEvents(events)).toContainEqual(expect.objectContaining({
       kind: 'usage-observed',
       sessionId: 'happier-session-1',
+      promptCache: { lastUseAtMs: hasTool ? 200 : 100 },
       context: expect.objectContaining({
         usedTokens: 12_345,
         windowTokens: 200_000,
       }),
     }));
+
+    expect(capture.sessionStatsRequestCount).toBe(1);
 
     await runtime.dispose();
   });

@@ -1,6 +1,7 @@
 import { codexStateSharingDescriptor } from './auth/services/state/sharing/descriptor.js';
 import { CODEX_NATIVE_HOME, CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
 import type { PluginCustomAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
+import type { AgentSessionCompactionCapability } from '@happier-dev/plugin-sdk/agents/runtime';
 
 const { providerId: _providerId, ...stateSharing } = codexStateSharingDescriptor;
 export const AGENT_STATE_SHARING_DESCRIPTOR = {
@@ -14,6 +15,13 @@ export const AGENT_STATE_SHARING_DESCRIPTOR = {
 
 // IMPORTANT: this must stay JSON-serializable (data-only).
 const CODEX_AGENT_ID = 'codex';
+
+
+export const CODEX_NATIVE_SESSION_COMPACTION_CAPABILITIES = Object.freeze({
+  events: true,
+  manual: true,
+  idle: { mode: 'host', defaultEnabled: false, defaultMinContextTokens: 180_000 },
+} as const satisfies AgentSessionCompactionCapability);
 
 const CODEX_RUNTIME_KIND_ALIASES = [
   { input: 'acp', runtimeKind: 'acp' },
@@ -88,7 +96,8 @@ export const AGENT_DEFINITION = Object.freeze({
       sessionRollback: { conversation: 'supported' },
       usageLimitRecovery: { checkNow: 'supported' },
       usageReporting: 'supported',
-    },
+      compaction: CODEX_NATIVE_SESSION_COMPACTION_CAPABILITIES,
+    } as const,
     runtimeKinds: {
       defaultKind: 'appServer',
       byKind: {
@@ -101,6 +110,7 @@ export const AGENT_DEFINITION = Object.freeze({
               sessionRollback: { conversation: 'unsupported' },
               usageLimitRecovery: { checkNow: 'unsupported' },
               usageReporting: 'unsupported',
+              compaction: null,
             },
             handoff: { vendorStateTransfer: 'unsupported' },
             localControl: null,
@@ -114,6 +124,7 @@ export const AGENT_DEFINITION = Object.freeze({
               sessionRollback: { conversation: 'unsupported' },
               usageLimitRecovery: { checkNow: 'unsupported' },
               usageReporting: 'unsupported',
+              compaction: null,
             },
             localControl: null,
           },

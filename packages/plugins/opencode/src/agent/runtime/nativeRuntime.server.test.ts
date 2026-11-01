@@ -249,6 +249,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
           support: 'supported',
         },
         sessionCapabilities: {
+          compaction: null,
           sessionFork: {
             conversation: 'supported',
             fromMessage: 'unsupported',

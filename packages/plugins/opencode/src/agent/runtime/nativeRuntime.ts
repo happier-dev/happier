@@ -18,6 +18,7 @@ import {
   resolveOpenCodeSystemToolId,
 } from '../systemTool.js';
 import { openOpenCodeServerSession } from './server/nativeSession.js';
+import { AGENT_DEFINITION } from '../definition.js';
 import { openCodeTranscriptIdentityCodec } from './server/transcript/committedIdentities.js';
 import { openOpenCodeServerExecutionRun } from './server/nativeExecutionRun.js';
 import {
@@ -212,7 +213,14 @@ async function openOpenCodeSession(
       runtimeCapabilities: {
         ...boundSession.runtimeCapabilities,
         ...(mode === 'acp'
-          ? { tools: { delivery: 'native_mcp' as const, support: 'supported' as const } }
+          ? {
+              tools: { delivery: 'native_mcp' as const, support: 'supported' as const },
+              sessionCapabilities: {
+                ...AGENT_DEFINITION.core.sessionCapabilities,
+                ...boundSession.runtimeCapabilities?.sessionCapabilities,
+                ...AGENT_DEFINITION.core.runtimeKinds.byKind.acp.overrides.sessionCapabilities,
+              },
+            }
           : {}),
         localControl: mode === 'server'
           ? {

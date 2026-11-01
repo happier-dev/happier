@@ -81,6 +81,26 @@ categories. **Bash** remains an approval category, including read-only commands
 run through Bash. Direct read, list, glob, and grep tools use the read policy.
 See [Permission modes](/sessions/permissions) for the shared permission intents.
 
+## Compaction
+
+The unreleased 0.3 server integration supports manual compaction and optional
+**Compact while idle** in OpenCode's Agent settings. Idle compaction is off by
+default. Its proposed default minimum conversation size is 100,000 tokens; you
+can choose a different minimum. Changes apply to newly started Sessions. The
+ACP runtime does not support these compact controls.
+
+Server mode can report a request clock without knowing the provider's cache
+lifetime. In that case, **Cache window → Automatic** does not schedule idle
+compaction; choose a window to use the reported clock. A chosen window replaces
+any detected lifetime, but does not prove provider retention. Cache counters
+and recovered history do not establish a fresh request clock or cache lifetime.
+
+Idle compaction uses the existing server summarize operation. It appears as one
+quiet conversation row without changing unread, list order, working state, or
+push notifications. OpenCode does not currently supply a measured before/after
+size pair. These additions describe development work, not a released Happier
+capability.
+
 ## OpenCode V2
 
 <Callout type="warn">

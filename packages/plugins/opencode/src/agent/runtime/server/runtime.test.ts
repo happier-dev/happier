@@ -403,6 +403,47 @@ describe('OpenCode catalog observation', () => {
 });
 
 describe('createOpenCodeServerRuntime', () => {
+  it.each([false, true])('publishes only live exact-parent cache clocks without adding history reads (tool: %s)', async (hasTool) => {
+    const client = createClientFixture();
+    const operations = await createStartedRuntime({ client });
+    const runtime = createOpenCodeSessionRuntime({
+      operations,
+      request: { kind: 'create', sessionId: 'clock-session', cwd: '/repo' },
+      disposeOperations: () => operations.resetOrDisposeRuntime(),
+    });
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch(event => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+    try {
+      operations.beginTurnLifecycle('clock-turn');
+      await operations.sendTurnPrompt('hello');
+      const user = (await client.sessionMessages({ sessionId: 'ses-1' }))[0] as { info: { id: string } };
+      const assistant = (id: string, parentID: string, created: number, completed?: number) => ({
+        type: 'message.updated', properties: { info: {
+          id, role: 'assistant', sessionID: 'ses-1', parentID, modelID: 'sonnet',
+          time: { created, ...(completed === undefined ? {} : { completed }) },
+          tokens: { input: 100, output: 1, reasoning: 0, cache: { read: 50, write: 0 } },
+        } },
+      });
+      await operations.handleProviderEvent(assistant('clock-answer-1', user.info.id, 100));
+      // The first live assistant completes the existing prompt-acceptance read.
+      const historyRead = vi.spyOn(client, 'sessionMessages');
+      if (hasTool) {
+        await operations.handleProviderEvent({ type: 'message.part.updated', properties: { part: {
+          type: 'tool', sessionID: 'ses-1', messageID: 'clock-answer-1', callID: 'clock-tool', tool: 'read',
+          state: { status: 'completed', input: {}, output: '', time: { start: 150, end: 200 } },
+        } } });
+      }
+      await operations.handleProviderEvent(assistant('old-answer', 'historical-user', 1, 2));
+      await operations.handleProviderEvent(assistant('clock-final', user.info.id, hasTool ? 300 : 100, 400));
+      const observations = events.filter(event => event.kind === 'usage-observed');
+      expect(observations.find(event => event.accounting?.inferenceId === 'old-answer')).not.toHaveProperty('promptCache');
+      expect(observations.find(event => event.accounting?.inferenceId === 'clock-final')).toMatchObject({
+        promptCache: { lastUseAtMs: hasTool ? 200 : 100 },
+      });
+      expect(observations.find(event => event.accounting?.inferenceId === 'clock-final')?.promptCache).not.toHaveProperty('ttlMs');
+      expect(historyRead).not.toHaveBeenCalled();
+    } finally { await runtime.dispose(); }
+  });
   it('preserves proven foreground commits and child scope through the detached Run adapter', async () => {
     const { ctx, harness } = createContextFixture();
     const client = createClientFixture();

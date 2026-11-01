@@ -712,6 +712,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
       try {
         await params.operations.compactContext({
           compactionId: request.compactionId,
+          trigger: request.trigger,
         });
         return { status: 'admitted' };
       } catch (error) {

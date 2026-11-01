@@ -121,6 +121,79 @@ async function createRuntime(params: Readonly<{
 }
 
 describe('OpenCode native interactions', () => {
+  it.each(['v1', 'v2'] as const)('preserves idle origin without foreground work for %s summarize', async (dialect) => {
+    const client = createClient();
+    const runtime = await createRuntime({ client, dialect, askQuestions: vi.fn() });
+    await runtime.updateSessionRuntimeConfig({ modelId: 'anthropic/sonnet' });
+    const historyRead = vi.spyOn(client, 'sessionMessages').mockClear();
+    const events: Array<{ kind: string; phase?: string; trigger?: string; turnId?: string }> = [];
+    runtime.subscribeRuntimeEvents((event) => events.push(event));
+    vi.mocked(client.sessionSummarize).mockImplementationOnce(async () => {
+      await runtime.handleProviderEvent({ type: 'session.status', properties: { sessionID: 'provider-session-1', status: { type: 'busy' } } });
+      if (dialect === 'v1') {
+        await runtime.handleProviderEvent({ type: 'message.updated', properties: { info: {
+          id: 'summary-idle', sessionID: 'provider-session-1', role: 'assistant', summary: true,
+        } } });
+      }
+    });
+    await runtime.compactContext({ compactionId: 'idle-compact', trigger: 'idle' });
+    if (dialect === 'v2') {
+      expect(events.filter((event) => event.kind === 'context-compaction')).toMatchObject([
+        { phase: 'started', trigger: 'idle' },
+      ]);
+      await runtime.handleProviderEvent({ type: 'session.next.compaction.ended', properties: { sessionID: 'provider-session-1' } });
+    }
+    expect(events.filter((event) => event.kind === 'context-compaction')).toMatchObject([
+      { phase: 'started', trigger: 'idle' }, { phase: 'completed', trigger: 'idle' },
+    ]);
+    expect(events.some((event) => event.kind === 'turn-start' || event.kind === 'turn-complete')).toBe(false);
+    expect(events.every((event) => event.turnId === undefined)).toBe(true);
+    expect(client.sessionSummarize).toHaveBeenCalledTimes(1);
+    // V2 already reads terminal accounting; V1's summarize response settles directly.
+    expect(historyRead).toHaveBeenCalledTimes(dialect === 'v2' ? 1 : 0);
+    await runtime.resetOrDisposeRuntime();
+  });
+  it('settles admitted V2 idle compaction once when disposed', async () => {
+    const runtime = await createRuntime({ client: createClient(), dialect: 'v2', askQuestions: vi.fn() });
+    await runtime.updateSessionRuntimeConfig({ modelId: 'anthropic/sonnet' });
+    const events: Array<{ kind: string; phase?: string; trigger?: string }> = [];
+    runtime.subscribeRuntimeEvents((event) => events.push(event));
+    await runtime.compactContext({ compactionId: 'idle-dispose', trigger: 'idle' });
+    await runtime.resetOrDisposeRuntime();
+    expect(events.filter((event) => event.kind === 'context-compaction')).toMatchObject([
+      { phase: 'started', trigger: 'idle' }, { phase: 'cancelled', trigger: 'idle' },
+    ]);
+  });
+  it('keeps V1 idle origin when native busy and summary arrive after the HTTP response', async () => {
+    const client = createClient();
+    const runtime = await createRuntime({ client, dialect: 'v1', askQuestions: vi.fn() });
+    await runtime.updateSessionRuntimeConfig({ modelId: 'anthropic/sonnet' });
+    const historyRead = vi.spyOn(client, 'sessionMessages').mockClear();
+    const events: Array<{ kind: string; phase?: string; trigger?: string }> = [];
+    runtime.subscribeRuntimeEvents(event => events.push(event));
+    await runtime.compactContext({ compactionId: 'late-idle', trigger: 'idle' });
+    await runtime.handleProviderEvent({ type: 'session.status', properties: {
+      sessionID: 'provider-session-1', status: { type: 'busy' },
+    } });
+    await runtime.handleProviderEvent({ type: 'message.updated', properties: { info: {
+      id: 'late-idle-summary', sessionID: 'provider-session-1', role: 'assistant', summary: true,
+    } } });
+    await runtime.handleProviderEvent({ type: 'session.idle', properties: { sessionID: 'provider-session-1' } });
+    expect(events.filter(event => event.kind === 'context-compaction')).toMatchObject([
+      { phase: 'started', trigger: 'idle' }, { phase: 'completed', trigger: 'idle' },
+    ]);
+    expect(events.some(event => event.kind === 'turn-start' || event.kind === 'turn-complete')).toBe(false);
+    expect(historyRead).not.toHaveBeenCalled();
+    await runtime.compactContext({ compactionId: 'manual-after-idle', trigger: 'manual' });
+    expect(client.sessionSummarize).toHaveBeenCalledTimes(2);
+    expect(events.filter(event => event.kind === 'context-compaction')).toMatchObject([
+      { phase: 'started', trigger: 'idle' }, { phase: 'completed', trigger: 'idle' },
+      { phase: 'started', trigger: 'manual' }, { phase: 'completed', trigger: 'manual' },
+    ]);
+    runtime.beginTurnLifecycle('foreground-after-idle');
+    expect(events.filter(event => event.kind === 'turn-start')).toMatchObject([{ turnId: 'foreground-after-idle' }]);
+    await runtime.resetOrDisposeRuntime();
+  });
   it('captures settled V2 compaction accounting from native history before the lifecycle early return', async () => {
     const client = createClient();
     const runtime = await createRuntime({ client, dialect: 'v2', askQuestions: vi.fn(async () => ({ status: 'cancelled' as const })) });
@@ -253,7 +326,7 @@ describe('OpenCode native interactions', () => {
     const events: Array<{ kind: string; phase?: string }> = [];
     const unsubscribe = runtime.subscribeRuntimeEvents((event) => events.push(event));
 
-    await runtime.compactContext({ compactionId: 'compact-1' });
+    await runtime.compactContext({ compactionId: 'compact-1', trigger: 'manual' });
 
     expect(client.sessionSummarize).toHaveBeenCalledWith({
       sessionId: 'provider-session-1',
@@ -274,7 +347,7 @@ describe('OpenCode native interactions', () => {
     const events: Array<{ kind: string; phase?: string; compactionId?: string }> = [];
     runtime.subscribeRuntimeEvents((event) => events.push(event));
 
-    await runtime.compactContext({ compactionId: 'compact-v2' });
+    await runtime.compactContext({ compactionId: 'compact-v2', trigger: 'manual' });
     expect(events.filter((event) => event.kind === 'context-compaction')).toEqual([
       expect.objectContaining({ phase: 'started', compactionId: 'compact-v2' }),
     ]);
@@ -300,7 +373,7 @@ describe('OpenCode native interactions', () => {
     });
 
     await expect(runtime.compactContext({
-      compactionId: 'compact-default-model',
+      compactionId: 'compact-default-model', trigger: 'manual',
     })).resolves.toBeUndefined();
 
     expect(client.sessionSummarize).toHaveBeenCalledWith({

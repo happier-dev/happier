@@ -5,6 +5,13 @@ import { PI_DIRECT_AUTH_ENV_KEYS } from './launchEnvironment.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('Pi AGENT_DEFINITION', () => {
+  it('projects the consumed default-off host compaction capability from one definition', () => {
+    expect(AGENT_DEFINITION.core.sessionCapabilities).toMatchObject({ compaction: {
+      events: true, manual: true, idle: { mode: 'host', defaultEnabled: false, defaultMinContextTokens: 100000 },
+    } });
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.capabilities.sessions?.compaction)
+      .toEqual(AGENT_DEFINITION.core.sessionCapabilities.compaction);
+  });
   it('declares native-extension Happier tool delivery', () => {
     expect(AGENT_DEFINITION.core.tools).toEqual({ delivery: 'native_extension', support: 'experimental',
       mcpToolControl: { off: 'hidden', approval: 'host' } });

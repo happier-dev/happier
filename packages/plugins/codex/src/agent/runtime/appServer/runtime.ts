@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { createCodexCompactionOperation, type CodexCompactionOperation } from './compaction.js';
+import { resolveCodexPromptCacheTtlMs } from './promptCache.js';
 import type {
   AgentSessionConversationRollbackRequest,
   AgentSessionConversationRollbackResult,
@@ -21,6 +23,7 @@ import {
   AgentRuntimeJsonValueSchema,
   canPublishSessionResumeIdentity,
   buildAgentAccountUsageRecordId,
+  resolvePromptCacheLastUseAtMs,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { isPluginError, PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { isChangeTitleToolNameAlias, readPendingLocalId } from '@happier-dev/plugin-sdk/sessions';
@@ -260,6 +263,8 @@ type CodexAppServerAccountUsageService =
   AgentSessionRuntimeContext['session']['services']['accountUsage'];
 
 type PendingTurn = {
+  compaction?: CodexCompactionOperation;
+  promptCache?: Parameters<typeof resolvePromptCacheLastUseAtMs>[0];
   threadId: string;
   sessionTurnId: string;
   agentTurnId: string | null;
@@ -949,6 +954,8 @@ export function createCodexAppServerRuntime(
     }
   };
   let currentModelId: string | null = trimStringValue(params.initialModelId);
+  let currentNativeModelProvider: string | null = null;
+  let currentNativeAuthType: CodexActiveProviderAccount['authType'];
   let currentCollaborationModeId: string | null = trimStringValue(params.initialCollaborationModeId);
   let currentCollaborationModePayload: Readonly<{
     mode: string;
@@ -999,6 +1006,7 @@ export function createCodexAppServerRuntime(
   let nativeReadyThreadId: string | null = null;
   let turnSeq = 0;
   let pendingTurn: PendingTurn | null = null;
+  let settledPromptCache: Readonly<{ threadId: string; nativeTurnId: string; lastUseAtMs: number }> | null = null;
   let connectedServiceAuthApplyTail: Promise<void> = Promise.resolve();
   let connectedServiceAuthApplyCount = 0;
   // Keep the existing terminal fence's original host correlation for late native tool results.
@@ -1264,7 +1272,14 @@ export function createCodexAppServerRuntime(
     }
   };
 
+  const invalidatePromptCacheEvidence = (): void => {
+    settledPromptCache = null;
+    if (pendingTurn) pendingTurn.promptCache = undefined;
+  };
+
   const invalidatePendingProviderOperationIdentity = (): void => {
+    invalidatePromptCacheEvidence();
+    currentNativeAuthType = undefined;
     if (!pendingTurn) return;
     pendingTurn.providerOperationIdentity = null;
     pendingTurn.providerAccountScope = undefined;
@@ -1278,6 +1293,10 @@ export function createCodexAppServerRuntime(
         undefined,
         { timeoutMs: null },
       ));
+      if (latestConnectedServiceRuntimeIdentity === identityBeforeRead) {
+        if (currentNativeAuthType !== undefined && currentNativeAuthType !== liveAccount.authType) invalidatePromptCacheEvidence();
+        currentNativeAuthType = liveAccount.authType;
+      }
       if (latestConnectedServiceRuntimeIdentity === identityBeforeRead
         && isCodexRequestUsageIdentityContradicted(identityBeforeRead, liveAccount)) {
         // Negative native evidence withdraws both the current attempt and future
@@ -1744,6 +1763,13 @@ export function createCodexAppServerRuntime(
     if (!hostTurnId) return false;
     const publishable = toolEventProjector.project({ method, notificationParams,
       mcpServerKeys, scopeId: hostTurnId, ...(!activeMatch ? { lateResultOnly: true } : {}) });
+    if (activeMatch?.promptCache && method === 'item/completed'
+      && publishable.some(event => event.type === 'tool-result' && !event.sidechainId)) {
+      const completedAtMs = readRecord(notificationParams)?.completedAtMs;
+      if (typeof completedAtMs === 'number' && Number.isSafeInteger(completedAtMs) && completedAtMs >= 0) {
+        activeMatch.promptCache = { ...activeMatch.promptCache, lastNonModelItemCompletedAtMs: completedAtMs };
+      }
+    }
     if (publishable.length === 0) return false;
     if (activeMatch) flushBufferedTranscriptSegments({ reason: 'tool-call-boundary' });
     let published = false;
@@ -1861,6 +1887,18 @@ export function createCodexAppServerRuntime(
       ?? readTurnId(notificationParams)
       ?? activeTurn.agentTurnId;
     if (agentTurnId && activeTurn.agentTurnId && agentTurnId !== activeTurn.agentTurnId) return;
+    if (activeTurn.compaction) {
+      if (agentTurnId) terminatedProviderTurnIds.set(agentTurnId, activeTurn.sessionTurnId);
+      activeTurn.compaction.finish(status === 'completed' ? 'completed' : 'cancelled');
+      settlePendingTurnAgentTurnIdObservation(activeTurn);
+      pendingTurn = null;
+      activeTurn.resolve();
+      return;
+    }
+    const lastUseAtMs = resolvePromptCacheLastUseAtMs(activeTurn.promptCache ?? {});
+    settledPromptCache = agentTurnId && lastUseAtMs !== undefined
+      ? { threadId: activeTurn.threadId, nativeTurnId: agentTurnId, lastUseAtMs }
+      : null;
     if (agentTurnId && recordPendingTurnAgentTurnId(activeTurn, agentTurnId)) {
       publishRuntimeEvent({
         kind: 'turn-agent-id-observed',
@@ -1931,7 +1969,7 @@ export function createCodexAppServerRuntime(
       if (!activeTurn.agentTurnId) {
         observePendingTurnAgentTurnId(activeTurn, agentTurnId);
         activeTurn.providerStartAcknowledged = true;
-        publishRuntimeEvent({
+        if (!activeTurn.compaction) publishRuntimeEvent({
           kind: 'turn-agent-id-observed',
           turnId: activeTurn.sessionTurnId,
           agentTurnId,
@@ -1969,6 +2007,12 @@ export function createCodexAppServerRuntime(
       null,
       null,
     );
+    const startedAt = readRecord(readRecord(notificationParams)?.turn)?.startedAt;
+    providerTurn.promptCache = {};
+    if (typeof startedAt === 'number' && Number.isFinite(startedAt) && startedAt >= 0) {
+      providerTurn.promptCache = { turnStartedAtMs: startedAt * 1000 };
+    }
+    settledPromptCache = null;
     observePendingTurnAgentTurnId(providerTurn, agentTurnId);
     providerTurn.providerStartAcknowledged = true;
     pendingTurn = providerTurn;
@@ -2014,7 +2058,7 @@ export function createCodexAppServerRuntime(
       && !activeTurn.agentTurnId
       && recordPendingTurnAgentTurnId(activeTurn, terminalTurnId)
     ) {
-      publishRuntimeEvent({ kind: 'turn-agent-id-observed', turnId: activeTurn.sessionTurnId, agentTurnId: terminalTurnId });
+      if (!activeTurn.compaction) publishRuntimeEvent({ kind: 'turn-agent-id-observed', turnId: activeTurn.sessionTurnId, agentTurnId: terminalTurnId });
     }
     return true;
   };
@@ -2046,6 +2090,14 @@ export function createCodexAppServerRuntime(
   const failPendingTurn = (error: Error, diagnostic = readCodexAppServerTurnFailureDiagnostic(error)): void => {
     const activeTurn = pendingTurn;
     if (!activeTurn || activeTurn.failureSettling) return;
+    if (activeTurn.compaction) {
+      activeTurn.compaction.finish('failed');
+      if (activeTurn.agentTurnId) terminatedProviderTurnIds.set(activeTurn.agentTurnId, activeTurn.sessionTurnId);
+      settlePendingTurnAgentTurnIdObservation(activeTurn);
+      pendingTurn = null;
+      activeTurn.resolve();
+      return;
+    }
     activeTurn.failureSettling = true;
     publishToolEventsFromNotification('turn/interrupted', { threadId: activeTurn.threadId, turnId: activeTurn.agentTurnId });
     if (activeTurn.agentTurnId) terminatedProviderTurnIds.set(activeTurn.agentTurnId, activeTurn.sessionTurnId);
@@ -2135,6 +2187,10 @@ export function createCodexAppServerRuntime(
   };
 
   const attachClientHandlers = (nextClient: DisposableCodexAppServerClient): void => {
+    nextClient.registerNotificationHandler('account/updated', () => {
+      currentNativeAuthType = undefined;
+      invalidatePromptCacheEvidence();
+    });
     nextClient.onNativeEvent((method, notificationParams) => {
       // Admit an owned native start before later receipts arrive, while projection remains ordered.
       if (!disposed && method === 'turn/started' && pendingTurn && !pendingTurn.agentTurnId
@@ -2189,7 +2245,19 @@ export function createCodexAppServerRuntime(
       const usageAttribution = attribution ?? (hostTurnId ? {
         v: 1 as const, turnId: hostTurnId, source: { kind: 'native' as const, connectedAccount: null },
       } : undefined);
-      publishRuntimeEvent({ ...sessionObservation, ...(hostTurnId ? { turnId: hostTurnId } : {}), ...(usageAttribution ? { attribution: usageAttribution } : {}) });
+      const usageThreadId = readThreadId(notificationParams);
+      const ownedTurn = pendingTurn?.promptCache && !pendingTurn.compaction && usageThreadId === pendingTurn.threadId
+        && nativeTurnId === pendingTurn.agentTurnId ? pendingTurn : null;
+      const lastUseAtMs = ownedTurn ? resolvePromptCacheLastUseAtMs(ownedTurn.promptCache ?? {})
+        : settledPromptCache?.threadId === usageThreadId && settledPromptCache.nativeTurnId === nativeTurnId
+          ? settledPromptCache.lastUseAtMs : undefined;
+      const ttlMs = lastUseAtMs === undefined ? undefined : resolveCodexPromptCacheTtlMs({
+        authType: currentNativeAuthType, modelProvider: currentNativeModelProvider, modelId: currentModelId,
+      });
+      publishRuntimeEvent({ ...sessionObservation, ...(hostTurnId ? { turnId: hostTurnId } : {}),
+        ...(usageAttribution ? { attribution: usageAttribution } : {}),
+        ...(lastUseAtMs === undefined ? {} : { promptCache: { lastUseAtMs, ...(ttlMs === undefined ? {} : { ttlMs }) } }),
+      });
     };
     if (params.happierSessionId !== undefined) nextClient.registerNotificationHandler('rawResponse/completed', (notificationParams) => {
       const record = readRecord(notificationParams);
@@ -2352,6 +2420,16 @@ export function createCodexAppServerRuntime(
             || method === 'item/reasoning/textDelta'
             || method === 'item/started',
         })) return;
+        if (pendingTurn?.compaction) {
+          if (method === 'item/started' || method === 'item/completed') {
+            const item = readRecord(readRecord(notificationParams)?.item);
+            const itemId = trimStringValue(item?.id);
+            if (item?.type === 'contextCompaction' && itemId) {
+              pendingTurn.compaction.observeItem(itemId, method === 'item/completed');
+            }
+          }
+          return;
+        }
         if (method === 'item/started' || method === 'item/completed') {
           const item = readRecord(readRecord(notificationParams)?.item);
           const compactionId = trimStringValue(item?.id);
@@ -2705,6 +2783,9 @@ export function createCodexAppServerRuntime(
     startedEmptyThreadWithoutExplicitModel = !requestedThreadId && !Object.prototype.hasOwnProperty.call(commonFields, 'model');
     startedEmptyThreadPolicyKey = requestedThreadId ? null : policyKey;
     currentModelId = readModelId(response) ?? currentModelId;
+    const nextNativeModelProvider = trimStringValue(readRecord(response)?.modelProvider);
+    if (currentNativeModelProvider !== nextNativeModelProvider) invalidatePromptCacheEvidence();
+    currentNativeModelProvider = nextNativeModelProvider;
     if (requiresConfinedMcp) {
       assertCodexToolRestrictionModelSupported(await ensureClient(), currentModelId);
     }
@@ -2827,6 +2908,8 @@ export function createCodexAppServerRuntime(
       pendingProviderPrompt,
       null,
     );
+    activeTurn.promptCache = { turnStartedAtMs: Date.now() };
+    settledPromptCache = null;
     pendingTurn = activeTurn;
     terminalPendingTurnFailure = null;
     void activeTurn.promise.catch(() => undefined);
@@ -3079,10 +3162,8 @@ export function createCodexAppServerRuntime(
         activeTurn.sessionTurnId,
         new Error('Codex provider turn was cancelled before correlated user-message acceptance was observed'),
       );
-      publishRuntimeEvent({
-        kind: 'turn-cancelled',
-        turnId: activeTurn.sessionTurnId,
-      });
+      if (activeTurn.compaction) activeTurn.compaction.finish('cancelled');
+      else publishRuntimeEvent({ kind: 'turn-cancelled', turnId: activeTurn.sessionTurnId });
       activeTurn.resolve();
       setActive(false);
       return;
@@ -3223,6 +3304,7 @@ export function createCodexAppServerRuntime(
     const activeTurn = pendingTurn;
     clearPendingTurnCompletionTimer();
     flushAssistantReasoningProjection('abort');
+    activeTurn?.compaction?.finish('cancelled');
     if (activeTurn) settlePendingTurnAgentTurnIdObservation(activeTurn);
     pendingTurn = null;
     if (activeTurn) clearPendingHappierTitleToolNamesForTurn(activeTurn.sessionTurnId);
@@ -3230,6 +3312,7 @@ export function createCodexAppServerRuntime(
     terminalPendingTurnFailure = null;
     toolEventProjector.clear();
     terminatedProviderTurnIds.clear();
+    settledPromptCache = null;
     preAckCancelledTurns.clear();
     pendingHappierTitleToolNamesByCallId.clear();
     publishedGeneratedMediaItemIds.clear();
@@ -3558,6 +3641,45 @@ export function createCodexAppServerRuntime(
       }
       return acceptedSendResult();
     },
+    async compact(request) {
+      if (request.instructions !== undefined) return {
+        status: 'unsupported', retryable: false,
+        diagnostic: { code: 'codex_compaction_instructions_unsupported', severity: 'warning' },
+      };
+      if (disposed) return {
+        status: 'unavailable', retryable: false,
+        diagnostic: { code: 'codex_runtime_disposed', severity: 'warning' },
+      };
+      const appServerClient = await ensureClient();
+      if (pendingTurn) return {
+        status: 'unavailable', retryable: false,
+        diagnostic: { code: 'codex_app_server_turn_in_flight', severity: 'warning' },
+      };
+      const currentThreadId = threadId;
+      if (!currentThreadId) return {
+        status: 'unavailable', retryable: false,
+        diagnostic: { code: 'codex_compaction_thread_unavailable', severity: 'warning' },
+      };
+      // Reserve the existing native operation before request notifications can arrive.
+      invalidatePromptCacheEvidence();
+      const operation = createPendingTurn(currentThreadId, request.compactionId, null, null);
+      operation.compaction = createCodexCompactionOperation(request, publishRuntimeEvent);
+      pendingTurn = operation;
+      try {
+        await appServerClient.request('thread/compact/start', { threadId: currentThreadId });
+        if (operation.compaction.phase === 'failed') throw new Error('Native compaction failed before acknowledgement');
+        operation.providerStartAcknowledged = true;
+        replayDeferredTerminalNotification(operation);
+        return { status: 'admitted' };
+      } catch {
+        if (operation.compaction.phase === 'started') operation.compaction.finish('failed');
+        if (pendingTurn === operation) pendingTurn = null;
+        settlePendingTurnAgentTurnIdObservation(operation);
+        operation.resolve();
+        return { status: 'rejected', retryable: false,
+          diagnostic: { code: 'codex_compaction_request_rejected', severity: 'error' } };
+      }
+    },
     async cancel(expectedTurnId?: string) {
       if (expectedTurnId !== undefined && pendingTurn?.sessionTurnId !== expectedTurnId) {
         return cancelledResult('not_running');
@@ -3620,6 +3742,7 @@ export function createCodexAppServerRuntime(
         }
       }
       if (nextModelId) {
+        if (nextModelId !== currentModelId) invalidatePromptCacheEvidence();
         if (
           threadId
           && publishedThreadId !== threadId

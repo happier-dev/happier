@@ -136,6 +136,49 @@ create/resume/fork, delivery, configuration, compaction, rollback, goal,
 catalog, usage-recovery, terminal, or external-session behavior must remain
 absent and fail closed through the host's typed unavailable path.
 
+## Idle compaction (unreleased 0.3)
+
+The unreleased 0.3 contract lets bundled and external Session Agents use the same
+idle compaction path. Declare `capabilities.sessions.compaction` once with the
+Agent, including `events: true`, optional `manual: true`, and an optional `idle`
+descriptor. Host mode declares `mode: 'host'`, `defaultEnabled`, and an optional
+`defaultMinContextTokens`. Publish the resolved descriptor for the runtime that
+actually opened; a mode without a compact operation must not inherit another
+mode's support.
+
+For host mode, implement `compact()` for `trigger: 'idle'` and emit canonical
+`context-compaction` lifecycle events with the supplied operation identity and
+origin. Admission is not completion. Keep idle events Session-scoped unless the
+native runtime associates them with a real turn. Report measured before/after
+counts only when the native operation supplies them.
+
+Add `promptCache: { lastUseAtMs, ttlMs? }` to attributed `usage-observed` events.
+The clock must be no later than the provider's cache use. When native events do
+not expose request start, use the public SDK's
+`resolvePromptCacheLastUseAtMs({ turnStartedAtMs, lastNonModelItemCompletedAtMs })`.
+It selects the last non-model item's completion, otherwise turn start, otherwise
+no clock. Model completion and usage receipt do not qualify. Report `ttlMs` only
+from a documented or probed contract for the actual route/request; model names,
+authentication type and cache-hit totals do not establish retention. Import the
+helper and `PROMPT_CACHE_DURATIONS` from
+`@happier-dev/plugin-sdk/agents/runtime`; reuse those vendor durations only when
+the observed request makes them applicable.
+
+Clock-only usage can still work when the person chooses a cache-window override.
+The host owns the enabled/minimum/window preferences, reads them once at Session
+start, and replaces a detected lifetime with the chosen window. **Automatic**
+uses the lifetime reported by the Agent; without a lifetime or chosen window,
+no idle compaction is scheduled. Missing clock is ineligible in either case.
+Use the existing host settings Actions rather than adding plugin settings,
+Actions, timers, polling, or a private host import.
+
+The host projects idle lifecycle events into one quiet row and keeps unread,
+list activity, working state and ready/push notifications unchanged. Other
+compaction origins retain their normal presentation. Native-mode Agents receive
+only the defaults their declared native controls honor. This contract is
+development-only; check the installed SDK API inventory and compatibility matrix
+before targeting a published host.
+
 ## Catalog facts
 
 Happier's bundled Agents carry a few host-behavior facts in Happier's own Agent

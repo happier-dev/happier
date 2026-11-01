@@ -1034,6 +1034,7 @@
 | `./agents/runtime` | `HandoffSurfaceV1` | type | daemon |
 | `./agents/runtime` | `ListCheckpointsRequestV1` | type | daemon |
 | `./agents/runtime` | `McpToolIdentityV1` | type | daemon |
+| `./agents/runtime` | `OPENAI_GPT56_PROMPT_CACHE_QUALIFICATION` | value | daemon |
 | `./agents/runtime` | `PROMPT_CACHE_DURATIONS` | value | daemon |
 | `./agents/runtime` | `PluginAgentAcpMcpInputPolicyV2` | type | daemon |
 | `./agents/runtime` | `PluginAgentAcpNativeSessionMcpConfigV2` | type | daemon |

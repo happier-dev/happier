@@ -10,6 +10,25 @@ const context = {
 
 type ProjectedEvents = ReturnType<ReturnType<typeof createPiRuntimeEventProjector>['project']>;
 
+describe('host idle compaction correlation', () => {
+  it('retains the idle origin while matching the native manual lifecycle exactly once', () => {
+    const projector = createPiRuntimeEventProjector();
+    const idleContext = { ...context, turnId: null };
+    projector.expectHostCompaction({ compactionId: 'idle-compact', trigger: 'idle' });
+    const started = projector.project({ type: 'compaction_start', reason: 'manual' }, idleContext);
+    expect(started).toMatchObject([{ kind: 'context-compaction', phase: 'started', trigger: 'idle', compactionId: 'idle-compact' }]);
+    expect(started[0]).not.toHaveProperty('turnId');
+    for (const reason of ['auto', 'threshold', 'overflow']) {
+      expect(projector.project({ type: 'compaction_end', reason, aborted: true }, idleContext)).toEqual([]);
+    }
+    const terminal = { type: 'compaction_end', reason: 'manual', aborted: true };
+    expect(projector.project(terminal, idleContext)).toMatchObject([
+      { kind: 'context-compaction', phase: 'cancelled', trigger: 'idle', compactionId: 'idle-compact' },
+    ]);
+    expect(projector.project(terminal, idleContext)).toEqual([]);
+  });
+});
+
 function channelTexts(events: ProjectedEvents, channel: 'assistant' | 'reasoning'): string[] {
   return events
     .filter((event) => event.kind === 'message-delta' && event.channel === channel)

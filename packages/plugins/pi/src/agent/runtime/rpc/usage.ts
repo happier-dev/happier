@@ -19,6 +19,7 @@ export function projectPiSessionStatsUsage(params: Readonly<{
   turnId: string | null;
   observationId: string;
   observedAtMs: number;
+  promptCache?: Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' }>['promptCache'];
 }>): Omit<Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' }>, 'sequence'> | null {
   const stats = readRecord(params.stats);
   if (!stats) return null;
@@ -39,6 +40,7 @@ export function projectPiSessionStatsUsage(params: Readonly<{
     ...(params.turnId ? { turnId: params.turnId } : {}),
     source: 'pi-session-stats',
     scope: 'session_cumulative',
+    ...(params.promptCache ? { promptCache: params.promptCache } : {}),
     ...(paid ? {
       tokens: paid.tokens,
       ...(paid.cost ? { cost: paid.cost } : {}),

@@ -83,7 +83,7 @@ export type OpenCodeRuntimeEvent =
       kind: 'context-compaction';
       compactionId: string;
       phase: 'started' | 'progress' | 'completed' | 'failed' | 'cancelled';
-      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      trigger: Extract<AgentSessionRuntimeEvent, { kind: 'context-compaction' }>['trigger'];
       diagnostic?: Readonly<{
         code: string;
         severity: 'error';

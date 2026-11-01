@@ -27,6 +27,25 @@ pi --version
 happier pi
 ```
 
+## Compaction
+
+The unreleased 0.3 Pi RPC integration supports manual compaction and optional
+**Compact while idle** in Pi's Agent settings. Idle compaction is off by default.
+Its proposed default minimum conversation size is 100,000 tokens; you can choose
+a different minimum. Changes to these defaults apply to newly started Sessions.
+
+Pi can report a request clock without knowing the provider's cache lifetime.
+In that case, **Cache window → Automatic** does not schedule idle compaction;
+choose a window to use the reported clock. Your choice replaces any detected
+lifetime, but does not establish how long the provider retains the cache. Cache
+read/write totals alone do not establish that lifetime.
+
+Idle compaction uses Pi's existing compact operation and appears as one quiet
+conversation row without changing unread, list order, working state, or push
+notifications. Pi does not currently supply a measured before/after size pair.
+Native automatic compaction remains distinct from Happier's idle request.
+These additions describe development work, not a released Happier capability.
+
 ## Extension-started runs
 
 In development builds, text submitted by Pi extensions appears in the Happier

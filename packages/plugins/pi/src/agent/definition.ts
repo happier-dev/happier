@@ -41,6 +41,7 @@ export const AGENT_DEFINITION = Object.freeze({
       sessionRollback: { conversation: 'unsupported' },
       usageLimitRecovery: { checkNow: 'unsupported' },
       usageReporting: 'supported',
+      compaction: { events: true, manual: true, idle: { mode: 'host', defaultEnabled: false, defaultMinContextTokens: 100000 } },
     },
     handoff: { vendorStateTransfer: 'unsupported' },
     runtimeInput: {

@@ -69,6 +69,7 @@ function createAppServerSession(): Readonly<{
       for (const listener of listeners) listener(event);
     },
     runtime: {
+      compact: async () => ({ status: 'admitted' }),
       rollbackNativeConversation,
       reconcileNativeConversationRollback,
       identity: { read: () => ({ providerSessionId: 'thread-1' }) },
@@ -818,6 +819,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
       severity: 'error',
       message: 'Codex send outcome is unknown.',
       details: {
+        failureCause: { phase: 'turn', failureReason: 'unclassified_provider_error' },
         runtimeAuthClassification: {
           kind: 'usage_limit',
           source: 'structured_provider_error',

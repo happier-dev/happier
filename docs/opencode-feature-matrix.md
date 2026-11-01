@@ -4,6 +4,11 @@
 
 The V2 limitations recorded below are also historical. See the [current-development OpenCode V2 status](../apps/docs/content/docs/agents/opencode.mdx#opencode-v2) for the released API integration and its remaining blocked paths.
 
+For the unreleased 0.3 server-mode manual and opt-in idle compaction contract,
+including unsupported ACP controls, see
+[OpenCode compaction](../apps/docs/content/docs/agents/opencode.mdx#compaction)
+and the [shared runtime owner](runtime-core.md#idle-compaction-unreleased-03).
+
 This file must not be used to locate current owners or plan new changes. Re-derive any historical claim from the current plugin contribution, Agent catalog, and Provider contracts before acting on it.
 
 ## Status legend

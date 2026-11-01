@@ -17,6 +17,11 @@ function buildJwt(payload: Record<string, unknown>): string {
 
 describe('readCodexAuthStoreProviderAccountId', () => {
   it.each([
+    ['chatgpt', 'chatgpt'], ['apiKey', 'apiKey'], ['other', undefined],
+  ])('retains only recognized native account auth type %s', (type, expected) => {
+    expect(readCodexActiveProviderAccount({ account: { type } }).authType).toBe(expected);
+  });
+  it.each([
     ['free', 'personal'], ['go', 'personal'], ['plus', 'personal'], ['pro', 'personal'], ['prolite', 'personal'], ['promax', 'personal'],
     ['team', 'workspace'], ['self_serve_business_prolite', 'workspace'], ['self_serve_business_usage_based', 'workspace'],
     ['business', 'workspace'], ['ent26', 'workspace'], ['enterprise_cbp_automation', 'workspace'],
@@ -38,7 +43,7 @@ describe('readCodexAuthStoreProviderAccountId', () => {
     expect(readCodexActiveProviderAccount({
       account: { type: 'chatgpt', id: 'legacy-account', email: 'runtime@example.test' },
       workspaceRouting: { chatgptAccountId: 'workspace-runtime' },
-    })).toEqual({ providerAccountId: 'workspace-runtime', providerEmail: 'runtime@example.test' });
+    })).toEqual({ authType: 'chatgpt', providerAccountId: 'workspace-runtime', providerEmail: 'runtime@example.test' });
   });
 
   it('reads the connected-service flat Codex auth account id', () => {
@@ -101,6 +106,7 @@ describe('readCodexAuthStoreProviderAccountId', () => {
       account: { type: 'chatgpt', email: '  Work@Example.Test  ' },
       requiresOpenaiAuth: true,
     })).toEqual({
+      authType: 'chatgpt',
       providerAccountId: null,
       providerEmail: 'work@example.test',
     });
