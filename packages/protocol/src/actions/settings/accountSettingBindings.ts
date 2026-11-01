@@ -38,7 +38,8 @@ type CoupledSettings = Pick<AccountSettings, 'codingPromptBehaviorV1' | 'usageLi
     | 'sessionTmuxSessionName' | 'sessionTmuxIsolated' | 'sessionTmuxTmpDir' | 'actionsSettingsV1'
     | 'sessionDefaultPermissionModeByTargetKey' | 'backendEnabledByTargetKey' | 'backendCliSourcePreferenceByTargetKey'
     | 'scmGitRepoPreferredBackend' | 'scmGitRepoPreferredBackendQualifiedId' | 'scmDefaultDiffModeByBackend'
-    | 'toolViewDetailLevelByToolName' | 'toolViewExpandedDetailLevelByToolName'>;
+    | 'toolViewDetailLevelByToolName' | 'toolViewExpandedDetailLevelByToolName'
+    | 'sessionIdleCompactionEnabledByTargetKey' | 'sessionIdleCompactionMinContextTokensByTargetKey' | 'sessionIdleCompactionCacheWindowOverrideMsByTargetKey'>;
 
 export type PortableAccountSettingBindingV1 = Readonly<{
     scope: 'account'; kind: 'owner'; access: 'read_write' | 'read_only' | 'sensitive';
@@ -46,6 +47,7 @@ export type PortableAccountSettingBindingV1 = Readonly<{
     read: (settings: CoupledSettings) => unknown;
     parse: (value: unknown) => Readonly<{ success: true; value: SettingDomainValueV1 }> | Readonly<{ success: false }>;
     mutate: (settings: CoupledSettings, value: SettingDomainValueV1) => Partial<CoupledSettings> | null;
+    reset?: (key: unknown) => Readonly<{ success: true; value: SettingDomainValueV1 }> | Readonly<{ success: false }>;
 }>;
 export type PortableAccountSettingPreparationResultV1 =
     | Readonly<{ status: 'prepared'; mutate: (settings: CoupledSettings) => Partial<CoupledSettings> | null }>
@@ -116,13 +118,15 @@ export function toolDetailOverrideStorage(kind: 'collapsed' | 'expanded'): Porta
         },
     };
 }
-type AgentPreferenceKey = 'sessionDefaultPermissionModeByTargetKey' | 'backendEnabledByTargetKey' | 'backendCliSourcePreferenceByTargetKey';
+type AgentPreferenceKey = 'sessionDefaultPermissionModeByTargetKey' | 'backendEnabledByTargetKey' | 'backendCliSourcePreferenceByTargetKey'
+    | 'sessionIdleCompactionEnabledByTargetKey' | 'sessionIdleCompactionMinContextTokensByTargetKey' | 'sessionIdleCompactionCacheWindowOverrideMsByTargetKey';
 const AgentPreferenceIntentSchema = z.strictObject({ agentTargetKey: BackendTargetKeyV2InputSchema, value: StrictJsonValueSchema });
 /** One target-sized intent, revalidated and rebased by the existing Settings CAS owner. */
 function agentPreferenceStorage(key: AgentPreferenceKey): PortableAccountSettingBindingV1 {
     function parse(value: unknown) {
         const intent = AgentPreferenceIntentSchema.safeParse(value);
         if (!intent.success) return null;
+        if (intent.data.value === null) return { intent: intent.data, record: null };
         const record = ACCOUNT_SETTING_DEFINITIONS[key].parseMutationValue({ [intent.data.agentTargetKey]: intent.data.value });
         return record.success && record.data !== null && typeof record.data === 'object' && !Array.isArray(record.data)
             && Object.entries(record.data).some(([target, value]) => target === intent.data.agentTargetKey && value === intent.data.value)
@@ -130,14 +134,23 @@ function agentPreferenceStorage(key: AgentPreferenceKey): PortableAccountSetting
     }
     return { ...owner, read: settings => settings[key],
         parse: value => { const admitted = parse(value); return admitted ? { success: true, value: admitted.intent } : { success: false }; },
-        mutate: (settings, value) => { const admitted = parse(value); return admitted ? {
-            [key]: { ...settings[key], ...admitted.record },
-        } : null; },
+        reset: key => { const target = BackendTargetKeyV2InputSchema.safeParse(key); return target.success
+            ? { success: true, value: { agentTargetKey: target.data, value: null } } : { success: false }; },
+        mutate: (settings, value) => {
+            const admitted = parse(value);
+            if (!admitted) return null;
+            const next = { ...settings[key], ...admitted.record };
+            if (admitted.record === null) delete next[admitted.intent.agentTargetKey];
+            return { [key]: next };
+        },
     };
 }
 export const agentDefaultPermissionStorage = agentPreferenceStorage('sessionDefaultPermissionModeByTargetKey');
 export const agentEnabledStorage = agentPreferenceStorage('backendEnabledByTargetKey');
 export const agentExecutableSourceStorage = agentPreferenceStorage('backendCliSourcePreferenceByTargetKey');
+export const agentIdleCompactionStorage = agentPreferenceStorage('sessionIdleCompactionEnabledByTargetKey');
+export const agentIdleCompactionMinContextTokensStorage = agentPreferenceStorage('sessionIdleCompactionMinContextTokensByTargetKey');
+export const agentIdleCompactionCacheWindowOverrideMsStorage = agentPreferenceStorage('sessionIdleCompactionCacheWindowOverrideMsByTargetKey');
 export const sharingPerAgentStorage: PreparedPortableAccountSettingBindingV1 = { ...owner,
     read: settings => settings.connectedServicesProviderStateSharingSettingsV1.byAgentId,
     parse: value => { const parsed = AgentProviderStateSharingChangeV1Schema.safeParse(value);
@@ -472,6 +485,9 @@ export function readPortableAccountSettingBindingV1(declaration: Readonly<{
         }
         case 'sourceControl.commitMessageAgent': return commitMessageAgentStorage;
         case 'agents.defaultPermission': return agentDefaultPermissionStorage;
+        case 'agents.idleCompaction': return agentIdleCompactionStorage;
+        case 'agents.idleCompaction.minContextTokens': return agentIdleCompactionMinContextTokensStorage;
+        case 'agents.idleCompaction.cacheWindowOverrideMs': return agentIdleCompactionCacheWindowOverrideMsStorage;
         case 'agents.enabled': return agentEnabledStorage;
         case 'agents.executableSource': return agentExecutableSourceStorage;
         case 'connectedServicesAgentSignIn.sharingPerAgent': return sharingPerAgentStorage;

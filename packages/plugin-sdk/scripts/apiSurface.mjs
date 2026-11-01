@@ -79,19 +79,10 @@ const HOST_EXPORTS_BY_ENTRYPOINT = new Map([
     ['reclaimJsonOwnerFileLockSnapshot', 'value'],
     ['withJsonOwnerFileLock', 'value'],
   ])],
-  ['./host/ui', new Map([
-    ['HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT', 'value'],
-    ['decodePluginUiClipboardReadResult', 'value'],
-    ['decodePluginUiConfirmResult', 'value'],
-    ['decodePluginUiResourceContent', 'value'],
-    ['encodePluginUiDiagnostic', 'value'],
-    ['PluginUiHostApiDecodeResult', 'type'],
-  ])],
 ]);
 const HOST_REALMS_BY_ENTRYPOINT = new Map([
   ['./host/registration', 'any'],
   ['./host/fs/json-owner-file-lock', 'daemon'],
-  ['./host/ui', 'any'],
 ]);
 const HOST_ENTRYPOINTS = new Set(HOST_EXPORTS_BY_ENTRYPOINT.keys());
 const HOST_ONLY_EXPORT_NAMES = new Set(

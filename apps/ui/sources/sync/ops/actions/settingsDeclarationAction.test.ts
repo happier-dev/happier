@@ -97,6 +97,33 @@ import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystem
 import { publishLocalDaemonStatus, readLocalDaemonSharedState } from '@/components/settings/machines/localControl/localDaemonSharedState';
 import type { LocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 
+describe('personal list Settings approval defaults', () => {
+    it.each([
+        ['agents.idleCompaction', 'sessionIdleCompactionEnabledByTargetKey', false],
+        ['agents.idleCompaction.minContextTokens', 'sessionIdleCompactionMinContextTokensByTargetKey', 0],
+        ['agents.idleCompaction.cacheWindowOverrideMs', 'sessionIdleCompactionCacheWindowOverrideMsByTargetKey', 2_147_483_647],
+    ] as const)('sets, reads and resets one Agent target through %s', async (anchor, key, value) => {
+        const target = 'agent:happier.agent.claude/claude';
+        const sibling = 'agent:happier.agent.codex/codex';
+        const initial = settingsParse({ sessionIdleCompactionEnabledByTargetKey: { [sibling]: true },
+            sessionIdleCompactionMinContextTokensByTargetKey: { [sibling]: 25 },
+            sessionIdleCompactionCacheWindowOverrideMsByTargetKey: { [sibling]: 60_000 } });
+        const owner = createOwner(undefined, true, true, initial);
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface: 'agent', authority: 'account_automation' } as const;
+        expect(await executor.execute('settings.set', { anchor, value: { agentTargetKey: target, value } }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true,
+            result: { value: { ...initial[key], [target]: value } } });
+        expect(await executor.execute('settings.reset', { anchor, key: target }, context)).toMatchObject({ ok: true });
+        expect(owner.account()[key]).toEqual(initial[key]);
+        for (const map of ['sessionIdleCompactionEnabledByTargetKey', 'sessionIdleCompactionMinContextTokensByTargetKey',
+            'sessionIdleCompactionCacheWindowOverrideMsByTargetKey'] as const) expect(owner.account()[map]).toEqual(initial[map]);
+        const before = owner.account();
+        expect(await executor.execute('settings.set', { anchor, value: { agentTargetKey: target, value: -1 } }, context)).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        expect(owner.account()).toEqual(before);
+    });
+});
+
 describe('Track device-local Settings declaration', () => {
     it('lets an agent read and write Track with SCM writes disabled without changing Account settings', async () => {
         const initialAccount = applySettings(settingsDefaults, { actionsSettingsV1: ActionsSettingsV1Schema.parse({

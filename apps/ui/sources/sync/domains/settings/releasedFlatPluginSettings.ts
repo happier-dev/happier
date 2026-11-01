@@ -18,13 +18,16 @@ import { settingsDefaults } from './settings';
  * Agent could read unrelated Account Settings simply by naming a declared field
  * after one of them.
  */
+export function isReleasedFlatPluginSettingKey(localId: string): boolean {
+    return localId.trim().length > 0 && !Object.prototype.hasOwnProperty.call(settingsDefaults, localId.trim());
+}
+
 export function readReleasedFlatPluginSettingValue(params: Readonly<{
     settings: Readonly<Record<string, unknown>> | null | undefined;
     localId: string;
 }>): unknown {
     const localId = params.localId.trim();
-    if (!localId) return undefined;
-    if (Object.prototype.hasOwnProperty.call(settingsDefaults, localId)) return undefined;
+    if (!isReleasedFlatPluginSettingKey(localId)) return undefined;
 
     const settings = params.settings;
     if (!settings || typeof settings !== 'object') return undefined;

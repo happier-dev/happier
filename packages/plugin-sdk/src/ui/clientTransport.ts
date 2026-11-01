@@ -11,7 +11,7 @@ import {
     decodePluginUiConfirmResult,
     decodePluginUiResourceContent,
     encodePluginUiDiagnostic,
-} from '../host/ui/hostApiCodecs.js';
+} from '@happier-dev/cli-common/plugins/ui';
 import type { PluginErrorData } from '../errors.js';
 import type { JsonValue, PluginReference } from '../identity.js';
 import { PluginUiResourceSubscriptionTargetV1Schema } from '@happier-dev/protocol/plugins/ui/client';

@@ -1,6 +1,6 @@
-import type { AgentUiSettingReferenceV1 } from '@happier-dev/protocol';
+import type { AgentUiSettingReferenceV1 } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
 
-import { readReleasedFlatPluginSettingValue } from '@/sync/domains/settings/releasedFlatPluginSettings';
+import { isReleasedFlatPluginSettingKey, readReleasedFlatPluginSettingValue } from '@/sync/domains/settings/releasedFlatPluginSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
 
 export type AgentPluginSettingsScope = 'account' | 'daemon';
@@ -27,6 +27,13 @@ export function attachAgentPluginSettings(
         writable: false,
     });
     return merged;
+}
+
+/** Account carriers this exact reference can read; scoped daemon values never invalidate Account consumers. */
+export function getAgentUiSettingAccountKeys(reference: AgentUiSettingReferenceV1 | undefined): readonly string[] {
+    if (!reference) return [];
+    if (reference.scope === 'host') return [reference.localId];
+    return reference.scope === 'account' && isReleasedFlatPluginSettingKey(reference.localId) ? [reference.localId] : [];
 }
 
 /** Resolve a public setting reference against exactly its declared scope. */

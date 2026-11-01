@@ -49,23 +49,9 @@ const HOST_FILE_LOCK_ENTRYPOINT = Object.freeze({
   }),
 });
 
-const HOST_UI_ENTRYPOINT = Object.freeze({
-  specifier: './host/ui',
-  sourceModule: 'src/host/ui/index.ts',
-  visibility: 'host',
-  realm: 'any',
-  conditions: Object.freeze({
-    types: './dist/host/ui/index.d.ts',
-    browser: './dist/host/ui/index.js',
-    'react-native': './dist/host/ui/index.js',
-    default: './dist/host/ui/index.js',
-  }),
-});
-
 const HOST_ENTRYPOINTS = Object.freeze([
   HOST_REGISTRATION_ENTRYPOINT,
   HOST_FILE_LOCK_ENTRYPOINT,
-  HOST_UI_ENTRYPOINT,
 ]);
 
 const AUTHOR_SYMBOL = Object.freeze({
@@ -196,22 +182,6 @@ const HOST_FILE_LOCK_SYMBOL = Object.freeze({
   realm: 'daemon',
 });
 
-const HOST_UI_SYMBOLS = Object.freeze([
-  ['HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT', 'value', 'hostedHtmlGuestBootstrap.generated'],
-  ['decodePluginUiClipboardReadResult', 'value'],
-  ['decodePluginUiConfirmResult', 'value'],
-  ['encodePluginUiDiagnostic', 'value'],
-  ['decodePluginUiResourceContent', 'value'],
-  ['PluginUiHostApiDecodeResult', 'type'],
-].map(([exportName, kind, sourceName = 'hostApiCodecs']) => Object.freeze({
-  specifier: './host/ui',
-  exportName,
-  kind,
-  sourceModule: `src/host/ui/${sourceName}.ts`,
-  sourceExport: exportName,
-  realm: 'any',
-})));
-
 const HOST_SYMBOLS = Object.freeze([
   HOST_REGISTRATION_EXECUTION_RUN_SYMBOL,
   HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
@@ -223,7 +193,6 @@ const HOST_SYMBOLS = Object.freeze([
   ...HOST_REGISTRATION_TARGETED_SYMBOLS,
   HOST_FILE_LOCK_RECLAIM_SYMBOL,
   HOST_FILE_LOCK_SYMBOL,
-  ...HOST_UI_SYMBOLS,
 ]);
 
 function validInventory(overrides = {}) {
@@ -575,10 +544,6 @@ test('projects symbols without posture metadata while preserving structured depr
         symbols: HOST_SYMBOLS
           .filter((symbol) => symbol.specifier === './host/fs/json-owner-file-lock'),
       },
-      {
-        specifier: './host/ui',
-        symbols: HOST_UI_SYMBOLS,
-      },
     ],
   });
 
@@ -664,36 +629,6 @@ test('projects symbols without posture metadata while preserving structured depr
     },
     {
       exportName: 'readPluginActionResultParser',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'PluginUiHostApiDecodeResult',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'decodePluginUiClipboardReadResult',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'decodePluginUiConfirmResult',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'decodePluginUiResourceContent',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'encodePluginUiDiagnostic',
       replacement: undefined,
       removalCondition: undefined,
     },
@@ -985,7 +920,6 @@ test('one generation plan includes host package seams but excludes them from aut
     './actions',
     './host/fs/json-owner-file-lock',
     './host/registration',
-    './host/ui',
   ]);
   assert.doesNotMatch(generated.sourceBarrels['src/actions/index.ts'], /@preview|@experimental|@stable/u);
   assert.match(
@@ -1041,7 +975,7 @@ test('generation exposes canonical source entries before packaged realm conditio
     'happier-source': './src/protocol/index.browser.ts',
     default: './dist/protocol/index.browser.js',
   });
-  for (const specifier of ['./host/registration', './host/ui', './ui/client', './voice/client']) {
+  for (const specifier of ['./host/registration', './ui/client', './voice/client']) {
     const entrypoint = inventory.entrypoints.find((entry) => entry.specifier === specifier);
     for (const condition of ['browser', 'react-native']) {
       const runtimeTarget = entrypoint.conditions[condition];
@@ -1090,7 +1024,6 @@ test('generation projects split browser barrels from canonical symbol realms', (
     '',
   ].join('\n'));
   assert.match(generated.sourceBarrels['src/actions/index.ts'], /daemonService/u);
-  assert.equal(Object.hasOwn(generated.sourceBarrels, 'src/host/ui/index.browser.ts'), false);
 });
 
 test('generation is deterministic regardless of inventory row ordering', () => {

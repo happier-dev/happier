@@ -28,6 +28,9 @@ import {
     useAgentsMachineScope,
 } from '@/components/settings/agents/collection/useAgentAdministrationCatalog';
 import { AgentMachinesSection } from '@/components/settings/agents/detail/AgentMachinesSection';
+import { AgentIdleCompactionRows, resolveIdleCompactionDeclaration } from '@/components/settings/agents/detail/AgentIdleCompactionRows';
+import type { AgentSessionCompactionCapability } from '@happier-dev/protocol/plugins/agents';
+import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -346,10 +349,12 @@ export const AgentSessionDefaultsSection = React.memo(function AgentSessionDefau
     /** The popover boundary the dropdown form of the permission choice measures against. */
     popoverBoundaryRef?: React.ComponentProps<typeof DropdownMenu>['popoverBoundaryRef'];
     onOpenModels: (() => void) | null;
+    /** An installed Agent's current compaction declaration; bundled Agents publish theirs per runtime kind. */
+    projectedCompaction?: AgentSessionCompactionCapability | null;
+    /** The daemon projection the Agent's own plugin settings (its runtime choice) are declared in. */
+    projectionInputs?: DaemonMergedProjectionInputs | null;
 }>) {
-    const settings = useSettingsSelector((settings) => ({
-        sessionDefaultPermissionModeByTargetKey: settings.sessionDefaultPermissionModeByTargetKey,
-    }));
+    const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const writePreference = useAgentPreferenceWriter();
     const [permissionMenuOpen, setPermissionMenuOpen] = React.useState(false);
     const { projection, compatibilityTargetKeys, accountSettingsAvailable } = props;
@@ -447,7 +452,7 @@ export const AgentSessionDefaultsSection = React.memo(function AgentSessionDefau
     const permissionPreference = providerTargetKey
         ? [providerTargetKey, ...compatibilityTargetKeys]
             .map((targetKey) => readAccountSettingValueForBackendTarget(
-                settings,
+                { sessionDefaultPermissionModeByTargetKey },
                 'sessionDefaultPermissionModeByTargetKey',
                 targetKey as BackendTargetRefV2Input,
             ))
@@ -460,7 +465,23 @@ export const AgentSessionDefaultsSection = React.memo(function AgentSessionDefau
     };
     const showPermissionMode = Boolean(providerTargetKey) && permissionModeOptions.length > 0;
     const hasAccountRows = Boolean(projection.identity) && (projection.connectedAccounts?.length ?? 0) > 0;
-    if (!showPermissionMode && !props.onOpenModels && !hasAccountRows) return null;
+    // Shown when the Agent declares idle compaction in any runtime mode; the rows pick the configured one.
+    const idleCompactionRows = providerTargetKey && resolveIdleCompactionDeclaration({
+        bundledAgentId: nativeAgentId, configuredRuntimeKind: null, projectedCompaction: props.projectedCompaction,
+    }) ? (
+        <AgentIdleCompactionRows
+            agentTargetKey={providerTargetKey}
+            compatibilityTargetKeys={compatibilityTargetKeys}
+            bundledAgentId={nativeAgentId}
+            projectedCompaction={props.projectedCompaction}
+            accountSettingsAvailable={accountSettingsAvailable}
+            machineId={props.machineId}
+            accountServerId={accountServerId}
+            projectionInputs={props.projectionInputs}
+            popoverBoundaryRef={props.popoverBoundaryRef}
+        />
+    ) : null;
+    if (!showPermissionMode && !props.onOpenModels && !hasAccountRows && !idleCompactionRows) return null;
     return (
         <ItemGroup
             title={t('settingsAgents.detailPage.sessionDefaultsTitle')}
@@ -529,6 +550,7 @@ export const AgentSessionDefaultsSection = React.memo(function AgentSessionDefau
             {defaultModelError ? (
                 <ProviderErrorItems error={defaultModelError.error} retry={defaultModelError.retry} />
             ) : null}
+            {idleCompactionRows}
             {props.onOpenModels ? (
                 <SettingRow setting={AGENT_SETTINGS.settings.models}
                     testID="settings.agents.detail.models"
@@ -545,6 +567,7 @@ export const AgentSessionDefaultsSection = React.memo(function AgentSessionDefau
 const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallbackScreenInner(props: Readonly<{
     projection: ResolvedAgentCatalogEntry;
     pluginSettingsProjection: PluginProjectionEntry | null;
+    projectionInputs: DaemonMergedProjectionInputs | null;
     targetSelection: MachineAdministrationTargetSelectionV1;
     accountSettingsAvailable: boolean;
     executionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
@@ -608,6 +631,7 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
                 compatibilityTargetKeys={props.compatibilityTargetKeys}
                 accountSettingsAvailable={props.accountSettingsAvailable}
                 machineId={props.executionTarget?.machine.id}
+                projectionInputs={props.projectionInputs}
                 onOpenModels={providersEnabled && providerTargetKey ? () => router.push({
                     pathname: '/(app)/settings/agents/[agentId]/models',
                     params: {
@@ -658,6 +682,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
     executionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
     compatibilityTargetKeys: readonly string[];
     pluginSettingsProjection: PluginProjectionEntry | null;
+    projectionInputs: DaemonMergedProjectionInputs | null;
     daemonOperationsAvailable: boolean;
     externalSessionsProjectionPhase: 'idle' | 'loading' | 'ready' | 'unsupported' | 'error';
     externalSessionsAgent: ExternalSessionsQualifiedAgent | null;
@@ -816,6 +841,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                 accountSettingsAvailable={accountSettingsAvailable}
                 machineId={primaryMachine?.id}
                 popoverBoundaryRef={popoverBoundaryRef}
+                projectionInputs={props.projectionInputs}
                 onOpenModels={providerTargetKey ? () => router.push({
                     pathname: '/(app)/settings/agents/[agentId]/models',
                     params: {
@@ -1117,6 +1143,7 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
     if (!currentAgentCapabilities && !projection.cli) {
         return (
             <AgentSettingsFallbackScreenInner
+                projectionInputs={daemonMergedProjectionInputs ?? null}
                 accountServerId={activeServer.serverId || null}
                 compatibilityTargetKeys={compatibilityTargetKeys}
                 projection={projection}
@@ -1135,6 +1162,7 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
 
     return (
         <AgentSettingsScreenInner
+            projectionInputs={daemonMergedProjectionInputs ?? null}
             agentId={resolvedAgentProjectionId ?? normalizedAgentId}
             projection={projection}
             currentAgentCapabilities={currentAgentCapabilities}

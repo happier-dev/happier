@@ -2,7 +2,6 @@ import { z } from 'zod/mini';
 import type { AccountSettings } from '../account/settings/accountSettings.js';
 import { SessionAgentSpawnPolicyV1Schema, SessionAgentSpawnPolicyV1StrictSchema, type SessionAgentSpawnPolicyV1 } from '../account/settings/sessionAgentSpawnPolicyV1.js';
 import { SessionAgentStartAllowListsV1Schema, SessionAgentStartAllowListsV1StrictSchema } from '../account/settings/sessionAgentStartAllowListsV1.js';
-import { readBuiltInSettingDeclarationV1 } from './settings/settingsDeclarations.js';
 import { BUILT_IN_SETTINGS_METADATA_V1 } from './settings/builtInSettingsMetadata.js';
 export * from './settings/settingsDeclarations.js';
 
@@ -80,18 +79,4 @@ export const ACCOUNT_SETTING_DECLARATIONS_V1 = {
 
 export function readAccountSettingDeclarationV1(anchor: unknown) {
   return Object.values(ACCOUNT_SETTING_DECLARATIONS_V1).find(declaration => declaration.anchor === anchor) ?? null;
-}
-
-export function isPresentUserSettingWriteV1(actionId: string, input: unknown): boolean {
-  return ['settings.set', 'settings.reset', 'settings.invoke'].includes(actionId) && typeof input === 'object' && input !== null
-    && 'anchor' in input && readBuiltInSettingDeclarationV1(input.anchor)?.presentUserOnly === true;
-}
-
-/** Declaration-owned surface restrictions remain separate from configurable Action approval. */
-export function isAccountSettingActionSurfaceAllowedV1(actionId: string, input: unknown, surface: unknown): boolean {
-  if (!['settings.set', 'settings.reset', 'settings.invoke'].includes(actionId)) return true;
-  if (surface !== 'agent' && surface !== 'mcp') return true;
-  if (typeof input !== 'object' || input === null || !('anchor' in input)) return true;
-  const declaration = readBuiltInSettingDeclarationV1(input.anchor);
-  return declaration?.surfaces?.[surface] !== false;
 }

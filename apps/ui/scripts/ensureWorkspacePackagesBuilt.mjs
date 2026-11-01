@@ -2,6 +2,7 @@ import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url';
 import { mkdir, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { WORKSPACE_BUILD_MODE_ENV, resolveWorkspaceBuildMode } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
+import { buildHostedHtmlGuestBootstrap } from '../../../packages/plugin-sdk/scripts/buildHostedHtmlGuestBootstrap.mjs';
 
 import {
   ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentDefault,
@@ -230,6 +231,10 @@ export async function ensureUiWorkspacePackagesBuilt({
     buildMode: publicationMode === 'artifact' ? 'strict' : env[WORKSPACE_BUILD_MODE_ENV] ?? 'source-dev',
   }) };
   verifyPatchedDependencies({ uiPackageDir });
+  await buildHostedHtmlGuestBootstrap({
+    packageRoot: resolve(repoRoot, 'packages/plugin-sdk'),
+    outputFile: resolve(uiPackageDir, 'sources/components/plugins/hostedWeb/guestBootstrap.generated.ts'),
+  });
   if (source) {
     if (publicationMode !== 'live') throw new Error('Source Expo preparation cannot publish package artifacts');
     // Source worker compilation owns freshness and retained outputs separately

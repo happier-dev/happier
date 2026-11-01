@@ -24,6 +24,7 @@ import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/ho
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { AgentEvent } from "@happier-dev/session-core/raw";
 import { t } from '@/text';
+import { formatTokenCount } from '@/utils/format/usageNumbers';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import type { TranscriptEventEmphasis } from './transcriptEventEmphasis';
 
@@ -443,6 +444,8 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     let detailText: string | undefined;
     let testID: string | undefined;
     let capabilityNotice: CapabilityNoticePresentation | null = null;
+    /** Background work nobody asked for: its glyph and words take tertiary ink. */
+    let quiet = false;
     const stopRecord = readSessionStopTranscriptRecordV1(props.event);
     const terminalComposerDraftBlocked = isTerminalComposerDraftBlockedEvent(props.event);
     const terminalComposerClearSessionId = typeof props.sessionId === 'string' ? props.sessionId.trim() : '';
@@ -525,6 +528,33 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
             formatRuntimeConfigOutcomeTiming(props.event.timing),
         ].filter((part): part is string => Boolean(part));
         detailText = detailParts.length > 0 ? detailParts.join(' · ') : undefined;
+    } else if (props.event.type === 'context-compaction' && props.event.trigger === 'idle') {
+        // Nobody asked for it, so it stays quiet: idle words, a static glyph while it runs, and a
+        // failure or cancellation in tertiary ink with nothing asked of the reader. The paused
+        // continuation copy never applies; the idle words say what happened.
+        const phase = props.event.phase === 'progress' ? 'started' : props.event.phase;
+        testID = `transcript-event-context-compaction-${phase}`;
+        if (phase === 'started') {
+            iconName = 'hourglass';
+            text = t('message.contextCompactionIdleStarted');
+        } else if (phase === 'failed') {
+            iconName = 'warning';
+            text = t('message.contextCompactionIdleFailed');
+            detailText = t('message.contextCompactionIdleFailedDetail');
+            quiet = true;
+        } else if (phase === 'cancelled') {
+            iconName = 'x-circle';
+            text = t('message.contextCompactionCancelled');
+            quiet = true;
+        } else {
+            iconName = 'check-circle';
+            text = t('message.contextCompactionIdleCompleted');
+            // Measured counts only (C2), and only when both are present; never an estimate.
+            const { tokenCountBefore: before, tokenCountAfter: after, tokenCountSource } = props.event;
+            detailText = tokenCountSource === 'providerReported' && before !== undefined && after !== undefined
+                ? t('message.contextCompactionIdleDetailCounts', { before: formatTokenCount(before), after: formatTokenCount(after) })
+                : t('message.contextCompactionIdleDetail');
+        }
     } else if (props.event.type === 'context-compaction') {
         const isPaused = props.event.phase === 'completed' && props.event.continuation === 'paused';
         testID = `transcript-event-context-compaction-${isPaused ? 'paused' : props.event.phase}`;
@@ -629,10 +659,10 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
         <>
             <View style={styles.row}>
                 <View style={styles.iconContainer}>
-                    <Icon name={iconName} size={EVENT_ICON_SIZE} color={eventColor} />
+                    <Icon name={iconName} size={EVENT_ICON_SIZE} color={quiet ? theme.colors.text.tertiary : eventColor} />
                 </View>
                 <View style={styles.textColumn} testID={testID ? `${testID}-body` : undefined}>
-                    <Text selectable style={[styles.text, deemphasized ? styles.deemphasizedText : null]}>
+                    <Text selectable style={[styles.text, deemphasized || quiet ? styles.deemphasizedText : null]}>
                         {props.findSourceRanges?.length ? <FindHighlightedText text={text} ranges={props.findSourceRanges} selectable /> : text}
                         {props.noticeCount && props.noticeCount > 1
                             ? <Text style={styles.noticeCount}>{` · ${t('sessionWork.workerUpdate.updateCount', { count: props.noticeCount })}`}</Text> : null}

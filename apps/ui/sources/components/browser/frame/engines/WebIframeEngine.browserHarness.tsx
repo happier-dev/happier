@@ -3,7 +3,7 @@ import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { buildArtifactHtmlDocumentV1 } from '@happier-dev/protocol/artifacts/artifactHtmlDocumentV1';
-import { HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT } from '@happier-dev/plugin-sdk/host/ui';
+import { HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT } from '../../../plugins/hostedWeb/guestBootstrap.generated';
 import { validatePluginHostedWebBridgeMessage } from '../../../plugins/hostedWeb/bridge';
 import { WebIframeEngine } from './WebIframeEngine';
 import type { BrowserFrameMessageReceipt } from '../types';

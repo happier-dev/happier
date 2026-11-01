@@ -1,5 +1,6 @@
 import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { shallow } from 'zustand/shallow';
 
 import type { LocalSettings } from '../domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '../domains/settings/settings';
@@ -11,19 +12,25 @@ export function useSettings(): Settings {
   return getStorage()(useShallow((state) => state.settings ?? settingsDefaults));
 }
 
-/** Subscribe to a settings-domain projection while retaining unchanged selected fields. */
-export function useSettingsSelector<T>(selector: (settings: Settings) => T): T {
-  const selectState = React.useMemo(() => {
-    let previous: { settings: Settings; value: T } | null = null;
-    return (state: StorageState): T => {
-      const settings = state.settings ?? settingsDefaults;
-      if (!previous || previous.settings !== settings) {
-        previous = { settings, value: selector(settings) };
-      }
-      return previous.value;
-    };
+/** The store owner routes Settings demand before running the consumer projection. */
+export function useSettingsSelector<T>(selector: (settings: Settings) => T, keys?: readonly string[]): T {
+  const stableKeys = useShallow((value: readonly string[] | undefined) => value)(keys);
+  const scope = React.useMemo(() => stableKeys ? { settings: stableKeys } : undefined, [stableKeys]);
+  const select = React.useCallback((state: StorageState) => {
+    // Account replacement is an input even when its selected preference is equal.
+    void state.settingsScope;
+    return selector(state.settings ?? settingsDefaults);
   }, [selector]);
-  return getStorage()(useShallow(selectState));
+  return getStorage()(select, scope, shallow);
+}
+
+/** A consumed-key view, including opaque released plugin-owned Account carriers. */
+export function useSettingsValues<K extends string>(keys: readonly K[]): Readonly<Pick<Settings, Extract<K, keyof Settings>>> & Readonly<Record<string, unknown>> {
+  const stableKeys = useShallow((value: readonly K[]) => value)(keys);
+  const select = React.useCallback((settings: Settings) => Object.fromEntries(
+    stableKeys.map(key => [key, (settings as Readonly<Record<string, unknown>>)[key]]),
+  ) as Readonly<Pick<Settings, Extract<K, keyof Settings>>> & Readonly<Record<string, unknown>>, [stableKeys]);
+  return useSettingsSelector(select, stableKeys);
 }
 
 export function useSettingsVersion(): number | null {

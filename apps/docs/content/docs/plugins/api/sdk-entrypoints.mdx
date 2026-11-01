@@ -53,7 +53,7 @@ the public surface; it does not create a separate stability tier per export.
 | Render Plugin UI | `/ui` | exact `./happier-plugin-ui/<artifactId>` package exports, `/ui/build` for toolchain facts, or `/ui/client` only in hosted-web code |
 | Declare and use data | `/settings`, `/collections`, or `/resources` | `/storage` for daemon persistence contracts |
 | Test a Plugin module | `/testing` | use the source owner’s capability path for precise types |
-| Work on Happier host code | `/host/registration`, `/host/fs/json-owner-file-lock`, or `/host/ui` | never import these paths from an installed Plugin |
+| Work on Happier host code | `/host/registration`, `/host/fs/json-owner-file-lock` | never import these paths from an installed Plugin |
 
 ## Entrypoint route map
 
@@ -79,7 +79,6 @@ the public surface; it does not create a separate stability tier per export.
 | `@happier-dev/plugin-sdk/hooks` | Daemon-realm hook contribution and handler contracts. | `import type * as Hooks from '@happier-dev/plugin-sdk/hooks';` |
 | `@happier-dev/plugin-sdk/host/fs/json-owner-file-lock` | Host-only: do not import from an installed plugin. Happier daemon packages use this scoped JSON owner-file-lock seam. | `import type * as HostFileLock from '@happier-dev/plugin-sdk/host/fs/json-owner-file-lock';` |
 | `@happier-dev/plugin-sdk/host/registration` | Host-only: do not import from an installed plugin. Happier host packages use this registration-rights seam. | `import type * as HostRegistration from '@happier-dev/plugin-sdk/host/registration';` |
-| `@happier-dev/plugin-sdk/host/ui` | Host-only: do not import from an installed plugin. Happier UI hosts use these canonical Host API result decoders for Resource content and clipboard reads. | `import { decodePluginUiResourceContent } from '@happier-dev/plugin-sdk/host/ui';` |
 | `@happier-dev/plugin-sdk/http` | Host-mediated HTTP service types and outcomes. | `import type * as Http from '@happier-dev/plugin-sdk/http';` |
 | `@happier-dev/plugin-sdk/interactions` | Typed questions, confirmations, approvals, and present-user interaction results. | `import type * as Interactions from '@happier-dev/plugin-sdk/interactions';` |
 | `@happier-dev/plugin-sdk/machine-provisioners` | Machine provisioner contribution, native observation, reconciliation, bootstrap, and stored-schema contracts. | `import type * as MachineProvisioners from '@happier-dev/plugin-sdk/machine-provisioners';` |

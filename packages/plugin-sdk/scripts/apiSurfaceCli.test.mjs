@@ -303,18 +303,6 @@ const INVENTORY = Object.freeze({
         default: './dist/host/fs/json-owner-file-lock/index.js',
       }),
     }),
-    Object.freeze({
-      specifier: './host/ui',
-      sourceModule: 'src/host/ui/index.ts',
-      visibility: 'host',
-      realm: 'any',
-      conditions: Object.freeze({
-        types: './dist/host/ui/index.d.ts',
-        browser: './dist/host/ui/index.js',
-        'react-native': './dist/host/ui/index.js',
-        default: './dist/host/ui/index.js',
-      }),
-    }),
   ]),
   symbols: Object.freeze([
     ...HOST_REGISTRATION_TARGETED_SYMBOLS,
@@ -398,21 +386,6 @@ const INVENTORY = Object.freeze({
       sourceExport: 'reclaimJsonOwnerFileLockSnapshot',
       realm: 'daemon',
     }),
-    ...[
-      ['HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT', 'value', 'src/host/ui/hostedHtmlGuestBootstrap.generated.ts'],
-      ['decodePluginUiClipboardReadResult', 'value', 'src/host/ui/hostApiCodecs.ts'],
-      ['decodePluginUiConfirmResult', 'value', 'src/host/ui/hostApiCodecs.ts'],
-      ['encodePluginUiDiagnostic', 'value', 'src/host/ui/hostApiCodecs.ts'],
-      ['decodePluginUiResourceContent', 'value', 'src/host/ui/hostApiCodecs.ts'],
-      ['PluginUiHostApiDecodeResult', 'type', 'src/host/ui/hostApiCodecs.ts'],
-    ].map(([exportName, kind, sourceModule]) => Object.freeze({
-      specifier: './host/ui',
-      exportName,
-      kind,
-      sourceModule,
-      sourceExport: exportName,
-      realm: 'any',
-    })),
     Object.freeze({
       specifier: './host/fs/json-owner-file-lock',
       exportName: 'withJsonOwnerFileLock',
@@ -472,12 +445,6 @@ async function createPackageFixture(root = undefined) {
       './host/fs/json-owner-file-lock': {
         types: './dist/host/fs/json-owner-file-lock/index.d.ts',
         default: './dist/host/fs/json-owner-file-lock/index.js',
-      },
-      './host/ui': {
-        types: './dist/host/ui/index.d.ts',
-        browser: './dist/host/ui/index.js',
-        'react-native': './dist/host/ui/index.js',
-        default: './dist/host/ui/index.js',
       },
     },
   };
@@ -559,24 +526,6 @@ async function createPackageFixture(root = undefined) {
       '',
       ].join('\n'),
   );
-  await writeFixtureFile(root, 'src/host/ui/index.ts', [
-    "export { HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT } from './hostedHtmlGuestBootstrap.generated.js';",
-    "export type { PluginUiHostApiDecodeResult } from './hostApiCodecs.js';",
-    "export { decodePluginUiClipboardReadResult } from './hostApiCodecs.js';",
-    "export { decodePluginUiResourceContent } from './hostApiCodecs.js';",
-    "export { decodePluginUiConfirmResult } from './hostApiCodecs.js';",
-    "export { encodePluginUiDiagnostic } from './hostApiCodecs.js';",
-    '',
-  ].join('\n'));
-  await writeFixtureFile(root, 'src/host/ui/hostedHtmlGuestBootstrap.generated.ts', 'export const HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT = "";\n');
-  await writeFixtureFile(root, 'src/host/ui/hostApiCodecs.ts', [
-    'export type PluginUiHostApiDecodeResult<T> = Readonly<{ ok: true; value: T }>;',
-    'export function decodePluginUiClipboardReadResult(): PluginUiHostApiDecodeResult<string> { return { ok: true, value: "" }; }',
-    'export function decodePluginUiResourceContent(): PluginUiHostApiDecodeResult<string> { return { ok: true, value: "" }; }',
-    'export function decodePluginUiConfirmResult(): PluginUiHostApiDecodeResult<boolean> { return { ok: true, value: true }; }',
-    'export function encodePluginUiDiagnostic(): string { return ""; }',
-    '',
-  ].join('\n'));
   await seedFixturePublicationSpecs(root);
   return root;
 }
@@ -844,10 +793,9 @@ test('real CLI default output is a concise summary with bounded real-phase progr
     assert.equal(
       result.stdout,
       [
-        'api-surface dry-run: drift (planned=7 changed=4 written=0)',
+        'api-surface dry-run: drift (planned=6 changed=3 written=0)',
         '  drift packageExports package.json',
         '  drift sourceBarrels src/host/registration/index.ts',
-        '  drift sourceBarrels src/host/ui/index.ts',
         '  drift authorApiMarkdown API.md',
         '',
       ].join('\n'),
@@ -868,12 +816,12 @@ test('real CLI default output is a concise summary with bounded real-phase progr
     // One header line plus one line per committed file that drifted: the
     // default output stays scannable while naming the whole delta. The
     // generated inventory is not committed, so it never reports drift.
-    assert.equal(result.stdout.trimEnd().split('\n').length, 5);
+    assert.equal(result.stdout.trimEnd().split('\n').length, 4);
     assert.equal(machineReadable.status, result.status, machineReadable.stderr);
     const report = JSON.parse(machineReadable.stdout);
     assert.deepEqual(report.summary, {
-      plannedFiles: 7,
-      changedFiles: 4,
+      plannedFiles: 6,
+      changedFiles: 3,
       writtenFiles: 0,
     });
     assert.ok(machineReadable.stdout.length > result.stdout.length);
@@ -1408,14 +1356,13 @@ test('real CLI --json is read-only by default and reports the complete source-to
         'authorApiMarkdown',
         'packageExports',
         'sourceBarrels',
-        'sourceBarrels',
       ],
     );
     assert.equal(
       report.files.find((file) => file.owner === 'apiSurfaceInventory').generated,
       true,
     );
-    assert.equal(report.summary.changedFiles, 4);
+    assert.equal(report.summary.changedFiles, 3);
     assert.equal(report.summary.writtenFiles, 0);
     assert.equal(report.files.find((file) => file.owner === 'authorApiMarkdown').path, 'API.md');
 
@@ -1446,8 +1393,8 @@ test('explicit write preflights and materializes exports, barrels, and author AP
     assert.equal(report.status, 'current');
     assert.equal(report.sourceToolingComplete, true);
     assert.equal(Object.hasOwn(report, 'eu3Complete'), false);
-    assert.equal(report.summary.changedFiles, 5);
-    assert.equal(report.summary.writtenFiles, 5);
+    assert.equal(report.summary.changedFiles, 4);
+    assert.equal(report.summary.writtenFiles, 4);
 
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
     assert.deepEqual(packageJson.exports, report.generationPlan.packageExports);
@@ -1934,7 +1881,7 @@ test('explicit check mode reports generated API documentation drift and passes o
     const driftReport = JSON.parse(drift.stdout);
     assert.equal(driftReport.mode, 'check');
     assert.equal(driftReport.status, 'drift');
-    assert.equal(driftReport.summary.changedFiles, 4);
+    assert.equal(driftReport.summary.changedFiles, 3);
     assert.equal(driftReport.files.find((file) => file.path === 'API.md').changed, true);
 
     const write = runJsonCli(root, ['--write']);
@@ -4536,14 +4483,6 @@ test('current Actions canonical source does not reach its generated entrypoint b
     await writeFixtureFile(root, 'src/host/fs/json-owner-file-lock/index.public.ts', [
       "export { reclaimJsonOwnerFileLockSnapshot } from '../../../apiSurfaceLockProbe.js';",
       "export { withJsonOwnerFileLock } from '../../../apiSurfaceLockProbe.js';",
-      '',
-    ].join('\n'));
-    // The fixture declares four entrypoints and publication specs are the
-    // topology owner, so ./host/ui needs its own spec after the sweep above.
-    await writeFixtureFile(root, 'src/host/ui/index.public.ts', [
-      "export { HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT } from './hostedHtmlGuestBootstrap.generated.js';",
-      "export { decodePluginUiClipboardReadResult, decodePluginUiConfirmResult, decodePluginUiResourceContent, encodePluginUiDiagnostic } from './hostApiCodecs.js';",
-      "export type { PluginUiHostApiDecodeResult } from './hostApiCodecs.js';",
       '',
     ].join('\n'));
     const result = runJsonCli(root, ['--write']);

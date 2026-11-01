@@ -113,7 +113,6 @@ async function bundle(entry, outfile, options = {}) {
     // This source QA follows the moving SDK and wire owners, not a stale dist.
     alias: {
       '@happier-dev/plugin-sdk/ui/client': join(repoRoot, 'packages/plugin-sdk/src/ui/client/index.ts'),
-      '@happier-dev/plugin-sdk/host/ui': join(repoRoot, 'packages/plugin-sdk/src/host/ui/index.ts'),
       '@happier-dev/protocol/artifacts/artifactHtmlDocumentV1': join(repoRoot, 'packages/protocol/src/artifacts/artifactHtmlDocumentV1.ts'),
       '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1': join(repoRoot, 'packages/protocol/src/plugins/contributions/ui/hostedHtmlCapabilitiesV1.ts'),
       '@happier-dev/protocol/plugins/ui/client': join(repoRoot, 'packages/protocol/src/plugins/ui/client.ts'),

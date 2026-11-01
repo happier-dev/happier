@@ -8,10 +8,12 @@ import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'settings.set': { enabled: true } } });
 
 describe('declared settings Actions', () => {
+  // No per-setting surface gate: former person-only settings (showToolCalls) follow the
+  // same per-Action default Ask and user waiver as every other Settings write.
   it.each([
-    { input: { anchor: 'transcript.agentHtmlNetworkPolicy', value: 'allowed' }, autonomous: true },
-    { input: { anchor: 'transcript.showToolCalls', value: false }, autonomous: false },
-  ])('enforces automated surface admission and approval waivers for $input.anchor', async ({ input, autonomous }) => {
+    { input: { anchor: 'transcript.agentHtmlNetworkPolicy', value: 'allowed' } },
+    { input: { anchor: 'transcript.showToolCalls', value: false } },
+  ])('asks agents by default and runs a waived write for $input.anchor', async ({ input }) => {
     const writes: unknown[] = [];
     // The answering Settings host is the process boundary; Action admission and policy stay real.
     const executor = createActionExecutor({ settingsDeclarationAction: async ({ input }: Parameters<NonNullable<ActionExecutorDeps['settingsDeclarationAction']>>[0]) => {
@@ -22,17 +24,16 @@ describe('declared settings Actions', () => {
     } as unknown as ActionExecutorDeps);
     for (const surface of ['agent', 'mcp'] as const) {
       expect(await executor.execute('settings.set', input, { surface, actionsSettings }))
-        .toMatchObject({ ok: false, errorCode: autonomous ? 'approvals_not_supported' : 'unsupported_action' });
+        .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
       expect(writes).toEqual([]);
     }
     const waived = ActionsSettingsV1Schema.parse({ v: 1,
       approvalWaivedSurfaces: { 'settings.set': ['agent', 'mcp'] } });
     for (const surface of ['agent', 'mcp'] as const) {
       const result = await executor.execute('settings.set', input, { surface, actionsSettings: waived });
-      if (autonomous) expect(result).toEqual({ ok: true, result: { anchor: input.anchor, value: input.value } });
-      else expect(result).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+      expect(result).toEqual({ ok: true, result: { anchor: input.anchor, value: input.value } });
     }
-    expect(writes).toEqual(autonomous ? [input, input] : []);
+    expect(writes).toEqual([input, input]);
   });
   it('applies a present user\'s own UI change directly while agents keep the approval default', () => {
     // A person changing their own preference in Settings is not an agent-initiated Action.

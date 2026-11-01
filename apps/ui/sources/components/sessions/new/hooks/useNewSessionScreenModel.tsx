@@ -172,24 +172,8 @@ import { useNewSessionScreenSimplePanelProps } from '@/components/sessions/new/h
 import { useNewSessionScreenWizardProps } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenWizardProps';
 import { resolveNewSessionConnectedServicesAgent, useNewSessionConnectedServicesAgentOptions } from '@/components/sessions/new/hooks/screenModel/useNewSessionConnectedServicesAgentOptions';
 import { useNewSessionScreenPreflightState } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenPreflightState';
-import type {
-    AgentPluginSettingsReadiness,
-    AgentPluginSettingsSnapshot,
-} from '@/agents/registry/registryUiBehavior';
-import {
-    readScopedPluginSettingsDeclaredFieldValue,
-    projectScopedPluginSettingsFields,
-    useScopedPluginSettingsProjection,
-} from '@/sync/domains/plugins/settings/scopedPluginSettingsProjection';
-import { scopedPluginSettingsAdapter } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
-import {
-    resolveScopedPluginSettingsServerIdentity,
-} from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
-import { resolveScopedPluginSettingsTarget } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
-import {
-    resolveAgentScopedPluginSettingsDeclarations,
-    type AgentScopedPluginSettingsDeclarations,
-} from '@/agents/registry/agentScopedPluginSettingsDeclarations';
+import type { AgentPluginSettingsSnapshot } from '@/agents/registry/registryUiBehavior';
+import { useAgentScopedPluginSettingsSnapshot } from '@/agents/registry/useAgentScopedPluginSettingsSnapshot';
 import { resolveNewSessionOperationalBackendTarget } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { buildNewSessionLaunchStatus } from '@/components/sessions/new/hooks/screenModel/newSessionLaunchStatusBadges';
 import { resolveNewSessionCreateAdmission } from '@/components/sessions/new/hooks/screenModel/newSessionCreateAdmission';
@@ -1343,151 +1327,23 @@ export function useNewSessionScreenModel(input?: Readonly<{
         temporaryComputerRegistryActionExecution]);
     const temporaryComputerCreator: TemporaryComputerCreatorDependencies =
         input?.temporaryComputerCreatorDependencies ?? composedTemporaryComputerCreator.dependencies;
-    /**
-     * The selected installed Agent's declarations are the only owners of the
-     * settings consumed by its behavior. Account and daemon groups are both
-     * legitimate and are projected independently through the canonical hook;
-     * this model only selects exact Agent-targeted groups and never reads a
-     * record directly.
-     */
-    const selectedAgentScopedSettingsDeclarations = React.useMemo<AgentScopedPluginSettingsDeclarations>(() => (
-        resolveAgentScopedPluginSettingsDeclarations({
-            agentId: selectedRuntimeCarrierAgentId,
-            projectionInputs: currentProjectionInputs,
-        })
-    ), [currentProjectionInputs, selectedRuntimeCarrierAgentId]);
-    const selectedAgentSettingsTargets = React.useMemo(() => {
-        const serverIdentityId = resolveScopedPluginSettingsServerIdentity(targetServerId);
-        const resolveTarget = (declaration: typeof selectedAgentScopedSettingsDeclarations.account) => (
-            declaration
-                ? resolveScopedPluginSettingsTarget({
-                    scope: declaration.scope,
-                    serverIdentityId,
-                    machineId: selectedMachineId,
-                    serverId: targetServerId,
-                })
-                : null
-        );
-        return Object.freeze({
-            account: resolveTarget(selectedAgentScopedSettingsDeclarations.account),
-            daemon: resolveTarget(selectedAgentScopedSettingsDeclarations.daemon),
-        });
-    }, [selectedAgentScopedSettingsDeclarations, selectedMachineId, targetServerId]);
-    const selectedAgentSettingsFields = React.useMemo(() => Object.freeze({
-        account: selectedAgentScopedSettingsDeclarations.account
-            ? projectScopedPluginSettingsFields(selectedAgentScopedSettingsDeclarations.account.fields)
-            : [],
-        daemon: selectedAgentScopedSettingsDeclarations.daemon
-            ? projectScopedPluginSettingsFields(selectedAgentScopedSettingsDeclarations.daemon.fields)
-            : [],
-    }), [selectedAgentScopedSettingsDeclarations]);
-    const selectedAgentAccountSettings = useScopedPluginSettingsProjection({
-        pluginId: selectedAgentScopedSettingsDeclarations.account?.pluginId ?? '',
-        scope: { kind: 'account' },
-        target: selectedAgentSettingsTargets.account,
+    const selectedAgentScopedPluginSettings = useAgentScopedPluginSettingsSnapshot({
+        agentId: selectedRuntimeCarrierAgentId,
+        projectionInputs: currentProjectionInputs,
+        serverId: targetServerId,
+        machineId: selectedMachineId,
         accountLifetime,
-        fields: selectedAgentSettingsFields.account,
-        sourceLifetimeIdentity: selectedAgentScopedSettingsDeclarations.account?.sourceLifetimeIdentity,
-        perActiveServerIdentityId: resolveScopedPluginSettingsServerIdentity(targetServerId),
-        enabled: projectionCurrent && selectedAgentSettingsTargets.account !== null,
-        adapter: scopedPluginSettingsAdapter,
+        enabled: projectionCurrent,
     });
-    const selectedAgentDaemonSettings = useScopedPluginSettingsProjection({
-        pluginId: selectedAgentScopedSettingsDeclarations.daemon?.pluginId ?? '',
-        scope: { kind: 'daemon' },
-        target: selectedAgentSettingsTargets.daemon,
-        accountLifetime,
-        fields: selectedAgentSettingsFields.daemon,
-        sourceLifetimeIdentity: selectedAgentScopedSettingsDeclarations.daemon?.sourceLifetimeIdentity,
-        perActiveServerIdentityId: resolveScopedPluginSettingsServerIdentity(targetServerId),
-        enabled: projectionCurrent && selectedAgentSettingsTargets.daemon !== null,
-        adapter: scopedPluginSettingsAdapter,
-    });
-    const selectedAgentSettingsSources = React.useMemo(() => [
-        {
-            declaration: selectedAgentScopedSettingsDeclarations.daemon,
-            projection: selectedAgentDaemonSettings,
-        },
-        {
-            declaration: selectedAgentScopedSettingsDeclarations.account,
-            projection: selectedAgentAccountSettings,
-        },
-    ] as const, [
-        selectedAgentAccountSettings,
-        selectedAgentDaemonSettings,
-        selectedAgentScopedSettingsDeclarations.account,
-        selectedAgentScopedSettingsDeclarations.daemon,
-    ]);
-    const selectedAgentHasScopedSettings = React.useMemo(
-        () => selectedAgentSettingsSources.some((source) => source.declaration !== null),
-        [selectedAgentSettingsSources],
-    );
-    const selectedAgentSettingsReady = React.useMemo(
-        () => !selectedAgentHasScopedSettings
-            || selectedAgentSettingsSources.every((source) => source.declaration === null || source.projection.state.ready),
-        [selectedAgentHasScopedSettings, selectedAgentSettingsSources],
-    );
-    const selectedAgentAccountFieldValues = useSettingsSelector(React.useCallback((accountSettings) => {
-        const values: Record<string, unknown> = {};
-        const declaration = selectedAgentScopedSettingsDeclarations.account;
-        if (!declaration) return values;
-        const serverIdentityId = resolveScopedPluginSettingsServerIdentity(targetServerId);
-        for (const field of declaration.fields) {
-            const value = readScopedPluginSettingsDeclaredFieldValue({
-                values: selectedAgentAccountSettings.state.values,
-                field,
-                serverIdentityId,
-                releasedFlatSettings: accountSettings,
-            });
-            if (value !== undefined) values[field.key] = value;
-        }
-        return values;
-    }, [selectedAgentAccountSettings.state.values, selectedAgentScopedSettingsDeclarations.account, targetServerId]));
-    const selectedAgentPluginSettings: AgentPluginSettingsSnapshot | null = React.useMemo(() => {
-        if (!selectedAgentHasScopedSettings || !selectedAgentSettingsReady) return null;
-        const serverIdentityId = resolveScopedPluginSettingsServerIdentity(targetServerId);
-        const values: Record<'account' | 'daemon', Record<string, unknown>> = {
-            account: selectedAgentAccountFieldValues,
-            daemon: {},
-        };
-        // Preserve both scope records independently. A declaration may reuse a
-        // local field id in Account and daemon scopes; deduping here would make
-        // the daemon-first iteration order an accidental precedence rule.
-        for (const source of selectedAgentSettingsSources) {
-            if (!source.declaration) continue;
-            const scope = source.declaration.scope.kind;
-            if (scope === 'account') continue;
-            for (const field of source.declaration.fields) {
-                const value = readScopedPluginSettingsDeclaredFieldValue({
-                    values: source.projection.state.values,
-                    field,
-                    serverIdentityId,
-                });
-                if (value !== undefined) values[scope][field.key] = value;
-            }
-        }
-        return Object.freeze({
-            account: Object.freeze(values.account),
-            daemon: Object.freeze(values.daemon),
-        });
-    }, [selectedAgentAccountFieldValues, selectedAgentHasScopedSettings, selectedAgentSettingsReady, selectedAgentSettingsSources, targetServerId]);
+    const selectedAgentPluginSettings = selectedAgentScopedPluginSettings.snapshot;
+    const selectedAgentSettingsReady = selectedAgentScopedPluginSettings.ready;
     // Explicit embedding values are accepted only when this screen has an
     // identified selected Agent. Never let an unqualified snapshot become a
     // global availability input for every catalog Agent.
     const selectedPluginSettingsAgentId = selectedRuntimeCarrierAgentId ?? staticAgentId;
     const effectiveAgentPluginSettings = selectedAgentPluginSettings
         ?? (selectedPluginSettingsAgentId ? input?.pluginSettings ?? null : null);
-    const effectiveAgentPluginSettingsReadiness: AgentPluginSettingsReadiness | null = React.useMemo(
-        () => selectedAgentHasScopedSettings
-            ? {
-                ready: selectedAgentSettingsReady,
-                settled: selectedAgentSettingsSources.every((source) => source.declaration === null || source.projection.state.settled),
-                loading: selectedAgentSettingsSources.some((source) => source.declaration !== null && source.projection.state.loading),
-                error: selectedAgentSettingsSources.find((source) => source.declaration !== null && source.projection.state.error)?.projection.state.error ?? null,
-            }
-            : null,
-        [selectedAgentHasScopedSettings, selectedAgentSettingsReady, selectedAgentSettingsSources],
-    );
+    const effectiveAgentPluginSettingsReadiness = selectedAgentScopedPluginSettings.readiness;
     const operationalBackendTarget = React.useMemo(() => resolveNewSessionOperationalBackendTarget({
         backendTarget,
         runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,

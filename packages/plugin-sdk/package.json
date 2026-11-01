@@ -146,19 +146,6 @@
       },
       "default": "./dist/host/registration/index.js"
     },
-    "./host/ui": {
-      "happier-source": "./src/host/ui/index.ts",
-      "types": "./dist/host/ui/index.d.ts",
-      "browser": {
-        "happier-source": "./src/host/ui/index.ts",
-        "default": "./dist/host/ui/index.js"
-      },
-      "react-native": {
-        "happier-source": "./src/host/ui/index.ts",
-        "default": "./dist/host/ui/index.js"
-      },
-      "default": "./dist/host/ui/index.js"
-    },
     "./http": {
       "happier-source": "./src/http/index.ts",
       "types": "./dist/http/index.d.ts",
@@ -517,8 +504,6 @@
     "check:api-surface": "pnpm --silent run check:api-governance",
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "generate:action-type-map": "node ./scripts/generateActionTypeMap.mjs --write",
-    "generate:hosted-html-guest": "node ./scripts/buildHostedHtmlGuestBootstrap.mjs",
-    "check:hosted-html-guest": "node ./scripts/buildHostedHtmlGuestBootstrap.mjs --check",
     "check:action-type-map": "node ./scripts/generateActionTypeMap.mjs --check",
     "prepare:declarations": "node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=prepare:declarations:prepared",
     "prepare:declarations:prepared": "pnpm --silent run generate:action-type-map",
@@ -529,13 +514,13 @@
     "check:public-toolchain:generated": "node ./scripts/generatePublicToolchainCompatibility.mjs --check-generated",
     "prepack": "node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=prepack:prepared",
     "prepack:prepared": "pnpm --silent run check:action-type-map && node ./scripts/bundleWorkspaceDeps.mjs --artifact && node ./scripts/apiSurfaceCli.mjs --materialize-source --write && pnpm --silent run build:compiled && node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --write && pnpm --silent run check:api-governance:prepared && pnpm --silent run check:public-toolchain:generated",
-    "generated:finite": "pnpm --silent run check:action-type-map && pnpm --silent run check:hosted-html-guest",
+    "generated:finite": "pnpm --silent run check:action-type-map",
     "prepare:finite": "node ./scripts/bundleWorkspaceDeps.mjs --declarations",
     "build:finite": "node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=build:finite:prepared",
     "build:finite:prepared": "pnpm --silent run build:compiled",
     "api:finite": "node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=api:finite:prepared",
     "api:finite:prepared": "node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check",
-    "build:compiled": "pnpm --silent run generate:hosted-html-guest && node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "build:compiled": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "build": "node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=build:prepared",
     "build:prepared": "pnpm --silent run build:compiled",
     "postinstall:real": "pnpm --silent run build",
@@ -549,9 +534,10 @@
     "vitest:local": "vitest",
     "test:source": "vitest run --config vitest.source.config.ts",
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
-    "typecheck:local": "pnpm --silent run typecheck:source && pnpm --silent run typecheck:tests",
-    "typecheck:source": "pnpm --silent run generate:hosted-html-guest && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
-    "typecheck:tests": "pnpm --silent run generate:hosted-html-guest && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json",
+    "typecheck:local": "pnpm --silent run typecheck:source:prepared && pnpm --silent run typecheck:tests:prepared",
+    "typecheck:source": "pnpm --silent run typecheck:source:prepared",
+    "typecheck:source:prepared": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
+    "typecheck:tests": "pnpm --silent run typecheck:tests:prepared",
     "typecheck:tests:prepared": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json",
     "typecheck:finite": "pnpm --silent run typecheck:tests:prepared"
   },

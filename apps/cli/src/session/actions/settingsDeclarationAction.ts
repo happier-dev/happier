@@ -107,8 +107,7 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
           const readable = Boolean(item.storage) && !sensitive && !unsupportedHost;
           return { anchor: item.anchor, pageId: item.pageId, title: item.title,
             ...(item.description ? { description: item.description } : {}), sensitive, readable,
-            writable: readable && item.storage?.access === 'read_write'
-              && !(context.surface === 'agent' && item.surfaces?.agent === false || context.surface === 'mcp' && item.surfaces?.mcp === false),
+            writable: readable && item.storage?.access === 'read_write',
             ...(item.storage?.scope === 'account' || item.storage?.scope === 'local' ? { storageScope: item.storage.scope } : {}),
             ...(item.targetKinds.length ? { targetKinds: [...item.targetKinds], targetRequired: item.storage?.scope === 'team' || item.storage?.scope === 'project' } : {}),
             ...(item.storage?.allowedValues ? { allowedValues: [...item.storage.allowedValues] } : {}),
@@ -175,7 +174,8 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
     }
     // Device preference keys belong to the answering App's declared owner, including on recovery.
     if (declaration.storage?.scope === 'local') return clientActionUnavailable(actionId);
-    if ('key' in parsed && parsed.key !== undefined) return refuse('setting_key_unsupported');
+    if ('key' in parsed && parsed.key !== undefined && !(actionId === 'settings.reset'
+      && readPortableAccountSettingBindingV1(declaration)?.reset)) return refuse('setting_key_unsupported');
     if (actionId === 'settings.invoke'
       || declaration.storage?.scope === 'project' || declaration.storage?.prerequisite === 'ui_picture_catalog'
       || declaration.storage?.prerequisite === 'ui_account_encryption_requirement') return clientActionUnavailable(actionId);
@@ -190,11 +190,11 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
     if ((actionId === 'settings.set' || actionId === 'settings.reset') && storage.access === 'read_only') return refuse('setting_read_only');
     if (storage.prerequisite === 'ui_platform') return { ...refuse('setting_value_unavailable'), details: { prerequisite: storage.prerequisite } };
     const resetValue = actionId === 'settings.reset'
-      ? resolveBuiltInAccountSettingResetValueV1(declaration)
+      ? resolveBuiltInAccountSettingResetValueV1(declaration, 'key' in parsed ? parsed.key : undefined)
       : undefined;
     if (resetValue && !resetValue.success) return refuse('setting_reset_unsupported');
     const resetRequest = actionId === 'settings.reset' ? SettingsDeclarationActionInputSchemasV1[actionId].parse(input) : undefined;
-    const { expected: resetExpected, ...resetInput } = resetRequest ?? {};
+    const { expected: resetExpected, key: _resetKey, ...resetInput } = resetRequest ?? {};
     const requested = actionId === 'settings.set' ? SettingsDeclarationActionInputSchemasV1[actionId].parse(input)
       : actionId === 'settings.reset' && resetValue?.success ? SettingsDeclarationActionInputSchemasV1['settings.set'].parse({
         ...resetInput, value: resetValue.value,

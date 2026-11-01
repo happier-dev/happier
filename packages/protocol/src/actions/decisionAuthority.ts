@@ -3,7 +3,6 @@ import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '../auth/apiTokenG
 import type { ActionRequiredAuthority } from './metadata.js';
 import type { ActionSpec } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
-import { isPresentUserSettingWriteV1 } from './accountSettingDeclarations.js';
 import { HandoffWorkspaceActionV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
@@ -110,7 +109,6 @@ export function requiresPresentUserExecutionAuthorityForActionInputV1(
   return spec.requiredAuthority === 'present_user'
     || isProjectSetupTrustRequestV1(spec.id, input)
     || isPublicLinkCreationActionV1(spec.id)
-    || isPresentUserSettingWriteV1(spec.id, input)
     || isLegacyWorkflowConversionInputV1(spec, input)
     || isSessionMessageHumanReturnInputV1(spec, input)
     || (spec.id === 'session.open' && typeof input === 'object' && input !== null

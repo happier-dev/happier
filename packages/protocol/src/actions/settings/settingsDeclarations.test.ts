@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { accountSettingsParse } from '../../account/settings/accountSettings.js';
-import { isAccountSettingActionSurfaceAllowedV1, isPresentUserSettingWriteV1 } from '../accountSettingDeclarations.js';
 import { isApprovalRequiredByActionsSettings } from '../actionApprovalPolicy.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { requiresPresentUserExecutionAuthorityForActionInputV1 } from '../decisionAuthority.js';
@@ -53,9 +52,6 @@ describe('portable built-in Settings declarations', () => {
       expect(parseBuiltInAccountSettingValueV1(declaration, invalid)).toEqual({ success: false });
       expect(buildBuiltInAccountSettingMutationV1(declaration, settings, invalid)).toBeNull();
     }
-    for (const surface of ['agent', 'mcp'] as const) {
-      expect(isAccountSettingActionSurfaceAllowedV1('settings.set', { anchor, value }, surface)).toBe(true);
-    }
   });
   it('reads and changes coordinator creation defaults through sparse Account settings intents', () => {
     const baseline = accountSettingsParse({});
@@ -100,20 +96,6 @@ describe('portable built-in Settings declarations', () => {
       expect(buildBuiltInAccountSettingMutationV1(declaration, defaults, value)).toBeNull();
     }
   });
-  it('keeps Account tool visibility human-owned across settings mutation routes', () => {
-    const declaration = readBuiltInSettingDeclarationV1('transcript.showToolCalls');
-    expect(declaration).toMatchObject({ presentUserOnly: true, surfaces: { agent: false, mcp: false } });
-    for (const actionId of ['settings.set', 'settings.reset', 'settings.invoke'] as const) {
-      const input = { anchor: 'transcript.showToolCalls', value: false };
-      expect(isPresentUserSettingWriteV1(actionId, input)).toBe(true);
-      for (const surface of ['agent', 'mcp'] as const) {
-        expect(isAccountSettingActionSurfaceAllowedV1(actionId, input, surface)).toBe(false);
-      }
-      for (const surface of ['ui', 'voice', 'cli'] as const) {
-        expect(isAccountSettingActionSurfaceAllowedV1(actionId, input, surface)).toBe(true);
-      }
-    }
-  });
   it('owns MCP startup failure policy on Sessions and preserves its Account storage key', () => {
     const declaration = readBuiltInSettingDeclarationV1('session.mcpServersStrictMode');
     expect(declaration).toMatchObject({ pageId: 'session', sectionId: 'session.mcpServersReliability',
@@ -141,9 +123,7 @@ describe('portable built-in Settings declarations', () => {
       expect(buildBuiltInAccountSettingMutationV1(declaration, accountSettingsParse({}), malformed)).toBeNull();
     }
     const input = { anchor: declaration.anchor, value: 'allowed' };
-    expect(isPresentUserSettingWriteV1('settings.set', input)).toBe(false);
     for (const surface of ['agent', 'mcp'] as const) {
-      expect(isAccountSettingActionSurfaceAllowedV1('settings.set', input, surface)).toBe(true);
       expect(isApprovalRequiredByActionsSettings('settings.set', accountSettingsParse({}).actionsSettingsV1,
         { surface }, undefined, undefined, input)).toBe(true);
       const waived = accountSettingsParse({ actionsSettingsV1: { v: 1,
@@ -210,14 +190,12 @@ describe('portable built-in Settings declarations', () => {
     const waived = accountSettingsParse({ actionsSettingsV1: { v: 1, actions: {},
       approvalWaivedSurfaces: { 'settings.set': ['agent', 'mcp'] },
     } }).actionsSettingsV1;
-    expect(isPresentUserSettingWriteV1('settings.set', input)).toBe(true);
     for (const surface of ['agent', 'mcp'] as const) {
-      expect(isAccountSettingActionSurfaceAllowedV1('settings.set', input, surface)).toBe(true);
       expect(isApprovalRequiredByActionsSettings('settings.set', accountSettingsParse({}).actionsSettingsV1,
         { surface }, undefined, undefined, input)).toBe(true);
       expect(isApprovalRequiredByActionsSettings('settings.set', waived, { surface }, undefined, undefined, input)).toBe(false);
     }
-    expect(requiresPresentUserExecutionAuthorityForActionInputV1(getActionSpec('settings.set'), input)).toBe(true);
+    expect(requiresPresentUserExecutionAuthorityForActionInputV1(getActionSpec('settings.set'), input)).toBe(false);
   });
   it('discovers Account, device, Home and Team Settings without a UI process', () => {
     const registry = BUILT_IN_SETTINGS_DECLARATIONS_V1;
@@ -264,7 +242,6 @@ describe('portable built-in Settings declarations', () => {
     const settings = accountSettingsParse({ analyticsOptOut: true });
     expect(readBuiltInAccountSettingValueV1(declaration, settings)).toBe(false);
     expect(buildBuiltInAccountSettingMutationV1(declaration, settings, true)).toEqual({ analyticsOptOut: false });
-    expect(readBuiltInSettingDeclarationV1('delegation.approvalReviewerEnabled')?.presentUserOnly).toBe(true);
     expect(readBuiltInSettingDeclarationV1('voicePrivacy.diagnosticsEnabled')?.storage?.access).toBe('read_only');
     expect(readBuiltInSettingDeclarationV1('voicePrivacy.forgetVoiceAgentMemory')?.operation).toEqual(expect.objectContaining({
       kind: 'invoke', requiresHumanInteraction: true, requiresApproval: true,

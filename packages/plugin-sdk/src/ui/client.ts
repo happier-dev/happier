@@ -9,7 +9,7 @@ import type { PluginUiHostApi, RenderContext } from './hostApi.js';
 import {
     PLUGIN_UI_PRIVATE_HOSTED_WEB_ACCOUNT_DATA_TRANSPORT_KEY,
     PLUGIN_UI_PRIVATE_MOUNTED_COMPOSER_REF_KEY,
-} from '../host/ui/privateCarrierKeys.js';
+} from './privateCarrierKeys.js';
 
 type CreatePluginUiHostApiClientOptions = Readonly<{ signal?: AbortSignal }>;
 

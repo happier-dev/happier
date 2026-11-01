@@ -140,7 +140,6 @@ import { isSessionStateFieldActionId, resolveSessionStateFieldActionWrite } from
 import { SessionCoordinatorEnableInputV1Schema } from '../sessions/follow/sessionCoordinatorActionsV1.js';
 import { executeSessionCoordinatorEnableV1 } from './executor/sessionCoordinator.js';
 import { isProjectDefinitionActionId } from './projectDefinitionActionFamily.js';
-import { isAccountSettingActionSurfaceAllowedV1 } from './accountSettingDeclarations.js';
 import { AccountHomeContinuationInputV1Schema } from './accountHomeContinuationV1.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils';
 import { resolveProjectActionMachineV1 } from './executor/projectActionPlacement.js';
@@ -2104,9 +2103,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (listAccessFailure) return listAccessFailure;
 
     const spec = getActionSpec(actionId);
-    if (!isAccountSettingActionSurfaceAllowedV1(actionId, input, ctx.surface)) {
-      return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-    }
     {
       const authorityFailure = requiredAuthorityFailure(spec, ctx, input);
       if (authorityFailure) {

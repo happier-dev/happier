@@ -20,6 +20,33 @@ function makeAgentAccountSettings(account: Readonly<Record<string, unknown>>) {
 }
 
 describe('createAgentUiBehaviorFromDescriptor', () => {
+    it('resolves a boolean configured runtime without inventing a spawn config option', () => {
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
+            kind: 'plugin.ui.v1', pluginId: 'acme.agent', agentId: 'acme', version: 1,
+            behavior: { payload: { sessionExtras: {
+                values: ['sdk', 'terminal'], settingKey: { scope: 'account', localId: 'useTerminal' },
+                booleanValues: { true: 'terminal', false: 'sdk' }, defaultValue: 'sdk',
+            } } },
+        });
+        expect(diagnostics).toEqual([]);
+        for (const [value, expected] of [[true, 'terminal'], [false, 'sdk'], [undefined, 'sdk'], ['true', 'sdk']] as const) {
+            const settings = makeAgentAccountSettings(value === undefined ? {} : { useTerminal: value });
+            expect(behavior.newSession?.resolveConfiguredRuntimeKind?.({ agentId: 'acme', settings })).toBe(expected);
+            expect(behavior.payload?.buildSpawnSessionExtras?.({ agentId: 'acme', settings, experiments: { enabled: false, switches: {} }, resumeSessionId: '', updatedAt: 1 })).toEqual({});
+        }
+    });
+
+    it('preserves enum runtime selection and spawn extras for Codex and OpenCode', () => {
+        for (const [agentId, settingKey, selected] of [['codex', 'codexBackendMode', 'acp'], ['opencode', 'opencodeBackendMode', 'acp']] as const) {
+            const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor(BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS[agentId]?.descriptor, agentId);
+            expect(diagnostics).toEqual([]);
+            const settings = makeAgentAccountSettings({ [settingKey]: selected });
+            expect(behavior.newSession?.resolveConfiguredRuntimeKind?.({ agentId, settings })).toBe(selected);
+            expect(behavior.payload?.buildSpawnSessionExtras?.({ agentId, settings, experiments: { enabled: false, switches: {} }, resumeSessionId: '', updatedAt: 1 })).toMatchObject({
+                sessionConfigOptionOverrides: { overrides: { [settingKey]: { value: selected } } },
+            });
+        }
+    });
     it('materializes a closed AskUserQuestion dialog declaration without an Agent-specific adapter', () => {
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
             kind: 'plugin.ui.v1',

@@ -1,5 +1,4 @@
 import { buildArtifactHtmlDocumentV1 } from '@happier-dev/protocol/artifacts/artifactHtmlDocumentV1';
-import { loadPluginUiHostSupport } from '../hostApi/loadPluginUiHostSupport';
 import {
     UiSurfaceCapabilityRequestV1Schema,
     type UiSurfaceNetworkOriginV1,
@@ -23,7 +22,7 @@ export async function buildHostedHtmlDocument(
     });
     const parsedBootstrap = bootstrapConfig === undefined ? undefined : PluginHostedWebBridgeBootstrapConfigV1Schema.parse(bootstrapConfig);
     const guestBootstrapScript = parsedBootstrap === undefined ? undefined
-        : (await loadPluginUiHostSupport()).HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT;
+        : (await import('./guestBootstrap.generated')).HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT;
     return buildArtifactHtmlDocumentV1(bundle, {
         bootstrapConfig: parsedBootstrap,
         guestBootstrapScript,

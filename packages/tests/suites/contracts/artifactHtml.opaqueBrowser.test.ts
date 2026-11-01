@@ -84,7 +84,6 @@ beforeAll(async () => {
         },
         bundle: true, write: false, format: 'iife', globalName: '__E2__', platform: 'browser', target: 'es2022',
         alias: {
-            '@happier-dev/plugin-sdk/host/ui': resolve(repo, 'packages/plugin-sdk/src/host/ui/index.ts'),
             '@happier-dev/protocol/sharing/public-viewer': resolve(repo, 'packages/protocol/src/sharing/publicViewer.ts'),
             '@happier-dev/protocol/artifacts/artifactHtmlDocumentV1': resolve(repo, 'packages/protocol/src/artifacts/artifactHtmlDocumentV1.ts'),
             '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1': resolve(repo, 'packages/protocol/src/plugins/contributions/ui/hostedHtmlCapabilitiesV1.ts'),

@@ -35,7 +35,7 @@ import {
 import {
     createDescriptorAdapterBehavior,
 } from './agentUiBehaviorDescriptorAdapters';
-import { readAgentUiSetting } from './agentUiSettingLookup';
+import { getAgentUiSettingAccountKeys, readAgentUiSetting } from './agentUiSettingLookup';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
@@ -302,12 +302,13 @@ type AgentExperimentSwitchDescriptor = Readonly<{
 
 type SessionExtrasDescriptor = Readonly<{
     providerId: string;
-    outputKey: string;
+    outputKey?: string;
     values: readonly string[];
     /** Qualified setting holding this Agent's configured mode. */
     settingKey?: AgentUiSettingReferenceV1;
     /** Retired spellings the setting can still hold. */
     aliases?: Readonly<Record<string, string>>;
+    booleanValues?: Readonly<{ true: string; false: string }>;
     /** Mode used when the setting is unset or unreadable. */
     defaultValue?: string;
 }>;
@@ -443,24 +444,28 @@ function readSessionExtrasDescriptor(
     const providerId = agentId;
     const outputKey = readString(value.outputKey);
     const values = readStringArray(value.values);
-    if (!providerId || !outputKey || values.length === 0) {
+    if (!providerId || values.length === 0) {
         diagnostics.push(createUiProjectionDiagnostic(
             'A16X1_MALFORMED_DESCRIPTOR',
             'payload.sessionExtras',
-            'Session extras descriptors require an output key and allowed values.',
+            'Session extras descriptors require allowed values.',
         ));
         return null;
     }
 
     const settingKey = readAgentUiSettingReference(value.settingKey);
     const aliases = readDescriptorStringRecord(value.aliases);
+    const trueValue = isRecord(value.booleanValues) ? readString(value.booleanValues.true) : null;
+    const falseValue = isRecord(value.booleanValues) ? readString(value.booleanValues.false) : null;
+    const booleanValues = trueValue && falseValue ? { true: trueValue, false: falseValue } : undefined;
     const defaultValue = readString(value.defaultValue);
     return {
         providerId,
-        outputKey,
+        ...(outputKey ? { outputKey } : {}),
         values,
         ...(settingKey ? { settingKey } : {}),
         ...(aliases ? { aliases } : {}),
+        ...(booleanValues ? { booleanValues } : {}),
         ...(defaultValue ? { defaultValue } : {}),
     };
 }
@@ -498,10 +503,10 @@ function readDeclaredSettingsMode(
     settings: Settings | Readonly<Record<string, unknown>>,
 ): string | null {
     if (!descriptor.settingKey) return null;
-    const declared = normalizeDescriptorValue(
-        readAgentUiSetting(settings, descriptor.settingKey),
-        descriptor.aliases,
-    );
+    const value = readAgentUiSetting(settings, descriptor.settingKey);
+    const declared = typeof value === 'boolean' && descriptor.booleanValues
+        ? descriptor.booleanValues[value ? 'true' : 'false']
+        : normalizeDescriptorValue(value, descriptor.aliases);
     return normalizeSessionExtraMode(descriptor, declared)
         ?? normalizeSessionExtraMode(descriptor, descriptor.defaultValue);
 }
@@ -514,7 +519,7 @@ function createSessionExtrasPayloadBehavior(
 
     return {
         buildSpawnSessionExtras: ({ agentId, settings, sessionConfigOptionOverrides, updatedAt }) => {
-            if (agentId !== descriptor.providerId) return {};
+            if (agentId !== descriptor.providerId || !descriptor.outputKey) return {};
             const mode = resolveSettingsMode(settings);
             if (!mode) return {};
             return {
@@ -532,6 +537,7 @@ function createSessionExtrasNewSessionBehavior(
     descriptor: SessionExtrasDescriptor,
 ): NonNullable<AgentUiBehavior['newSession']> {
     return {
+        configuredRuntimeSettingKeys: getAgentUiSettingAccountKeys(descriptor.settingKey),
         resolveConfiguredRuntimeKind: ({ agentId, settings }) => (
             agentId === descriptor.providerId ? readDeclaredSettingsMode(descriptor, settings) : null
         ),

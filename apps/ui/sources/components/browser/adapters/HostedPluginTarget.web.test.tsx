@@ -39,9 +39,9 @@ function createHostedPluginSecurityPolicy(
 
 describe('HostedPluginTarget web', () => {
     it('retains prepared document bytes across equivalent inputs and replaces real bootstrap, policy, and body changes', async () => {
-        // Resolve the real lazy SDK support before the render-readiness assertion;
+        // Resolve the real lazy guest bootstrap before the render-readiness assertion;
         // source transformation belongs to the test setup, not a guest deadline.
-        await import('@happier-dev/plugin-sdk/host/ui');
+        await import('@/components/plugins/hostedWeb/guestBootstrap.generated');
         const render = (nonce: string, origin: string, body: string) => (
             <HostedPluginTarget
                 title="Inline plugin"

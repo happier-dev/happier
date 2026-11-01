@@ -15,8 +15,7 @@ export function readCurrentUiActionParity() {
   const defaults = accountSettingsParse({});
   const settingBindings = new Map<string, string[]>();
   for (const declaration of BUILT_IN_SETTINGS_DECLARATIONS_V1) {
-    if (declaration.storage?.scope !== 'account' || declaration.storage.access !== 'read_write'
-      || declaration.surfaces?.agent === false) continue;
+    if (declaration.storage?.scope !== 'account' || declaration.storage.access !== 'read_write') continue;
     // Ask the real pure semantic owner for an admitted reset delta; no write or service runs.
     const reset = resolveBuiltInAccountSettingResetValueV1(declaration);
     const delta = reset.success ? buildBuiltInAccountSettingMutationV1(declaration, defaults, reset.value) : null;

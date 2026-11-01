@@ -333,59 +333,6 @@ test('declaration preparation derives stale Plugin SDK DTOs through the canonica
   await assert.rejects(() => runPluginSdkPreparedScript('check:action-type-map', options));
 });
 
-test('SDK runtime preparation regenerates the guest after a source edit while its generated check rejects drift', async (t) => {
-  const repoRoot = await mkdtemp(resolve(tmpdir(), 'happier-sdk-guest-preparation-'));
-  t.after(() => rm(repoRoot, { recursive: true, force: true }));
-  const pluginSdkDir = resolve(repoRoot, 'packages/plugin-sdk');
-  const { scripts } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  for (const path of ['scripts', 'src/ui', 'src/host/ui']) {
-    await mkdir(resolve(pluginSdkDir, path), { recursive: true });
-  }
-  await copyFile(new URL('./buildHostedHtmlGuestBootstrap.mjs', import.meta.url),
-    resolve(pluginSdkDir, 'scripts/buildHostedHtmlGuestBootstrap.mjs'));
-  await mkdir(resolve(pluginSdkDir, 'node_modules'), { recursive: true });
-  await symlink(dirname(fileURLToPath(import.meta.resolve('esbuild/package.json'))),
-    resolve(pluginSdkDir, 'node_modules/esbuild'), process.platform === 'win32' ? 'junction' : 'dir');
-  await writeFile(resolve(pluginSdkDir, 'package.json'), JSON.stringify({
-    name: '@fixture/sdk', private: true, type: 'module', scripts: {
-      ...scripts,
-      // Only the compiler subprocess is replaced. The public preparation graph,
-      // esbuild bundle and generated-payload comparison all run their real owners.
-      'build:compiled': scripts['build:compiled'].replace(
-        'node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json',
-        'node ./scripts/compile.mjs'),
-      'typecheck:source': scripts['typecheck:source'].replace(
-        'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json',
-        'node ./scripts/compile.mjs'),
-      'typecheck:tests': scripts['typecheck:tests'].replace(
-        'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json',
-        'node ./scripts/compile.mjs'),
-    },
-  }));
-  await writeFile(resolve(pluginSdkDir, 'scripts/compile.mjs'),
-    "import { copyFile } from 'node:fs/promises'; await copyFile('src/host/ui/hostedHtmlGuestBootstrap.generated.ts', 'compiled');\n");
-  const entry = resolve(pluginSdkDir, 'src/ui/hostedHtmlGuestEntry.ts');
-  const payload = resolve(pluginSdkDir, 'src/host/ui/hostedHtmlGuestBootstrap.generated.ts');
-  await writeFile(entry, 'globalThis.guestSourceRevision = "initial";\n');
-  await runPluginSdkPreparedScript('generate:hosted-html-guest', { pluginSdkDir });
-  const initial = await readFile(payload, 'utf8');
-  await writeFile(entry, 'globalThis.guestSourceRevision = "edited";\n');
-  await assert.rejects(() => runPluginSdkPreparedScript('check:hosted-html-guest', { pluginSdkDir }));
-  await assert.doesNotReject(() => runPluginSdkPreparedScript('typecheck:source', { pluginSdkDir }));
-  const current = await readFile(payload, 'utf8');
-  assert.notEqual(current, initial);
-  assert.match(current, /edited/u);
-  assert.equal(await readFile(resolve(pluginSdkDir, 'compiled'), 'utf8'), current);
-  await writeFile(entry, 'globalThis.guestSourceRevision = "test-input";\n');
-  await runPluginSdkPreparedScript('typecheck:tests', { pluginSdkDir });
-  const testCurrent = await readFile(payload, 'utf8');
-  assert.match(testCurrent, /test-input/u);
-  assert.equal(await readFile(resolve(pluginSdkDir, 'compiled'), 'utf8'), testCurrent);
-  await runPluginSdkPreparedScript('check:hosted-html-guest', { pluginSdkDir });
-  await runPluginSdkPreparedScript('build:prepared', { pluginSdkDir });
-  assert.equal(await readFile(payload, 'utf8'), testCurrent, 'warm preparation is deterministic');
-});
-
 test('plugin-sdk workspace bundling preserves an explicit lock override', () => {
   assert.equal(
     resolvePluginSdkWorkspaceBundleLockPath({ repoRoot: '/repo', lockPath: '/tmp/explicit.lock' }),
@@ -546,14 +493,23 @@ test('plugin-sdk keeps publication preparation separate from ordinary source val
   }
   assert.equal(
     packageJson.scripts['typecheck:source'],
+    'pnpm --silent run typecheck:source:prepared',
+  );
+  assert.equal(
+    packageJson.scripts['typecheck:source:prepared'],
     'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json',
   );
   assert.equal(
     packageJson.scripts['typecheck:tests'],
+    'pnpm --silent run typecheck:tests:prepared',
+  );
+  assert.equal(
+    packageJson.scripts['typecheck:tests:prepared'],
     'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json',
   );
-  assert.equal(packageJson.scripts['typecheck:local'], 'pnpm --silent run typecheck:source && pnpm --silent run typecheck:tests');
-  assert.equal(packageJson.scripts['generated:finite'], 'pnpm --silent run check:action-type-map && pnpm --silent run check:hosted-html-guest');
+  assert.equal(packageJson.scripts.typecheck, '../../apps/stack/bin/hstack-exec --script=typecheck:local');
+  assert.equal(packageJson.scripts['typecheck:local'], 'pnpm --silent run typecheck:source:prepared && pnpm --silent run typecheck:tests:prepared');
+  assert.equal(packageJson.scripts['generated:finite'], 'pnpm --silent run check:action-type-map');
   assert.ok(
     packageJson.scripts['test:prepared'].startsWith('vitest run --config vitest.config.ts && '),
     'the prepared test lane must use the authored-source collection boundary before adjacent tests',

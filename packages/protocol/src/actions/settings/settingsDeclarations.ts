@@ -35,8 +35,10 @@ export type PortableSettingDeclarationV1 = Readonly<{
   storage?: PortableSettingStorageV1;
   targetKinds: readonly SettingsDeclarationTargetKindV1[];
   sensitive: boolean;
-  presentUserOnly: boolean;
-  surfaces?: Readonly<{ agent: boolean; mcp: boolean }>;
+  /** Explicit permission-policy meaning, independent of sensitive content and safety. */
+  permissionChanging?: true;
+  /** Host-authored safety for reversible personal preferences; omission retains danger. */
+  agentSafety?: 'safe' | 'danger';
   operation?: Readonly<{ kind: 'interaction' | 'invoke'; requiresHumanInteraction: boolean; requiresApproval?: boolean; uiConfirmation?: 'direct' | 'policy'; owner?: string; options?: readonly string[] }>;
 }>;
 
@@ -63,6 +65,24 @@ export function resolveSettingsDeclarationOperationApprovalPolicyV1(operation: R
 export function readBuiltInSettingsOperationApprovalPolicyV1(input: unknown): ReturnType<typeof resolveSettingsDeclarationOperationApprovalPolicyV1> {
   const anchor = input !== null && typeof input === 'object' && 'anchor' in input ? input.anchor : undefined;
   return resolveSettingsDeclarationOperationApprovalPolicyV1(readBuiltInSettingDeclarationV1(anchor)?.operation);
+}
+
+/** Action inputs select an existing declaration; they cannot supply their own safety. */
+export function readBuiltInSettingsPermissionChangingV1(input: unknown, kind: 'write' | 'invoke' = 'write'): boolean {
+  const canChange = (declaration: PortableSettingDeclarationV1) => declaration.permissionChanging === true
+    && (kind === 'invoke' ? Boolean(declaration.operation) : declaration.storage?.access === 'read_write');
+  if (input === undefined) return builtInSettingsDeclarations.some(canChange);
+  const anchor = input !== null && typeof input === 'object' && 'anchor' in input ? input.anchor : undefined;
+  const declaration = readBuiltInSettingDeclarationV1(anchor);
+  return declaration ? canChange(declaration) : false;
+}
+
+/** Action inputs select an existing declaration; they cannot supply their own safety. */
+export function readBuiltInSettingsWriteSafetyV1(input: unknown): 'safe' | 'danger' {
+  const anchor = input !== null && typeof input === 'object' && 'anchor' in input ? input.anchor : undefined;
+  const declaration = readBuiltInSettingDeclarationV1(anchor);
+  return declaration?.agentSafety === 'safe' && !declaration.sensitive
+    && declaration.storage?.access === 'read_write' ? 'safe' : 'danger';
 }
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -230,8 +250,10 @@ export function readBuiltInAccountSettingValueV1(declaration: AccountSettingDecl
 }
 
 /** Reset is a validated default intent, never replacement of an owning settings object. */
-export function resolveBuiltInAccountSettingResetValueV1(declaration: AccountSettingDeclarationBindingV1):
+export function resolveBuiltInAccountSettingResetValueV1(declaration: AccountSettingDeclarationBindingV1, key?: unknown):
   ReturnType<typeof parseBuiltInAccountSettingValueV1> {
+  const owner = readPortableAccountSettingBindingV1(declaration);
+  if (owner?.reset) return owner.reset(key);
   return parseBuiltInAccountSettingValueV1(declaration,
     readBuiltInAccountSettingValueV1(declaration, accountSettingsParse({})));
 }

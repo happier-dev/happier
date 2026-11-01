@@ -289,6 +289,9 @@ export type AgentUiBehavior = Readonly<{
         }>) => Record<string, unknown> | undefined;
     }>;
     newSession?: Readonly<{
+        /** Account dependencies are declared beside the descriptor interpreter that reads them. */
+        configuredRuntimeSettingKeys?: readonly string[];
+        transcriptStorageSettingKeys?: readonly string[];
         /** Agent-authored portable runtime choice, bound to its declared setting. */
         runtimeDescriptorV1?: Readonly<{
             backendMode: Readonly<{
@@ -298,7 +301,7 @@ export type AgentUiBehavior = Readonly<{
         }>;
         resolveConfiguredRuntimeKind?: (ctx: {
             agentId: AgentLookupId;
-            settings: Settings;
+            settings: Readonly<Record<string, unknown>>;
             pluginSettings?: AgentPluginSettingsSnapshot | null;
         }) => string | null;
         buildNewSessionOptions?: (ctx: {
@@ -718,11 +721,12 @@ export function resolveAgentUiBehavior(
 
 export function resolveConfiguredAgentRuntimeKindFromUiBehavior(params: Readonly<{
     agentId: string;
-    settings: Settings;
+    settings: Readonly<Record<string, unknown>>;
     pluginSettings?: AgentPluginSettingsSnapshot | null;
     machineId?: string | null;
+    accountScope?: ServerAccountScope | null;
 }>): string | null {
-    return resolveAgentUiBehavior(params.agentId, params.machineId)
+    return resolveAgentUiBehavior(params.agentId, params.machineId, params.accountScope)
         .newSession
         ?.resolveConfiguredRuntimeKind?.({
             agentId: params.agentId,

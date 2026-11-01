@@ -40,11 +40,12 @@ export interface SearchOptions {
     contributedActions?: readonly PluginContributedActionDescriptor[];
 }
 
-// Happier defaults follow the effective opened-runtime capability.
+// Descriptions resolve when the list is built, so they follow the
+// reader's current language rather than the one loaded when this module was first imported.
 function buildDefaultCommands(compaction: AgentSessionCompactionCapability | null | undefined): CommandItem[] {
     return [
-        ...(compaction?.manual === true ? [{ command: 'compact', description: 'Compact the conversation history' }] : []),
-        { command: 'clear', description: 'Clear the conversation' },
+        ...(compaction?.manual === true ? [{ command: 'compact', description: t('agentInput.commands.compact') }] : []),
+        { command: 'clear', description: t('agentInput.commands.clear') },
         { command: 'goal', description: t('session.workState.commandDescription') },
     ];
 }
@@ -195,23 +196,18 @@ function buildContributedActionSlashCommands(
     });
 }
 
-// Command descriptions for known tools/commands
-const COMMAND_DESCRIPTIONS: Record<string, string> = {
-    // Default commands
-    compact: 'Compact the conversation history',
-    
-    // Common tool commands
-    help: 'Show available commands',
-    clear: 'Clear the conversation',
-    reset: 'Reset the session',
-    export: 'Export conversation',
-    debug: 'Show debug information',
-    status: 'Show connection status',
-    stop: 'Stop current operation',
-    abort: 'Abort current operation',
-    cancel: 'Cancel current operation',
-    
-    // Add more descriptions as needed
+// Descriptions for commands an Agent advertises without one of its own.
+const COMMAND_DESCRIPTIONS: Readonly<Record<string, () => string>> = {
+    compact: () => t('agentInput.commands.compact'),
+    clear: () => t('agentInput.commands.clear'),
+    help: () => t('agentInput.commands.help'),
+    reset: () => t('agentInput.commands.reset'),
+    export: () => t('agentInput.commands.export'),
+    debug: () => t('agentInput.commands.debug'),
+    status: () => t('agentInput.commands.status'),
+    stop: () => t('agentInput.commands.stop'),
+    abort: () => t('agentInput.commands.abort'),
+    cancel: () => t('agentInput.commands.cancel'),
 };
 
 // Get commands from session metadata.
@@ -257,7 +253,7 @@ function getCommandsFromSession(
             command,
             description: 'description' in entry && typeof entry.description === 'string' && entry.description.trim().length > 0
                 ? entry.description
-                : COMMAND_DESCRIPTIONS[command],
+                : COMMAND_DESCRIPTIONS[command]?.(),
         });
     }
 

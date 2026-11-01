@@ -135,7 +135,7 @@ export const SettingsDeclarationActionInputSchemasV1 = {
   'settings.get': z.strictObject({ anchor: AnchorSchema, key: z.optional(SettingKeySchema), target: z.optional(SettingsDeclarationTargetV1Schema), includeVersion: z.optional(z.literal(true)) }),
   'settings.set': z.strictObject({ anchor: AnchorSchema, key: z.optional(SettingKeySchema), value: SettingsDeclarationValueV1Schema, target: z.optional(SettingsDeclarationTargetV1Schema),
     expectedSettingsVersion: z.optional(SettingsVersionSchema), reversal: z.optional(SettingReversalInputSchema) }),
-  'settings.reset': z.strictObject({ anchor: AnchorSchema, target: z.optional(SettingsDeclarationTargetV1Schema),
+  'settings.reset': z.strictObject({ anchor: AnchorSchema, key: z.optional(SettingKeySchema), target: z.optional(SettingsDeclarationTargetV1Schema),
     expected: z.optional(SettingsDeclarationResetExpectedV1Schema) }),
   'settings.invoke': z.strictObject({ anchor: AnchorSchema, input: z.optional(SettingsDeclarationOperationInputV1Schema), target: z.optional(SettingsDeclarationTargetV1Schema) }),
 } as const;
