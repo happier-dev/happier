@@ -25,9 +25,6 @@ async function provider(context: PluginInvocationContext) {
   if ((status.state !== 'ready' && status.state !== 'updateAvailable') || !status.executable) {
     throw Object.assign(new Error('native Docker Sandboxes executable unavailable'), { code: 'docker_sandbox_unavailable' });
   }
-  if (status.version !== '0.46.0') {
-    throw Object.assign(new Error('native Docker Sandboxes version is not qualified'), { code: 'docker_sandbox_version_unqualified' });
-  }
   return createDockerSandboxesProvider(context.services.exec, status.executable, context.invokedAtMs, context.signal);
 }
 function privateBytes(value: string) {

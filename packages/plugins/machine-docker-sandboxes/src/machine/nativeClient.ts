@@ -67,42 +67,35 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
       if (!DockerSandboxesResourceV1Schema.safeParse(resource).success) return invalidResource();
       const locator = readLocator(resource);
       try {
-        // v0.46.0 quiet output establishes inventory presence independently
-        // of the native power observation; it is never enrollment evidence.
-        const result = await run(['ls', '--quiet'], signal);
-        if (completed(result) && !result.stdoutTruncated) {
-          const names = new TextDecoder('utf-8', { fatal: true }).decode(result.stdout).split(/\r?\n/u).filter(Boolean);
-          if (names.every(isSandboxName)) {
-            return { presence: names.includes(locator.sandboxName) ? 'present' : 'absent', resource: locator, readiness: 'unqualified' } as const;
-          }
-        }
-      } catch {
-        // A failed, malformed or partial inventory cannot establish absence.
-      }
-      return { presence: 'unknown', resource: locator, readiness: 'unqualified' } as const;
-    },
-    async power(resource: SandboxLocator, signal?: AbortSignal): Promise<'running' | 'stopped' | 'unknown'> {
-      if (!DockerSandboxesResourceV1Schema.safeParse(resource).success) return 'unknown';
-      try {
         // v0.46.0 (991967dc90ce) commands.jsonLsEntry: name/status and
-        // guest_unresponsive are native JSON fields. Extra native facts are
-        // ignored; no command acceptance or unrelated sandbox supplies power.
+        // guest_unresponsive supply presence and power from one full inventory.
+        // Neither native presence nor power is enrollment evidence.
         const result = await run(['ls', '--json'], signal);
-        if (!completed(result) || result.stdoutTruncated) return 'unknown';
+        if (!completed(result) || result.stdoutTruncated) return { presence: 'unknown', resource: locator, readiness: 'unqualified' } as const;
         const inventory: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.stdout));
         if (typeof inventory !== 'object' || inventory === null || !('sandboxes' in inventory)
-          || !Array.isArray(inventory.sandboxes)) return 'unknown';
-        const values = inventory.sandboxes;
+          || !Array.isArray(inventory.sandboxes)) return { presence: 'unknown', resource: locator, readiness: 'unqualified' } as const;
+        const values: readonly unknown[] = inventory.sandboxes;
         let power: 'running' | 'stopped' | 'unknown' | undefined;
         for (const value of values) {
-          if (typeof value !== 'object' || value === null || !('name' in value) || typeof value.name !== 'string') return 'unknown';
+          if (typeof value !== 'object' || value === null || !('name' in value) || typeof value.name !== 'string' || !isSandboxName(value.name)) {
+            return { presence: 'unknown', resource: locator, readiness: 'unqualified' } as const;
+          }
           if (value.name !== resource.sandboxName) continue;
-          if (power !== undefined) return 'unknown';
+          if (power !== undefined) return { presence: 'unknown', resource: locator, readiness: 'unqualified' } as const;
           if ('guest_unresponsive' in value && value.guest_unresponsive !== false) power = 'unknown';
           else power = 'status' in value && (value.status === 'running' || value.status === 'stopped') ? value.status : 'unknown';
         }
-        return power ?? 'unknown';
-      } catch { return 'unknown'; }
+        return power === undefined ? { presence: 'absent', resource: locator, readiness: 'unqualified' } as const
+          : { presence: 'present', power, resource: locator, readiness: 'unqualified' } as const;
+      } catch {
+        // A failed, malformed or partial inventory cannot establish absence.
+        return { presence: 'unknown', resource: locator, readiness: 'unqualified' } as const;
+      }
+    },
+    async power(resource: SandboxLocator, signal?: AbortSignal): Promise<'running' | 'stopped' | 'unknown'> {
+      const observation = await client.inspect(resource, signal);
+      return 'presence' in observation && observation.presence === 'present' ? observation.power : 'unknown';
     },
     async exec(resource: SandboxLocator, command: readonly string[], signal?: AbortSignal, input?: Uint8Array) {
       if (!DockerSandboxesResourceV1Schema.safeParse(resource).success) {
