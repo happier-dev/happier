@@ -3911,6 +3911,14 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             nextPollAtMs: 13_000,
         }));
 
+        // A reopened form needs the acknowledged code, even after a pending poll.
+        await expect(h.owner.resumeDevice({ attemptId: 'attempt-1' })).resolves.toMatchObject({
+            status: 'awaitingDeviceAuthorization',
+            attemptId: 'attempt-1',
+            userCode: expect.any(String),
+            pollIntervalMs: 7_000,
+        });
+
         now += 6_000;
         await expect(h.owner.pollDevice({ attemptId: 'attempt-1' })).resolves.toEqual({
             status: 'pending',

@@ -1264,6 +1264,23 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         });
     }
 
+    function deviceAuthorizationResponse(
+        attemptId: string,
+        device: NonNullable<ActiveStoredAttempt['device']>,
+    ): Extract<AttemptResponse, { status: 'awaitingDeviceAuthorization' }> {
+        return {
+            status: 'awaitingDeviceAuthorization',
+            attemptId,
+            verificationUri: device.verificationUri,
+            ...(device.verificationUriComplete === undefined
+                ? {}
+                : { verificationUriComplete: device.verificationUriComplete }),
+            userCode: device.userCode,
+            expiresAtMs: device.expiresAtMs,
+            pollIntervalMs: device.pollIntervalMs,
+        };
+    }
+
     function snapshotDeviceTransaction(
         attempt: ActiveStoredAttempt,
     ): ConnectedAccountDeviceTransactionSnapshot {
@@ -2240,17 +2257,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 await cleanUpAfterDeviceAcknowledgementDrift(attempt, afterAcknowledge);
                 return afterAcknowledge;
             }
-            const response: AttemptResponse = {
-                status: 'awaitingDeviceAuthorization',
-                attemptId: attempt.id,
-                verificationUri: result.verificationUri,
-                ...(result.verificationUriComplete === undefined
-                    ? {}
-                    : { verificationUriComplete: result.verificationUriComplete }),
-                userCode: result.userCode,
-                expiresAtMs: result.expiresAtMs,
-                pollIntervalMs: result.pollIntervalMs,
-            };
+            const response = deviceAuthorizationResponse(attempt.id, attempt.device);
             attempt.phase = 'awaitingDeviceAuthorization';
             attempt.lastResponse = response;
             scheduleExpiryReclaim();
@@ -3086,6 +3093,13 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     && existing.phase === 'outcomeUnknown' && !input.restoreOnly) {
                     return await settlePrepared(existing, false, true);
                 }
+                // Poll replies omit display data. A new form resumes the already
+                // acknowledged challenge, rather than replaying that pending reply.
+                if ('admission' in existing && existing.device
+                    && (existing.lastResponse?.status === 'pending'
+                        || existing.lastResponse?.status === 'awaitingDeviceAuthorization')) {
+                    return deviceAuthorizationResponse(existing.id, existing.device);
+                }
                 return existing.lastResponse ?? unavailable(input.attemptId);
             }
             const deviceTransactions = params.deviceTransactions;
@@ -3414,17 +3428,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     lastResponse: null,
                     cleanupTerminalResponse: null,
                 };
-                const response: AttemptResponse = {
-                    status: 'awaitingDeviceAuthorization',
-                    attemptId: attempt.id,
-                    verificationUri: snapshot.verificationUri,
-                    ...(snapshot.verificationUriComplete === undefined
-                        ? {}
-                        : { verificationUriComplete: snapshot.verificationUriComplete }),
-                    userCode: snapshot.userCode,
-                    expiresAtMs: snapshot.expiresAtMs,
-                    pollIntervalMs: snapshot.pollIntervalMs,
-                };
+                const response = deviceAuthorizationResponse(attempt.id, snapshot);
                 if (preparedSettlement) {
                     attempt.phase = 'outcomeUnknown';
                     attempt.lastResponse = {
