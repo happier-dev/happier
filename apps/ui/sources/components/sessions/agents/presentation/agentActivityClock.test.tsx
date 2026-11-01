@@ -1,9 +1,12 @@
 import * as React from 'react';
+import { Text } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { InboxRelativeTime } from '@/components/inbox/InboxRelativeTime';
 import { useAgentActivityClockNow, useWorkRelativeTime } from './agentActivityClock';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 
 const host = vi.hoisted(() => ({ appState: 'active', visibility: 'visible',
     appListeners: new Set<() => void>(), documentListeners: new Set<() => void>() }));
@@ -46,6 +49,77 @@ function countClockFires() {
 }
 
 describe('shared Work clock', () => {
+    it('keeps one interval for visible elapsed demand while a retained sibling reopens with a new start', async () => {
+        const census = installTimerCensus((stack) => stack.includes('agentActivityClock') ? 'elapsed' : null);
+        function Elapsed(props: Readonly<{ id: string; startedAtMs: number }>) {
+            return <Text testID={props.id}>{useAgentActivityClockNow() - props.startedAtMs}</Text>;
+        }
+        const draw = (firstActive: boolean, secondActive: boolean, secondStart = NOW) => <>
+            <PluginSurfaceFocusEligibilityProvider active={firstActive}><Elapsed id="first" startedAtMs={NOW} /></PluginSurfaceFocusEligibilityProvider>
+            <PluginSurfaceFocusEligibilityProvider active={secondActive}><Elapsed id="second" startedAtMs={secondStart} /></PluginSurfaceFocusEligibilityProvider>
+        </>;
+        const screen = await renderScreen(draw(true, false));
+        const elapsed = (id: string) => screen.findByTestId(id)?.props.children;
+        try {
+            expect(census.read()).toEqual([{ kind: 'interval', delayMs: 1000, consumer: 'elapsed' }]);
+            await act(async () => { vi.advanceTimersByTime(30_000); });
+            expect(elapsed('first')).toBe(30_000);
+            expect(elapsed('second')).toBe(0);
+            const newStart = Date.now() - 2_000;
+            await screen.update(draw(true, true, newStart));
+            expect(elapsed('second')).toBe(2_000);
+            expect(census.read()).toHaveLength(1);
+            await screen.update(draw(false, true, newStart));
+            await act(async () => { vi.advanceTimersByTime(1_000); });
+            expect(elapsed('second')).toBe(3_000);
+            expect(census.readFires()).toEqual({ interval: 31, timeout: 0 });
+            await screen.update(draw(false, false, newStart));
+            expect(census.read()).toEqual([]);
+        } finally {
+            await screen.unmount();
+            census.stop();
+        }
+    });
+    it('requires both host visibility and layout presentation for the shared elapsed clock', async () => {
+        const census = installTimerCensus((stack) => stack.includes('agentActivityClock') ? 'elapsed' : null);
+        function Elapsed() { return String(useAgentActivityClockNow() - NOW); }
+        const draw = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active}><Elapsed /></PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(draw(true));
+        try {
+            expect(screen.getTextContent()).toBe('0');
+            await act(async () => {
+                host.visibility = 'hidden';
+                for (const listener of host.documentListeners) listener();
+            });
+            const before = census.readFires();
+            await act(async () => { vi.advanceTimersByTime(300_000); });
+            expect(census.readFires()).toEqual(before);
+            expect(census.read()).toEqual([]);
+            await screen.update(draw(false));
+            await act(async () => {
+                host.visibility = 'visible';
+                for (const listener of host.documentListeners) listener();
+            });
+            expect(census.read()).toEqual([]);
+            await screen.update(draw(true));
+            expect(screen.getTextContent()).toBe('300000');
+            expect(census.read()).toEqual([{ kind: 'interval', delayMs: 1000, consumer: 'elapsed' }]);
+            await act(async () => {
+                host.appState = 'background';
+                for (const listener of host.appListeners) listener();
+            });
+            expect(census.read()).toEqual([]);
+            await act(async () => {
+                vi.advanceTimersByTime(60_000);
+                host.appState = 'active';
+                for (const listener of host.appListeners) listener();
+            });
+            expect(screen.getTextContent()).toBe('360000');
+        } finally {
+            await screen.unmount();
+            census.stop();
+        }
+    });
     it('preserves the shared one-second elapsed clock without repainting its parent', async () => {
         let elapsedFires = 0;
         const originalInterval = globalThis.setInterval;

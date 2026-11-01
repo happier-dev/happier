@@ -2,6 +2,7 @@ import * as React from 'react';
 import { formatShortRelativeTimeAt, readShortRelativeTimeRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 /**
  * One shared one-second tick for every running agent clock on screen.
@@ -40,13 +41,19 @@ function getSnapshot(): number {
 
 /** The current second, re-rendering only the component that reads it. */
 export function useAgentActivityClockNow(): number {
-    return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+    const presented = useLayoutPresentationActive();
+    const viewed = useHostActivelyViewed();
+    const active = presented && viewed;
+    const subscribeWhileActive = React.useCallback((listener: () => void) =>
+        active ? subscribe(listener) : () => {}, [active]);
+    return React.useSyncExternalStore(subscribeWhileActive, getSnapshot, getSnapshot);
 }
 
 /** Relative leaves request only their next displayed age; hidden/fixed snapshots request nothing. */
 export function useWorkRelativeTime(timestamp: number, fixedNowMs?: number): string {
     const readNextRefresh = React.useCallback((clockMs: number) => readShortRelativeTimeRefreshAtMs(timestamp, clockMs), [timestamp]);
     const activelyViewed = useHostActivelyViewed();
-    const clockMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, activelyViewed && fixedNowMs === undefined);
+    const presented = useLayoutPresentationActive();
+    const clockMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, presented && activelyViewed && fixedNowMs === undefined);
     return formatShortRelativeTimeAt(timestamp, fixedNowMs ?? clockMs);
 }
