@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionFamily.js';
 import { z } from 'zod/mini';
-import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS } from './specs/machineConnectionActionIdsV1.js';
+import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS } from './specs/machineConnectionActionIdsV1.js';
 import { LOCAL_DAEMON_SERVICE_ACTION_IDS } from './specs/localDaemonServiceActionIdsV1.js';
 import { USAGE_ACTION_IDS, USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { MACHINE_ACCESS_ACTION_IDS, MACHINE_WORK_SUMMARY_ACTION_IDS } from './specs/machine/accessActionIdsV1.js';
@@ -203,7 +203,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'machines.agents.install.cancel',
   ],
   machine_agent_sign_in: ['machines.agents.signIn.start', 'machines.agents.signIn.status', 'machines.agents.signIn.cancel', 'machines.agents.signIn.restart'],
-  machine_connection: ['homes.connect', 'homes.reconnect', 'machines.add.command', 'machines.pairing.create', ...MACHINE_PAGE_ACTION_IDS, ...MACHINE_TERMINAL_ACTION_IDS, ...MACHINE_ADD_SSH_ACTION_IDS],
+  machine_connection: ['homes.connect', 'homes.reconnect', 'machines.add.command', 'machines.pairing.create', ...MACHINE_PAGE_ACTION_IDS, ...MACHINE_TERMINAL_ACTION_IDS, ...MACHINE_ADD_SSH_ACTION_IDS, ...MACHINE_MANAGED_INSTALLATION_ACTION_IDS],
   local_daemon_services: LOCAL_DAEMON_SERVICE_ACTION_IDS,
   machine_access: MACHINE_ACCESS_ACTION_IDS,
   machine_work_summary: MACHINE_WORK_SUMMARY_ACTION_IDS,
