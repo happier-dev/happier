@@ -1,6 +1,6 @@
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { logger } from '@/ui/logger';
-import { createBackoff } from '@/utils/time';
+import { createBackoff, isRetryableError } from '@/utils/time';
 
 export type AcpRequestOperation =
   | 'Initialize'
@@ -74,14 +74,17 @@ export async function withRetry<T>(
     onRetry?: (attempt: number, error: Error) => void;
   },
 ): Promise<T> {
-  let failuresSoFar = 0;
-
   const backoff = createBackoff({
     minDelay: options.baseDelayMs,
     maxDelay: options.maxDelayMs,
     maxFailureCount: options.maxAttempts,
+    shouldRetry: (error: unknown) => {
+      const code = readAcpRequestErrorCode(error);
+      // JSON-RPC parse / invalid request / missing method / invalid params cannot change
+      // when the exact same initialize/authenticate request is sent again.
+      return isRetryableError(error) && code !== -32700 && code !== -32600 && code !== -32601 && code !== -32602;
+    },
     onError: (e: unknown, failuresCount: number) => {
-      failuresSoFar = failuresCount;
       const error =
         e instanceof Error
           ? e

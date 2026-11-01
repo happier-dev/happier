@@ -40,6 +40,13 @@ export function exponentialBackoffDelay(currentFailureCount: number, minDelay: n
 
 export type BackoffFunc = <T>(callback: () => Promise<T>) => Promise<T>;
 
+export function isRetryableError(error: unknown): boolean {
+    return !(error && typeof error === 'object' && (
+        ('retryable' in error && error.retryable === false)
+        || ('canTryAgain' in error && error.canTryAgain === false)
+    ));
+}
+
 export function createBackoff(
     opts?: {
         onError?: (e: any, failuresCount: number) => void,
@@ -55,17 +62,7 @@ export function createBackoff(
         const maxFailureCount = opts && opts.maxFailureCount !== undefined ? opts.maxFailureCount : 8;
         const shouldRetry = opts && opts.shouldRetry
             ? opts.shouldRetry
-            : (e: any) => {
-                if (e && typeof e === 'object') {
-                    if ((e as any).retryable === false) {
-                        return false;
-                    }
-                    if (typeof (e as any).canTryAgain === 'boolean' && (e as any).canTryAgain === false) {
-                        return false;
-                    }
-                }
-                return true;
-            };
+            : isRetryableError;
         while (true) {
             try {
                 return await callback();

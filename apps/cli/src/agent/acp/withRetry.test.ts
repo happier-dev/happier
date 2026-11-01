@@ -5,6 +5,24 @@ import { logger } from '@/ui/logger';
 import { createAcpRequestFailureLogRecord, withRetry } from './withRetry';
 
 describe('withRetry', () => {
+  it.each([-32700, -32600, -32601, -32602])('does not resend an identical deterministic JSON-RPC rejection (%s)', async code => {
+    const failure = Object.assign(new Error('Invalid request parameters'), { code });
+    const operation = vi.fn(async () => { throw failure; });
+    await expect(withRetry(operation, { operationName: 'Initialize', maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 1 }))
+      .rejects.toBe(failure);
+    expect(operation).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains retries for a transient provider rate limit', async () => {
+    let attempts = 0;
+    const result = await withRetry(async () => {
+      if (++attempts === 1) throw Object.assign(new Error('Rate limit'), { code: 429 });
+      return 'ready';
+    }, { operationName: 'Authenticate', maxAttempts: 2, baseDelayMs: 1, maxDelayMs: 1 });
+    expect(result).toBe('ready');
+    expect(attempts).toBe(2);
+  });
+
   it('retains the numeric request error code without exposing provider error data', () => {
     const secret = 'Bearer must-not-appear-in-acp-request-log';
     const error = Object.assign(new Error(secret), {
@@ -61,8 +79,8 @@ describe('withRetry', () => {
     ).rejects.toBe(err);
   });
 
-  it('does not retry errors explicitly classified as non-retryable', async () => {
-    const err = Object.assign(new Error('outcome unknown'), { retryable: false as const });
+  it.each([{ retryable: false }, { canTryAgain: false }])('does not retry errors explicitly classified as non-retryable (%o)', async flags => {
+    const err = Object.assign(new Error('outcome unknown'), flags);
     const operation = vi.fn(async () => {
       throw err;
     });
