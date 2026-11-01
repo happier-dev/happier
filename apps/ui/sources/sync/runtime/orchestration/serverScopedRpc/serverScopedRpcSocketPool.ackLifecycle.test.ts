@@ -2,10 +2,11 @@ import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { io, type Socket } from 'socket.io-client';
 import { expect, it } from 'vitest';
-import { callSocketRpc, emitWithAckCancellable, readRpcRequestDisposition } from '@happier-dev/sync-client';
+import { callSocketRpc, createHappierSocket, emitWithAckCancellable, readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createServerScopedRpcSocketPool } from './serverScopedRpcSocketPool';
+import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from './serverScopedRpcTypes';
 
 it.each([
     { firstTimeoutMs: 100, secondTimeoutMs: 2_000 },
@@ -59,6 +60,62 @@ it.each([
         admitConnection();
         await pool.stopAll();
         await new Promise<void>((resolve) => { server.close(() => resolve()); });
+    }
+});
+
+it('delivers a later Describe while a sibling RPC holds an ACK on the same pooled socket', async () => {
+    const http = createServer();
+    const server = new Server(http, { path: '/v1/updates/' });
+    let acknowledgeHeld!: (value: unknown) => void;
+    let received!: () => void;
+    const issued = new Promise<void>(resolve => { received = resolve; });
+    server.on('connection', socket => socket.on(SOCKET_RPC_EVENTS.CALL,
+        (request: SocketRpcRequestPayload, ack: (value: unknown) => void) => {
+            if (request.requestId === 'held-rpc') { acknowledgeHeld = ack; received(); }
+            else ack({ ok: true, result: { completed: 'describe' } });
+        }));
+    await new Promise<void>(resolve => { http.listen(0, '127.0.0.1', resolve); });
+    const address = http.address();
+    if (!address || typeof address === 'string') throw new Error('Missing loopback server address');
+    const physical: Socket[] = [];
+    const pool = createServerScopedRpcSocketPool({
+        createSocket: ({ serverUrl, token }) => {
+            const { socket } = createHappierSocket({ endpoint: serverUrl, token, clientType: 'user-scoped', clientPurpose: 'scoped-rpc' });
+            physical.push(socket);
+            return socket;
+        },
+        reachability: {
+            startReachability: async () => {}, waitForReachable: async () => {},
+            subscribeNetworkAllowed: () => () => {},
+        },
+        readIdleDisconnectMs: () => 0,
+    });
+    const scope = { serverUrl: `http://127.0.0.1:${address.port}`, token: 'synthetic-token', timeoutMs: DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS };
+    let long: Promise<unknown> | undefined;
+    let completed = false;
+    try {
+        const first = await pool.acquire(scope);
+        long = callSocketRpc({ socket: first, target: { kind: 'machine', id: 'machine-1' },
+            method: 'execution.run.start', params: {}, content: { mode: 'plain' }, timeoutMs: null, requestId: 'held-rpc' })
+            .then(result => { completed = true; return result; });
+        await issued;
+        first.disconnect();
+        const sibling = await pool.acquire(scope);
+        expect(sibling.getSocketId()).toBe(first.getSocketId());
+        await expect(callSocketRpc({ socket: sibling, target: { kind: 'machine', id: 'machine-1' },
+            method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, params: {},
+            content: { mode: 'plain' }, timeoutMs: null, requestId: 'describe-rpc' }))
+            .resolves.toEqual({ completed: 'describe' });
+        expect(completed).toBe(false);
+        expect(physical).toHaveLength(1);
+        acknowledgeHeld({ ok: true, result: { completed: 'held' } });
+        await expect(long).resolves.toEqual({ completed: 'held' });
+        sibling.disconnect();
+    } finally {
+        acknowledgeHeld?.({ ok: true, result: { completed: 'held' } });
+        await pool.stopAll();
+        await long?.catch(() => {});
+        await new Promise<void>(resolve => { server.close(() => resolve()); });
     }
 });
 

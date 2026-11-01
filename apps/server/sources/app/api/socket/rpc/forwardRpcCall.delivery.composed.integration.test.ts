@@ -1,4 +1,5 @@
 import { once } from 'node:events';
+import { randomBytes } from 'node:crypto';
 import { io as connect, type Socket as ClientSocket } from 'socket.io-client';
 import type { Socket } from 'socket.io';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -47,6 +48,62 @@ describe('client to daemon RPC reply delivery across Redis adapter nodes', () =>
         await targetSocket.join(buildRpcMethodRoom({ userId: 'account-one', method }));
         return { source, target, targetSocket, method };
     }
+
+    it.each(['plain', 'e2ee'] as const)('delivers Describe before a held sibling RPC on the same %s client and daemon sockets', async mode => {
+        const { source, target, targetSocket, method } = await fixture();
+        const machineId = method.slice(0, method.indexOf(':'));
+        const describeMethod = RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE;
+        const heldMethod = 'execution.run.start';
+        for (const name of [describeMethod, heldMethod]) {
+            await targetSocket.join(buildRpcMethodRoom({ userId: 'account-one', method: `${machineId}:${name}` }));
+        }
+        let release!: () => void;
+        const held = new Promise<void>(resolve => { release = resolve; });
+        let received!: () => void;
+        const admitted = new Promise<void>(resolve => { received = resolve; });
+        const key = randomBytes(32);
+        const manager = new RpcHandlerManager({ scopePrefix: machineId, encryptionMode: mode,
+            ...(mode === 'e2ee' ? { encryptionKey: key, encryptionVariant: 'dataKey' as const } : {}), logger() {} });
+        manager.registerHandler(heldMethod, async () => { received(); await held; return { completed: 'held' }; });
+        manager.registerHandler(describeMethod, () => ({ completed: 'describe' }));
+        target.on(SOCKET_RPC_EVENTS.REQUEST, (request: SocketRpcRequestPayload, ack: (value: unknown) => void) => {
+            void manager.handleRequest(request, ack);
+        });
+        const relay = (socket: Socket) => socket.on(SOCKET_RPC_EVENTS.CALL,
+            async (request: SocketRpcRequestPayload, ack: (value: unknown) => void) => {
+                ack(await forwardRpcCall({ io: source.io, targetUserId: 'account-one', method: request.method,
+                    callParams: request.params, callerSocketId: socket.id, timeoutMs: null }));
+            });
+        source.io.on('connection', relay);
+        const ui = connect(`http://127.0.0.1:${source.port}`, {
+            path: '/v1/updates', transports: ['websocket'], reconnection: false, forceNew: true,
+        });
+        clients.push(ui);
+        const content = mode === 'plain' ? { mode: 'plain' as const } : { mode: 'e2ee' as const, cipher: {
+            encryptRaw: async (value: unknown) => encodeBase64(encrypt(key, 'dataKey', value)),
+            decryptRaw: async (value: string) => decrypt(key, 'dataKey', decodeBase64(value)),
+        } };
+        const call = (name: string) => callSocketRpc({ socket: ui, target: { kind: 'machine', id: machineId },
+            method: name, params: {}, content, timeoutMs: null });
+        let completed = false;
+        let long: Promise<unknown> | undefined;
+        try {
+            await new Promise<void>(resolve => ui.once('connect', resolve));
+            long = call(heldMethod).then(result => { completed = true; return result; });
+            await admitted;
+            // No elapsed-time assertion: the held daemon handler cannot finish
+            // until after this independent response crosses both real sockets.
+            await expect(call(describeMethod)).resolves.toEqual({ completed: 'describe' });
+            expect(completed).toBe(false);
+            release();
+            await expect(long).resolves.toEqual({ completed: 'held' });
+        } finally {
+            release();
+            ui.disconnect();
+            await long?.catch(() => {});
+            source.io.off('connection', relay);
+        }
+    });
 
     it.each(['Home', 'daemon'] as const)('delivers binding status and preserves the %s timeout code through the real client codec', async origin => {
         const { source, target, targetSocket, method: fixtureMethod } = await fixture(0);
