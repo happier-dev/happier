@@ -153,6 +153,16 @@
         "capabilities": {
           "sessions": {
             "cancel": true,
+            "compaction": {
+              "events": true,
+              "idle": {
+                "defaultEnabled": true,
+                "defaultMinContextTokens": 200000,
+                "mode": "native",
+                "nativeHonorsMinimum": true
+              },
+              "manual": true
+            },
             "configuration": true,
             "delivery": [
               "newTurn",
