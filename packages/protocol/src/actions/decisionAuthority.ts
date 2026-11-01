@@ -157,7 +157,7 @@ export function resolveCredentialActionAdmissionV1(input: Readonly<{
   // known. External credentials retain their separate opt-in approve authority.
   if (input.spec.id === 'session.permission.respond' || input.spec.id === 'approval.request.decide') {
     return canCredentialDecideV1(input)
-      || (input.surface !== 'api' && !input.hasExternalCredential && !input.grant)
+      || (input.surface !== 'api' && input.surface !== 'voice' && !input.hasExternalCredential && !input.grant)
       ? { ok: true }
       : { ok: false, errorCode: 'present_user_required' };
   }

@@ -57,7 +57,7 @@ describe('verified invocation authority', () => {
     const spec = getActionSpec('session.permission.respond');
     for (const surface of ['agent', 'mcp', 'api', 'cli', 'rpc', 'plugin', 'ui', 'voice'] as const) {
       expect(resolveCredentialActionAdmissionV1({ spec, authority: 'account_automation', grant: null, surface }))
-        .toEqual(surface !== 'api' ? { ok: true } : { ok: false, errorCode: 'present_user_required' });
+        .toEqual(surface !== 'api' && surface !== 'voice' ? { ok: true } : { ok: false, errorCode: 'present_user_required' });
       expect(resolveCredentialActionAdmissionV1({ spec, authority: 'account_automation', grant: null, surface,
         hasExternalCredential: true })).toEqual({ ok: false, errorCode: 'present_user_required' });
       expect(resolveCredentialActionAdmissionV1({ spec, authority: 'account_automation',
