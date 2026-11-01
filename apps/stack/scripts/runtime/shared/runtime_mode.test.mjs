@@ -44,6 +44,20 @@ test('resolveStackRuntimeMode lets --runtime override source env mode', () => {
   assert.equal(resolved.source, 'flag');
 });
 
+test('--runtime follows an active source snapshot while --runtime=built still selects a built snapshot', () => {
+  const activeRuntimeState = {
+    runtimeSnapshotId: null,
+    sourceRuntimeIdentities: { daemon: { selected: 'loaded-source', loaded: 'loaded-source' } },
+  };
+  assert.deepEqual(resolveStackRuntimeMode({ argv: ['--runtime'], env: {}, activeRuntimeState }),
+    { mode: 'source-snapshot', source: 'flag' });
+  assert.deepEqual(resolveStackRuntimeMode({ argv: ['--runtime=built'], env: {}, activeRuntimeState }),
+    { mode: 'require', source: 'flag' });
+  assert.deepEqual(resolveStackRuntimeMode({ argv: ['--runtime'], env: {}, activeRuntimeState: {
+    sourceRuntimeIdentities: { server: { selected: 'server-source', loaded: 'server-source' } },
+  } }), { mode: 'require', source: 'flag' });
+});
+
 test('resolveStackRuntimeMode lets --source override prefer env mode', () => {
   const resolved = resolveStackRuntimeMode({
     argv: ['--source'],

@@ -31,7 +31,10 @@ export function resolveStackRuntimeMode({ argv = [], env = process.env, activeRu
   }
 
   if (wantsRuntime) {
-    return { mode: runtimeValue === 'source' ? 'source-snapshot' : 'require', source: 'flag' };
+    const followsLoadedSourceDaemon = runtimeValue === undefined
+      && Boolean(activeRuntimeState?.sourceRuntimeIdentities?.daemon?.loaded);
+    return { mode: runtimeValue === 'source' || followsLoadedSourceDaemon
+      ? 'source-snapshot' : 'require', source: 'flag' };
   }
   if (wantsSource) {
     return { mode: 'source', source: 'flag' };
