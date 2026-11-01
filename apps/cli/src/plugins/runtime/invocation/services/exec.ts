@@ -323,6 +323,13 @@ export function spawnAuthorizedHostExecLaunchForHost(
 ): SupervisedPluginProcess {
     const custody = options.processCustody;
     const environment = withHostProcessOwnerEnvironment(launch.env, launch.processOwnerTag ?? readHostProcessOwnerTag());
+    if (options.descendantDisposition === 'preserve-on-success') {
+        // Stack lifecycle markers describe the daemon, not the native supervisor
+        // that takes ownership after this launch succeeds.
+        for (const key of Object.keys(environment)) {
+            if (key.startsWith('HAPPIER_STACK_')) delete environment[key];
+        }
+    }
     let supervised: SupervisedPluginProcess;
     // The service cleanup must retain even a no-launch capture: native
     // preparation may already own resources when the final spawn fails.
@@ -1059,9 +1066,6 @@ export function createStablePluginExecService(params: Readonly<{
     const preauthorizedSpawns =
         new WeakMap<object, ResolvedPluginExecutable>();
     const allowedEnvKeys = new Set(params.allowedEnvKeys ?? []);
-    const admittedEnvironment = Object.freeze(Object.fromEntries(
-        Object.entries(params.environment ?? {}).filter(([key]) => allowedEnvKeys.has(key)),
-    ));
 
     function guard(signal?: AbortSignal, lifetime?: ManagedPluginExecLifetimeForHost): void {
         if (!(lifetime ? lifetime.isOccurrenceCurrent() : params.isOccurrenceCurrent())) {
@@ -1315,7 +1319,7 @@ export function createStablePluginExecService(params: Readonly<{
             throw error;
         }
         const environment: Readonly<Record<string, string>> = {
-            ...admittedEnvironment,
+            ...(params.environment ?? {}),
             ...(resolved.env ?? {}),
             ...(request.env ?? {}),
         };
@@ -1380,7 +1384,8 @@ export function createStablePluginExecService(params: Readonly<{
             } catch (error) {
                 fail('plugin_exec_spawn_failed', 'Process could not be started', error);
             }
-            linuxProcessLaunchScope = process.platform === 'linux' && managedCustody
+            linuxProcessLaunchScope = process.platform === 'linux'
+                && (managedCustody || options?.descendantDisposition === 'preserve-on-success')
                 ? await prepareCgroupProcessLaunchScope() : null;
             if (params.assertLaunchCurrent) {
                 await params.assertLaunchCurrent(options?.signal

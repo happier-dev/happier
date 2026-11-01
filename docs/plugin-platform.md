@@ -5695,7 +5695,12 @@ handle without stopping those descendants. Cancellation, timeout and disposal
 while the root runs, and unsuccessful exit retain tree termination. Omission or
 `'terminate'` preserves ordinary supervision. The native tool owns subsequent
 stop/delete; this does not establish a host-managed service or release native Job
-custody. Lima selects it only for `start`; stop/delete and guest IO stay supervised.
+custody. Preserved launches do not inherit `HAPPIER_STACK_*` lifecycle markers:
+those identify the spawning Stack daemon, not the native supervisor. They retain
+their own POSIX session/process group and use the existing Linux native scope
+escape so a daemon unit's control-group stop does not own them. macOS uses the
+POSIX detachment; Lima is unavailable on Windows. Lima selects this disposition
+for `start` and `restart`; stop/delete and guest IO stay supervised.
 Native daemons must redirect inherited streams so captured output can close.
 
 A resolved native command can return `nativeInstance` using the existing

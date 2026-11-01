@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { setTimeout as delay } from 'node:timers/promises';
+import { readFile } from 'node:fs/promises';
 import { LUME_PLUGIN } from '@happier-dev/plugins-machine-lume/manifest';
 import { CUA_PLUGIN } from '@happier-dev/plugins-machine-cua/manifest';
 import { DOCKER_SANDBOXES_PLUGIN } from '@happier-dev/plugins-machine-docker-sandboxes/manifest';
@@ -14,6 +15,9 @@ import { createProductionPluginInvocationServiceOwners } from './production';
 describe('native provisioner production process composition', () => {
     it.for(['run', 'spawn'] as const)('preserves native descendants through the public %s projection after invocation retirement', async (method, { task }) => {
         await withTempDir('happier-native-exec-composed-', async directory => {
+            vi.stubEnv('HAPPIER_STACK_STACK', 'native-lifetime-fixture');
+            vi.stubEnv('HAPPIER_STACK_ENV_FILE', `${directory}/env`);
+            vi.stubEnv('HAPPIER_STACK_PROCESS_KIND', 'daemon');
             const fixture = createDaemonizingProcessFixture(directory);
             const manifest = normalizePluginManifestV2(LIMA_PLUGIN.manifest);
             const controller = new AbortController();
@@ -60,18 +64,24 @@ describe('native provisioner production process composition', () => {
                 controller.abort();
                 await owners.dispose();
                 expect(await waitForProcessExit(pid, { timeoutMs: 200 })).toBe(false);
+                if (process.platform === 'linux') {
+                    const keys = (await readFile(`/proc/${pid}/environ`, 'utf8')).split('\0')
+                        .map(entry => entry.slice(0, entry.indexOf('='))).filter(key => key.startsWith('HAPPIER_STACK_'));
+                    expect(keys).toEqual([]);
+                }
             } finally {
                 controller.abort();
                 await owners.dispose();
                 await fixture.cleanup();
+                vi.unstubAllEnvs();
             }
         });
     });
 
     it.each([LUME_PLUGIN.manifest, CUA_PLUGIN.manifest, DOCKER_SANDBOXES_PLUGIN.manifest].map(manifest => normalizePluginManifestV2(manifest)))(
-        'preserves the selected native environment without disclosing unrelated ambient values for $id',
+        'preserves native overrides and inherited host configuration for $id',
         async (manifest) => {
-            vi.stubEnv('UNRELATED_SECRET', 'ambient-secret');
+            vi.stubEnv('NATIVE_AMBIENT_CONFIGURATION', 'ambient-configuration');
             vi.stubEnv('NATIVE_CONFIGURATION', 'ambient-configuration');
             const owners = createProductionPluginInvocationServiceOwners({
                 loggerSink: { write() {} },
@@ -99,11 +109,11 @@ describe('native provisioner production process composition', () => {
                 }, { hostAccessRequests: requests, surface: seed.surface, signal: seed.signal }).serviceBinding;
                 const services = owners.createServices(seed, binding);
                 const result = await services.exec.run({ executable,
-                    args: ['-e', 'process.stdout.write(JSON.stringify({selected:process.env.NATIVE_CONFIGURATION, unrelated:process.env.UNRELATED_SECRET ?? null}))'],
+                    args: ['-e', 'process.stdout.write(JSON.stringify({selected:process.env.NATIVE_CONFIGURATION, ambient:process.env.NATIVE_AMBIENT_CONFIGURATION}))'],
                     env: { NATIVE_CONFIGURATION: 'selected-configuration' },
                 });
                 expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
-                expect(JSON.parse(Buffer.from(result.stdout).toString())).toEqual({ selected: 'selected-configuration', unrelated: null });
+                expect(JSON.parse(Buffer.from(result.stdout).toString())).toEqual({ selected: 'selected-configuration', ambient: 'ambient-configuration' });
             } finally {
                 await owners.dispose();
                 vi.unstubAllEnvs();
