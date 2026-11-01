@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, QualifiedConnectedAccountCredentialPayloadV1Schema } from '@happier-dev/protocol';
 
 import {
@@ -12,10 +12,11 @@ import type {
   ConnectedAccountAttemptSettlementRequest,
   ConnectedAccountDeviceTransactionSnapshot,
   ConnectedAccountOAuthTransactionSnapshot,
-} from '@/plugins/runtime/connectedAccounts/authenticationAttemptOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import type { PluginSourceCustody } from '@/plugins/runtime/sourceAuthority';
 import { loadBundledPluginLocators } from '@/plugins/projection/registry/builtIn/locators';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
+import { createConnectedAccountAttemptTransactionApiBoundary as createTransactionApi } from '@/testkit/connectedAccountAttemptTransactionApi';
 
 import {
   createQualifiedConnectedAccountAttemptTransactionAdapters,
@@ -25,77 +26,7 @@ function transactionKey(
   kind: ConnectedAccountAttemptTransactionKind,
   attemptId: string,
 ): string {
-  return `${kind}:${attemptId}`;
-}
-
-function createTransactionApi(): ConnectedAccountAttemptTransactionStoreApi & {
-  records: Map<string, ConnectedAccountAttemptTransactionRecord>;
-} {
-  const records = new Map<string, ConnectedAccountAttemptTransactionRecord>();
-  const scopes = new Map<string, Parameters<ConnectedAccountAttemptTransactionStoreApi['create']>[0]['scope']>();
-  return {
-    records,
-    async create(input) {
-      const key = transactionKey(input.kind, input.attemptId);
-      if (records.has(key)) {
-        throw new ConnectedAccountAttemptTransactionApiError(
-          'connected_account_attempt_transaction_conflict',
-        );
-      }
-      const record = Object.freeze({
-        revision: 1,
-        content: input.content,
-        expiresAtMs: input.expiresAtMs,
-      });
-      records.set(key, record);
-      scopes.set(key, input.scope);
-      return record;
-    },
-    async read(input) {
-      return records.get(transactionKey(input.kind, input.attemptId)) ?? null;
-    },
-    async replace(input) {
-      const key = transactionKey(input.kind, input.attemptId);
-      const current = records.get(key);
-      if (!current || current.revision !== input.expectedRevision) {
-        throw new ConnectedAccountAttemptTransactionApiError(
-          'connected_account_attempt_transaction_conflict',
-        );
-      }
-      const record = Object.freeze({
-        revision: current.revision + 1,
-        content: input.content,
-        expiresAtMs: input.expiresAtMs,
-      });
-      records.set(key, record);
-      scopes.set(key, input.scope);
-      return record;
-    },
-    async delete(input) {
-      const key = transactionKey(input.kind, input.attemptId);
-      const current = records.get(key);
-      if (!current || current.revision !== input.expectedRevision) {
-        throw new ConnectedAccountAttemptTransactionApiError(
-          'connected_account_attempt_transaction_conflict',
-        );
-      }
-      records.delete(key);
-      scopes.delete(key);
-    },
-    async listPending(input) {
-      return [...scopes.entries()].flatMap(([key, scope]) => {
-        const record = records.get(key);
-        if (!record || scope.machineId !== input.machineId
-          || scope.service.pluginId !== input.service.pluginId
-          || scope.service.localId !== input.service.localId
-          || scope.phase === 'starting') return [];
-        const [kind, attemptId] = key.split(':');
-        if (kind !== 'oauth' && kind !== 'device' || !attemptId) return [];
-        return [{ attemptId, kind, modeId: scope.modeId, intent: scope.intent,
-          phase: scope.phase, createdAtMs: scope.createdAtMs, expiresAtMs: record.expiresAtMs }];
-      });
-    },
-  };
+  return attemptId;
 }
 
 function credentials(fill: number): Credentials {
@@ -214,6 +145,126 @@ function preparedDeviceSettlement(
 }
 
 describe('qualified Connected Account attempt transaction adapters', () => {
+  it.each(['oauth', 'device'] as const)('restores %s from its already addressed record without another lookup', async kind => {
+    const api = createTransactionApi();
+    const owner = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: tokenOnlyCredentials(), ...plainAccount, api, now: () => 5_000,
+    });
+    const snapshot = kind === 'oauth' ? oauthSnapshot() : deviceSnapshot();
+    if (kind === 'oauth') {
+      await owner.oauth.create({ attemptId: snapshot.attemptId, service,
+        snapshot: oauthSnapshot(), callbackUrl: 'https://app.example/callback' });
+    } else {
+      await owner.device.acknowledge(deviceSnapshot());
+    }
+    const reads = vi.spyOn(api, 'read');
+    const record = await api.read({ attemptId: snapshot.attemptId });
+    expect(record).not.toBeNull();
+    if (kind === 'oauth') {
+      expect((await owner.oauth.read(snapshot.attemptId, record!))?.snapshot).toEqual(snapshot);
+    } else {
+      expect(await owner.device.read(snapshot.attemptId, record!)).toEqual(snapshot);
+    }
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves another transaction kind untouched during device cleanup', async () => {
+    const api = createTransactionApi();
+    const owner = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: tokenOnlyCredentials(), ...plainAccount, api, now: () => 5_000,
+    });
+    const snapshot = oauthSnapshot();
+    const transaction = await owner.oauth.create({ attemptId: snapshot.attemptId,
+      service, snapshot, callbackUrl: 'https://app.example/callback' });
+    await owner.device.clear(snapshot.attemptId);
+    expect(await owner.oauth.read(snapshot.attemptId)).toMatchObject({ request: transaction.request });
+    expect(api.records.size).toBe(1);
+  });
+
+  it.each(['plain', 'e2ee'] as const)('uses one finite %s address while configuration advances to OAuth', async accountMode => {
+    const api = createTransactionApi();
+    let now = 5_000;
+    const owner = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: accountMode === 'plain' ? tokenOnlyCredentials() : credentials(7),
+      ...(accountMode === 'plain' ? plainAccount : e2eeAccount), api, now: () => now,
+    });
+    const snapshot = oauthSnapshot();
+    const address = { attemptId: snapshot.attemptId, kind: 'oauth' as const,
+      phase: 'configurationRequired' as const, createdAtMs: snapshot.createdAtMs,
+      intent: snapshot.intent, service, modeId: snapshot.modeId };
+    const acknowledged = await owner.address.acknowledge(address);
+    const first = api.records.get(snapshot.attemptId)!;
+    expect(first.scope.phase).toBe('configurationRequired');
+    expect(await owner.oauth.read(snapshot.attemptId)).toBeNull();
+    now += 1_000;
+    expect(await owner.address.acknowledge(address)).toEqual(acknowledged);
+    const transaction = await owner.oauth.create({ attemptId: snapshot.attemptId,
+      service, snapshot, callbackUrl: 'https://app.example/callback' });
+    expect(api.records.size).toBe(1);
+    expect(api.records.get(snapshot.attemptId)?.scope.phase).toBe('starting');
+    expect(transaction.expiresAtMs).toBeLessThanOrEqual(acknowledged.expiresAtMs);
+    await transaction.close();
+    expect(api.records.size).toBe(0);
+  });
+
+  it('advances a configuration address to a device challenge without adding a second record', async () => {
+    const api = createTransactionApi();
+    const owner = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: tokenOnlyCredentials(), ...plainAccount, api, now: () => 5_000,
+    });
+    const snapshot = deviceSnapshot();
+    await owner.address.acknowledge({ attemptId: snapshot.attemptId, kind: 'device',
+      phase: 'configurationRequired', createdAtMs: snapshot.createdAtMs,
+      intent: snapshot.intent, service, modeId: snapshot.modeId });
+    expect(await owner.device.read(snapshot.attemptId)).toBeNull();
+    await owner.device.acknowledge(snapshot);
+    expect(api.records.size).toBe(1);
+    expect(await owner.device.read(snapshot.attemptId)).toEqual(snapshot);
+    await owner.device.clear(snapshot.attemptId);
+    expect(api.records.size).toBe(0);
+  });
+
+  it('keeps a manual host address at its admitted expiry and clears the same record', async () => {
+    const api = createTransactionApi();
+    let now = 5_000;
+    const owner = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: tokenOnlyCredentials(), ...plainAccount, api, now: () => now,
+    });
+    const snapshot = { attemptId: 'manual-attempt', kind: 'manual' as const,
+      phase: 'configurationRequired' as const, createdAtMs: now,
+      intent: 'connect' as const, service, modeId: 'manual' };
+    const acknowledged = await owner.address.acknowledge(snapshot);
+    now += 1_000;
+    expect(await owner.address.acknowledge({ ...snapshot, phase: 'awaitingManual' })).toEqual(acknowledged);
+    expect(api.records.size).toBe(1);
+    expect(api.records.get(snapshot.attemptId)).toMatchObject({ kind: 'manual',
+      expiresAtMs: acknowledged.expiresAtMs, scope: { phase: 'awaitingManual' } });
+    await owner.address.clear(snapshot.attemptId);
+    expect(api.records.size).toBe(0);
+  });
+
+  it('persists and restores an Account-scoped attempt without a Machine', async () => {
+    const api = createTransactionApi();
+    const owner = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: tokenOnlyCredentials(),
+      getAccountEncryptionMode: plainAccount.getAccountEncryptionMode,
+      api,
+      now: () => 5_000,
+    });
+    const snapshot = oauthSnapshot();
+    const transaction = await owner.oauth.create({
+      attemptId: snapshot.attemptId, service, snapshot, callbackUrl: 'https://app.example/callback',
+    });
+    await transaction.acknowledge({ ...snapshot, phase: 'awaitingOAuth' });
+    expect(await owner.listPending(service)).toEqual([expect.objectContaining({ attemptId: snapshot.attemptId })]);
+    const otherHost = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: tokenOnlyCredentials(), ...plainAccount, api, now: () => 5_000,
+    });
+    const restored = await otherHost.oauth.read(snapshot.attemptId);
+    expect(restored?.request).toEqual(transaction.request);
+    await restored?.acknowledge({ ...snapshot, phase: 'awaitingOAuth' });
+    expect(api.records.get(transactionKey('oauth', snapshot.attemptId))?.scope).not.toHaveProperty('machineId');
+  });
   it.each(['credential', 'redirect'] as const)('retains valid large %s material through the canonical transaction envelope', async (kind) => {
     const api = createTransactionApi();
     const owner = createQualifiedConnectedAccountAttemptTransactionAdapters({
@@ -246,7 +297,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     } else {
       const snapshot = { ...deviceSnapshot(), expiresAtMs: providerExpiry };
       await owner.device.acknowledge(snapshot);
-      expect(api.records.get('device:device-attempt')?.expiresAtMs).toBe(providerExpiry);
+      expect(api.records.get('device-attempt')?.expiresAtMs).toBe(providerExpiry);
       await owner.device.clear(snapshot.attemptId);
     }
   });
@@ -257,13 +308,13 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     const snapshot = { ...oauthSnapshot(), service: { pluginId: 'happier', localId: 'mcp-sign-in' }, sourceCustody: { kind: 'host' as const } };
     const handle = await owner.oauth.create({ attemptId: snapshot.attemptId, service: snapshot.service, snapshot,
       callbackUrl: 'https://app.happier.dev/oauth/mcp/callback' });
-    expect(handle.expiresAtMs).toBe(api.records.get('oauth:oauth-attempt')!.expiresAtMs);
+    expect(handle.expiresAtMs).toBe(api.records.get('oauth-attempt')!.expiresAtMs);
     const issuer = `https://issuer.example/${'issuer-path'.repeat(420)}`;
     const discovered = { ...snapshot, phase: 'awaitingOAuth' as const, issuer, issuerResponseParameterRequired: true, stagedAccountConfigurationContent: {
       values: { resource: 'https://mcp.example/mcp', issuer }, secretValues: { clientSecret: 'secret-client' },
     } };
     await handle.acknowledge!(discovered);
-    expect(storedContentJson(api.records.get('oauth:oauth-attempt'))).not.toContain('secret-client');
+    expect(storedContentJson(api.records.get('oauth-attempt'))).not.toContain('secret-client');
     expect((await owner.oauth.read!(snapshot.attemptId))?.snapshot).toEqual(discovered);
     await expect(handle.acknowledge!({ ...discovered, stagedAccountConfigurationContent: { values: { resource: 'https://other.example' } } }))
       .rejects.toThrow();
@@ -347,6 +398,9 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     ['device policy', { directExportContract: null }],
     ['direct-export policy', { directExportContract: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 }],
     ['absent policy', {}],
+    ['authentication provenance', { authenticationProvenance: {
+      authenticatedAt: 2_000, machine: { serverId: 'auth-home', machineId: 'auth-machine' },
+    } }],
   ] as const)('persists and restores prepared settlement with %s', async (_label, policy) => {
     const api = createTransactionApi();
     const initial = deviceSnapshot();
@@ -359,7 +413,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
 
     await owner.device!.acknowledge(prepared);
 
-    expect(api.records.get('device:device-attempt')?.revision).toBe(2);
+    expect(api.records.get('device-attempt')?.revision).toBe(2);
     const replacement = createQualifiedConnectedAccountAttemptTransactionAdapters({
       credentials: tokenOnlyCredentials(), ...plainAccount, api, now: () => 5_000,
     });
@@ -389,7 +443,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     await expect(owner.device!.acknowledge(unknownField)).rejects.toMatchObject({
       issues: expect.arrayContaining([expect.objectContaining({ code: 'unrecognized_keys' })]),
     });
-    expect(api.records.get('device:device-attempt')?.revision).toBe(1);
+    expect(api.records.get('device-attempt')?.revision).toBe(1);
     await expect(owner.device!.read(initial.attemptId)).resolves.toEqual(initial);
   });
 
@@ -443,7 +497,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     expect(original.request.callbackUrl).toBe(
       'https://provider.example/oauth/callback',
     );
-    const persisted = api.records.get('oauth:oauth-attempt');
+    const persisted = api.records.get('oauth-attempt');
 
     expect(persisted).toBeDefined();
     expect(persisted!.content.t).toBe('encrypted');
@@ -497,7 +551,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
       ...discovered,
       phase: 'outcomeUnknown',
     });
-    const consumed = api.records.get('oauth:oauth-attempt');
+    const consumed = api.records.get('oauth-attempt');
     expect(storedContentJson(consumed)).not.toContain(completion.state);
     expect(storedContentJson(consumed)).not.toContain('authorization-code');
 
@@ -517,7 +571,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     });
 
     await first.device!.acknowledge(initial);
-    const persisted = api.records.get('device:device-attempt');
+    const persisted = api.records.get('device-attempt');
     expect(persisted?.content.t).toBe('encrypted');
     expect(storedContentJson(persisted)).not.toContain('super-secret-refresh-token');
     expect(storedContentJson(persisted)).not.toContain('super-secret-tenant');
@@ -587,7 +641,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     });
 
     await first.device!.acknowledge(initial);
-    const persisted = api.records.get('device:device-attempt');
+    const persisted = api.records.get('device-attempt');
     expect(persisted?.content.t).toBe('plain');
     expect(persisted?.content).toMatchObject({
       t: 'plain',
@@ -618,7 +672,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
       snapshot: oauthInitial,
       callbackUrl: 'https://provider.example/oauth/callback',
     });
-    expect(api.records.get('oauth:oauth-attempt')?.content.t).toBe('plain');
+    expect(api.records.get('oauth-attempt')?.content.t).toBe('plain');
     await expect(afterRestart.oauth!.read!(oauthInitial.attemptId))
       .resolves.toMatchObject({
         snapshot: oauthInitial,
@@ -665,7 +719,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     const initial = deviceSnapshot(custody);
 
     await first.device!.acknowledge(initial);
-    const persisted = api.records.get('device:device-attempt');
+    const persisted = api.records.get('device-attempt');
     expect(persisted?.content).toMatchObject({
       t: 'plain',
       v: {
@@ -754,7 +808,10 @@ describe('qualified Connected Account attempt transaction adapters', () => {
   it('drops stored occurrence and retired generation fields while preserving canonical source custody', async () => {
     const api = createTransactionApi();
     const snapshot = deviceSnapshot();
-    api.records.set('device:device-attempt', Object.freeze({
+    api.records.set('device-attempt', Object.freeze({
+      kind: 'device',
+      scope: Object.freeze({ machineId: 'machine-1', service: snapshot.service, modeId: snapshot.modeId,
+        intent: snapshot.intent, phase: 'awaitingDeviceAuthorization', createdAtMs: snapshot.createdAtMs }),
       revision: 1,
       expiresAtMs: 60_000,
       content: {
@@ -784,7 +841,10 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     const api = createTransactionApi();
     const current = deviceSnapshot();
     const { sourceCustody: _custody, ...legacyRest } = current;
-    api.records.set('device:device-attempt', Object.freeze({
+    api.records.set('device-attempt', Object.freeze({
+      kind: 'device',
+      scope: Object.freeze({ machineId: 'machine-1', service: current.service, modeId: current.modeId,
+        intent: current.intent, phase: 'awaitingDeviceAuthorization', createdAtMs: current.createdAtMs }),
       revision: 1,
       expiresAtMs: 60_000,
       content: {

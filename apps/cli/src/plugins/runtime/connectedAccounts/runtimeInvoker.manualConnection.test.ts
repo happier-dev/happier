@@ -11,8 +11,8 @@ import { createStablePluginHttpHost } from '../fetch/service';
 import { createProductionPluginInvocationServiceOwners } from '../invocation/services/production';
 import { createPluginRuntimeOccurrenceId } from '../runtimeSlots';
 import { createConnectedAccountContributionRegistry } from './contributionRegistry';
-import { createConnectedAccountConfigurationOwner } from './configurationOwner';
-import { createConnectedAccountAuthenticationAttemptOwner, type ConnectedAccountAttemptSettlementRequest } from './authenticationAttemptOwner';
+import { createConnectedAccountConfigurationOwner } from '@happier-dev/cli-common/connectedAccounts';
+import { createConnectedAccountAuthenticationAttemptOwner, type ConnectedAccountAttemptSettlementRequest } from '@happier-dev/cli-common/connectedAccounts';
 import { createConnectedAccountHostRuntimeInvoker } from './runtimeInvoker';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 
@@ -60,7 +60,7 @@ describe('manual Connected Account production invocation', () => {
         let rejectCredential = fixture.provider === 'email';
         // HTTP and DNS are genuine external boundaries. Policy, registry,
         // invocation services, provider codecs and attempt settlement stay real.
-        const http = createStablePluginHttpHost({ resolveNetworkAddresses: async () => ['93.184.216.34'], adapter: {
+        const http = createStablePluginHttpHost({  adapter: {
             async request(request) {
                 requests.push(new URL(request.url).origin);
                 return { status: rejectCredential ? 401 : 200, finalUrl: request.url, headers: {},
@@ -83,7 +83,6 @@ describe('manual Connected Account production invocation', () => {
                 .map(request => ({ request, required: true })) }),
             resolveHostPolicy: owners.resolveInvocationHostPolicy,
             createServices: owners.createServices, registerRawForRedaction: owners.registerRawForRedaction,
-            resolveHostOwnedConfiguredEndpoints: () => [], resolveNetworkAddresses: async () => ['93.184.216.34'],
         });
         const persisted: ConnectedAccountAttemptSettlementRequest[] = [];
         let sequence = 0;

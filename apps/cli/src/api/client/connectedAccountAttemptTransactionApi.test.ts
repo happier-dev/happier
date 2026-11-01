@@ -8,6 +8,7 @@ import {
 
 vi.mock('axios', () => ({
   default: {
+    defaults: {},
     get: vi.fn(),
     patch: vi.fn(),
     post: vi.fn(),
@@ -36,9 +37,11 @@ describe('Connected Account attempt transaction API', () => {
       token: 'account-token',
     });
     const record = {
+      kind: 'oauth' as const,
       revision: 1,
       content: { t: 'encrypted' as const, c: 'opaque-ciphertext' },
       expiresAtMs: 123_456,
+      scope,
     };
     vi.mocked(axios.post).mockResolvedValue({
       status: 200,
@@ -69,7 +72,6 @@ describe('Connected Account attempt transaction API', () => {
       scope,
     })).resolves.toEqual(record);
     await expect(api.read({
-      kind: 'oauth',
       attemptId: 'attempt-1',
     })).resolves.toEqual(record);
     await expect(api.replace({
@@ -93,7 +95,7 @@ describe('Connected Account attempt transaction API', () => {
     const expectedUrl =
       'https://server.example/v2/connect/connected-account-attempt-transactions/oauth/attempt-1';
     expect(vi.mocked(axios.post).mock.calls[0]?.[0]).toBe(expectedUrl);
-    expect(vi.mocked(axios.get).mock.calls[0]?.[0]).toBe(expectedUrl);
+    expect(vi.mocked(axios.get).mock.calls[0]?.[0]).toBe('https://server.example/v2/connect/connected-account-attempt-transactions/attempt-1');
     expect(vi.mocked(axios.patch).mock.calls[0]?.[0]).toBe(expectedUrl);
     expect(vi.mocked(axios.delete).mock.calls[0]?.[0]).toBe(expectedUrl);
     for (const options of [
@@ -127,7 +129,6 @@ describe('Connected Account attempt transaction API', () => {
     });
 
     await expect(api.read({
-      kind: 'device',
       attemptId: 'attempt-2',
     })).resolves.toBeNull();
     await expect(api.replace({
@@ -169,7 +170,6 @@ describe('Connected Account attempt transaction API', () => {
       code: 'connected_account_attempt_transaction_unreadable',
     });
     await expect(api.read({
-      kind: 'oauth',
       attemptId: 'retained-unreadable',
     })).rejects.toMatchObject({
       name: ConnectedAccountAttemptTransactionApiError.name,
@@ -254,7 +254,6 @@ describe('Connected Account attempt transaction API', () => {
     });
 
     await expect(api.read({
-      kind: 'oauth',
       attemptId: 'attempt-3',
     })).rejects.toThrow();
   });
@@ -275,7 +274,6 @@ describe('Connected Account attempt transaction API', () => {
     });
 
     await expect(api.read({
-      kind: 'oauth',
       attemptId: 'attempt-5',
     })).rejects.toThrow();
   });

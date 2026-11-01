@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ConnectedAccountConfigurationError,
   createConnectedAccountConfigurationOwner,
-} from '@/plugins/runtime/connectedAccounts/configurationOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import {
   resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot,

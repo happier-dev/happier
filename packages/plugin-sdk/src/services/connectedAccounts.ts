@@ -5,8 +5,10 @@ import type {
     ConnectedAccountRuntime,
 } from '../connectedAccounts.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
-import type { JsonValue, PluginContributionRef } from '../identity.js';
+import type { PluginContributionRef } from '../identity.js';
 import type { PluginInvocationContext } from '../invocation.js';
+import type { HttpService } from './io.js';
+import type { LoggerService } from './core.js';
 export type {
     ConnectedAccountBindingEvent as PluginConnectedAccountBindingEvent,
     ConnectedAccountBindingSummary as PluginConnectedAccountBindingSummary,
@@ -21,179 +23,77 @@ export type {
     PluginConnectedAccountMaterializationKind,
 } from '../connectedAccounts.js';
 
-export type PluginConnectedAccountRuntimeConfigurationTarget =
-    | Readonly<{
-        kind: 'service';
-        service: PluginContributionRef;
-        modeId: string;
-    }>
-    | Readonly<{
-        kind: 'account';
-        account: ConnectedAccountRef;
-        modeId: string;
-    }>
-    | Readonly<{
-        kind: 'attempt';
-        attemptId: string;
-        service: PluginContributionRef;
-        modeId: string;
-    }>;
-export type PluginConnectedAccountRuntimeConfiguration = Readonly<{
-    target: PluginConnectedAccountRuntimeConfigurationTarget;
-    revision: string;
-    values: Readonly<Record<string, JsonValue>>;
-    getSecret(
-        fieldId: string,
-        options?: Readonly<{ signal?: AbortSignal }>,
-    ): Promise<string | null>;
-}>;
-export interface PluginConnectedAccountCredentialStore {
-    get(key: string, options?: { signal?: AbortSignal }): Promise<string | null>;
-    set(key: string, value: string, options?: { signal?: AbortSignal }): Promise<void>;
-    delete(key: string, options?: { signal?: AbortSignal }): Promise<void>;
-}
-export type PluginConnectedAccountAuthenticationAttempt =
-    | Readonly<{ kind: 'connect'; attemptId: string }>
-    | Readonly<{ kind: 'reconnect'; attemptId: string; account: ConnectedAccountRef }>;
+import type {
+    ConnectedAccountAuthenticationModeRuntime,
+    ConnectedAccountRuntimeConfigurationTarget as PluginConnectedAccountRuntimeConfigurationTarget,
+    ConnectedAccountRuntimeConfiguration as PluginConnectedAccountRuntimeConfiguration,
+    ConnectedAccountCredentialStore as PluginConnectedAccountCredentialStore,
+    ConnectedAccountAuthenticationAttempt as PluginConnectedAccountAuthenticationAttempt,
+    ConnectedAccountFailureRetryEvidence as PluginConnectedAccountFailureRetryEvidence,
+    ConnectedAccountProviderIdentity,
+    ConnectedAccountAuthCompletionResult as PluginConnectedAccountAuthCompletionResult,
+    ConnectedAccountAuthFailure as PluginConnectedAccountAuthFailure,
+    ConnectedAccountOutcomeUnknown as PluginConnectedAccountOutcomeUnknown,
+    ConnectedAccountConnectedResult as PluginConnectedAccountConnectedResult,
+    ConnectedAccountOAuthBeginRequest as PluginConnectedAccountOAuthBeginRequest,
+    ConnectedAccountOAuthCompletion as PluginConnectedAccountOAuthCompletion,
+    ConnectedAccountManualCompletion as PluginConnectedAccountManualCompletion,
+    ConnectedAccountOAuthBeginResult as PluginConnectedAccountOAuthBeginResult,
+    ConnectedAccountDeviceBeginResult as PluginConnectedAccountDeviceBeginResult,
+    ConnectedAccountDevicePollResult as PluginConnectedAccountDevicePollResult,
+    ConnectedAccountReconciliationResult as PluginConnectedAccountReconciliationResult,
+    ConnectedAccountPendingResult as PluginConnectedAccountPendingResult
+} from '@happier-dev/cli-common/connectedAccounts';
+/** @realm any */
+export type {
+    ConnectedAccountRuntimeConfigurationTarget as PluginConnectedAccountRuntimeConfigurationTarget,
+    ConnectedAccountRuntimeConfiguration as PluginConnectedAccountRuntimeConfiguration,
+    ConnectedAccountCredentialStore as PluginConnectedAccountCredentialStore,
+    ConnectedAccountAuthenticationAttempt as PluginConnectedAccountAuthenticationAttempt,
+    ConnectedAccountFailureRetryEvidence as PluginConnectedAccountFailureRetryEvidence,
+    ConnectedAccountProviderIdentity,
+    ConnectedAccountAuthCompletionResult as PluginConnectedAccountAuthCompletionResult,
+    ConnectedAccountAuthFailure as PluginConnectedAccountAuthFailure,
+    ConnectedAccountOutcomeUnknown as PluginConnectedAccountOutcomeUnknown,
+    ConnectedAccountConnectedResult as PluginConnectedAccountConnectedResult,
+    ConnectedAccountOAuthBeginRequest as PluginConnectedAccountOAuthBeginRequest,
+    ConnectedAccountOAuthCompletion as PluginConnectedAccountOAuthCompletion,
+    ConnectedAccountManualCompletion as PluginConnectedAccountManualCompletion,
+    ConnectedAccountOAuthBeginResult as PluginConnectedAccountOAuthBeginResult,
+    ConnectedAccountDeviceBeginResult as PluginConnectedAccountDeviceBeginResult,
+    ConnectedAccountDevicePollResult as PluginConnectedAccountDevicePollResult,
+    ConnectedAccountReconciliationResult as PluginConnectedAccountReconciliationResult,
+    ConnectedAccountPendingResult as PluginConnectedAccountPendingResult
+} from '@happier-dev/cli-common/connectedAccounts';
 /**
  * Connected Account runtime work is not an Action invocation, so it never
  * receives the Action progress reporter. Its own `operation` metadata would
  * otherwise intersect with that reporter and force the host to advertise a
  * progress callback it discards.
  */
-export type PluginConnectedAccountAuthenticationContext = Omit<PluginInvocationContext, 'operation'> & Readonly<{
+/** @realm any */
+export type PluginConnectedAccountPortableAuthenticationContext = Pick<PluginInvocationContext,
+    'plugin' | 'contribution' | 'surface' | 'invokedAtMs' | 'caller' | 'signal'> & Readonly<{
+    services: Readonly<{
+        http: HttpService;
+        /** Host diagnostics when available; portable Account hosts may omit logging. */
+        logger?: Pick<LoggerService, 'warn'>;
+    }>;
     service: PluginContributionRef;
     attempt: PluginConnectedAccountAuthenticationAttempt;
     configuration: PluginConnectedAccountRuntimeConfiguration;
     attemptCredentials: PluginConnectedAccountCredentialStore;
 }>;
-export type PluginConnectedAccountFailureRetryEvidence =
-    | Readonly<{
-        failureClass?: never;
-        retryNotBeforeMs?: never;
-    }>
-    | Readonly<{
-        /** Closed provider evidence; currently only an explicit rate limit. */
-        failureClass: 'rateLimit';
-        /** Absolute epoch milliseconds derived from provider response evidence. */
-        retryNotBeforeMs?: number;
-    }>;
-
-/** Nonsecret provider identity bound to the credential; null marks an unknown fact. */
-export type ConnectedAccountProviderIdentity = Readonly<{
-    accountId?: string | null;
-    email?: string | null;
-    organizationId?: string | null;
-}>;
-
-export type PluginConnectedAccountAuthCompletionResult =
-    | Readonly<{
-        status: 'connected';
-        /**
-         * Immutable service-local account identity proposed by the plugin when it
-         * has a truthful stable value. The host mints an opaque identity when this
-         * is omitted on first connect; reconnect remains bound to the admitted
-         * exact account.
-         */
-        accountId?: string;
-        providerIdentity?: ConnectedAccountProviderIdentity;
-        displayName: string;
-        scopes: readonly string[];
-    }>
-    | (Readonly<{
-        status: 'rejected';
-        diagnostic: PluginDiagnosticData;
-    }> & PluginConnectedAccountFailureRetryEvidence)
-    | (Readonly<{
-        status: 'unavailable';
-        diagnostic: PluginDiagnosticData;
-    }> & PluginConnectedAccountFailureRetryEvidence)
-    | Readonly<{
-        status: 'outcomeUnknown';
-        diagnostic: PluginDiagnosticData;
-    }>;
-export type PluginConnectedAccountAuthFailure = Extract<
-    PluginConnectedAccountAuthCompletionResult,
-    Readonly<{ status: 'rejected' | 'unavailable' }>
+/** Native authentication retains the daemon's ordinary invocation services. @realm daemon */
+export type PluginConnectedAccountAuthenticationContext = Omit<PluginInvocationContext, 'operation'> & Pick<
+    PluginConnectedAccountPortableAuthenticationContext,
+    'service' | 'attempt' | 'configuration' | 'attemptCredentials'
 >;
-export type PluginConnectedAccountOutcomeUnknown = Extract<
-    PluginConnectedAccountAuthCompletionResult,
-    Readonly<{ status: 'outcomeUnknown' }>
->;
-export type PluginConnectedAccountConnectedResult = Extract<
-    PluginConnectedAccountAuthCompletionResult,
-    Readonly<{ status: 'connected' }>
->;
-export type PluginConnectedAccountOAuthBeginRequest = Readonly<{
-    callbackUrl: string;
-    state: string;
-    pkce: Readonly<{ challenge: string; method: 'S256' }>;
-}>;
-export type PluginConnectedAccountOAuthCompletion = Readonly<{
-    code: string;
-    callbackUrl: string;
-    state: string;
-    pkceVerifier: string;
-}>;
-export type PluginConnectedAccountManualCompletion = Readonly<{
-    fields: Readonly<Record<string, string>>;
-}>;
-export type PluginConnectedAccountOAuthBeginResult =
-    | Readonly<{
-        status: 'awaitingOAuthRedirect';
-        authorizationUrl: string;
-        expiresAtMs?: number;
-        issuer?: string;
-        issuerResponseParameterRequired?: boolean;
-    }>
-    | Exclude<PluginConnectedAccountAuthCompletionResult, Readonly<{ status: 'connected' }>>;
-export type PluginConnectedAccountDeviceBeginResult =
-    | Readonly<{
-        status: 'awaitingDeviceAuthorization';
-        verificationUri: string;
-        verificationUriComplete?: string;
-        userCode: string;
-        expiresAtMs: number;
-        pollIntervalMs: number;
-    }>
-    | Exclude<PluginConnectedAccountAuthCompletionResult, Readonly<{ status: 'connected' }>>;
-export type PluginConnectedAccountDevicePollResult =
-    | Readonly<{ status: 'pending'; retryAfterMs: number }>
-    | PluginConnectedAccountAuthCompletionResult;
-export type PluginConnectedAccountReconciliationResult =
-    | Readonly<{ status: 'pending'; retryAfterMs: number }>
-    | PluginConnectedAccountAuthCompletionResult;
-export type PluginConnectedAccountPendingResult = Extract<
-    PluginConnectedAccountDevicePollResult,
-    Readonly<{ status: 'pending' }>
->;
+/** @realm any */
 export type PluginConnectedAccountAuthenticationModeRuntime =
-    (
-        | Readonly<{
-            kind: 'oauthAuthorizationCode';
-            begin(input: PluginConnectedAccountOAuthBeginRequest, context: PluginConnectedAccountAuthenticationContext, options?: { signal?: AbortSignal }): Promise<PluginConnectedAccountOAuthBeginResult>;
-            complete(input: PluginConnectedAccountOAuthCompletion, context: PluginConnectedAccountAuthenticationContext, options?: { signal?: AbortSignal }): Promise<PluginConnectedAccountAuthCompletionResult>;
-            cancel(context: PluginConnectedAccountAuthenticationContext): Promise<void>;
-        }>
-        | Readonly<{
-            kind: 'oauthDeviceCode';
-            begin(context: PluginConnectedAccountAuthenticationContext, options?: { signal?: AbortSignal }): Promise<PluginConnectedAccountDeviceBeginResult>;
-            poll(context: PluginConnectedAccountAuthenticationContext, options?: { signal?: AbortSignal }): Promise<PluginConnectedAccountDevicePollResult>;
-            cancel(context: PluginConnectedAccountAuthenticationContext): Promise<void>;
-        }>
-        | Readonly<{
-            kind: 'manual';
-            complete(input: PluginConnectedAccountManualCompletion, context: PluginConnectedAccountAuthenticationContext, options?: { signal?: AbortSignal }): Promise<PluginConnectedAccountAuthCompletionResult>;
-        }>
-    ) & Readonly<{
-        reconcile?(
-            context: PluginConnectedAccountAuthenticationContext,
-            options?: Readonly<{ signal?: AbortSignal }>,
-        ): Promise<PluginConnectedAccountReconciliationResult>;
-    }>;
-export type PluginConnectedAccountHealthResult =
-    | Readonly<{ status: ConnectedAccountListedState; providerIdentity?: ConnectedAccountProviderIdentity; displayName?: string; scopes?: readonly string[]; diagnostic?: PluginDiagnosticData }>
-    | Readonly<{ status: 'rejected'; diagnostic: PluginDiagnosticData }>;
+    ConnectedAccountAuthenticationModeRuntime<PluginConnectedAccountAuthenticationContext>;
+export type { ConnectedAccountHealthResult as PluginConnectedAccountHealthResult } from '@happier-dev/cli-common/connectedAccounts';
+import type { ConnectedAccountHealthResult as PluginConnectedAccountHealthResult } from '@happier-dev/cli-common/connectedAccounts';
 export type PluginConnectedAccountReadContext = Omit<PluginInvocationContext, 'operation'> & Readonly<{
     account: ConnectedAccountRef;
     configuration: PluginConnectedAccountRuntimeConfiguration;

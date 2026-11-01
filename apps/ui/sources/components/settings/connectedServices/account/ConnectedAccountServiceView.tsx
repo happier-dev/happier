@@ -763,7 +763,7 @@ const ConnectedAccountServiceController = React.memo(
                 ...(expectedActiveServer ? { expectedActiveServer } : {}),
                 command: pending.kind === 'device'
                     ? { operation: 'resumeDevice', attemptId: pending.attemptId }
-                    : { operation: 'read', attemptId: pending.attemptId, restoreKind: 'oauth' },
+                    : { operation: 'read', attemptId: pending.attemptId },
                 signal: request.signal,
             });
             if (!isControllerCurrent() || request.signal.aborted || generation !== flowGenerationRef.current) return;

@@ -3,9 +3,11 @@ import { z } from 'zod/mini';
 
 import { CanonicalHttpOriginSchema } from '../http/canonicalHttpOrigin.js';
 import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';
+import { PluginClientExecutionReferenceV1Schema } from '../plugins/contributions/clientExecution.js';
 import {
   PluginConfigurationSettingFieldV2Schema,
   PluginSettingFieldV2Schema,
+  PluginSettingFieldIdV2Schema,
 } from '../plugins/contributions/settings.js';
 import {
   PluginJsonValueV2Schema,
@@ -13,6 +15,7 @@ import {
 } from '../plugins/contributions/publicTypes.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { ProviderAccountUsageRecordKeyV1Schema } from './providerAccountUsagePrimitives.js';
+import { QualifiedConnectedAccountCredentialKeyV1Schema } from './qualifiedConnectedAccountCredentialKeyV1.js';
 
 const PluginConnectedAccountAuthenticationFieldV2Schema =
   lazyZodSchema(() => z.pipe(PluginSettingFieldV2Schema, z.transform((field) => ({
@@ -188,7 +191,35 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       fields: PluginConnectedAccountAuthenticationFieldsV2Schema,
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
       directExport: z.optional(PluginConnectedAccountDirectExportV2Schema),
-    }),
+      /** Verified manual input fields staged under these exact credential keys. */
+      credentialFieldKeys: z.optional(z.record(PluginSettingFieldIdV2Schema, QualifiedConnectedAccountCredentialKeyV1Schema)),
+      /** Omission is unknown. Import completion never establishes the original sign-in time. */
+      credentialOrigin: z.optional(z.enum(['authentication', 'native_import'])),
+      /** Canonical string values, with only an optional declared field-key projection; no runtime/provider verification. */
+      accountDirectSave: z.optional(z.union([z.literal(true), z.strictObject({
+        fieldKeys: z.record(PluginSettingFieldIdV2Schema, QualifiedConnectedAccountCredentialKeyV1Schema),
+      })])),
+    }).check(z.superRefine((mode, context) => {
+      if (mode.credentialFieldKeys) {
+        const declared = new Set(mode.fields.map(field => field.id));
+        const keys = Object.values(mode.credentialFieldKeys);
+        if (Object.keys(mode.credentialFieldKeys).some(id => !declared.has(id)) || new Set(keys).size !== keys.length
+          || mode.accountDirectSave !== undefined) context.addIssue({ code: 'custom', path: ['credentialFieldKeys'],
+            message: 'Manual credential keys must name distinct declared fields and have one mapping owner.' });
+      }
+      if (mode.accountDirectSave && mode.configuration) context.addIssue({ code: 'custom', path: ['accountDirectSave'],
+        message: 'Account-direct credentials cannot require daemon-owned configuration.' });
+      if (typeof mode.accountDirectSave === 'object') {
+        const mapping = mode.accountDirectSave.fieldKeys;
+        const sourceIds = new Set(mode.fields.map(field => field.id));
+        if (Object.keys(mapping).some(id => !sourceIds.has(id))) context.addIssue({ code: 'custom', path: ['accountDirectSave', 'fieldKeys'],
+          message: 'Account-direct field keys must name declared manual fields.' });
+        const keys = mode.fields.map(field => mapping[field.id] ?? field.id);
+        if (new Set(keys).size !== keys.length || keys.some(key => !QualifiedConnectedAccountCredentialKeyV1Schema.safeParse(key).success)) {
+          context.addIssue({ code: 'custom', path: ['accountDirectSave', 'fieldKeys'], message: 'Account-direct credential keys must be valid and unique.' });
+        }
+      }
+    })),
     z.strictObject({
       id: asProtocolZod(PluginContributionLocalIdSchema),
       kind: z.literal('oauthAuthorizationCode'),
@@ -220,7 +251,40 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
 export type PluginConnectedAccountAuthenticationModeV2 =
   z.infer<typeof PluginConnectedAccountAuthenticationModeV2Schema>;
 
+export function isAccountDirectConnectedAccountModeV1(mode: PluginConnectedAccountAuthenticationModeV2 | null | undefined):
+  mode is Extract<PluginConnectedAccountAuthenticationModeV2, { kind: 'manual' }> & { accountDirectSave: NonNullable<Extract<PluginConnectedAccountAuthenticationModeV2, { kind: 'manual' }>['accountDirectSave']> } {
+  return mode?.kind === 'manual' && mode.accountDirectSave !== undefined && mode.configuration === undefined;
+}
+
+/**
+ * Credential keys of an Account-direct mode whose declared field is `secret`.
+ * The declaration, not a service id or value match, decides custody: these
+ * keys are held by one Saved Secret resource each and the credential keeps
+ * only the reference.
+ */
+export function listAccountDirectSecretCredentialKeysV1(
+  mode: PluginConnectedAccountAuthenticationModeV2 | null | undefined,
+): ReadonlyMap<string, string> {
+  if (!isAccountDirectConnectedAccountModeV1(mode)) return new Map();
+  return listConnectedAccountSecretCredentialKeysV1(mode);
+}
+
+/** Declaration-owned field provenance; never infer a key by comparing secret values. */
+export function listConnectedAccountSecretCredentialKeysV1(
+  mode: PluginConnectedAccountAuthenticationModeV2 | null | undefined,
+): ReadonlyMap<string, string> {
+  if (mode?.kind !== 'manual') return new Map();
+  if (mode.credentialFieldKeys) return new Map(mode.fields.filter(field => field.secret && Object.hasOwn(mode.credentialFieldKeys!, field.id))
+    .map(field => [mode.credentialFieldKeys![field.id]!, field.id] as const));
+  if (!isAccountDirectConnectedAccountModeV1(mode)) return new Map();
+  const fieldKeys = mode.accountDirectSave === true ? null : mode.accountDirectSave.fieldKeys;
+  return new Map(mode.fields.filter(field => field.secret === true)
+    .map(field => [fieldKeys?.[field.id] ?? field.id, field.id] as const));
+}
+
 export const PluginConnectedAccountAuthenticationV2Schema = lazyZodSchema(() => z.strictObject({
+  /** Optional authentication-only Account artifact; daemon native operations keep their runtime. */
+  account: z.optional(PluginClientExecutionReferenceV1Schema),
   defaultModeId: asProtocolZod(PluginContributionLocalIdSchema),
   modes: z.array(PluginConnectedAccountAuthenticationModeV2Schema).check(z.minLength(1)),
   native: z.optional(z.strictObject({ systemTool: z.literal('gh') })),

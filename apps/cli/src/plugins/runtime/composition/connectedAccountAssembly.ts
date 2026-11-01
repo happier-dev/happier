@@ -2,12 +2,10 @@ import type { PluginSourceCustody } from '../sourceAuthority';
 import type { PluginRuntimeOccurrenceId } from '../runtimeSlots';
 import type { ResolvedContributionRegistry } from '../../projection/registry/types';
 import type { StablePluginConnectedAccountsOwner } from '../invocation/services/connectedAccounts';
-import type { PluginNetworkAddressResolver } from '../fetch/originLocality';
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedAccountContributionRegistry } from '../connectedAccounts/contributionRegistry';
 import type { HostConnectedAccountRuntimeRegistration } from '../connectedAccounts/contributionRegistry';
 import { createConnectedAccountHostRuntimeInvoker } from '../connectedAccounts/runtimeInvoker';
-import { resolveHostOwnedConnectedAccountConfiguredEndpoints } from '../connectedAccounts/configuredOrigins';
 import type { createProductionPluginInvocationServiceOwners } from '../invocation/services/production';
 
 type InvocationServiceOwners = ReturnType<typeof createProductionPluginInvocationServiceOwners>;
@@ -18,6 +16,7 @@ export function assembleConnectedAccountRuntime(input: Readonly<{
     readPluginOccurrenceId(pluginId: string): PluginRuntimeOccurrenceId | null;
     readPluginSourceCustody(pluginId: string): PluginSourceCustody | null;
     isPluginOccurrenceCurrent(pluginId: string, occurrenceId: PluginRuntimeOccurrenceId): boolean;
+    resolveRetirementSignal?(pluginId: string): AbortSignal;
     activateOnDemand(ref: Readonly<{ pluginId: string; localId: string }>): Promise<void>;
     readRegistrations(): Parameters<typeof createConnectedAccountContributionRegistry>[0]['readRegistrations'] extends () => infer Result
         ? Result
@@ -31,14 +30,12 @@ export function assembleConnectedAccountRuntime(input: Readonly<{
         | 'redactDiagnosticText'
     >;
     onDescriptorUnavailable: Parameters<typeof createConnectedAccountContributionRegistry>[0]['onDescriptorUnavailable'];
-    networkDependencies?: Readonly<{
-        resolveNetworkAddresses?: PluginNetworkAddressResolver;
-    }>;
 }>) {
     const contributions = createConnectedAccountContributionRegistry({
         readPluginOccurrenceId: input.readPluginOccurrenceId,
         readPluginSourceCustody: input.readPluginSourceCustody,
         isPluginOccurrenceCurrent: input.isPluginOccurrenceCurrent,
+        resolveRetirementSignal: input.resolveRetirementSignal,
         descriptors: input.descriptors,
         onDescriptorUnavailable: input.onDescriptorUnavailable,
         activateOnDemand: input.activateOnDemand,
@@ -58,23 +55,6 @@ export function assembleConnectedAccountRuntime(input: Readonly<{
                 correlationId: seed.correlationId,
             }, value);
         },
-        resolveHostOwnedConfiguredEndpoints(service, configuration) {
-            const contribution = contributions.list().find((candidate) => (
-                candidate.ref.pluginId === service.pluginId
-                && candidate.ref.localId === service.localId
-            ));
-            if (!contribution) {
-                throw new Error('Connected-account configured origin descriptor is unavailable');
-            }
-            return resolveHostOwnedConnectedAccountConfiguredEndpoints({
-                service,
-                descriptor: contribution.descriptor,
-                configuration,
-            });
-        },
-        ...(input.networkDependencies?.resolveNetworkAddresses
-            ? { resolveNetworkAddresses: input.networkDependencies.resolveNetworkAddresses }
-            : {}),
     });
     return Object.freeze({ contributions, invoker });
 }

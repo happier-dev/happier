@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol';
 import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
+import { createPluginRegistrationScope } from '@/plugins/runtime/api/registrationScope';
 import type { ResolvedConnectedAccountDescriptorContribution } from '@/plugins/projection/registry/types';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 
@@ -10,6 +10,7 @@ import {
     ConnectedAccountRuntimeInvocationNotStartedError,
     createConnectedAccountContributionRegistry as createProductionConnectedAccountContributionRegistry,
     type ConnectedAccountRuntimeLease,
+    type ConnectedAccountPortableRuntimeLease,
     type ConnectedAccountPluginRuntimeLease,
 } from './contributionRegistry';
 
@@ -57,7 +58,7 @@ function createConnectedAccountContributionRegistry(
 async function resolveLease(
     registry: Readonly<{
         resolve(ref: Readonly<{ pluginId: string; localId: string }>):
-            Promise<ConnectedAccountRuntimeLease | null>;
+            Promise<ConnectedAccountRuntimeLease | ConnectedAccountPortableRuntimeLease | null>;
     }>,
     ref: Readonly<{ pluginId: string; localId: string }>,
 ): Promise<ConnectedAccountPluginRuntimeLease> {
@@ -66,6 +67,7 @@ async function resolveLease(
         throw new Error(`Expected a resolvable lease for '${ref.pluginId}/${ref.localId}'`);
     }
     if (lease.owner === 'host') throw new Error('Expected a plugin lease');
+    if ('realm' in lease) throw new Error('Expected a native plugin lease');
     return lease;
 }
 
@@ -143,7 +145,7 @@ describe('connected-account contribution registry', () => {
             runtime: runtime('host'),
         });
         const lease = await registry.resolve(ref);
-        if (!lease) throw new Error('Expected a host lease');
+        if (!lease || lease.owner !== 'host') throw new Error('Expected a host lease');
         expect(registry.describe(ref)?.ref).toEqual(ref);
         expect(lease.sourceCustody).toEqual({ kind: 'host' });
         expect(lease.isCurrent()).toBe(true);
@@ -355,6 +357,10 @@ describe('connected-account contribution registry', () => {
         (runtime as unknown as { status: () => Promise<unknown> }).status = async () => ({
             status: 'connected',
             displayName: 'post-commit replacement',
+        });
+        runtime.authentication.modes.manual.complete = async () => ({
+            status: 'connected', accountId: 'post-commit replacement',
+            displayName: 'post-commit replacement', scopes: [],
         });
 
         let current = true;

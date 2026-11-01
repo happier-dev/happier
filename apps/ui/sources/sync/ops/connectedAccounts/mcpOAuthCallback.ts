@@ -96,7 +96,7 @@ export async function completeMcpOAuthCallback(input: McpOAuthCallbackInput): Pr
     assertCurrent();
     const target = { serverId: account.serverId, expectedAccountId: account.expectedAccountId, machineId,
         assertCurrent, executeAction: account.executeAction, signal: account.signal };
-    const restored = await runConnectedAccountAuthenticationAction({ ...target, command: { operation: 'read', attemptId, restoreKind: 'oauth' } });
+    const restored = await runConnectedAccountAuthenticationAction({ ...target, command: { operation: 'read', attemptId } });
     assertCurrent();
     const settled = restored.status === 'awaitingOAuth' && restored.callbackUrl === MCP_OAUTH_CALLBACK_URL_V1
         ? await runConnectedAccountAuthenticationAction({ ...target, command: { operation: 'completeOAuth', attemptId, completion } })

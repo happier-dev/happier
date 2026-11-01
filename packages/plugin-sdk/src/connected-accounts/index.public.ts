@@ -23,6 +23,8 @@ export type { PluginConnectedAccountFailureRetryEvidence as ConnectedAccountFail
 export type { PluginConnectedAccountAuthenticationAttempt as ConnectedAccountAuthenticationAttempt } from '../services/connectedAccounts.js';
 export type { ConnectedAccountAuthenticationContext } from '../connectedAccounts.js';
 export type { ConnectedAccountAuthenticationModeRuntime } from '../connectedAccounts.js';
+export type { ConnectedAccountAuthenticationRuntime } from '../connectedAccounts.js';
+export type { ConnectedAccountPortableAuthenticationContext, ConnectedAccountPortableReadContext, ConnectedAccountPortableRuntime } from '../connectedAccounts.js';
 export type { PluginConnectedAccountBindingEvent as ConnectedAccountBindingEvent } from '../services/connectedAccounts.js';
 export type { ConnectedAccountBindingSummary } from '../connectedAccounts.js';
 export type { ConnectedAccountServiceKey } from '../connectedAccounts.js';

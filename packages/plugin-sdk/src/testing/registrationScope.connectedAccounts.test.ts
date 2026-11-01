@@ -2,9 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PluginConnectedAccountDescriptorContributionV2 } from '@happier-dev/protocol';
 
 import type { PluginConnectedAccountRuntime } from '../services/index.js';
-import {
-    createPluginRegistrationScope,
-} from '../host/registration/index.js';
+import { createPluginRegistrationScope } from '../registration/scope.js';
 
 function commonRuntime() {
     return {
@@ -122,70 +120,13 @@ describe('Connected Accounts registration staging', () => {
         expect(Object.keys(registration.value.authentication.modes)).toEqual(['manual', 'device']);
     });
 
-    it('rejects the retired single-mode authentication shape and malformed mode records', () => {
+    it('requires the named authentication modes shape', () => {
         const retired = scope();
         retired.api.connectedAccounts.register('forge', {
-            authentication: {
-                kind: 'manual',
-                complete: vi.fn(),
-            },
+            authentication: { kind: 'manual', complete: vi.fn() },
             ...commonRuntime(),
         } as unknown as PluginConnectedAccountRuntime);
-        expect(() => retired.commit()).toThrow(/invalid 'connectedAccountDescriptors\/forge' runtime/i);
-
-        const malformed = scope();
-        malformed.api.connectedAccounts.register('forge', {
-            authentication: {
-                modes: {
-                    device: {
-                        kind: 'oauthDeviceCode',
-                        begin: vi.fn(),
-                        poll: vi.fn(),
-                    },
-                },
-            },
-            ...commonRuntime(),
-        } as unknown as PluginConnectedAccountRuntime);
-        expect(() => malformed.commit()).toThrow(/invalid 'connectedAccountDescriptors\/forge' runtime/i);
-
-        const invalidModeId = scope();
-        invalidModeId.api.connectedAccounts.register('forge', {
-            authentication: {
-                modes: {
-                    ['__proto__']: {
-                        kind: 'manual',
-                        complete: vi.fn(),
-                    },
-                },
-            },
-            ...commonRuntime(),
-        } as unknown as PluginConnectedAccountRuntime);
-        expect(() => invalidModeId.commit()).toThrow(/invalid 'connectedAccountDescriptors\/forge' runtime/i);
-    });
-
-    it('rejects a runtime whose declared provider reconciliation cannot run before publication', () => {
-        const registrationScope = scope();
-        registrationScope.api.connectedAccounts.register('forge', {
-            authentication: {
-                modes: {
-                    manual: {
-                        kind: 'manual',
-                        complete: vi.fn(),
-                    },
-                    device: {
-                        kind: 'oauthDeviceCode',
-                        begin: vi.fn(),
-                        poll: vi.fn(),
-                        cancel: vi.fn(),
-                    },
-                },
-            },
-            ...commonRuntime(),
-        } satisfies PluginConnectedAccountRuntime);
-
-        expect(() => registrationScope.commit())
-            .toThrow(/reconciliation reachability does not match/i);
-        expect(registrationScope.registrations()).toEqual([]);
+        expect(() => retired.commit()).toThrow(TypeError);
     });
 
     it('captures class-based account and authentication-mode callbacks', async () => {

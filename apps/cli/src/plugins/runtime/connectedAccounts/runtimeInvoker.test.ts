@@ -12,6 +12,7 @@ import type {
     TargetPluginInterceptedRequest as PluginInterceptedRequest,
 } from '../lifecycle/contributions/targetRequestInterceptors';
 import type {
+    ConnectedAccountAuthenticationContext,
     ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
@@ -34,14 +35,14 @@ import {
     createConnectedAccountAuthenticationAttemptOwner,
     type ConnectedAccountAttemptProviderInvocation,
     type ConnectedAccountOAuthCallbackCompletion,
-} from './authenticationAttemptOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import {
     createConnectedAccountContributionRegistry,
     ConnectedAccountRuntimeInvocationNotStartedError,
     type ConnectedAccountRuntimeLease,
 } from './contributionRegistry';
 import { createPluginRuntimeOccurrenceId } from '../runtimeSlots';
-import { createConnectedAccountConfigurationOwner } from './configurationOwner';
+import { createConnectedAccountConfigurationOwner } from '@happier-dev/cli-common/connectedAccounts';
 import {
     createConnectedAccountHostRuntimeInvoker,
     type ConnectedAccountRuntimeEstablishedOperation,
@@ -97,7 +98,7 @@ const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
 });
 
 function runtime(
-    observeContext: (context: PluginInvocationContext) => void,
+    observeContext: (context: ConnectedAccountAuthenticationContext | Parameters<PluginConnectedAccountRuntime['status']>[0]) => void,
 ) {
     return {
         authentication: {
@@ -138,7 +139,6 @@ function createEstablishedInvoker(
     declaresRecoveryCredits = registeredRuntime.recoveryCredits !== undefined,
 ) {
     return createConnectedAccountHostRuntimeInvoker({
-        resolveNetworkAddresses: testResolveNetworkAddresses,
         resolveRuntime: async () => Object.freeze({
             ref: service,
             ...runtimeIdentity,
@@ -162,7 +162,6 @@ function createEstablishedInvoker(
         createServices: () =>
             Object.freeze({}) as PluginInvocationContext['services'],
         registerRawForRedaction() {},
-        resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
     });
 }
 
@@ -281,7 +280,7 @@ describe('connected-account runtime invoker', () => {
             resolvePlugin: () => { throw new Error('Host runtime must not resolve a plugin package'); },
             resolveHostPolicy: () => { throw new Error('Host runtime must not ask for plugin HostAccess'); },
             createServices: () => { throw new Error('Host runtime must not create plugin services'); },
-            registerRawForRedaction() {}, resolveHostOwnedConfiguredEndpoints: () => [],
+            registerRawForRedaction() {},
         });
         const lease = await registry.resolve(ref);
         if (!lease) throw new Error('Missing host lease');
@@ -597,7 +596,6 @@ describe('connected-account runtime invoker', () => {
             },
         };
         const invoker = createConnectedAccountHostRuntimeInvoker({
-            resolveNetworkAddresses: testResolveNetworkAddresses,
             resolveRuntime: async () => Object.freeze({
                 ref: service,
                 ...runtimeIdentity,
@@ -618,7 +616,6 @@ describe('connected-account runtime invoker', () => {
             }),
             createServices: owners.createServices,
             registerRawForRedaction: owners.registerRawForRedaction,
-            resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
         });
 
         await expect(invoker.invokeEstablished({
@@ -712,8 +709,9 @@ describe('connected-account runtime invoker', () => {
                 correlationId: seed.correlationId,
             }, value),
         });
+        const authenticationLogs: PluginInvocationLogRecord[] = [];
         owners = createProductionPluginInvocationServiceOwners({
-            loggerSink: { write: () => {} },
+            loggerSink: { write: record => { authenticationLogs.push(record); } },
             http: httpHost,
         });
         const networkRequest = Object.freeze({
@@ -741,6 +739,8 @@ describe('connected-account runtime invoker', () => {
                     manual: {
                         kind: 'manual',
                         async complete(input, context) {
+                            expect(context.services.logger).toBeDefined();
+                            context.services.logger?.warn('Authentication needs attention');
                             await context.services.http.request({
                                 url: `https://api.telegram.org/bot${input.fields.token}/getMe`,
                                 method: 'POST',
@@ -771,7 +771,6 @@ describe('connected-account runtime invoker', () => {
             },
         };
         const invoker = createConnectedAccountHostRuntimeInvoker({
-            resolveNetworkAddresses: testResolveNetworkAddresses,
             resolveRuntime: async () => Object.freeze({
                 ref: service,
                 ...runtimeIdentity,
@@ -805,11 +804,7 @@ describe('connected-account runtime invoker', () => {
                     correlationId: seed.correlationId,
                 }, value);
             },
-            resolveHostOwnedConfiguredEndpoints: () => Object.freeze([Object.freeze({
-                origin: 'https://api.telegram.org',
-                base: 'https://api.telegram.org',
-                grantTargetKind: 'connectedAccountOrigin' as const,
-            })]),
+
         });
 
         await expect(invoker.invokeAuthentication({
@@ -869,6 +864,7 @@ describe('connected-account runtime invoker', () => {
             expect.objectContaining({ url: rawUrl, body }),
             expect.objectContaining({ url: issuedUrl }),
         ]);
+        expect(authenticationLogs).toContainEqual(expect.objectContaining({ level: 'warn', message: 'Authentication needs attention' }));
         await owners.dispose();
     });
 
@@ -930,7 +926,6 @@ describe('connected-account runtime invoker', () => {
             },
         };
         const invoker = createConnectedAccountHostRuntimeInvoker({
-            resolveNetworkAddresses: testResolveNetworkAddresses,
             resolveRuntime: async () => Object.freeze({
                 ref: service,
                 ...runtimeIdentity,
@@ -952,7 +947,6 @@ describe('connected-account runtime invoker', () => {
             }),
             createServices: () => Object.freeze({}) as PluginInvocationContext['services'],
             registerRawForRedaction,
-            resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
         });
 
         await expect(invoker.invokeEstablished({
@@ -1031,7 +1025,6 @@ describe('connected-account runtime invoker', () => {
             },
         };
         const invoker = createConnectedAccountHostRuntimeInvoker({
-            resolveNetworkAddresses: testResolveNetworkAddresses,
             resolveRuntime: async () => Object.freeze({
                 ref: service,
                 ...runtimeIdentity,
@@ -1053,7 +1046,6 @@ describe('connected-account runtime invoker', () => {
             }),
             createServices: () => Object.freeze({}) as PluginInvocationContext['services'],
             registerRawForRedaction,
-            resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
         });
         const context = Object.freeze({
             service,
@@ -1237,7 +1229,6 @@ describe('connected-account runtime invoker', () => {
                 && input.pluginId === service.pluginId && input.occurrenceId === identity.occurrenceId,
         });
         const invoker = createConnectedAccountHostRuntimeInvoker({
-            resolveNetworkAddresses: testResolveNetworkAddresses,
             resolveRuntime: async (ref) => await registry.resolve(ref),
             resolvePlugin: () => Object.freeze({
                 version: '1.0.0',
@@ -1257,7 +1248,6 @@ describe('connected-account runtime invoker', () => {
                 return Object.freeze({}) as PluginInvocationContext['services'];
             },
             registerRawForRedaction() {},
-            resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
         });
         const settle = vi.fn(async () => ({ status: 'connected' as const, account: { service, accountId: 'account-a' } }));
         const attempts = createConnectedAccountAuthenticationAttemptOwner({
@@ -1446,7 +1436,6 @@ describe('connected-account runtime invoker', () => {
                 getSecret: async () => null,
             });
             const invoker = createConnectedAccountHostRuntimeInvoker({
-                resolveNetworkAddresses: testResolveNetworkAddresses,
                 resolveRuntime: async (ref) => await registry.resolve(ref),
                 resolvePlugin: () => Object.freeze({
                     version: '1.0.0',
@@ -1464,7 +1453,6 @@ describe('connected-account runtime invoker', () => {
                 createServices: () =>
                     Object.freeze({}) as PluginInvocationContext['services'],
                 registerRawForRedaction() {},
-                resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
             });
             const settle = vi.fn();
             const attempts = createConnectedAccountAuthenticationAttemptOwner({
@@ -1612,7 +1600,6 @@ describe('connected-account runtime invoker', () => {
         } satisfies PluginConnectedAccountRuntime;
         const createInvoker = (status: 'available' | 'denied') =>
             createConnectedAccountHostRuntimeInvoker({
-                resolveNetworkAddresses: testResolveNetworkAddresses,
                 resolveRuntime: async () => Object.freeze({
                     ref: service,
                     ...runtimeIdentity,
@@ -1640,7 +1627,6 @@ describe('connected-account runtime invoker', () => {
                 }),
                 createServices: () => Object.freeze({}) as PluginInvocationContext['services'],
                 registerRawForRedaction() {},
-                resolveHostOwnedConfiguredEndpoints: vi.fn(() => Object.freeze([])),
             });
         const invocation = {
             admission: Object.freeze({

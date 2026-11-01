@@ -1,3 +1,4 @@
+import { createConnectedAccountAttemptTransactionApiBoundary } from '@/testkit/connectedAccountAttemptTransactionApi';
 import { describe, expect, it, vi } from 'vitest';
 import {
     CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
@@ -15,11 +16,11 @@ import {
     type ConnectedAccountAttemptSettlementRequest,
     type ConnectedAccountDeviceTransactionSnapshot,
     type ConnectedAccountOAuthCallbackCompletion,
-} from './authenticationAttemptOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import {
     ConnectedAccountRuntimeInvocationNotStartedError,
 } from './contributionRegistry';
-import { createConnectedAccountConfigurationOwner, type ConnectedAccountConfigurationOwner } from './configurationOwner';
+import { createConnectedAccountConfigurationOwner, type ConnectedAccountConfigurationOwner } from '@happier-dev/cli-common/connectedAccounts';
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { createQualifiedConnectedAccountAttemptTransactionAdapters } from '@/daemon/connectedServices/qualifiedConnectedAccountAttemptTransactionAdapters';
 import type { ConnectedAccountAttemptTransactionStoreApi, ConnectedAccountAttemptTransactionRecord } from '@/api/client/connectedAccountAttemptTransactionApi';
@@ -360,19 +361,10 @@ async function waitForAttemptStatus(
 
 describe('OAuth issuer admission', () => {
     it('publishes the sealed transaction expiry when an authorization server supplies no expiry', async () => {
-        const records = new Map<string, ConnectedAccountAttemptTransactionRecord>();
         // The transaction HTTP/database boundary is replaced; the actual PKCE,
         // envelope, revision and attempt owners run together.
-        const api: ConnectedAccountAttemptTransactionStoreApi = {
-            async create(input) { const record = { revision: 1, content: input.content, expiresAtMs: input.expiresAtMs };
-                records.set(input.attemptId, record); return record; },
-            async read(input) { return records.get(input.attemptId) ?? null; },
-            async replace(input) { const current = records.get(input.attemptId);
-                if (!current || current.revision !== input.expectedRevision) throw new Error('fixture CAS conflict');
-                const record = { revision: current.revision + 1, content: input.content, expiresAtMs: input.expiresAtMs };
-                records.set(input.attemptId, record); return record; },
-            async delete(input) { records.delete(input.attemptId); }, async listPending() { return []; },
-        };
+        const api = createConnectedAccountAttemptTransactionApiBoundary();
+        const { records } = api;
         const transactions = createQualifiedConnectedAccountAttemptTransactionAdapters({ credentials: { token: 'account-token', encryption: null },
             getAccountEncryptionMode: async () => 'plain', getMachineId: () => 'machine-1', now: () => 1_000, api });
         const h = harness({ admittedMode: oauthMode({ outcomeReconciliation: 'none' }), oauthTransactions: transactions.oauth, now: () => 1_000,
@@ -3304,7 +3296,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         });
         await expect(replacement.owner.read({
             attemptId: 'attempt-1',
-            restoreKind: 'oauth',
         })).resolves.toMatchObject({
             status: 'awaitingOAuth',
             authorizationUrl: 'https://provider.example/authorize',

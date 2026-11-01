@@ -6,6 +6,24 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./plugins/registration/staticCapture": {
+      "happier-source": "./src/plugins/registration/staticCapture.ts",
+      "types": "./dist/plugins/registration/staticCapture.d.ts",
+      "import": "./dist/plugins/registration/staticCapture.js",
+      "default": "./dist/plugins/registration/staticCapture.js"
+    },
+    "./plugins/registration/scope": {
+      "happier-source": "./src/plugins/registration/scope.ts",
+      "types": "./dist/plugins/registration/scope.d.ts",
+      "import": "./dist/plugins/registration/scope.js",
+      "default": "./dist/plugins/registration/scope.js"
+    },
+    "./connectedAccounts": {
+      "happier-source": "./src/connectedAccounts/index.ts",
+      "types": "./dist/connectedAccounts/index.d.ts",
+      "import": "./dist/connectedAccounts/index.js",
+      "default": "./dist/connectedAccounts/index.js"
+    },
     "./machineLima": {
       "types": "./machineLima.d.mts",
       "import": "./machineLima.mjs",

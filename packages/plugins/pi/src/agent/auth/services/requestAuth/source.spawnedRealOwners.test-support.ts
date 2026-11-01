@@ -797,7 +797,7 @@ describe('Pi request-auth strict spawned real-owner composition', () => {
         createQualifiedConnectedAccountDaemonPersistence({
           credentials,
           getAccountEncryptionMode: () => api.getAccountEncryptionMode(),
-          secrets: {
+          secrets: { admit: async () => {},
             has: async () => false,
             read: async () => null,
           },

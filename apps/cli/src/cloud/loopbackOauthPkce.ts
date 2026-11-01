@@ -38,7 +38,7 @@ export type StartLoopbackOauthPkceFlowOptions<TTokens> = {
   onTokenExchangeErrorResponse?: (params: { error: unknown; res: ServerResponse }) => void;
   onPortResolved?: (params: { defaultPort: number; port: number; usedFallback: boolean }) => void;
   generateState?: () => string;
-  generatePkce?: () => OauthPkceCodes;
+  generatePkce?: () => OauthPkceCodes | Promise<OauthPkceCodes>;
   timeoutMs?: number;
   startupDelayMs?: number;
   isLoopbackPortAvailableFn?: (port: number) => Promise<boolean>;
@@ -87,7 +87,7 @@ export async function startLoopbackOauthPkceFlow<TTokens>(
     usedFallback: !defaultPortAvailable,
   });
 
-  const { verifier, challenge } = generatePkce();
+  const { verifier, challenge } = await generatePkce();
   const state = generateState();
   const redirectUri = `http://localhost:${port}${opts.callbackPath}`;
   const callbackUrl = `http://127.0.0.1:${port}${opts.callbackPath}`;

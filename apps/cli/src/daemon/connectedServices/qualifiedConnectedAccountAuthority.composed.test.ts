@@ -108,8 +108,7 @@ async function authorityFixture(initialMode: 'plain' | 'e2ee' = 'plain') {
     resolveHostPolicy: () => ({ hostAccess: [], serviceBinding:
       createLoggerAndEventsAvailablePluginInvocationServiceBinding('fixture', 'producer', []) }),
     // This host contribution calls no platform services; invocation and guards remain real.
-    createServices: () => ({}) as PluginInvocationContext['services'], registerRawForRedaction() {},
-    resolveHostOwnedConfiguredEndpoints: () => [] });
+    createServices: () => ({}) as PluginInvocationContext['services'], registerRawForRedaction() {}, });
   const registry = { connectedAccountContributions: contributions, resolveConnectedAccountRuntime: async () => runtimeLease,
     connectedAccountRuntimeInvoker: invoker };
   const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({ credentials,

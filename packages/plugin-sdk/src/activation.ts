@@ -32,6 +32,7 @@ import type {
     PluginConnectedAccountRegistrationApi,
 } from './services/index.js';
 import type { HttpMethod } from './services/io.js';
+import type { ConnectedAccountPortableRuntime } from './connectedAccounts.js';
 import type { DetectedMcpServerV1 } from './mcp.js';
 import type {
     PluginMcpDiscoveredServer,
@@ -431,6 +432,9 @@ export interface PluginClientApi {
 
 /** Portable Account artifact uses the same activate(api) registration ABI. @realm any */
 export interface PluginAccountApi {
+    readonly connectedAccounts: {
+        register(id: string, runtime: ConnectedAccountPortableRuntime): void;
+    };
     readonly actions: {
         register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(
             id: string, handler: PluginAccountActionHandler<I, O>,

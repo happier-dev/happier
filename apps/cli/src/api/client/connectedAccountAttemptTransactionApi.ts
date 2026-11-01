@@ -1,259 +1,43 @@
+import { createConnectedAccountAttemptTransactionApi as createPortableTransactionApi } from '@happier-dev/cli-common/connectedAccounts';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
-import type { StoredJsonContentEnvelope } from '@happier-dev/protocol';
 import axios from '@/api/client/credentialAxios';
-import { z } from 'zod/mini';
-
 import { resolveConnectedServicesServerApiTimeoutMs } from './connectedServicesServerApiTimeout';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 
-export type ConnectedAccountAttemptTransactionKind = 'oauth' | 'device';
+export type {
+  ConnectedAccountAttemptTransactionKind,
+  ConnectedAccountAttemptTransactionScope,
+  PendingConnectedAccountAttemptTransaction,
+  ConnectedAccountAttemptTransactionRecord,
+  ConnectedAccountAttemptTransactionStoreApi,
+  ConnectedAccountAttemptTransactionApiErrorCode,
+} from '@happier-dev/cli-common/connectedAccounts';
+export { ConnectedAccountAttemptTransactionApiError } from '@happier-dev/cli-common/connectedAccounts';
 
-export type ConnectedAccountAttemptTransactionScope = Readonly<{
-  machineId: string;
-  service: Readonly<{ pluginId: string; localId: string }>;
-  modeId: string;
-  intent: 'connect' | 'reconnect';
-  phase: 'starting' | 'awaitingOAuth' | 'awaitingDeviceAuthorization' | 'outcomeUnknown';
-  createdAtMs: number;
-}>;
-
-export type PendingConnectedAccountAttemptTransaction = Readonly<{
-  attemptId: string;
-  kind: ConnectedAccountAttemptTransactionKind;
-  modeId: string;
-  intent: ConnectedAccountAttemptTransactionScope['intent'];
-  phase: Exclude<ConnectedAccountAttemptTransactionScope['phase'], 'starting'>;
-  createdAtMs: number;
-  expiresAtMs: number;
-}>;
-
-export type ConnectedAccountAttemptTransactionRecord = Readonly<{
-  revision: number;
-  content: StoredJsonContentEnvelope;
-  expiresAtMs: number;
-}>;
-
-export type ConnectedAccountAttemptTransactionStoreApi = Readonly<{
-  create(input: Readonly<{
-    kind: ConnectedAccountAttemptTransactionKind;
-    attemptId: string;
-    content: StoredJsonContentEnvelope;
-    expiresAtMs: number;
-    scope: ConnectedAccountAttemptTransactionScope;
-  }>): Promise<ConnectedAccountAttemptTransactionRecord>;
-  read(input: Readonly<{
-    kind: ConnectedAccountAttemptTransactionKind;
-    attemptId: string;
-  }>): Promise<ConnectedAccountAttemptTransactionRecord | null>;
-  replace(input: Readonly<{
-    kind: ConnectedAccountAttemptTransactionKind;
-    attemptId: string;
-    expectedRevision: number;
-    content: StoredJsonContentEnvelope;
-    expiresAtMs: number;
-    scope: ConnectedAccountAttemptTransactionScope;
-  }>): Promise<ConnectedAccountAttemptTransactionRecord>;
-  delete(input: Readonly<{
-    kind: ConnectedAccountAttemptTransactionKind;
-    attemptId: string;
-    expectedRevision: number;
-  }>): Promise<void>;
-  listPending(input: Readonly<{
-    machineId: string;
-    service: ConnectedAccountAttemptTransactionScope['service'];
-  }>): Promise<readonly PendingConnectedAccountAttemptTransaction[]>;
-}>;
-
-export type ConnectedAccountAttemptTransactionApiErrorCode =
-  | 'connected_account_attempt_transaction_not_found'
-  | 'connected_account_attempt_transaction_conflict'
-  | 'connected_account_attempt_transaction_expiry_invalid'
-  | 'connected_account_attempt_transaction_storage_mode_mismatch'
-  | 'connected_account_attempt_transaction_unreadable'
-  | 'connected_account_attempt_transaction_contract_invalid';
-
-export class ConnectedAccountAttemptTransactionApiError extends Error {
-  readonly code: ConnectedAccountAttemptTransactionApiErrorCode;
-
-  constructor(code: ConnectedAccountAttemptTransactionApiErrorCode) {
-    super(code);
-    this.name = 'ConnectedAccountAttemptTransactionApiError';
-    this.code = code;
-  }
-}
-
-const TransactionRecordSchema = z.strictObject({
-  revision: z.number().check(z.int(), z.minimum(1)),
-  content: StoredJsonContentEnvelopeSchema,
-  expiresAtMs: z.number().check(z.int(), z.positive()),
-});
-
-const PendingTransactionSchema = z.strictObject({
-  attemptId: z.string().check(z.minLength(1), z.maxLength(160)),
-  kind: z.enum(['oauth', 'device']),
-  modeId: z.string().check(z.minLength(1), z.maxLength(256)),
-  intent: z.enum(['connect', 'reconnect']),
-  phase: z.enum(['awaitingOAuth', 'awaitingDeviceAuthorization', 'outcomeUnknown']),
-  createdAtMs: z.number().check(z.int(), z.nonnegative()),
-  expiresAtMs: z.number().check(z.int(), z.positive()),
-});
-const PendingTransactionsSchema = z.strictObject({
-  attempts: z.array(PendingTransactionSchema),
-});
-
-const TransactionErrorSchema = z.strictObject({
-  error: z.enum([
-    'connected_account_attempt_transaction_not_found',
-    'connected_account_attempt_transaction_conflict',
-    'connected_account_attempt_transaction_expiry_invalid',
-    'connected_account_attempt_transaction_storage_mode_mismatch',
-    'connected_account_attempt_transaction_unreadable',
-  ]),
-});
-
-function requestHeaders(token: string): Readonly<Record<string, string>> {
-  return {
-    ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-    Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/json',
-  };
-}
-
-function transactionUrl(
-  kind: ConnectedAccountAttemptTransactionKind,
-  attemptId: string,
-): string {
-  return `${resolveServerHttpBaseUrl()}/v2/connect/connected-account-attempt-transactions/${kind}/${encodeURIComponent(attemptId)}`;
-}
-
-function throwResponseError(data: unknown): never {
-  const parsed = TransactionErrorSchema.safeParse(data);
-  throw new ConnectedAccountAttemptTransactionApiError(
-    parsed.success
-      ? parsed.data.error
-      : 'connected_account_attempt_transaction_contract_invalid',
-  );
-}
-
-export function createConnectedAccountAttemptTransactionApi(
-  params: Readonly<{ token: string }>,
-): ConnectedAccountAttemptTransactionStoreApi {
-  const options = {
-    headers: requestHeaders(params.token),
-    timeout: resolveConnectedServicesServerApiTimeoutMs(),
-  } as const;
-  return Object.freeze({
-    async create(input) {
-      const response = await axios.post(
-        transactionUrl(input.kind, input.attemptId),
-        {
-          content: input.content,
-          expiresAtMs: input.expiresAtMs,
-          scope: input.scope,
-        },
-        {
-          ...options,
-          validateStatus: (status) => status === 200 || status === 409,
-        },
-      );
-      if (response.status !== 200) throwResponseError(response.data);
-      return TransactionRecordSchema.parse(response.data);
-    },
-    async read(input) {
-      const response = await axios.get(
-        transactionUrl(input.kind, input.attemptId),
-        {
-          ...options,
-          validateStatus: (status) => (
-            status === 200 || status === 404 || status === 409
-          ),
-        },
-      );
-      if (response.status === 404) {
-        const parsed = TransactionErrorSchema.safeParse(response.data);
-        if (
-          !parsed.success
-          || parsed.data.error !== 'connected_account_attempt_transaction_not_found'
-        ) {
-          throw new ConnectedAccountAttemptTransactionApiError(
-            'connected_account_attempt_transaction_contract_invalid',
-          );
-        }
-        return null;
-      }
-      if (response.status !== 200) throwResponseError(response.data);
-      return TransactionRecordSchema.parse(response.data);
-    },
-    async replace(input) {
-      const response = await axios.patch(
-        transactionUrl(input.kind, input.attemptId),
-        {
-          expectedRevision: input.expectedRevision,
-          content: input.content,
-          expiresAtMs: input.expiresAtMs,
-          scope: input.scope,
-        },
-        {
-          ...options,
-          validateStatus: (status) => (
-            status === 200 || status === 404 || status === 409
-          ),
-        },
-      );
-      if (response.status !== 200) throwResponseError(response.data);
-      return TransactionRecordSchema.parse(response.data);
-    },
-    async delete(input) {
-      const response = await axios.delete(
-        transactionUrl(input.kind, input.attemptId),
-        {
-          ...options,
-          data: { expectedRevision: input.expectedRevision },
-          validateStatus: (status) => (
-            status === 200 || status === 404 || status === 409
-          ),
-        },
-      );
-      if (response.status === 404) {
-        // DELETE is idempotent: an exact absent record is the outcome this
-        // cleanup asked for. Reporting it as a failure keeps the terminal
-        // response and its attempt slot held for an operation that can never
-        // succeed again.
-        const parsed = TransactionErrorSchema.safeParse(response.data);
-        if (
-          !parsed.success
-          || parsed.data.error !== 'connected_account_attempt_transaction_not_found'
-        ) {
-          throw new ConnectedAccountAttemptTransactionApiError(
-            'connected_account_attempt_transaction_contract_invalid',
-          );
-        }
-        return;
-      }
-      if (response.status !== 200) throwResponseError(response.data);
-      if (
-        !response.data
-        || typeof response.data !== 'object'
-        || Array.isArray(response.data)
-        || response.data.status !== 'deleted'
-      ) {
-        throw new ConnectedAccountAttemptTransactionApiError(
-          'connected_account_attempt_transaction_contract_invalid',
-        );
-      }
-    },
-    async listPending(input) {
-      const url = new URL(`${resolveServerHttpBaseUrl()}/v2/connect/connected-account-attempt-transactions/pending`);
-      url.searchParams.set('machineId', input.machineId);
-      url.searchParams.set('pluginId', input.service.pluginId);
-      url.searchParams.set('localId', input.service.localId);
-      const response = await axios.get(url.toString(), {
-        ...options,
-        validateStatus: (status) => status === 200 || status === 409,
-      });
-      if (response.status !== 200) throwResponseError(response.data);
-      return PendingTransactionsSchema.parse(response.data).attempts;
+export function createConnectedAccountAttemptTransactionApi(params: Readonly<{ token: string }>) {
+  return createPortableTransactionApi({
+    token: params.token,
+    baseUrl: resolveServerHttpBaseUrl(),
+    headers: buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+    timeoutMs: resolveConnectedServicesServerApiTimeoutMs(),
+    http: {
+      async request(input) {
+        const options = {
+          headers: input.headers,
+          timeout: input.timeoutMs,
+          maxRedirects: 0,
+          validateStatus: (status: number) => status === 200 || status === 404 || status === 409,
+        };
+        const body: unknown = input.body === undefined ? undefined : JSON.parse(new TextDecoder().decode(input.body));
+        const response = input.method === 'POST'
+          ? await axios.post(input.url, body, options)
+          : input.method === 'PATCH'
+            ? await axios.patch(input.url, body, options)
+            : input.method === 'DELETE'
+              ? await axios.delete(input.url, { ...options, data: body })
+              : await axios.get(input.url, options);
+        return { status: response.status, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(response.data)) };
+      },
     },
   });
 }

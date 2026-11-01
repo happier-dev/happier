@@ -42,6 +42,7 @@ import {
     type PluginRuntimeActivationRegistryLease,
 } from './composition/activationAssembly';
 import { assemblePluginRuntimeConsumers } from './composition/consumerAssembly';
+import { createCredentialedConnectedAccountAuthenticationHost, type CredentialedConnectedAccountAuthenticationHost } from './connectedAccounts/authenticationHost';
 import {
     assembleConnectedAccountRuntime,
     projectConnectedAccountPurposeBindingOwner,
@@ -306,6 +307,7 @@ import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/
 import type {
     createConnectedAccountContributionRegistry,
     ConnectedAccountRuntimeLease,
+    ConnectedAccountPortableRuntimeLease,
 } from './connectedAccounts/contributionRegistry';
 import type {
     createConnectedAccountHostRuntimeInvoker,
@@ -880,7 +882,9 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     /** Capability/diagnostic view of the injected measured database policy. */
     readDaemonDatabaseCapability?(pluginId: string): PluginDaemonDatabaseCapability;
     connectedAccountContributions?: ReturnType<typeof createConnectedAccountContributionRegistry>;
-    resolveConnectedAccountRuntime?(ref: PluginContributionRef): Promise<ConnectedAccountRuntimeLease | null>;
+    resolveConnectedAccountRuntime?(ref: PluginContributionRef): Promise<ConnectedAccountRuntimeLease | ConnectedAccountPortableRuntimeLease | null>;
+    resolveAccountConnectedAccountRuntime?(ref: PluginContributionRef): Promise<ConnectedAccountPortableRuntimeLease | null>;
+    connectedAccountAuthenticationHost?: CredentialedConnectedAccountAuthenticationHost;
     connectedAccountRuntimeInvoker?: ConnectedAccountHostRuntimeInvoker;
     resolveQualifiedConnectedAccountEstablishedRuntimeOwner?():
         Pick<QualifiedConnectedAccountEstablishedRuntimeOwner, 'invoke'> | null;
@@ -1817,7 +1821,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
     params?: Readonly<{
         /** Source and lifetime of the authenticated invoking Account process. */
         accountExecution?: Pick<AccountPluginActivationSourcesInput, 'credentials' | 'serverUrl' | 'isCurrent' | 'isCredentialCurrent'>
-            & Readonly<{ machineId?: string; serverId?: string; serverIdentityId?: string }>;
+            & Readonly<{ machineId?: string; serverId?: string; serverIdentityId?: string;
+                savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1 }>;
         signal?: AbortSignal;
         readSpawnFailureLimits?: import('@/processes/spawnFailure/classifySpawnFailure').SpawnFailureLimitsReader;
         happyHomeDir?: string;
@@ -1920,6 +1925,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         : scopedActionRuntime
         ? async () => scopedActionRuntime.credentials
         : readStoredCredentials;
+    const savedSecretOperationContext = params?.accountExecution?.savedSecretOperationContext
+        ? Object.freeze({ ...params.accountExecution.savedSecretOperationContext })
+        : undefined;
     const accountCredentialAuthority = scopedActionRuntime || params?.accountExecution
         ? Object.freeze({
             readCredentials: readSessionCredentials,
@@ -7007,6 +7015,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
 
     const connectedAccountAssembly = assembleConnectedAccountRuntime({
         hostRuntimes: [createMcpSignInConnectedAccountRegistration()],
+        resolveRetirementSignal: pluginId => resolveRuntimeConsumerLifecycle(pluginId).retirementSignal,
         readPluginOccurrenceId: readCurrentPluginOccurrenceId,
         readPluginSourceCustody: readCurrentPluginSourceCustody,
         isPluginOccurrenceCurrent: isCurrentPluginOccurrence,
@@ -7059,10 +7068,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 }),
             });
         },
-        networkDependencies: params?.networkDependencies,
     });
     const connectedAccountContributions = connectedAccountAssembly.contributions;
     const connectedAccountRuntimeInvoker = connectedAccountAssembly.invoker;
+    const connectedAccountAuthenticationHost = params?.accountExecution
+        ? createCredentialedConnectedAccountAuthenticationHost({
+            credentials: params.accountExecution.credentials, serverHttpBaseUrl: params.accountExecution.serverUrl,
+            ...(savedSecretOperationContext ? { operationContext: savedSecretOperationContext } : {}),
+            contributions: connectedAccountContributions, invoker: connectedAccountRuntimeInvoker,
+        }) : undefined;
     let consumersRetired = false;
     const connectedAccountPurposeBindingOwner =
         projectConnectedAccountPurposeBindingOwner(params?.connectedAccounts);
@@ -7664,6 +7678,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         },
         connectedAccountContributions,
         resolveConnectedAccountRuntime: connectedAccountContributions.resolve,
+        resolveAccountConnectedAccountRuntime: connectedAccountContributions.resolveAccount,
+        connectedAccountAuthenticationHost,
         connectedAccountRuntimeInvoker,
         resolveQualifiedConnectedAccountEstablishedRuntimeOwner() {
             return consumerAssembly.isOccurrenceCurrent()

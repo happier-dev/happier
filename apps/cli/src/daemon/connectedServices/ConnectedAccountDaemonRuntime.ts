@@ -26,16 +26,18 @@ import type { ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/conn
 import {
     ConnectedAccountRuntimeInvocationNotStartedError,
     type ConnectedAccountRuntimeLease,
+    type ConnectedAccountPortableRuntimeLease,
 } from '@/plugins/runtime/connectedAccounts/contributionRegistry';
 import {
     createConnectedAccountAuthenticationAttemptOwner,
+    executeConnectedAccountAuthenticationCommand,
     type ConnectedAccountAttemptProviderInvocation,
-} from '@/plugins/runtime/connectedAccounts/authenticationAttemptOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import {
     createConnectedAccountConfigurationOwner,
     type ConnectedAccountConfigurationOwner,
     type ConnectedAccountConfigurationTarget,
-} from '@/plugins/runtime/connectedAccounts/configurationOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import {
     revokeQualifiedConnectedAccount,
 } from './revokeQualifiedConnectedAccount';
@@ -141,7 +143,7 @@ export type ConnectedAccountDaemonPersistence = Readonly<{
     attempts: Pick<
         AttemptOwnerParams,
         'accounts' | 'oauth' | 'settlement'
-    > & Partial<Pick<AttemptOwnerParams, 'deviceTransactions' | 'lateEvidence'>>
+    > & Partial<Pick<AttemptOwnerParams, 'deviceTransactions' | 'lateEvidence' | 'attemptAddresses'>>
       & Readonly<{
           listPending?(service: PluginContributionRef): Promise<readonly PendingConnectedAccountAttemptTransaction[]>;
           assertAuthenticationActionAllowed?(input: Readonly<{
@@ -232,6 +234,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
     createAttemptId?: () => string;
     createAccountId?: () => string;
     now?: () => number;
+    resolveExecutionMachine?: AttemptOwnerParams['resolveExecutionMachine'];
     revocation: Pick<
         Parameters<typeof revokeQualifiedConnectedAccount>[0],
         | 'token'
@@ -253,7 +256,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
             let registryLease = await params.reloadController.acquireRuntimeRegistry();
             let retained = false;
             try {
-                let contribution: ConnectedAccountRuntimeLease | null | undefined;
+                let contribution: ConnectedAccountRuntimeLease | ConnectedAccountPortableRuntimeLease | null | undefined;
                 try {
                     contribution = await registryLease.registry.resolveConnectedAccountRuntime?.(input.service);
                 } catch (error) {
@@ -285,13 +288,13 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                     return releasePromise;
                 };
                 const runtimeCustody = Object.freeze({
-                    lease: contribution,
                     async invoke(invocation: ConnectedAccountAttemptProviderInvocation) {
                         if (!invoker) throw new Error('Connected-account host runtime invoker is unavailable');
                         activeInvocations += 1;
                         try {
                             return await invoker.invokeAuthentication({
                                 ...invocation,
+                                lease: contribution,
                                 isConfigurationCurrent: configuration.isCurrent,
                                 configurationRevocationSignal: configuration.currentnessSignal,
                             });
@@ -357,7 +360,18 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
     const attempts = createConnectedAccountAuthenticationAttemptOwner({
         createAttemptId: params.createAttemptId ?? (() => `caa_${randomUUID()}`),
         createAccountId: params.createAccountId ?? (() => `ca_${randomUUID()}`),
+        createSavedSecretResourceId: randomUUID,
+        readSelectedSecrets: async (selections, signal) => {
+            const secrets = params.persistence.configuration.secrets;
+            await secrets.admit?.(Object.values(selections).map(selection => selection.ref), { signal });
+            return Object.fromEntries(await Promise.all(Object.entries(selections).map(async ([fieldId, selection]) => {
+                const value = await secrets.read(selection.ref, { signal });
+                if (value === null) throw new Error('connected_account_credential_secret_unavailable');
+                return [fieldId, value];
+            })));
+        },
         now: params.now ?? Date.now,
+        resolveExecutionMachine: params.resolveExecutionMachine,
         onBackgroundTransition: ({ response, service, settlementPhase }) => {
             logAuthenticationAttempt({
                 operation: 'beginProviderFlow',
@@ -373,6 +387,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
         configuration,
         runtime,
         oauth: params.persistence.attempts.oauth,
+        attemptAddresses: params.persistence.attempts.attemptAddresses,
         ...(params.persistence.attempts.deviceTransactions
             ? { deviceTransactions: params.persistence.attempts.deviceTransactions }
             : {}),
@@ -622,7 +637,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                                     code: 'connected_account_service_unavailable',
                                 };
                             }
-                            if (!quotaRuntime.runtime.quota) {
+                            if (!('quota' in quotaRuntime.runtime) || !quotaRuntime.runtime.quota) {
                                 return {
                                     status: 'unavailable' as const,
                                     code: 'connected_account_v4_operation_unsupported',
@@ -868,11 +883,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                         });
                     }
                 }
-                const view = await configuration.inspect(basis);
-                if (
-                    view.revision !== replacement.snapshot.revision
-                    || !await configuration.isCurrent(replacement.snapshot)
-                ) {
+                if (!await configuration.isCurrent(replacement.snapshot)) {
                     return Object.freeze({
                         status: 'conflict' as const,
                         code: 'connected_account_configuration_consequence_stale',
@@ -882,7 +893,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                     status: 'configurationCommitted' as const,
                     ...basis,
                     configuration:
-                        projectConfigurationControlView(view),
+                        projectConfigurationControlView(replacement.configuration),
                 });
             } catch (error) {
                 if (command.operation === 'revokeAccount'
@@ -942,85 +953,11 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                 });
             };
             try {
-            const response: ConnectedAccountAttemptResponse = await (async () => {
-            switch (command.operation) {
-                case 'beginConnect':
-                    await params.persistence.attempts
-                        .assertAuthenticationActionAllowed?.({
-                            intent: 'connect',
-                            service: command.service,
-                            authenticationModeId: command.modeId,
-                        });
-                    return await attempts.beginConnect({
-                        service: command.service,
-                        modeId: command.modeId,
-                        ...(command.expectedConfigurationRevision === undefined
-                            ? {}
-                            : { expectedConfigurationRevision: command.expectedConfigurationRevision }),
-                    });
-                case 'beginReconnect':
-                    await params.persistence.attempts
-                        .assertAuthenticationActionAllowed?.({
-                            intent: 'reconnect',
-                            service: command.account.service,
-                        });
-                    return await attempts.beginReconnect({
-                        account: command.account,
-                        ...(command.expectedConfigurationRevision === undefined
-                            ? {}
-                            : { expectedConfigurationRevision: command.expectedConfigurationRevision }),
-                    });
-                case 'continueConnect':
-                    return await attempts.continueConnect({
-                        attemptId: command.attemptId,
-                        ...(command.expectedConfigurationRevision === undefined
-                            ? {}
-                            : { expectedConfigurationRevision: command.expectedConfigurationRevision }),
-                    });
-                case 'submitManual':
-                    return await attempts.submitManual({
-                        attemptId: command.attemptId,
-                        fields: command.fields,
-                        ...(options?.signal ? { signal: options.signal } : {}),
-                    });
-                case 'completeOAuth':
-                    return await attempts.completeOAuth({
-                        attemptId: command.attemptId,
-                        completion: command.completion,
-                        ...(options?.signal ? { signal: options.signal } : {}),
-                    });
-                case 'pollDevice':
-                    return await attempts.pollDevice({
-                        attemptId: command.attemptId,
-                        ...(options?.signal ? { signal: options.signal } : {}),
-                    });
-                case 'resumeDevice':
-                    return await attempts.resumeDevice({ attemptId: command.attemptId });
-                case 'reconcile':
-                    return await attempts.reconcile({
-                        attemptId: command.attemptId,
-                        ...(options?.signal ? { signal: options.signal } : {}),
-                    });
-                case 'cancel':
-                    {
-                        const cancelled = await attempts.cancel({ attemptId: command.attemptId });
-                        // Cancel closes this consumer's demand. Uncertain prepared
-                        // settlements retain their recovery state, but a terminal
-                        // response no longer needs lost-reply custody.
-                        if (cancelled.status !== 'outcomeUnknown' && cancelled.status !== 'cleanupPending') {
-                            attempts.releaseTerminalResponse(command.attemptId);
-                        }
-                        return cancelled;
-                    }
-                case 'read':
-                    return await attempts.read({
-                        attemptId: command.attemptId,
-                        ...(command.restoreKind ? { restoreKind: command.restoreKind } : {}),
-                        ...(command.waitForProviderStart === undefined ? {} : { waitForProviderStart: command.waitForProviderStart }),
-                        ...(options?.signal ? { signal: options.signal } : {}),
-                    });
-            }
-            })();
+            const response = await executeConnectedAccountAuthenticationCommand({ attempts, command,
+                ...(options?.signal ? { signal: options.signal } : {}),
+                ...(params.persistence.attempts.assertAuthenticationActionAllowed
+                    ? { assertBeginAllowed: params.persistence.attempts.assertAuthenticationActionAllowed } : {}),
+            });
             report({
                 status: response.status,
                 attemptId: 'attemptId' in response ? response.attemptId ?? attemptId : attemptId,

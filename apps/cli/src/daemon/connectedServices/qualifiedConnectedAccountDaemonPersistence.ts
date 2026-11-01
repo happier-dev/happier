@@ -54,13 +54,13 @@ import {
 } from '@/settings/secrets/savedSecretCatalog';
 import {
   parseConnectedAccountConfigurationRecordContent,
-} from '@/plugins/runtime/connectedAccounts/configurationOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import type {
   ConnectedAccountDeviceTransactionOwner,
   ConnectedAccountOAuthTransaction,
   ConnectedAccountOAuthTransactionOwner,
   ConnectedAccountOAuthTransactionSnapshot,
-} from '@/plugins/runtime/connectedAccounts/authenticationAttemptOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import type { PendingConnectedAccountAttemptTransaction } from '@/api/client/connectedAccountAttemptTransactionApi';
 
 import type { ConnectedAccountDaemonPersistence } from './ConnectedAccountDaemonRuntime';
@@ -465,7 +465,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
         ) {
           throw new Error('Connected-account OAuth transaction identity is unavailable');
         }
-        const pkce = generatePkceCodes();
+        const pkce = await generatePkceCodes();
         const record = {
           snapshot: input.snapshot,
           state: `${input.attemptId}.${Buffer.from(randomBytes(32)).toString('base64url')}`,

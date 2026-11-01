@@ -1,6 +1,7 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import {
@@ -117,10 +118,18 @@ export const QualifiedConnectedAccountProviderIdentityV4Schema = lazyZodSchema((
 const QualifiedConnectedAccountScopesV4Schema = lazyZodSchema(() => z._default(z
   .array(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))).check(z.maxLength(128), z.refine((scopes) => new Set(scopes).size === scopes.length, 'Qualified Connected Account scopes must be unique')), []));
 
+/** Display evidence of an observed authentication, never inferred from import or refresh time. */
+export const QualifiedConnectedAccountAuthenticationProvenanceV4Schema = lazyZodSchema(() => z.strictObject({
+  authenticatedAt: z.number().check(z.int(), z.nonnegative()),
+  /** serverId carries the portable Home server identity, not a device-local profile alias. */
+  machine: MachineTargetV1Schema,
+}));
+
 export const QualifiedConnectedAccountPresentationMetadataV4Schema = lazyZodSchema(() => z.strictObject({
   providerIdentity: z.optional(QualifiedConnectedAccountProviderIdentityV4Schema),
   displayName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
   scopes: QualifiedConnectedAccountScopesV4Schema,
+  authenticationProvenance: z.optional(QualifiedConnectedAccountAuthenticationProvenanceV4Schema),
 }));
 
 const QualifiedConnectedAccountProfileV4Shape = {

@@ -20,7 +20,7 @@ import { createConnectedAccountHostRuntimeInvoker } from '@/plugins/runtime/conn
 import {
   createConnectedAccountConfigurationOwner,
   type ConnectedAccountConfigurationRecord,
-} from '@/plugins/runtime/connectedAccounts/configurationOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import type {
   ConnectedAccountHostRuntimeInvoker,
   ConnectedAccountRuntimeEstablishedInvocation,
@@ -205,7 +205,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         createLoggerAndEventsAvailablePluginInvocationServiceBinding('authority-generation', 'producer', []) }),
       // This native leaf uses no platform services; all credential/currentness owners stay real.
       createServices: () => ({}) as PluginInvocationContext['services'],
-      registerRawForRedaction() {}, resolveHostOwnedConfiguredEndpoints: () => [],
+      registerRawForRedaction() {},
     });
     const contributions = createConnectedAccountContributionRegistry({
       descriptors: kind === 'host' ? [] : [{ provenance: 'external', source: { kind: 'package' }, pluginId: ref.pluginId, definition }],
@@ -640,7 +640,6 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       // No platform service is used by this provider leaf; the real invoker owns its context.
       createServices: () => ({}) as PluginInvocationContext['services'],
       registerRawForRedaction() {},
-      resolveHostOwnedConfiguredEndpoints: () => [],
     });
     const registry = {
       resolveConnectedAccountRuntime: async () => runtimeLease,

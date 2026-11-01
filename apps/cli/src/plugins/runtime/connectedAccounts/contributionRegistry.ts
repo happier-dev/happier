@@ -1,20 +1,21 @@
 import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedAccountServiceIdentityV1Schema, type ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountPortableRuntime, ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 
 import type { ResolvedConnectedAccountDescriptorContribution } from '@/plugins/projection/registry/types';
 import { createPluginRuntimeOccurrenceId, type PluginRuntimeOccurrenceId } from '../runtimeSlots';
 import type { PluginSourceCustody } from '../sourceAuthority';
 import type { HostConnectedAccountRuntime } from './hostRuntime';
+import type { CredentialedConnectedAccountAuthenticationRuntime } from './authenticationHost';
 
 export type ConnectedAccountRuntimeRegistration = Readonly<{
     pluginId: string;
     occurrenceId: string;
     localId: string;
-    runtime: PluginConnectedAccountRuntime;
-}>;
+}> & (Readonly<{ realm?: 'daemon'; runtime: PluginConnectedAccountRuntime }>
+    | Readonly<{ realm: 'account'; runtime: ConnectedAccountPortableRuntime }>);
 
 /**
  * The cold projection of one admitted connected-account contribution: everything a
@@ -31,6 +32,7 @@ export type ConnectedAccountContributionRegistryEntry = Readonly<{
 
 export type ConnectedAccountPluginRuntimeLease = Readonly<{
     owner?: 'plugin';
+    realm?: 'daemon';
     ref: PluginContributionRef;
     occurrenceId: PluginRuntimeOccurrenceId;
     sourceCustody: PluginSourceCustody;
@@ -48,6 +50,13 @@ export type ConnectedAccountHostRuntimeLease = Readonly<{
     runtime: HostConnectedAccountRuntime;
     isCurrent(): boolean;
 }>;
+export type ConnectedAccountPortableRuntimeLease = Omit<ConnectedAccountPluginRuntimeLease, 'runtime' | 'realm'> & Readonly<{
+    realm: 'account';
+    runtime: ConnectedAccountPortableRuntime;
+    authentication: Readonly<{
+        acquire(create: () => CredentialedConnectedAccountAuthenticationRuntime): CredentialedConnectedAccountAuthenticationRuntime;
+    }>;
+}>;
 export type ConnectedAccountRuntimeLease = ConnectedAccountPluginRuntimeLease | ConnectedAccountHostRuntimeLease;
 export type HostConnectedAccountRuntimeRegistration = Readonly<{
     ref: PluginContributionRef;
@@ -55,16 +64,8 @@ export type HostConnectedAccountRuntimeRegistration = Readonly<{
     runtime: HostConnectedAccountRuntime;
 }>;
 
-export class ConnectedAccountRuntimeInvocationNotStartedError extends Error {
-    readonly code = 'connected_account_runtime_generation_changed';
-
-    constructor() {
-        super(
-            'Connected-account runtime occurrence is no longer current before provider entry',
-        );
-        this.name = 'ConnectedAccountRuntimeInvocationNotStartedError';
-    }
-}
+export { ConnectedAccountRuntimeInvocationNotStartedError } from '@happier-dev/cli-common/connectedAccounts';
+import { ConnectedAccountRuntimeInvocationNotStartedError } from '@happier-dev/cli-common/connectedAccounts';
 
 function qualifiedKey(ref: PluginContributionRef): string {
     return buildQualifiedPluginContributionKey(ConnectedAccountServiceIdentityV1Schema.parse(ref));
@@ -97,6 +98,7 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
     readPluginOccurrenceId(pluginId: string): PluginRuntimeOccurrenceId | null;
     readPluginSourceCustody(pluginId: string): PluginSourceCustody | null;
     isPluginOccurrenceCurrent(pluginId: string, occurrenceId: PluginRuntimeOccurrenceId): boolean;
+    resolveRetirementSignal?(pluginId: string): AbortSignal;
     /**
      * Reports a descriptor this generation could not admit, so the host can tell
      * the operator which plugin lost its Connected Accounts. The registry itself
@@ -128,7 +130,9 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
      * does not exist. Genuine faults (activation failure, duplicate
      * registration, descriptor/runtime mismatch) keep throwing as themselves.
      */
-    resolve(ref: PluginContributionRef): Promise<ConnectedAccountRuntimeLease | null>;
+    resolve(ref: PluginContributionRef): Promise<ConnectedAccountRuntimeLease | ConnectedAccountPortableRuntimeLease | null>;
+    /** Portable view of the same admitted registration; never a native-runtime cast. */
+    resolveAccount(ref: PluginContributionRef): Promise<ConnectedAccountPortableRuntimeLease | null>;
     registerHostConnectedAccountRuntime(input: HostConnectedAccountRuntimeRegistration): void;
     dispose(): void;
 }> {
@@ -138,6 +142,7 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
         occurrenceId: PluginRuntimeOccurrenceId;
         sourceCustody: PluginSourceCustody;
         owner?: 'plugin';
+        authentication: { runtime: CredentialedConnectedAccountAuthenticationRuntime | null };
     }> | ConnectedAccountHostRuntimeLease;
     const descriptorsByKey = new Map<string, Declared>();
     const duplicateKeys = new Set<string>();
@@ -177,6 +182,7 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
             descriptor,
             occurrenceId,
             sourceCustody,
+            authentication: { runtime: null },
         }));
     }
     let disposed = false;
@@ -207,6 +213,50 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
             sourceCustody: declared.sourceCustody,
             isCurrent: () => declared.owner === 'host'
                 ? !disposed : isCurrentOccurrence(declared.ref.pluginId, declared.occurrenceId),
+        });
+    }
+
+    async function resolvePluginRegistration(qualifiedRef: PluginContributionRef,
+        declared: Exclude<Declared, ConnectedAccountHostRuntimeLease>) {
+        if (!isCurrentOccurrence(qualifiedRef.pluginId, declared.occurrenceId)) {
+            throw new ConnectedAccountRuntimeInvocationNotStartedError();
+        }
+        let registration = readRegistration(qualifiedRef);
+        if (!registration) {
+            await params.activateOnDemand(qualifiedRef);
+            if (!isCurrentOccurrence(qualifiedRef.pluginId, declared.occurrenceId)) {
+                throw new ConnectedAccountRuntimeInvocationNotStartedError();
+            }
+            registration = readRegistration(qualifiedRef);
+        }
+        if (!registration) return null;
+        return {
+            ref: declared.ref, occurrenceId: declared.occurrenceId, sourceCustody: declared.sourceCustody,
+            descriptor: declared.descriptor, registration,
+            isCurrent: () => isCurrentOccurrence(qualifiedRef.pluginId, declared.occurrenceId),
+        };
+    }
+
+    function projectPortableLease(
+        resolved: NonNullable<Awaited<ReturnType<typeof resolvePluginRegistration>>>,
+        declared: Exclude<Declared, ConnectedAccountHostRuntimeLease>,
+        runtime: ConnectedAccountPortableRuntime,
+    ): ConnectedAccountPortableRuntimeLease {
+        const { registration: _registration, ...lease } = resolved;
+        return Object.freeze({ ...lease, realm: 'account' as const, runtime,
+            authentication: Object.freeze({ acquire(create: () => CredentialedConnectedAccountAuthenticationRuntime) {
+                if (declared.authentication.runtime) return declared.authentication.runtime;
+                const signal = params.resolveRetirementSignal?.(lease.ref.pluginId);
+                if (disposed || !signal || signal.aborted) throw new ConnectedAccountRuntimeInvocationNotStartedError();
+                const retained = create();
+                declared.authentication.runtime = retained;
+                signal.addEventListener('abort', () => {
+                    const current = declared.authentication.runtime;
+                    declared.authentication.runtime = null;
+                    current?.dispose();
+                }, { once: true });
+                return retained;
+            } }),
         });
     }
 
@@ -242,27 +292,29 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
                 if (!declared.isCurrent()) throw new ConnectedAccountRuntimeInvocationNotStartedError();
                 return declared;
             }
-            if (!isCurrentOccurrence(qualifiedRef.pluginId, declared.occurrenceId)) {
-                throw new ConnectedAccountRuntimeInvocationNotStartedError();
-            }
-            let registration = readRegistration(qualifiedRef);
-            if (!registration) {
-                await params.activateOnDemand(qualifiedRef);
-                if (!isCurrentOccurrence(qualifiedRef.pluginId, declared.occurrenceId)) {
-                    throw new ConnectedAccountRuntimeInvocationNotStartedError();
-                }
-                registration = readRegistration(qualifiedRef);
-            }
-            if (!registration) return null;
-            return Object.freeze({
-                ref: declared.ref,
-                occurrenceId: declared.occurrenceId,
-                sourceCustody: declared.sourceCustody,
-                descriptor: declared.descriptor,
-                runtime: registration.runtime,
-                isCurrent: () => isCurrentOccurrence(qualifiedRef.pluginId, declared.occurrenceId),
-            });
+            const resolved = await resolvePluginRegistration(qualifiedRef, declared);
+            if (!resolved) return null;
+            if (resolved.registration.realm === 'account') return projectPortableLease(resolved, declared, resolved.registration.runtime);
+            const { registration, ...lease } = resolved;
+            return Object.freeze({ ...lease, runtime: registration.runtime });
         },
-        dispose() { disposed = true; },
+        async resolveAccount(ref) {
+            const qualifiedRef = snapshotQualifiedRef(ref);
+            const declared = descriptorsByKey.get(qualifiedKey(qualifiedRef));
+            if (!declared || declared.owner === 'host') return null;
+            const resolved = await resolvePluginRegistration(qualifiedRef, declared);
+            if (!resolved || resolved.registration.realm !== 'account') return null;
+            return projectPortableLease(resolved, declared, resolved.registration.runtime);
+        },
+        dispose() {
+            disposed = true;
+            for (const declared of descriptorsByKey.values()) {
+                if (declared.owner !== 'host') {
+                    const runtime = declared.authentication.runtime;
+                    declared.authentication.runtime = null;
+                    runtime?.dispose();
+                }
+            }
+        },
     });
 }

@@ -39,7 +39,7 @@ import type {
 import type { AccountPluginDataStorageHostDependencies } from './context/accountPluginDataStorage';
 import {
     createConnectedAccountAuthenticationAttemptOwner,
-} from './connectedAccounts/authenticationAttemptOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import {
     ConnectedAccountRuntimeInvocationNotStartedError,
 } from './connectedAccounts/contributionRegistry';

@@ -11,7 +11,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { logger } from '@/ui/logger';
 import { createConnectedAccountHostRuntimeInvoker } from '@/plugins/runtime/connectedAccounts/runtimeInvoker';
-import type { ConnectedAccountOAuthCallbackCompletion } from '@/plugins/runtime/connectedAccounts/authenticationAttemptOwner';
+import type { ConnectedAccountOAuthCallbackCompletion } from '@happier-dev/cli-common/connectedAccounts';
 import { createLoggerAndEventsAvailablePluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import {
@@ -21,7 +21,7 @@ import {
 import type {
   ConnectedAccountConfigurationRecord,
   ConnectedAccountConfigurationTarget,
-} from '@/plugins/runtime/connectedAccounts/configurationOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import type {
   ResolvedConnectedAccountDescriptorContribution,
 } from '@/plugins/projection/registry/types';
@@ -116,7 +116,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       const definition = PluginConnectedAccountDescriptorContributionV2Schema.parse({ id: service.localId, title: 'Work', authentication: { defaultModeId: authentication, modes: [{ ...authenticationMode,
         ...(['configurationFailure', 'disposedDuringAdmission'].includes(scenario) ? { configuration: { scope: 'service', changeBehavior: 'refresh', fields: [{ id: 'endpoint', title: 'Endpoint', schema: { type: 'string' }, required: true }] } } : {}),
       }] } });
-      const complete: Extract<ConnectedAccountRuntimeRegistration['runtime']['authentication']['modes'][string], { kind: 'manual' }>['complete'] = async (_input, context) => {
+      const complete: Extract<Extract<ConnectedAccountRuntimeRegistration, { realm?: 'daemon' }>['runtime']['authentication']['modes'][string], { kind: 'manual' }>['complete'] = async (_input, context) => {
         if (successor) return { status: 'rejected', diagnostic: { code: 'successor_entered', severity: 'error' } };
         if (scenario === 'cancelledManual') {
           callbackEntered = true;
@@ -125,7 +125,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
         if (authentication !== 'manual') expect(await context.attemptCredentials.get('challenge')).toBe('original-challenge');
         return { status: 'connected', displayName: 'Original account', scopes: [] };
       };
-      const modes: ConnectedAccountRuntimeRegistration['runtime']['authentication']['modes'] = authentication === 'manual'
+      const modes: Extract<ConnectedAccountRuntimeRegistration, { realm?: 'daemon' }>['runtime']['authentication']['modes'] = authentication === 'manual'
         ? { manual: { kind: 'manual', complete } }
         : authentication === 'oauth'
           ? { oauth: { kind: 'oauthAuthorizationCode', begin: async (_input, context) => {
@@ -137,7 +137,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
             await context.attemptCredentials.set('challenge', 'original-challenge');
             return { status: 'awaitingDeviceAuthorization', verificationUri: 'https://provider.example/device', userCode: 'ABCD', expiresAtMs: 61_000, pollIntervalMs: 5_000 };
           }, poll: async (context) => complete({ fields: {} }, context), cancel: async () => {} } };
-      const registeredRuntime: ConnectedAccountRuntimeRegistration['runtime'] = {
+      const registeredRuntime: Extract<ConnectedAccountRuntimeRegistration, { realm?: 'daemon' }>['runtime'] = {
         authentication: { modes }, refresh: async () => ({ status: 'connected' }), revoke: async () => ({ status: 'remoteUnsupported' }),
         status: async () => ({ status: 'connected' }), materialize: async () => ({ kind: 'environment', env: {} }),
       };
@@ -150,7 +150,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       const invoker = createConnectedAccountHostRuntimeInvoker({
         resolveRuntime: contributions.resolve, resolvePlugin: () => ({ version: '1.0.0', hostAccessRequests: [] }),
         resolveHostPolicy: () => ({ hostAccess: [], serviceBinding: createLoggerAndEventsAvailablePluginInvocationServiceBinding(identity.occurrenceId, 'producer', []) }),
-        createServices: () => createUnavailablePluginServices(), registerRawForRedaction: () => {}, resolveHostOwnedConfiguredEndpoints: () => [],
+        createServices: () => createUnavailablePluginServices(), registerRawForRedaction: () => {},
       });
       // Unrelated registry catalogs are inert fixture data; publication, leases,
       // auth invocation and configuration admission all execute their real owners.
@@ -1294,7 +1294,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
     const unreached = (): never => {
       throw new Error('describeService must not enter the connected-account provider');
     };
-    const publishedRuntime: ConnectedAccountRuntimeRegistration['runtime'] = {
+    const publishedRuntime: Extract<ConnectedAccountRuntimeRegistration, { realm?: 'daemon' }>['runtime'] = {
       authentication: {
         modes: {
           oauth: {

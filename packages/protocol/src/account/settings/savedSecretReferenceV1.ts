@@ -1,3 +1,6 @@
+import { z } from 'zod/mini';
+import { lazyZodSchema } from '../../lazyZodSchema.js';
+
 export const SHARED_SAVED_SECRET_REF_V1_PREFIX = 'happier:shared-secret:v1:';
 
 export type SavedSecretRefV1 =
@@ -38,6 +41,15 @@ export function formatSharedSavedSecretRefV1(resourceId: string): string {
   assertSharedSavedSecretResourceIdV1(resourceId);
   return `${SHARED_SAVED_SECRET_REF_V1_PREFIX}${resourceId}`;
 }
+
+/** A settled picker carries identity only; pending person input is never a Saved Secret ref. */
+export const SharedSavedSecretReferenceSelectionV1Schema = lazyZodSchema(() => z.strictObject({
+  ref: z.string().check(z.refine(value => {
+    try { return parseSavedSecretRefV1(value).kind === 'shared_resource'; } catch { return false; }
+  })),
+  resourceRevision: z.number().check(z.int(), z.positive()),
+}));
+export type SharedSavedSecretReferenceSelectionV1 = z.infer<typeof SharedSavedSecretReferenceSelectionV1Schema>;
 
 /** Canonical carrier paths keep opaque ids and field names unambiguous. */
 export function formatSavedSecretReferencePathSegmentV1(key: string): string {

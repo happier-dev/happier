@@ -2703,7 +2703,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             const lease = await runtimeRegistry.resolveConnectedAccountRuntime!({
                 pluginId: 'acme.novel.accounts', localId: 'same-local-id',
             });
-            if (!lease) throw new Error('Expected a resolvable connected-account lease');
+            if (!lease || 'realm' in lease) throw new Error('Expected a resolvable native connected-account lease');
             expect(runtimeRegistry.activatedPluginIds.has('acme.novel.accounts')).toBe(true);
             expect(lease).toMatchObject({
                 ref: { pluginId: 'acme.novel.accounts', localId: 'same-local-id' },

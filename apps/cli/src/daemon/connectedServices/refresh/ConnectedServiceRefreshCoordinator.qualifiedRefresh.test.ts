@@ -23,7 +23,7 @@ import { logger } from '@/ui/logger';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import type {
   ConnectedAccountConfigurationRecord,
-} from '@/plugins/runtime/connectedAccounts/configurationOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';

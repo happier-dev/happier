@@ -36,6 +36,7 @@ import type { BackgroundServiceRunner } from '../backgroundServices.js';
 import type { AgentExternalSessionHooksContribution } from '../externalSessionHooks.js';
 import type { PluginDynamicResourceRuntime } from '../services/resources.js';
 import type { PluginConnectedAccountRuntime } from '../services/index.js';
+import type { ConnectedAccountPortableRuntime } from '../connectedAccounts.js';
 import type { AgentExternalSessionTakeoverContribution } from '../sessions/externalSessionTakeover.js';
 import type {
     ManagedProviderRuntime,
@@ -115,12 +116,14 @@ export type PluginAgentRuntimeRegistration = PluginRegistrationValueByFamily['ag
 
 export type PluginRegistrationFamily = keyof PluginRegistrationValueByFamily;
 
-type PluginRuntimeRegistrationFor<TFamily extends PluginRegistrationFamily> = Readonly<{
+type PluginRuntimeRegistrationFor<TFamily extends PluginRegistrationFamily, TRealm extends 'daemon' | 'account'> = Readonly<{
     family: TFamily;
     localId: string;
-    value: PluginRegistrationValueByFamily[TFamily];
+    value: TFamily extends 'connectedAccountDescriptors'
+        ? TRealm extends 'account' ? ConnectedAccountPortableRuntime : PluginRegistrationValueByFamily[TFamily]
+        : PluginRegistrationValueByFamily[TFamily];
 }>;
 
-export type PluginRuntimeRegistration = {
-    [TFamily in PluginRegistrationFamily]: PluginRuntimeRegistrationFor<TFamily>;
+export type PluginRuntimeRegistration<TRealm extends 'daemon' | 'account' = 'daemon'> = {
+    [TFamily in PluginRegistrationFamily]: PluginRuntimeRegistrationFor<TFamily, TRealm>;
 }[PluginRegistrationFamily];

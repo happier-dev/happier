@@ -9,7 +9,7 @@ import {
     parseConnectedAccountConfigurationRecordContent,
     type ConnectedAccountConfigurationRecord,
     type ConnectedAccountConfigurationTarget,
-} from './configurationOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 
 const service = Object.freeze({ pluginId: 'acme.accounts', localId: 'work' });
 const account = Object.freeze({ service, accountId: 'account-a' });

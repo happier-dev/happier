@@ -20,7 +20,7 @@ import {
 } from '@happier-dev/protocol';
 import type {
   ConnectedAccountDeviceTransactionSnapshot,
-} from '@/plugins/runtime/connectedAccounts/authenticationAttemptOwner';
+} from '@happier-dev/cli-common/connectedAccounts';
 import {
   commitActiveAccountSettingsSnapshot,
   resetActiveAccountSettingsSnapshotForTests,

@@ -1,5 +1,8 @@
 import { isLoopbackHostname } from '../server/urls/loopbackHostname.js';
 
+/** Canonical Connected Account relay; daemon attempts retain OAuth validation and credential custody. */
+export const CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 = 'https://app.happier.dev/oauth/connected-account/callback';
+
 export type OauthAuthorizationResponse =
   | Readonly<{ kind: 'invalid' }>
   | Readonly<{ kind: 'rawAuthorizationCode'; code: string }>

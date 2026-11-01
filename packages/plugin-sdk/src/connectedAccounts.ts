@@ -1,3 +1,4 @@
+import type { PluginConnectedAccountPortableAuthenticationContext } from './services/connectedAccounts.js';
 import { AGY_OAUTH_ALLOW_RAW_AUTHORIZATION_CODE, AGY_OAUTH_AUTHORIZE_URL, AGY_OAUTH_CALLBACK_URL, AGY_OAUTH_CLIENT_ID, AGY_OAUTH_CLIENT_SECRET, AGY_OAUTH_SCOPES, AGY_OAUTH_TOKEN_URL, AGY_OAUTH_USERINFO_URL } from '@happier-dev/protocol/providers/agy/oauth';
 /**
  * Connected Account authoring, binding, materialization, usage, and runtime
@@ -68,6 +69,9 @@ import type {
 import type { JsonValue, PluginContributionRef } from './identity.js';
 import type { AgentAccountUsageMeter } from './agentRuntime/accountUsage.js';
 import type { Disposable } from './lifecycle.js';
+import type { PluginInvocationContext } from './invocation.js';
+import type { HttpService } from './services/io.js';
+import type { ConnectedAccountAuthenticationModeRuntime as CommonAuthenticationModeRuntime, ConnectedAccountEstablishedReadContext, ConnectedAccountEstablishedRuntime } from '@happier-dev/cli-common/connectedAccounts';
 import type { ConnectedAccountMaterialization } from './connected-accounts/materialization.js';
 export type { ConnectedAccountMaterialization } from './connected-accounts/materialization.js';
 
@@ -305,6 +309,7 @@ export {
 /** @realm daemon */
 export type {
     PluginConnectedAccountAuthenticationContext as ConnectedAccountAuthenticationContext,
+    PluginConnectedAccountPortableAuthenticationContext as ConnectedAccountPortableAuthenticationContext,
     PluginConnectedAccountAuthenticationModeRuntime as ConnectedAccountAuthenticationModeRuntime,
     PluginConnectedAccountCredentialStore as ConnectedAccountCredentialStore,
     PluginConnectedAccountHealthResult as ConnectedAccountHealthResult,
@@ -312,6 +317,21 @@ export type {
     PluginConnectedAccountRegistrationApi,
     PluginConnectedAccountRuntimeConfiguration as ConnectedAccountRuntimeConfiguration,
 } from './services/connectedAccounts.js';
+
+/** Established Account reads receive selected credentials and portable HTTP only. @realm any */
+export type ConnectedAccountPortableReadContext = ConnectedAccountEstablishedReadContext
+    & Pick<PluginInvocationContext, 'plugin' | 'contribution' | 'surface' | 'caller'>
+    & Readonly<{ services: Readonly<{ http: HttpService }> }>;
+
+/** Portable callbacks registered through the ordinary Account artifact. @realm any */
+export type ConnectedAccountPortableRuntime = Readonly<{
+    authentication: Readonly<{
+        modes: Readonly<Record<string, CommonAuthenticationModeRuntime<PluginConnectedAccountPortableAuthenticationContext>>>;
+    }>;
+}> & Partial<Pick<ConnectedAccountEstablishedRuntime<ConnectedAccountPortableReadContext>, 'materialize'>>;
+
+/** Authentication-only registrations remain valid portable runtimes. @realm any */
+export type ConnectedAccountAuthenticationRuntime = ConnectedAccountPortableRuntime;
 
 type ConnectedServiceCredentialRawMetadataV1 = Readonly<{
     claudeAiOauth?: Readonly<{

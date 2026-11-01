@@ -1,17 +1,20 @@
+import type { ConnectedAccountRuntimeConfiguration as PluginConnectedAccountRuntimeConfiguration } from './authenticationTypes.js';
+import type { PluginContributionRef, JsonValue } from '../plugins/registration/contracts.js';
 import type {
-    ConnectedAccountRuntimeConfiguration as PluginConnectedAccountRuntimeConfiguration } from '@happier-dev/plugin-sdk/connected-accounts';
-import type {
-    PluginContributionRef,
-} from '@happier-dev/plugin-sdk';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type {
+    FeaturesResponse,
     PluginConnectedAccountAuthenticationModeV2,
 } from '@happier-dev/protocol';
 
 import { normalizeConnectedAccountConfigurationV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
+import type { ConnectedAccountCredentialSecretReader, ConnectedAccountCredentialOperationSecretReader } from './credentialMaterial.js';
 
-import type { ConnectedAccountAttemptConfigurationAdmission } from './authenticationAttemptOwner';
-import { clonePluginPlainData } from '../plainData';
+import type {
+    ConnectedAccountAttemptAddressOwner,
+    ConnectedAccountAttemptConfigurationAdmission,
+    ConnectedAccountDeviceTransactionOwner,
+    ConnectedAccountOAuthTransactionOwner,
+} from './authenticationAttemptOwner.js';
+import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 type MaybePromise<T> = T | Promise<T>;
@@ -45,6 +48,7 @@ export type ConnectedAccountConfigurationRecord = Readonly<{
 export function parseConnectedAccountConfigurationRecordContent(
     input: unknown,
     revision: string,
+    scope?: 'service' | 'account' | 'attempt',
 ): ConnectedAccountConfigurationRecord {
     assertBoundedIdentity(revision, 'Connected-account configuration revision');
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
@@ -83,10 +87,13 @@ export function parseConnectedAccountConfigurationRecordContent(
     }
     const values = cloneOwnRecord(
         valuesProperty.value as Readonly<Record<string, unknown>>,
-        (entry) => clonePluginPlainData(entry, {
-            path: 'Connected-account configuration value',
-            invalid,
-        }) as JsonValue,
+        (entry) => {
+            try {
+                return cloneStrictPluginJsonValue(entry, 'Connected-account configuration value') as JsonValue;
+            } catch (error) {
+                throw invalid(error instanceof Error ? error.message : 'Connected-account configuration value must contain strict JSON data');
+            }
+        },
     );
     const secretRefs = cloneOwnRecord(
         secretRefsProperty.value as Readonly<Record<string, unknown>>,
@@ -116,6 +123,12 @@ export function parseConnectedAccountConfigurationRecordContent(
                 return entry;
             },
         );
+    if (scope === 'service' && secretValues !== undefined) {
+        throw new Error('Connected-account service configuration cannot contain inline secret bytes');
+    }
+    if (scope !== undefined && scope !== 'service' && Object.keys(secretRefs).length > 0) {
+        throw new Error('Connected-account account and attempt configuration cannot contain SavedSecret references');
+    }
     return Object.freeze({
         revision,
         values,
@@ -129,6 +142,112 @@ type ConfigurationReplacement = Readonly<{
     secretRefs: Readonly<Record<string, unknown>>;
     secretValues?: Readonly<Record<string, unknown>>;
 }>;
+
+type AttemptConfigurationTarget = Extract<ConnectedAccountConfigurationTarget, { kind: 'attempt' }>;
+
+export type ConnectedAccountAttemptConfigurationStore = Readonly<{
+    read(target: AttemptConfigurationTarget): Promise<ConnectedAccountConfigurationRecord | null>;
+    replace(input: Readonly<{
+        target: AttemptConfigurationTarget;
+        expectedRevision: string | null;
+        replacement: Omit<ConnectedAccountConfigurationRecord, 'revision'>;
+    }>): Promise<
+        | Readonly<{ status: 'committed'; record: ConnectedAccountConfigurationRecord }>
+        | Readonly<{ status: 'conflict' | 'unavailable'; code: string }>
+    >;
+    destroy(attemptId: string): Promise<void>;
+}>;
+
+/** The existing host-lifetime attempt staging store, shared by daemon and Account hosts. */
+export function createConnectedAccountAttemptConfigurationStore(params: Readonly<{
+    createRevision(): string;
+    transactions?: Readonly<{
+        address?: ConnectedAccountAttemptAddressOwner;
+        oauth?: ConnectedAccountOAuthTransactionOwner;
+        device?: ConnectedAccountDeviceTransactionOwner;
+    }>;
+}>): ConnectedAccountAttemptConfigurationStore {
+    const configurations = new Map<string, Readonly<{
+        target: AttemptConfigurationTarget;
+        record: ConnectedAccountConfigurationRecord;
+    }>>();
+
+    return Object.freeze({
+        async read(target: AttemptConfigurationTarget): Promise<ConnectedAccountConfigurationRecord | null> {
+            const staged = configurations.get(target.attemptId);
+            if (staged) {
+                return sameService(staged.target.service, target.service) && staged.target.modeId === target.modeId
+                    ? staged.record : null;
+            }
+            const record = await params.transactions?.address?.read(target.attemptId);
+            if (!record) return null;
+            const snapshot = record.kind === 'oauth'
+                ? (await params.transactions?.oauth?.read?.(target.attemptId, record))?.snapshot
+                : record.kind === 'device'
+                    ? await params.transactions?.device?.read(target.attemptId, record)
+                    : null;
+            if (!snapshot || snapshot.attemptId !== target.attemptId
+                || !sameService(snapshot.service, target.service) || snapshot.modeId !== target.modeId
+                || snapshot.stagedAccountConfigurationContent === undefined) return null;
+            return parseConnectedAccountConfigurationRecordContent(
+                snapshot.stagedAccountConfigurationContent, snapshot.expectedConfigurationRevision, 'attempt',
+            );
+        },
+        async replace(input: Readonly<{
+            target: AttemptConfigurationTarget;
+            expectedRevision: string | null;
+            replacement: Omit<ConnectedAccountConfigurationRecord, 'revision'>;
+        }>) {
+            const current = configurations.get(input.target.attemptId);
+            if ((current && (!sameService(current.target.service, input.target.service)
+                || current.target.modeId !== input.target.modeId))
+                || (current?.record.revision ?? null) !== input.expectedRevision) {
+                return Object.freeze({ status: 'conflict' as const, code: 'connected_account_configuration_changed' });
+            }
+            try {
+                const record = parseConnectedAccountConfigurationRecordContent(input.replacement, params.createRevision(), 'attempt');
+                configurations.set(input.target.attemptId, Object.freeze({
+                    target: Object.freeze({
+                        kind: 'attempt', attemptId: input.target.attemptId,
+                        service: Object.freeze({ ...input.target.service }), modeId: input.target.modeId,
+                    }),
+                    record,
+                }));
+                return Object.freeze({ status: 'committed' as const, record });
+            } catch {
+                return Object.freeze({ status: 'unavailable' as const, code: 'connected_account_configuration_persistence_unavailable' });
+            }
+        },
+        async destroy(attemptId: string): Promise<void> {
+            configurations.delete(attemptId);
+        },
+    });
+}
+
+type ConfigurationControlView = Readonly<{
+    status: 'ready' | 'configurationRequired';
+    revision: string | null;
+    values: Readonly<Record<string, JsonValue>>;
+    configuredSecretFieldIds: readonly string[];
+    missingFieldIds: readonly string[];
+}>;
+
+function configurationControlView(
+    normalized: Awaited<ReturnType<typeof normalizeConnectedAccountConfigurationV1>>,
+): ConfigurationControlView {
+    return Object.freeze({
+        status: normalized.revision !== null && normalized.missingFieldIds.length === 0
+            ? 'ready' as const
+            : 'configurationRequired' as const,
+        revision: normalized.revision,
+        values: normalized.values,
+        configuredSecretFieldIds: Object.freeze([...new Set([
+            ...Object.keys(normalized.secretRefs),
+            ...Object.keys(normalized.secretValues),
+        ])].sort()),
+        missingFieldIds: normalized.missingFieldIds,
+    });
+}
 
 type SnapshotMetadata = Readonly<{
     mode: PluginConnectedAccountAuthenticationModeV2;
@@ -183,6 +302,21 @@ function assertBoundedIdentity(value: string, label: string): void {
 
 function sameService(left: PluginContributionRef, right: PluginContributionRef): boolean {
     return left.pluginId === right.pluginId && left.localId === right.localId;
+}
+
+export function resolveConnectedAccountPublicOAuthClient(input: Readonly<{
+    clients: FeaturesResponse['capabilities']['connectedServices']['publicOAuthClients'];
+    service: PluginContributionRef;
+    modeId: string;
+}>): Awaited<ReturnType<NonNullable<PluginConnectedAccountRuntimeConfiguration['getPublicOAuthClient']>>> {
+    const matches = input.clients?.filter(client => sameService(client.service, input.service)) ?? [];
+    // Never guess among conflicting operator declarations or another mode.
+    if (matches.length !== 1) return null;
+    const client = matches[0]!;
+    const scopes = client.scopesByMode[input.modeId];
+    return scopes?.length
+        ? Object.freeze({ clientId: client.clientId, scopes: Object.freeze([...scopes]) })
+        : null;
 }
 
 function modeConfiguration(
@@ -317,13 +451,7 @@ export type ConnectedAccountConfigurationOwner = Readonly<{
         mode: PluginConnectedAccountAuthenticationModeV2;
         occurrenceId: string;
         sourceCustody: ConnectedAccountSourceCustodyV1;
-    }>): Promise<Readonly<{
-        status: 'ready' | 'configurationRequired';
-        revision: string | null;
-        values: Readonly<Record<string, JsonValue>>;
-        configuredSecretFieldIds: readonly string[];
-        missingFieldIds: readonly string[];
-    }>>;
+    }>): Promise<ConfigurationControlView>;
     replaceForControl(input: Readonly<{
         target: ConnectedAccountConfigurationTarget;
         mode: PluginConnectedAccountAuthenticationModeV2;
@@ -336,6 +464,7 @@ export type ConnectedAccountConfigurationOwner = Readonly<{
         | Readonly<{
             status: 'committed';
             snapshot: PluginConnectedAccountRuntimeConfiguration;
+            configuration: ConfigurationControlView;
         }>
         | Readonly<{
             status: 'conflict' | 'unavailable';
@@ -351,7 +480,7 @@ export type ConnectedAccountConfigurationOwner = Readonly<{
         expectedConfigurationRevision?: string;
         occurrenceId: string;
         sourceCustody: ConnectedAccountSourceCustodyV1;
-    }>): Promise<ConnectedAccountAttemptConfigurationAdmission>;
+    }>): Promise<ConnectedAccountAttemptConfigurationAdmission & Readonly<{ secretReader?: ConnectedAccountCredentialOperationSecretReader }>>;
     replace(input: Readonly<{
         target: ConnectedAccountConfigurationTarget;
         mode: PluginConnectedAccountAuthenticationModeV2;
@@ -377,6 +506,10 @@ export type ConnectedAccountConfigurationOwner = Readonly<{
 
 export function createConnectedAccountConfigurationOwner(params: Readonly<{
     read(target: ConnectedAccountConfigurationTarget): Promise<ConnectedAccountConfigurationRecord | null>;
+    readPublicOAuthClient?(
+        input: Readonly<{ service: PluginContributionRef; modeId: string }>,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): ReturnType<NonNullable<PluginConnectedAccountRuntimeConfiguration['getPublicOAuthClient']>>;
     replace(input: Readonly<{
         target: ConnectedAccountConfigurationTarget;
         expectedRevision: string | null;
@@ -400,20 +533,8 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
         | Readonly<{ status: 'conflict' | 'unavailable'; code?: string }>
     >;
     destroyAttempt(attemptId: string): MaybePromise<void>;
-    secrets: Readonly<{
-        /**
-         * Validates an operation's Saved Secret references against the Home in
-         * one bounded batch before the operation is admitted
-         * (teams-lane-10 08 §5.8). Rejects when they cannot be admitted.
-         */
-        admit(secretIds: readonly string[], options?: Readonly<{ signal?: AbortSignal }>): Promise<void>;
+    secrets: ConnectedAccountCredentialSecretReader & Readonly<{
         has(secretId: string): Promise<boolean>;
-        read(secretId: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<string | null>;
-        /** Source snapshots need the canonical materializer's currentness, never a hash of plaintext. */
-        readMaterial?(secretId: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<{
-            value: string;
-            fingerprint: string;
-        }> | null>;
     }>;
     isRuntimeCurrent(input: Readonly<{
         pluginId: string;
@@ -535,6 +656,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
         secretRefs: Readonly<Record<string, string>>;
         secretValues?: Readonly<Record<string, string>>;
         unconfigured?: boolean;
+        secretReader?: ConnectedAccountCredentialOperationSecretReader;
     }>): PluginConnectedAccountRuntimeConfiguration {
         const currentnessSignal = currentnessSignalFor(input.target, input.revision);
         const secretFields = new Set(
@@ -547,6 +669,24 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             target: input.target,
             revision: input.revision,
             values: input.values,
+            async getPublicOAuthClient(options) {
+                options?.signal?.throwIfAborted();
+                if (!await owner.isCurrent(snapshot)) {
+                    throw new ConnectedAccountConfigurationError('connected_account_configuration_stale',
+                        'Connected-account configuration is no longer current');
+                }
+                const selected = await params.readPublicOAuthClient?.({
+                    service: serviceForTarget(input.target), modeId: input.target.modeId,
+                }, options) ?? null;
+                options?.signal?.throwIfAborted();
+                if (!await owner.isCurrent(snapshot)) {
+                    throw new ConnectedAccountConfigurationError('connected_account_configuration_stale',
+                        'Connected-account configuration changed during public client retrieval');
+                }
+                return selected === null ? null : Object.freeze({
+                    clientId: selected.clientId, scopes: Object.freeze([...selected.scopes]),
+                });
+            },
             async getSecret(fieldId, options) {
                 if (!secretFields.has(fieldId)) {
                     throw new ConnectedAccountConfigurationError(
@@ -565,7 +705,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 const secretId = input.secretRefs[fieldId];
                 if (inlineSecret === undefined && !secretId) return null;
                 const secret = inlineSecret
-                    ?? await params.secrets.read(secretId!, options);
+                    ?? await (input.secretReader ?? params.secrets).read(secretId!, options);
                 if (
                     secret !== null
                     && (typeof secret !== 'string' || secret.length > MAX_SECRET_VALUE_LENGTH)
@@ -670,21 +810,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                     'Connected-account configuration changed during inspection',
                 );
             }
-            return Object.freeze({
-                status: normalized.revision !== null
-                    && normalized.missingFieldIds.length === 0
-                    ? 'ready' as const
-                    : 'configurationRequired' as const,
-                revision: normalized.revision,
-                values: normalized.values,
-                configuredSecretFieldIds: Object.freeze(
-                    [...new Set([
-                        ...Object.keys(normalized.secretRefs),
-                        ...Object.keys(normalized.secretValues),
-                    ])].sort(),
-                ),
-                missingFieldIds: normalized.missingFieldIds,
-            });
+            return configurationControlView(normalized);
         },
 
         async replaceForControl(input: Readonly<{
@@ -838,7 +964,11 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 secretRefs: committed.secretRefs,
                 secretValues: committed.secretValues,
             });
-            return Object.freeze({ status: 'committed' as const, snapshot });
+            return Object.freeze({
+                status: 'committed' as const,
+                snapshot,
+                configuration: configurationControlView(committed),
+            });
         },
 
         async admit(input: Readonly<{
@@ -850,7 +980,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             expectedConfigurationRevision?: string;
             occurrenceId: string;
             sourceCustody: ConnectedAccountSourceCustodyV1;
-        }>): Promise<ConnectedAccountAttemptConfigurationAdmission> {
+        }>): Promise<ConnectedAccountAttemptConfigurationAdmission & Readonly<{ secretReader?: ConnectedAccountCredentialOperationSecretReader }>> {
             const runtimeIdentity = Object.freeze({
                 occurrenceId: input.occurrenceId,
                 sourceCustody: input.sourceCustody,
@@ -874,8 +1004,9 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             await assertRuntimeCurrent(input.service, runtimeIdentity);
             // An AccountChange hint is only a wake; a new operation must not use
             // a shared Saved Secret the Home no longer authorizes.
+            let secretReader: ConnectedAccountCredentialOperationSecretReader;
             try {
-                await params.secrets.admit(Object.values(record?.secretRefs ?? {}));
+                secretReader = await params.secrets.admit(Object.values(record?.secretRefs ?? {})) ?? params.secrets;
             } catch {
                 throw new ConnectedAccountConfigurationError(
                     'connected_account_configuration_unavailable',
@@ -926,10 +1057,12 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 values: normalized.values,
                 secretRefs: normalized.secretRefs,
                 secretValues: normalized.secretValues,
+                secretReader,
             });
             return Object.freeze({
                 status: 'ready',
                 snapshot,
+                secretReader,
                 ...(target.kind === 'attempt' ? {
                     stagedAccountConfigurationContent: Object.freeze({
                         values: normalized.values,

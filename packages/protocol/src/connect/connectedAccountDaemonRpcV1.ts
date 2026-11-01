@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import type { JsonValue } from '../json/strictJsonValue.js';
 import { z } from 'zod/mini';
 
 import type { PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
@@ -20,6 +21,7 @@ import { QualifiedConnectedAccountRefSchema, ConnectedAccountServiceIdentityV1Sc
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from './connectedServiceBindings.js';
 import { ConnectedServiceCredentialRevisionV1Schema } from './connectedServiceSchemas.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
 
 import { ManagedResourceDependencyV1Schema, ManagedResourceDispositionV1Schema } from '../machines/managed/managedDependencyV1.js';
 
@@ -36,7 +38,9 @@ type ReadonlyControlResponse<T> =
   T extends { configuration: infer TConfiguration }
     ? Omit<ReadonlyArrayProperties<T>, 'configuration'> & {
         readonly configuration:
-          ReadonlyArrayProperties<TConfiguration>;
+          Omit<ReadonlyArrayProperties<TConfiguration>, 'values'> & {
+            readonly values: Readonly<Record<string, JsonValue>>;
+          };
       }
     : ReadonlyArrayProperties<T>;
 
@@ -122,6 +126,7 @@ export const ConnectedAccountAuthenticationCommandSchemas = {
       operation: z.literal('submitManual'),
       attemptId: BoundedIdentitySchema,
       fields: ManualFieldsSchema,
+      selectedSecrets: z.optional(z.record(z.string(), SharedSavedSecretReferenceSelectionV1Schema)),
     })),
     completeOAuth: lazyZodSchema(() => z.strictObject({
       operation: z.literal('completeOAuth'),
@@ -152,7 +157,6 @@ export const ConnectedAccountAuthenticationCommandSchemas = {
     read: lazyZodSchema(() => z.strictObject({
       operation: z.literal('read'),
       attemptId: BoundedIdentitySchema,
-      restoreKind: z.optional(z.literal('oauth')),
       waitForProviderStart: z.optional(z.boolean()),
     })),
 } as const;
@@ -429,10 +433,10 @@ export const ConnectedAccountPendingAttemptsResponseSchema = lazyZodSchema(() =>
       status: z.literal('pendingAttempts'),
       attempts: z.array(z.strictObject({
         attemptId: BoundedIdentitySchema,
-        kind: z.enum(['oauth', 'device']),
+        kind: z.enum(['manual', 'oauth', 'device']),
         modeId: BoundedIdentitySchema,
         intent: z.enum(['connect', 'reconnect']),
-        phase: z.enum(['awaitingOAuth', 'awaitingDeviceAuthorization', 'outcomeUnknown']),
+        phase: z.enum(['configurationRequired', 'awaitingManual', 'awaitingOAuth', 'awaitingDeviceAuthorization', 'outcomeUnknown']),
         createdAtMs: z.number().check(z.int(), z.nonnegative()),
         expiresAtMs: z.number().check(z.int(), z.positive()),
       })),

@@ -26,7 +26,23 @@ import { normalizeConnectedAccountConfigurationV1, normalizeConnectedAccountConf
 export { normalizeConnectedAccountConfigurationV1, normalizeConnectedAccountConfiguredOrigin, replaceConnectedServiceConfigurationCatalogV1 } from './connectedServiceConfigurationCatalogV1.js';
 export type { ConnectedServiceConfigurationCatalogHostV1, ConnectedServiceConfigurationCatalogWriteV1 } from './connectedServiceConfigurationCatalogV1.js';
 
+import type { PluginConnectedAccountAuthenticationModeV2 } from './pluginConnectedAccountAuthenticationV2.js';
+import type { SharedSavedSecretReferenceSelectionV1 } from '../account/settings/savedSecretReferenceV1.js';
+import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../plugins/actions/jsonSchemaValidation.js';
+
 type QuotaResetInput = ReturnType<(typeof inputs)['connectedServices.quota.reset']['parse']>;
+/** One field admission for daemon authentication and declared Account-direct credentials. */
+export function areConnectedAccountManualFieldsValidV1(mode: Extract<PluginConnectedAccountAuthenticationModeV2, { kind: 'manual' }>,
+  values: Readonly<Record<string, string>>, selectedSecrets: Readonly<Record<string, SharedSavedSecretReferenceSelectionV1>> = {}): boolean {
+  const ids = new Set(mode.fields.map(field => field.id));
+  try {
+    return Object.keys(values).every(id => ids.has(id))
+      && Object.keys(selectedSecrets).every(id => ids.has(id) && !Object.hasOwn(values, id)
+        && mode.fields.some(field => field.id === id && field.secret))
+      && mode.fields.every(field => Object.hasOwn(selectedSecrets, field.id)
+        || isValidPluginJsonSchemaValue(compilePluginJsonSchema(field.schema), values[field.id] ?? ''));
+  } catch { return false; }
+}
 export type ConnectedAccountPurposeMutationV1 = Readonly<{
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
   legacySettingsDelta: Omit<NonNullable<ReturnType<typeof writeAgentDefaultChoice>>, 'connectedAccountPurposeBindingsV1'>;

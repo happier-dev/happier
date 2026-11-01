@@ -136,6 +136,14 @@ const QualifiedConnectedAccountCredentialMutationCommonV4Shape = {
   content: StoredJsonContentEnvelopeSchema,
   metadata: QualifiedConnectedAccountCredentialMetadataV4Schema,
   directExportContract: z.optional(z.nullable(z.literal(CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1))),
+  /**
+   * Server-visible custody fact (ids only, no material): the Saved Secret
+   * resources this credential references. Omission on an update retains the
+   * stored set; legacy readers refuse a referencing credential with their
+   * released typed unsupported-format result.
+   */
+  savedSecretResourceIds: z.optional(z.array(z.string().check(z.minLength(1), z.maxLength(128))).check(z.maxLength(64),
+    z.refine(ids => new Set(ids).size === ids.length, 'Saved Secret resource ids must be unique'))),
   contributionContractVersion: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
   reconnect: z.optional(z.strictObject({
     allowProviderIdentityChange: z._default(z.optional(z.boolean()), false),

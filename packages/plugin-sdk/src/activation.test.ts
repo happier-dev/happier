@@ -81,7 +81,7 @@ describe('plugin activation contract', () => {
             >
         >().toEqualTypeOf<'kind' | 'begin' | 'poll' | 'cancel' | 'reconcile'>();
         expectTypeOf<keyof PluginConnectedAccountRuntimeConfiguration>()
-            .toEqualTypeOf<'target' | 'revision' | 'values' | 'getSecret'>();
+            .toEqualTypeOf<'target' | 'revision' | 'values' | 'getSecret' | 'getPublicOAuthClient'>();
         expectTypeOf<RuntimePluginConnectedAccountRuntimeConfiguration>()
             .toEqualTypeOf<PluginConnectedAccountRuntimeConfiguration>();
         expectTypeOf<PluginConnectedAccountRuntimeConfiguration['target']['kind']>()

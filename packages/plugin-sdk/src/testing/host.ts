@@ -9,7 +9,7 @@ import type {
     PluginMachineMaterializationRefV1,
     RehydratedPluginContributionPointOperationV1,
 } from '@happier-dev/protocol';
-import { derivePluginDaemonContributionRegistrationRights, derivePluginContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { derivePluginContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { formatPluginManifestIngestionDiagnostics } from '@happier-dev/protocol/plugins/manifest/ingest';
 
 import type {
@@ -41,10 +41,10 @@ import type { PresentationService } from '../interactions.js';
 import type { PluginCancellationOptions } from '../lifecycle.js';
 import {
     createPluginActionHandlerNotStartedError,
-    createPluginRegistrationScope,
     readPluginActionResultParser,
-    type PluginRuntimeRegistration,
 } from '../host/registration/index.js';
+import { createPluginRegistrationScope } from '../registration/scope.js';
+import type { PluginRuntimeRegistration } from '../registration/valueByFamily.js';
 import type { PluginServiceId, PluginServices } from '../services/index.js';
 import type {
     TargetedContributionPointRef,
@@ -425,7 +425,7 @@ function createPluginServices(
 }
 
 function registrationValue<F extends keyof PluginTestkitRegistrationByFamily>(
-    registrations: readonly PluginRuntimeRegistration[],
+    registrations: readonly PluginRuntimeRegistration<'daemon' | 'account'>[],
     family: F,
     localId: PluginContributionLocalId,
 ): PluginTestkitRegistrationByFamily[F] | undefined {
@@ -454,20 +454,22 @@ export async function createPluginTestkit(
         TestkitFixtureProtocol,
         ReadonlyMap<string, RehydratedPluginContributionPointOperationV1>
     >();
-    const rights = derivePluginDaemonContributionRegistrationRights(
+    const rights = derivePluginContributionRegistrationRights(
         manifest.contributes as Readonly<Record<string, unknown>>,
     );
     const registrationScope = createPluginRegistrationScope({
         pluginId: manifest.id,
         target: { realm: 'daemon' },
-        rights,
+        rights: rights.filter(right => right.target.realm === 'daemon'),
     });
-    const accountTargets = [...new Map(manifest.contributes.actions.flatMap(action => action.execution.target === 'account'
-        ? [[JSON.stringify(action.execution.account), action.execution.account] as const] : [])).values()];
+    const accountTargets = [...new Map(rights.flatMap(right => right.target.realm === 'account'
+        ? [[JSON.stringify([right.target.artifactId, right.target.exportName]), {
+            artifactId: right.target.artifactId, exportName: right.target.exportName,
+        }] as const] : [])).values()];
     const accountRegistrationScopes = options.module.activateAccount ? accountTargets.map(account => ({
         account,
         scope: createPluginRegistrationScope({ pluginId: manifest.id, target: { realm: 'account', ...account },
-            rights: derivePluginContributionRegistrationRights(manifest.contributes as Readonly<Record<string, unknown>>)
+            rights: rights
                 .filter(right => right.target.realm === 'account'
                     && right.target.artifactId === account.artifactId && right.target.exportName === account.exportName) }),
     })) : [];
@@ -488,7 +490,7 @@ export async function createPluginTestkit(
     const currentnessListeners = new Set<() => void>();
     let disposalPromise: Promise<void> | null = null;
     let pluginCleanup: PluginCleanup | null = null;
-    let registrations: readonly PluginRuntimeRegistration[] = Object.freeze([]);
+    let registrations: readonly PluginRuntimeRegistration<'daemon' | 'account'>[] = Object.freeze([]);
     const actionDefinitions = new Map(
         manifest.contributes.actions.map((definition) => [definition.id, definition] as const),
     );
