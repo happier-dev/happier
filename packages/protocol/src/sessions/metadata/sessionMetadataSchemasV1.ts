@@ -473,6 +473,30 @@ export type SessionPublicAgentStateV1 = z.infer<
 >;
 
 /**
+ * A key holder's statement that this Session is shared with these Teams. Sealed inside the
+ * Session key's own metadata, it proves key possession: the Home stores it but cannot forge it.
+ * The daemon releases the key to a later Team member only on this statement. The per-Session
+ * key binds it to the Session; the Home has not assigned the Session id yet at creation.
+ */
+export const SessionTeamShareStatementV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  teamIds: z.array(z.string().check(z.minLength(1))).check(z.minLength(1)),
+}));
+export type SessionTeamShareStatementV1 = z.infer<typeof SessionTeamShareStatementV1Schema>;
+
+/** Names one more Team in flat metadata; plain Sessions carry no statement. */
+export function addSessionTeamsToShareStatementV1<T extends Readonly<Record<string, unknown>>>(
+  metadata: T,
+  teamIds: readonly string[],
+): T {
+  const stated = SessionTeamShareStatementV1Schema.safeParse(metadata.teamShareStatementV1);
+  const current = stated.success ? stated.data.teamIds : [];
+  const added = teamIds.filter(teamId => !current.includes(teamId));
+  if (added.length === 0) return metadata;
+  return Object.assign({}, metadata, { teamShareStatementV1: { v: 1, teamIds: [...new Set([...current, ...added])] } });
+}
+
+/**
  * The sole recipient-safe Session.metadata envelope. It intentionally has no
  * passthrough behavior: additive fields require an explicit schema/projector
  * decision before they can cross a share boundary.
@@ -488,10 +512,27 @@ export const SessionSharedMetadataV1Schema = lazyZodSchema(() => z.strictObject(
   actionConfirmationsV1: z.optional(SessionActionConfirmationsV1Schema),
   forkVisualsV1: z.optional(SessionForkVisualsV1Schema),
   sessionGuardStateV1: z.optional(SessionGuardStateV1Schema),
+  teamShareStatementV1: z.optional(SessionTeamShareStatementV1Schema),
 }));
 export type SessionSharedMetadataV1 = z.infer<
   typeof SessionSharedMetadataV1Schema
 >;
+
+/**
+ * Whether bytes a served Session key decrypted are this Session's strict layout-1 shared
+ * metadata. The Home names both the key and the layout, so this is the only proof that a key
+ * it serves for a reseal is this Session's and not another resource's (Saved Secret, Workflow,
+ * Machine): their plaintext has no strict shared form. Layout 0 accepts any record, so it proves
+ * nothing; `session.access.layout.update` moves a Session to layout 1.
+ */
+export function readSessionKeyBoundSharedMetadataV1(params: Readonly<{
+  metadataLayoutVersion: unknown;
+  decryptedMetadata: unknown;
+}>): SessionSharedMetadataV1 | null {
+  if (params.metadataLayoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1) return null;
+  const parsed = SessionSharedMetadataV1Schema.safeParse(params.decryptedMetadata);
+  return parsed.success ? parsed.data : null;
+}
 
 /** Stored reads discard unknown extensions while validating every known field. */
 export const StoredSessionSharedMetadataV1Schema = createStoredReadSchema(SessionSharedMetadataV1Schema);
@@ -1479,6 +1520,7 @@ const SessionOwnerCompatibilityRuntimeDescriptorV1Schema =
  */
 export const SessionOwnerCompatibilityViewV1Schema = lazyZodSchema(() => z.strictObject({
   sessionGuardStateV1: z.optional(SessionGuardStateV1Schema),
+  teamShareStatementV1: z.optional(SessionTeamShareStatementV1Schema),
   summary: z.optional(SessionSharedSummaryV1Schema),
   agentPresentation: z.optional(SessionSharedAgentPresentationV1Schema),
   externalSessionOperationPresentationV1:
@@ -1755,6 +1797,7 @@ export function projectSessionSharedMetadataV1(params: Readonly<{
     projectOperationPresentation(metadata);
   const publicAgentState = projectPublicAgentState(params.agentState);
   const sessionGuardStateV1 = createStoredReadSchema(SessionGuardStateV1Schema).safeParse(metadata.sessionGuardStateV1);
+  const teamShareStatementV1 = SessionTeamShareStatementV1Schema.safeParse(metadata.teamShareStatementV1);
   const actionConfirmationsV1 = createStoredReadSchema(SessionActionConfirmationsV1Schema).safeParse(
     metadata.actionConfirmationsV1,
   );
@@ -1777,6 +1820,7 @@ export function projectSessionSharedMetadataV1(params: Readonly<{
       : {}),
     ...(forkVisualsV1.success ? { forkVisualsV1: forkVisualsV1.data } : {}),
     ...(sessionGuardStateV1.success ? { sessionGuardStateV1: sessionGuardStateV1.data } : {}),
+    ...(teamShareStatementV1.success ? { teamShareStatementV1: teamShareStatementV1.data } : {}),
   });
 }
 
@@ -1845,6 +1889,7 @@ export function projectSessionOwnerCompatibilityViewV1(
 
   const canonical = SessionOwnerCompatibilityViewV1Schema.parse({
     ...(sharedMetadata.sessionGuardStateV1 ? { sessionGuardStateV1: sharedMetadata.sessionGuardStateV1 } : {}),
+    ...(sharedMetadata.teamShareStatementV1 ? { teamShareStatementV1: sharedMetadata.teamShareStatementV1 } : {}),
     ...(sharedMetadata.summary
       ? { summary: sharedMetadata.summary }
       : {}),
@@ -1902,6 +1947,7 @@ const SHARED_ONLY_METADATA_KEYS = new Set([
   'summary',
   'agentPresentation',
   'sessionGuardStateV1',
+  'teamShareStatementV1',
   EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY,
   'actionConfirmationsV1',
 ]);

@@ -31,7 +31,7 @@ import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachin
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { MachinePoolErrorV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { SessionPublicLinkCreateActionInputV1Schema, projectSessionPublicLinkActionResultV1, projectSessionPublicLinkCreateActionResultV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
-import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import { SessionAccessErrorCodeV1Schema, SetSessionAccessContextRequestV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { z } from 'zod/mini';
 
 import {
@@ -47,6 +47,7 @@ import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient'
 import type { StoredCredentials } from '@/persistence';
 import {
   materializeSessionAccessGrantEnvelope,
+  recordSessionTeamShareStatement,
   SessionAccessGrantEnvelopeHostError,
 } from '@/api/sessionAccessGrantEnvelopeHost';
 import {
@@ -1087,6 +1088,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       let request = publicRequest;
       let localPublication: Awaited<ReturnType<typeof materializeSessionPublicLinkCreateBody>> | null = null;
       let retainedEnvelopeFallback = false;
+      let repairActionId: 'session.access.layout.update' | undefined;
       if (actionId === 'session.public_link.create') {
         if (signal?.aborted) {
           return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
@@ -1161,6 +1163,18 @@ export function createAccountServerActionDeps(input: Readonly<{
           }
         }
       }
+      if (actionId === 'session.access.context.set' && input.credentials?.token === input.token) {
+        const { sessionId, primaryTeamId } = SetSessionAccessContextRequestV1Schema.parse(actionInput);
+        if (primaryTeamId !== null) {
+          try {
+            await recordSessionTeamShareStatement({ token: input.token, credentials: input.credentials,
+              serverHttpBaseUrl, sessionId, teamId: primaryTeamId, ...(signal ? { signal } : {}) });
+          } catch {
+            // The statement never fails a share, so only cancellation reaches here.
+            return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+          }
+        }
+      }
       if (actionId === 'session.access.grant.set') {
         try {
           let serverFeaturesSnapshot: CliServerFeaturesSnapshot | undefined;
@@ -1181,6 +1195,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           });
           const physicalInput = materialized.input;
           retainedEnvelopeFallback = materialized.retainedEnvelopeFallback;
+          repairActionId = materialized.repairActionId;
           const accountEnvelopeInput = 'accountEnvelopeInput' in physicalInput
             ? physicalInput.accountEnvelopeInput
             : undefined;
@@ -1250,6 +1265,10 @@ export function createAccountServerActionDeps(input: Readonly<{
           const code = retainedEnvelopeFallback && named.data === 'recipient_envelope_required'
             ? 'session_data_key_unavailable'
             : named.data;
+          if (code === 'session_data_key_unavailable' && repairActionId) {
+            return { ok: false, errorCode: code, error:
+              `${code}: this Session uses the legacy metadata layout. Run ${repairActionId} for it, then share again.` };
+          }
           return { ok: false, errorCode: code, error: code };
         }
         if (actionId === 'session.public_link.remove' && response.status === 404 && body?.error === 'Share not found') {

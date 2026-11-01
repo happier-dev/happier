@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  addSessionTeamsToShareStatementV1,
   createSessionOwnerMetadataV1,
+  projectSessionOwnerCompatibilityViewV1,
   projectSessionSharedMetadataV1,
   readSessionModesMetadata,
   SessionOwnerModeCatalogV1Schema,
@@ -9,6 +11,25 @@ import {
   SessionSharedMetadataV1Schema,
 } from './sessionMetadataSchemasV1.js';
 import { SessionPermissionApprovalReviewerClaimV1Schema } from '../permissions/v1.js';
+
+describe('Team share statement', () => {
+  it('survives the rewrite every metadata writer performs, and stays out of owner-private metadata', () => {
+    const metadata = addSessionTeamsToShareStatementV1(
+      addSessionTeamsToShareStatementV1({ path: '/work', host: 'holder' }, ['team-a']), ['team-b', 'team-a']);
+    const sharedMetadata = projectSessionSharedMetadataV1({ metadata });
+    expect(sharedMetadata.teamShareStatementV1).toEqual({ v: 1, teamIds: ['team-a', 'team-b'] });
+    const owner = createSessionOwnerMetadataV1({ metadata });
+    if (!owner.ok) throw new Error('Expected owner metadata');
+    expect(JSON.stringify(owner.ownerMetadata)).not.toContain('team-a');
+    const rewritten = projectSessionOwnerCompatibilityViewV1({ sharedMetadata, ownerMetadata: owner.ownerMetadata });
+    expect(projectSessionSharedMetadataV1({ metadata: rewritten }).teamShareStatementV1).toEqual(sharedMetadata.teamShareStatementV1);
+  });
+
+  it('commits nothing when the Team is already stated', () => {
+    const metadata = addSessionTeamsToShareStatementV1({}, ['team-a']);
+    expect(addSessionTeamsToShareStatementV1(metadata, ['team-a'])).toBe(metadata);
+  });
+});
 
 describe('retained metadata projection', () => {
   it('projects the hidden retained linked-session descriptor without losing its native Agent state', () => {

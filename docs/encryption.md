@@ -4858,6 +4858,55 @@ that both the caller and target may currently read and writes through the same
 `SessionDataKeyEnvelope` persistence owner; it does not create Team/Group keys or a
 second preparation store.
 
+Recipient keys reach a later Team or Group member without a manager opening a sheet.
+When a membership or Account transition gives a non-owner read access to an E2EE Session,
+the shared access-transition owner publishes the existing `share` Account change to the
+Session owner. The owner's daemon consumes it from the Account change feed and runs the
+one Session pass, `runSessionRecipientEnvelopePass`, over the per-Session collection. The
+wake names no recipient: the collection's audience census alone decides who is owed, so
+the membership history horizon, removal and recipient readiness keep their owners. An
+offline daemon catches up from its cursor. Delivery is best effort and never holds that
+cursor: a refused or failed pass leaves the recipient `key_pending`, which a manager can
+still resolve from the access editor or member sheet. A member who has no content key
+yet stays pending the same way, because no change fires when their key is set up later.
+
+The daemon delivers only for a Session a key holder chose to share. Before a Team or Group
+share reaches the Home, or at creation for a collective E2EE Session, the key-holding device
+adds `teamShareStatementV1` to the Session's shared metadata, sealed with the Session key.
+The daemon delivers when the key the Home served carries such a statement. It does not
+compare the statement with the Home's current Team audience: the census already excludes
+removed Teams, and an active Home could answer that read however it liked.
+
+Every path that seals a Session key the Home served to someone else first proves the key is
+that Session's. The Protocol predicate `readSessionKeyBoundSharedMetadataV1` accepts only
+bytes that decrypt into this Session's strict layout-1 shared metadata. The CLI opens such
+keys only through `openSessionDataEncryptionKeyForReseal`: the daemon's Team delivery, a
+direct grant, the creation-time recipient pass and the statement writer. The app's
+`readTransferableSessionDataKey` applies the same predicate. This proves key possession,
+not who a person is. The Home stores the statement but cannot forge it, so a forged wake for
+a private Session, or a Saved Secret, Workflow or Machine key served as a Session key, seals
+nothing. Layout 0 proves nothing, because that layout accepts any record. A layout-0 Session
+therefore keeps the manager path: a direct grant falls back to the recipient's retained
+envelope, and the CLI error names `session.access.layout.update` as the repair. The app
+moves a layout-0 Session to layout 1 before sharing it. Sessions with no statement also keep
+the manager path, including shares from a device without the key and Sessions shared before
+this check existed.
+
+Two residuals are accepted for 0.3 (`.project/OWNER-RULINGS.md`, 2026-10-31):
+
+- The Home owns Team rosters, so an active Home can add a ghost member to a Session already
+  shared with a Team and receive its key.
+- A statement binds a key, not a Session's identity. While one person Team-shares a
+  Session, or grants it directly, an actively malicious Home can answer with another
+  Session's key and metadata under the shared Session's id. The statement is then written
+  under the other Session's key, and the Home can release that key to a member it added.
+  This needs an active Home and that person's share action, reaches one Session per share,
+  and is not reachable from a database dump. The full fix seals each Session's identity into
+  its metadata, with a backfill for existing Sessions; it is planned after 0.3.
+
+A direct grant wakes every Manage holder through `sessionAccessGrantService.ts`, not only
+the owner.
+
 Fresh Workflow Step Sessions (development) carry the Run's frozen view Team
 through the ordinary creation-time `initialAccess` writer. They omit
 `primaryTeamId` except for `team_required`, which selects the existing Team

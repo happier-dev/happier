@@ -9,6 +9,7 @@ import { removeUnsafeSessionManagerEdgesForAccessChangeInTx } from "@/app/sessio
 import { hasSessionFollowSessionSource } from '@/app/session/follow/sessionFollowSourceIdentity';
 import { projectSessionEffectiveAccessV1, type EffectiveSessionAccess } from "./sessionAccess";
 import { clearSessionResponsibilityIfNoReadAccessInTx } from "./sessionResponsibilityService";
+import { SESSION_METADATA_PRIVACY_UPGRADE_SOURCE_WHERE } from "../metadata/sessionMetadataRecipientProjection";
 
 export interface SessionAccessTransitionEffects {
     readonly changedAccountIds: readonly string[];
@@ -107,6 +108,23 @@ export async function applySessionAccessTransitionEffectsInTx(
 
     await acquireSessionAccessTransitionCursorLocksInTx(tx, [params.sessionId],
         [...changedAccountIds, ...(params.additionalPublicationAccountIds ?? [])]);
+    if (grantedAccountIds.length > 0) {
+        // Membership and Account-status transitions can grow a Session's audience
+        // without changing its owner's own access projection. The owner holds the
+        // work this creates: a retained layout-0 upgrade, or recipient keys for an
+        // E2EE Session. The wake names no recipient; the audience census decides.
+        // The existing Session audience fence already includes that owner.
+        const candidate = await tx.session.findFirst({
+            where: { id: params.sessionId, OR: [SESSION_METADATA_PRIVACY_UPGRADE_SOURCE_WHERE, { encryptionMode: "e2ee" }] },
+            select: { accountId: true },
+        });
+        if (candidate && grantedAccountIds.some(accountId => accountId !== candidate.accountId)
+            && !params.additionalPublicationAccountIds?.includes(candidate.accountId)) {
+            for (const publication of await markAccountsChanged(tx, {
+                accountIds: [candidate.accountId], kind: "share", entityId: params.sessionId,
+            })) accountCursors.set(publication.accountId, publication);
+        }
+    }
     // Only final read-access loss retires the person's own draft; Edit-to-View
     // keeps it. Draft and Session cursors share the complete transition fence.
     for (const accountId of revokedAccountIds) await tombstoneSessionDraftForLifecycleInTx(tx, { accountId, sessionId: params.sessionId });

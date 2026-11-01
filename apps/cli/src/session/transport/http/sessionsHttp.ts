@@ -56,6 +56,7 @@ import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import {
+  addSessionInitialAccessTeamShareStatement,
   buildSessionInitialAccessCreateFields,
   materializeSessionInitialAccessCreateFields,
   prepareSessionInitialAccessDataKeyEnvelopes,
@@ -1737,7 +1738,7 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
   } = encryptionModeResolution;
 
   const initialAccessFields = buildSessionInitialAccessCreateFields(params, serverFeaturesSnapshot);
-  const creationMetadata = params.metadata;
+  const creationMetadata = addSessionInitialAccessTeamShareStatement(params.metadata, initialAccessFields, desiredSessionEncryptionMode);
   const sessionEncryptionContext =
     desiredSessionEncryptionMode === 'e2ee'
       ? resolveSessionEncryptionContext(params.credentials)
@@ -1852,10 +1853,8 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
     fields: initialAccessFields,
     sessionId: parsed.session.id,
     sessionEncryptionMode: returnedMode,
-    resolveSessionDataKey: () => {
-      const context = resolveSessionEncryptionContextFromCredentials(params.credentials, parsed.session);
-      return context?.encryptionVariant === 'dataKey' ? context.encryptionKey : null;
-    },
+    credentials: params.credentials,
+    session: parsed.session,
     token: params.credentials.token,
     serverHttpBaseUrl: serverUrl,
     ...(params.shouldCommit ? { isScopeCurrent: params.shouldCommit } : {}),

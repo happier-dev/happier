@@ -887,6 +887,7 @@ export class ApiMachineClient {
     }>;
     private readonly lifecycleDependencies: ApiMachineClientLifecycleDependencies;
     private readonly prepareMachineRecipientEnvelopes: (machineIds: readonly string[], signal: AbortSignal) => Promise<void>;
+    private readonly prepareSessionRecipientEnvelopes: (sessionIds: readonly string[], signal: AbortSignal) => Promise<void>;
     private machineContentContext: Readonly<{ codec: MachineContentCodec; ready: boolean }>;
     private get machineContentCodec(): MachineContentCodec { return this.machineContentContext.codec; }
     private get machineContentReady(): boolean { return this.machineContentContext.ready; }
@@ -1232,17 +1233,22 @@ export class ApiMachineClient {
         this.lifecycleDependencies = lifecycleDependencies ?? {};
         const machineRuntimeServerId = configuration.activeServerId;
         const machineRuntimeServerHttpBaseUrl = resolveServerHttpBaseUrl();
-        this.prepareMachineRecipientEnvelopes = async (machineIds, signal) => {
-            if (machineIds.length === 0) return;
+        const captureRecipientPreparationAuthority = async (signal: AbortSignal) => {
             const transportGeneration = this.activeTransportGeneration;
             const credential = await readStoredCredentialsForServerId(machineRuntimeServerId).catch(() => null);
             const accountId = readAccountIdFromToken(this.token);
-            if (!credential || credential.token !== this.token || !accountId || signal.aborted || this.projectionSchedulingClosed) return;
+            if (!credential || credential.token !== this.token || !accountId || signal.aborted || this.projectionSchedulingClosed) return null;
             const isCurrent = async () => !signal.aborted && !this.projectionSchedulingClosed
                 && this.isActiveTransportGeneration(transportGeneration)
                 && configuration.activeServerId === machineRuntimeServerId
                 && isDeepStrictEqual(await readStoredCredentialsForServerId(machineRuntimeServerId).catch(() => null), credential);
-            if (!await isCurrent()) return;
+            return await isCurrent() ? { credential, accountId, isCurrent, transportGeneration } : null;
+        };
+        this.prepareMachineRecipientEnvelopes = async (machineIds, signal) => {
+            if (machineIds.length === 0) return;
+            const authority = await captureRecipientPreparationAuthority(signal);
+            if (!authority) return;
+            const { credential, accountId, isCurrent } = authority;
             const [{ prepareMachineAccessKeyEnvelopes }, { runSessionDataKeyPreparationDetached }] = await Promise.all([
                 import('./machineAccessGrantEnvelopeHost'),
                 import('@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass'),
@@ -1252,6 +1258,33 @@ export class ApiMachineClient {
                 await runSessionDataKeyPreparationDetached(JSON.stringify([machineRuntimeServerId, accountId, 'machine-data-key-envelopes', machineId]),
                     () => prepareMachineAccessKeyEnvelopes({ credentials: credential, serverId: machineRuntimeServerId,
                         serverHttpBaseUrl: machineRuntimeServerHttpBaseUrl, machineId, signal, isCredentialCurrent: isCurrent }));
+            }
+        };
+        this.prepareSessionRecipientEnvelopes = async (sessionIds, signal) => {
+            if (sessionIds.length === 0) return;
+            const authority = await captureRecipientPreparationAuthority(signal);
+            // A Plain Account holds no content key, so it has nothing to deliver.
+            if (!authority?.credential.encryption) return;
+            const { credential, accountId, isCurrent, transportGeneration } = authority;
+            const [{ prepareSessionRecipientEnvelopes }, { runSessionDataKeyPreparationDetached }] = await Promise.all([
+                import('./sessionAccessGrantEnvelopeHost'),
+                import('@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass'),
+            ]);
+            for (const sessionId of new Set(sessionIds)) {
+                if (!await isCurrent()) return;
+                try {
+                    await runSessionDataKeyPreparationDetached(JSON.stringify([machineRuntimeServerId, accountId, 'session-data-key-envelopes', sessionId]),
+                        () => prepareSessionRecipientEnvelopes({ credentials: credential, sessionId, signal,
+                            serverHttpBaseUrl: machineRuntimeServerHttpBaseUrl,
+                            isScopeCurrent: () => !this.projectionSchedulingClosed && this.isActiveTransportGeneration(transportGeneration) }));
+                } catch (error) {
+                    signal.throwIfAborted();
+                    // Delivery never holds the Account cursor: a queued `share` can outlive this
+                    // holder's Manage access, and an undelivered key stays visibly pending.
+                    logger.warn('[API MACHINE] Session recipient key delivery stopped', {
+                        sessionId, code: error instanceof Error && 'code' in error ? error.code : 'unknown',
+                    });
+                }
             }
         };
         this.machineRuntimeServerHttpBaseUrl = machineRuntimeServerHttpBaseUrl;
@@ -5401,6 +5434,9 @@ export class ApiMachineClient {
                 ...(reason !== 'live' ? [this.machine.id] : []),
                 ...changes.filter(change => change.kind === 'machine').map(change => change.entityId),
             ], signal);
+            signal.throwIfAborted();
+            await this.prepareSessionRecipientEnvelopes(
+                changes.filter(change => change.kind === 'share').map(change => change.entityId), signal);
             signal.throwIfAborted();
             if (reason !== 'live' || hasProjectRowsChange) {
                 await this.notifyAccountProjectRowsChanged({

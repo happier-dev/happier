@@ -3,7 +3,7 @@ import { generateStoredContentPublicShareMaterialV1 } from '@happier-dev/protoco
 import { sealPublicShareDataKeyV1 } from '@happier-dev/protocol/crypto/publicShareEncryptedDataKeyEnvelopeV0';
 
 import { getRandomBytes } from '@/api/encryption';
-import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
+import { openSessionDataEncryptionKeyForReseal } from '@/api/client/openSessionDataEncryptionKey';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import type { StoredCredentials } from '@/persistence';
@@ -94,10 +94,7 @@ export async function materializeSessionPublicLinkCreateBody(params: Readonly<{
   if (!params.credentials || params.credentials.token !== params.token) {
     throw new SessionPublicLinkEnvelopeHostError('session_data_key_unavailable');
   }
-  const sessionDataKey = openSessionDataEncryptionKey({
-    credential: params.credentials,
-    encryptedDataEncryptionKeyBase64: (rawSession as Readonly<{ dataEncryptionKey?: unknown }>).dataEncryptionKey,
-  });
+  const sessionDataKey = openSessionDataEncryptionKeyForReseal({ credential: params.credentials, session: rawSession })?.dataKey;
   if (!sessionDataKey) {
     throw new SessionPublicLinkEnvelopeHostError('session_data_key_unavailable');
   }

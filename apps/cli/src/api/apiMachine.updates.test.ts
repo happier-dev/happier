@@ -7,6 +7,8 @@ import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/acc
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
 import { MachineRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { readMachineFinitePolicyV1 } from '@happier-dev/protocol/machines/machineFinitePolicyV1';
@@ -25,6 +27,19 @@ vi.mock('socket.io-client', () => ({
 
 // Cold source transformation belongs to collection, not a held-operation deadline.
 await import('./api');
+
+/** The Account feed consumes the active settings snapshot; this suite resets modules per case. */
+async function seedActiveAccountSnapshot(token: string): Promise<void> {
+  const [{ setActiveAccountSettingsSnapshot }, { accountSettingsParse }, { resolveAccountSettingsScopeKeyForToken }] = await Promise.all([
+    import('@/settings/accountSettings/activeAccountSettingsSnapshot'),
+    import('@happier-dev/protocol/account/settings/accountSettings'),
+    import('@/settings/accountSettings/accountSettingsScopeKey'),
+  ]);
+  setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1,
+    loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(token) });
+}
+
+type ServedSessionRow = Readonly<{ transferredKey: Uint8Array; metadata: string; metadataLayoutVersion: number }>;
 
 describe('ApiMachineClient updates', () => {
   afterEach(() => {
@@ -227,6 +242,131 @@ describe('ApiMachineClient updates', () => {
       expect(delivered).toEqual(key);
       expect(persistence.writeAccountChangesCursor).toHaveBeenCalledWith('bob', 1);
     } finally { await client.shutdown(); }
+  });
+
+  /** One pushed `share` pass over real preparation modules; the Home serves the row the case names. */
+  const runShareWakePass = async (serveSessionRow: (sessionKey: Uint8Array) => ServedSessionRow) => {
+    const persistence = await import('@/persistence');
+    const { runWithServerHttpBaseUrl } = await import('./client/serverHttpBaseUrl');
+    await Promise.all([
+      import('./sessionAccessGrantEnvelopeHost'),
+      import('@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass'),
+    ]);
+    const owner = tweetnacl.box.keyPair();
+    const recipient = tweetnacl.box.keyPair();
+    const signing = tweetnacl.sign.keyPair();
+    const key = new Uint8Array(32).fill(53);
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'alice' })).toString('base64url')}.signature`;
+    const credential = { token, encryption: { type: 'dataKey' as const, publicKey: owner.publicKey, machineKey: owner.secretKey } };
+    const sealToOwner = (dataKey: Uint8Array) => encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: owner.publicKey, randomBytes: getRandomBytes }));
+    const ownerEnvelope = sealToOwner(key);
+    const servedRow = serveSessionRow(key);
+    const openedOwnerMetadata = createSessionOwnerMetadataV1({ metadata: { path: '/work', host: 'alice' } });
+    if (!openedOwnerMetadata.ok) throw new Error('Expected owner metadata fixture');
+    const ownerMetadata = sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'dataKey', machineKey: owner.secretKey },
+      ownerMetadata: openedOwnerMetadata.ownerMetadata, randomBytes: getRandomBytes });
+    const owedItem = { recipientAccountId: 'later-team-member', envelopeState: 'missing', contentKey: { status: 'available',
+      accountSigningPublicKey: Buffer.from(signing.publicKey).toString('hex'), contentPublicKey: encodeBase64(recipient.publicKey),
+      contentPublicKeySignature: encodeBase64(signAccountContentKeyBindingV1({ accountSigningSecretKey: signing.secretKey, contentPublicKey: recipient.publicKey })) } };
+    const summary = { prepared: 1, pending: 0, invalid: 0, recipientKeyUnavailable: 0 };
+    let delivered: Uint8Array | null = null;
+    let memberJoined = false;
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json({
+      features: {}, capabilities: { serverIdentity: { serverIdentityId: 'fixture-home' } },
+    })));
+    vi.spyOn(persistence, 'readStoredCredentialsForServerId').mockResolvedValue(credential);
+    vi.spyOn(persistence, 'readAccountChangesCursor').mockResolvedValue(0);
+    let acknowledgeFeed!: () => void;
+    const feedCommitted = new Promise<void>(resolve => { acknowledgeFeed = resolve; });
+    vi.spyOn(persistence, 'writeAccountChangesCursor').mockImplementation(async (accountId, cursor) => {
+      if (accountId === 'alice' && cursor === 4) acknowledgeFeed();
+    });
+    const sessionIds = ['foreign-session', 'settled-session', 'plain-session', 'owed-session'];
+    const envelopePage = (sessionId: string) => {
+      if (sessionId === 'foreign-session') return { status: 403, data: { error: 'forbidden' } };
+      if (sessionId === 'plain-session') return { status: 200, data: { status: 'not_required' } };
+      const items = sessionId === 'owed-session' && !delivered ? [owedItem] : [];
+      return { status: 200, data: { status: 'required', summary, items, nextCursor: null } };
+    };
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      const { pathname, searchParams } = new URL(url);
+      if (pathname === '/v1/account/profile') return { status: 200, data: { id: 'alice' } };
+      if (pathname === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'e2ee', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (pathname === '/v2/changes') {
+        const subscribed = searchParams.get('kinds')?.split(',').includes('share');
+        return { status: 200, data: { changes: memberJoined && subscribed
+          ? sessionIds.map((entityId, index) => ({ cursor: index + 1, kind: 'share', entityId, changedAt: 1 })) : [], nextCursor: memberJoined ? 4 : 0 } };
+      }
+      const envelopes = pathname.match(/^\/v2\/sessions\/([^/]+)\/data-key\/envelopes$/);
+      if (envelopes) return envelopePage(envelopes[1]!);
+      if (pathname === '/v2/sessions/owed-session') return { status: 200, data: { session: {
+        id: 'owed-session', seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1, encryptionMode: 'e2ee',
+        metadata: servedRow.metadata, metadataLayoutVersion: servedRow.metadataLayoutVersion, metadataVersion: 1,
+        ...(servedRow.metadataLayoutVersion === 1 ? { share: null, ownerMetadata } : {}),
+        agentState: null, agentStateVersion: 0, dataEncryptionKey: sealToOwner(servedRow.transferredKey) } } };
+      return { status: 404, data: {} };
+    });
+    // The key holder's statement is the whole proof; the pass reads no Home audience.
+    vi.spyOn(axios, 'post').mockResolvedValue({ status: 500, data: {} });
+    const patch = vi.spyOn(axios, 'patch').mockImplementation(async (url: string, body: unknown) => {
+      expect(url).toBe('https://owner-home.test/v2/sessions/owed-session/data-key/envelopes');
+      // The Home only ever sees sealed bytes for the census's own recipient.
+      expect(JSON.stringify(body)).not.toContain(encodeBase64(key));
+      const { entries } = body as { entries: Array<{ recipientAccountId: string; encryptedDataKey: string }> };
+      expect(entries.map(entry => entry.recipientAccountId)).toEqual(['later-team-member']);
+      delivered = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(entries[0]!.encryptedDataKey), recipientSecretKeyOrSeed: recipient.secretKey });
+      return { status: 200, data: { appliedCount: 1 } };
+    });
+    const socket = createApiSessionSocketStub();
+    bindApiSessionSocketSequenceMock(ioMock, [socket, createApiSessionSocketStub()]);
+    const { ApiMachineClient } = await import('./apiMachine');
+    const client = runWithServerHttpBaseUrl('https://owner-home.test', () => new ApiMachineClient(token, {
+      id: 'alice-executor', encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: 'dataKey', dataEncryptionKey: ownerEnvelope,
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+    }));
+    client.onConnectedServicesProjection(async () => {});
+    await seedActiveAccountSnapshot(token);
+    try {
+      runWithServerHttpBaseUrl('https://owner-home.test', () => client.connect({ onConnect: () => {
+        memberJoined = true;
+        socket.trigger('update', { id: 'team-member-joined', seq: 4, createdAt: 1, body: { t: 'account-change' } });
+      } }));
+      await feedCommitted;
+      return { key, delivered, patch };
+    } finally { await client.shutdown(); }
+  };
+
+  it('delivers Session keys from the owner daemon on the pushed share change, without a foreign or settled Session blocking it', async () => {
+    const { key, delivered, patch } = await runShareWakePass(sessionKey => ({
+      transferredKey: sessionKey, metadataLayoutVersion: 1,
+      metadata: encodeBase64(encrypt(sessionKey, 'dataKey', projectSessionSharedMetadataV1({ metadata: {
+        summary: { text: 'Shared work', updatedAt: 1 }, teamShareStatementV1: { v: 1, teamIds: ['session-team'] },
+      } }))),
+    }));
+    expect(delivered).toEqual(key);
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(axios.post).not.toHaveBeenCalled();
+    // Nothing owed, nothing opened: the key is read only for real work.
+    expect(axios.get).not.toHaveBeenCalledWith('https://owner-home.test/v2/sessions/settled-session', expect.anything());
+  });
+
+  const otherResourceKey = new Uint8Array(32).fill(67);
+  const machineContent = { host: 'alice', platform: 'linux', happyCliVersion: '0.3', homeDir: '/home/alice', happyHomeDir: '/home/alice/.happier' };
+  const sealedTo = (key: Uint8Array, value: unknown) => encodeBase64(encrypt(key, 'dataKey', value));
+  it.each<[string, (sessionKey: Uint8Array) => ServedSessionRow]>([
+    ['a Machine key with its own content under the tolerant legacy layout', () => ({
+      transferredKey: otherResourceKey, metadataLayoutVersion: 0, metadata: sealedTo(otherResourceKey, machineContent) })],
+    ['a Machine key with its own content under the shared layout', () => ({
+      transferredKey: otherResourceKey, metadataLayoutVersion: 1, metadata: sealedTo(otherResourceKey, machineContent) })],
+    ['a key that cannot open the Session metadata', sessionKey => ({
+      transferredKey: otherResourceKey, metadataLayoutVersion: 1, metadata: sealedTo(sessionKey, { v: 1 }) })],
+    ['a Session no key holder shared with a Team', sessionKey => ({
+      transferredKey: sessionKey, metadataLayoutVersion: 1, metadata: sealedTo(sessionKey, { v: 1 }) })],
+  ])('leaves recipients pending and seals nothing when the Home serves %s as the Session key', async (_case, serveSessionRow) => {
+    const { delivered, patch } = await runShareWakePass(serveSessionRow);
+    expect(patch).not.toHaveBeenCalled();
+    expect(delivered).toBeNull();
   });
 
   it.each(['http503', 'network', 'unopenable-key'] as const)('keeps RPC authority across snapshot refresh failure only without contrary key evidence (%s)', async (failure) => {

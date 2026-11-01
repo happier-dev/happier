@@ -10,10 +10,13 @@ import type { PatchSessionDataKeyEnvelopesV1, SessionDataKeyEnvelopeItemV1, Sess
 import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { addSessionTeamsToShareStatementV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import axios from '@/api/client/credentialAxios';
 import { setImmediate } from 'node:timers/promises';
 
 import { getRandomBytes } from '@/api/encryption';
+import { openSessionDataEncryptionKeyForReseal } from '@/api/client/openSessionDataEncryptionKey';
+import type { StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -43,13 +46,17 @@ export class SessionInitialAccessEnvelopeHostError extends Error {
 /**
  * Collective grants commit with the row. The physical creator then prepares
  * their authorized audience using the returned row's opened standalone key,
- * never a new proposed key on create-or-rejoin. Plain Sessions need no work.
+ * never a new proposed key on create-or-rejoin. The Home names that key, so it
+ * is sealed only when it opens the returned row's shared metadata. Plain
+ * Sessions need no work.
  */
 export async function prepareSessionInitialAccessDataKeyEnvelopes(params: Readonly<{
   fields: Readonly<{ initialAccess?: SessionInitialAccessDraftV1; primaryTeamId?: string | null }>;
   sessionId: string;
   sessionEncryptionMode: 'plain' | 'e2ee';
-  resolveSessionDataKey: () => Uint8Array | null;
+  credentials: StoredCredentials;
+  /** The create-or-load response row. */
+  session: Parameters<typeof openSessionDataEncryptionKeyForReseal>[0]['session'];
   token: string;
   serverHttpBaseUrl: string;
   signal?: AbortSignal;
@@ -59,11 +66,34 @@ export async function prepareSessionInitialAccessDataKeyEnvelopes(params: Readon
     || Boolean(params.fields.primaryTeamId);
   if (!collective || params.sessionEncryptionMode === 'plain') return;
   params.signal?.throwIfAborted();
-  const key = params.resolveSessionDataKey();
+  const key = openSessionDataEncryptionKeyForReseal({ credential: params.credentials, session: params.session })?.dataKey;
   if (!key || key.byteLength !== ENCRYPTED_DATA_KEY_V1_BYTES) {
     throw new SessionInitialAccessEnvelopeHostError('session_data_key_unavailable');
   }
+  const result = await runSessionRecipientEnvelopePass({
+    sessionId: params.sessionId, token: params.token, serverHttpBaseUrl: params.serverHttpBaseUrl,
+    ...(params.signal ? { signal: params.signal } : {}),
+    ...(params.isScopeCurrent ? { isScopeCurrent: params.isScopeCurrent } : {}),
+    resolveSessionDataKey: () => key,
+  });
+  if (result.status === 'scope_changed') throw new SessionInitialAccessEnvelopeHostError('session_access_request_failed');
+  return result;
+}
+
+/**
+ * The CLI's one page → seal → commit pass over a Session's Home-owned audience.
+ * The Home decides who is owed; the key is read only once a page holds real work.
+ */
+export async function runSessionRecipientEnvelopePass(params: Readonly<{
+  sessionId: string;
+  resolveSessionDataKey: () => Uint8Array | null | Promise<Uint8Array | null>;
+  token: string;
+  serverHttpBaseUrl: string;
+  signal?: AbortSignal;
+  isScopeCurrent?: () => boolean;
+}>): Promise<SessionDataKeyPreparationPassResult> {
   const url = `${params.serverHttpBaseUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/data-key/envelopes`;
+  let openedKey: Promise<Uint8Array | null> | null = null;
   const options = {
     headers: { Authorization: `Bearer ${params.token}`, 'Content-Type': 'application/json' },
     timeout: configuration.sessionControlHttpTimeoutMs,
@@ -86,6 +116,8 @@ export async function prepareSessionInitialAccessDataKeyEnvelopes(params: Readon
     },
     itemKey: item => item.recipientAccountId,
     prepareEntries: async items => {
+      const key = await (openedKey ??= Promise.resolve(params.resolveSessionDataKey()));
+      if (!key) return { entries: [], failedItemKeys: items.map(item => item.recipientAccountId) };
       const entries: Array<PatchSessionDataKeyEnvelopesV1['entries'][number]> = [];
       const failedItemKeys: string[] = [];
       for (const item of items) {
@@ -106,7 +138,6 @@ export async function prepareSessionInitialAccessDataKeyEnvelopes(params: Readon
     isScopeCurrent: () => !params.signal?.aborted && (params.isScopeCurrent?.() ?? true),
   });
   params.signal?.throwIfAborted();
-  if (result.status === 'scope_changed') throw new SessionInitialAccessEnvelopeHostError('session_access_request_failed');
   return result;
 }
 
@@ -193,6 +224,19 @@ export function buildSessionInitialAccessCreateFields(
     ...(initialAccess !== undefined ? { initialAccess } : {}),
     ...(primaryTeamId !== undefined ? { primaryTeamId } : {}),
   };
+}
+
+/** A creator holds the key, so a collective E2EE create carries its share statement from birth. */
+export function addSessionInitialAccessTeamShareStatement<T extends Readonly<Record<string, unknown>>>(
+  metadata: T,
+  fields: Readonly<{ initialAccess?: SessionInitialAccessDraftV1; primaryTeamId?: string | null }>,
+  sessionEncryptionMode: 'e2ee' | 'plain',
+): T {
+  if (sessionEncryptionMode === 'plain') return metadata;
+  return addSessionTeamsToShareStatementV1(metadata, [
+    ...(fields.primaryTeamId ? [fields.primaryTeamId] : []),
+    ...(fields.initialAccess?.grants ?? []).flatMap(({ subject }) => subject.kind === 'account' ? [] : [subject.teamId]),
+  ]);
 }
 
 /**

@@ -30,6 +30,9 @@ import {
   FeaturesResponseSchema,
 } from '@happier-dev/protocol';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
+import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { createSessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { encrypt, getRandomBytes } from './encryption';
 
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import {
@@ -55,6 +58,19 @@ import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows } from '@/w
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+
+/** Owner-row fields whose shared metadata opens under the Session key, so a reseal can prove the key is this Session's. */
+function sessionKeyBoundRowFields(params: Readonly<{ sessionDataKey: Uint8Array; ownerMachineKey: Uint8Array }>) {
+  const opened = createSessionOwnerMetadataV1({ metadata: { path: '/work', host: 'holder' } });
+  if (!opened.ok) throw new Error('Expected owner metadata fixture');
+  return {
+    metadataLayoutVersion: 1 as const,
+    metadata: encodeBase64(encrypt(params.sessionDataKey, 'dataKey', { v: 1 })),
+    share: null,
+    ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'dataKey', machineKey: params.ownerMachineKey },
+      ownerMetadata: opened.ownerMetadata, randomBytes: getRandomBytes }),
+  };
+}
 
 function createAccountProjectWorkerActionDeps(input: Parameters<typeof createAccountServerActionDeps>[0]) {
   const ctx = input.credentials ? resolveSessionEncryptionContextFromCredentials(input.credentials) : null;
@@ -1672,6 +1688,43 @@ describe('Session access HTTP adapter', () => {
     expect(sessionQueries).toEqual([{ accessProjectionVersion: '1' }]);
   });
 
+  it('seals the Team share statement before a Team context change reaches the Home', async () => {
+    const { encrypt, decrypt, encodeBase64: encode, decodeBase64: decode, getRandomBytes } = await import('./encryption');
+    const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
+    const { sealSessionOwnerMetadataEnvelopeV1 } = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1');
+    const { createSessionOwnerMetadataV1 } = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1');
+    const holder = tweetnacl.box.keyPair();
+    const sessionKey = new Uint8Array(32).fill(73);
+    const opened = createSessionOwnerMetadataV1({ metadata: { path: '/work', host: 'holder' } });
+    if (!opened.ok) throw new Error('Expected owner metadata fixture');
+    const effects: string[] = [];
+    let sealedShared = '';
+    app.get('/v2/sessions/session-team', async () => ({ session: { id: 'session-team', seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+      encryptionMode: 'e2ee', metadataLayoutVersion: 1, metadataVersion: 1, share: null, agentState: null, agentStateVersion: 0,
+      metadata: encode(encrypt(sessionKey, 'dataKey', { v: 1 })),
+      ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'dataKey', machineKey: holder.secretKey }, ownerMetadata: opened.ownerMetadata, randomBytes: getRandomBytes }),
+      dataEncryptionKey: encode(sealEncryptedDataKeyEnvelopeV1({ dataKey: sessionKey, recipientPublicKey: holder.publicKey, randomBytes: getRandomBytes })) } }));
+    app.get('/v1/account/encryption/currentness', async () => ({
+      mode: 'e2ee', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+    app.patch('/v2/sessions/session-team', async (request) => {
+      effects.push('statement');
+      sealedShared = (request.body as Readonly<{ sharedMetadata: Readonly<{ ciphertext: string }> }>).sharedMetadata.ciphertext;
+      return { success: true, metadataLayoutVersion: 1, sharedMetadata: { version: 2 }, agentState: { version: 0 } };
+    });
+    app.post('/v2/sessions/access-context/set', async () => {
+      effects.push('context');
+      return { changed: true, primaryTeamId: 'team-1' };
+    });
+    const deps = createAccountServerActionDeps({ token: 'bound-home-token', serverId: 'home', serverHttpBaseUrl: 'http://access.test',
+      credentials: { token: 'bound-home-token', encryption: { type: 'dataKey', publicKey: holder.publicKey, machineKey: holder.secretKey } } });
+    await expect(deps.sessionAccessAction!({
+      actionId: 'session.access.context.set', input: { sessionId: 'session-team', primaryTeamId: 'team-1' },
+      context: { surface: 'cli', serverId: 'home' },
+    })).resolves.toMatchObject({ changed: true });
+    expect(effects).toEqual(['statement', 'context']);
+    expect(decrypt(sessionKey, 'dataKey', decode(sealedShared))).toMatchObject({ teamShareStatementV1: { v: 1, teamIds: ['team-1'] } });
+  });
+
   it('keeps supported older Homes on the released bare detail projection during grant preparation', async () => {
     const sessionQueries: unknown[] = [];
     app.get('/v2/sessions/session-plain', async (request) => {
@@ -1811,6 +1864,7 @@ describe('Session access HTTP adapter', () => {
         id: 'session-e2ee',
         encryptionMode: 'e2ee',
         dataEncryptionKey: publishedCallerEnvelope,
+        ...sessionKeyBoundRowFields({ sessionDataKey, ownerMachineKey: callerMachineKey }),
         metadataVersion: 0,
         agentStateVersion: 0,
       }),
@@ -1995,6 +2049,52 @@ describe('Session access HTTP adapter', () => {
     ]);
   });
 
+  it('names the layout update when a legacy-layout Session has no retained recipient envelope', async () => {
+    const callerMachineKey = new Uint8Array(32).fill(13);
+    const publicInput = {
+      sessionId: 'session-legacy',
+      subject: { kind: 'account' as const, accountId: 'recipient-account' },
+      accessLevel: 'view' as const,
+      canApprovePermissions: false,
+    };
+    const physicalBodies: unknown[] = [];
+    // Layout 0 accepts any record, so even the real Session key proves nothing there.
+    app.get('/v2/sessions/session-legacy', async () => ({
+      session: createSessionRecordFixture({
+        id: 'session-legacy',
+        encryptionMode: 'e2ee',
+        dataEncryptionKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({
+          dataKey: new Uint8Array(32).fill(31),
+          recipientPublicKey: deriveBoxPublicKeyFromSeed(callerMachineKey),
+          randomBytes: getRandomBytes,
+        })),
+        metadata: encodeBase64(encrypt(new Uint8Array(32).fill(31), 'dataKey', { v: 1 })),
+      }),
+    }));
+    app.post('/v2/sessions/access-grants/set', async (request, reply) => {
+      physicalBodies.push(request.body);
+      return reply.code(400).send({ error: 'recipient_envelope_required' });
+    });
+    const deps = createAccountServerActionDeps({
+      token: 'bound-home-token',
+      credentials: {
+        token: 'bound-home-token',
+        encryption: { type: 'dataKey', publicKey: deriveBoxPublicKeyFromSeed(callerMachineKey), machineKey: callerMachineKey },
+      },
+      serverId: 'home',
+      serverHttpBaseUrl: 'http://access.test',
+    });
+
+    const result = await deps.sessionAccessAction!({
+      actionId: 'session.access.grant.set',
+      input: publicInput,
+      context: { surface: 'cli', serverId: 'home' },
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'session_data_key_unavailable' });
+    expect((result as { error: string }).error).toContain('session.access.layout.update');
+    expect(physicalBodies).toEqual([publicInput]);
+  });
+
   it('keeps a direct Plain grant key-free without requiring local encryption credentials', async () => {
     const physicalBodies: unknown[] = [];
     app.get('/v2/sessions/session-plain', async () => ({
@@ -2063,6 +2163,7 @@ describe('Session access HTTP adapter', () => {
         id: 'session-e2ee',
         encryptionMode: 'e2ee',
         dataEncryptionKey: ownerEnvelope,
+        ...sessionKeyBoundRowFields({ sessionDataKey, ownerMachineKey: managerKey.secretKey }),
         metadataVersion: 0,
         agentStateVersion: 0,
       }),
@@ -2210,8 +2311,9 @@ describe('Session access HTTP adapter', () => {
     const physicalBodies: unknown[] = [];
     const callerMachineKey = new Uint8Array(32).fill(19);
     const callerPublicKey = deriveBoxPublicKeyFromSeed(callerMachineKey);
+    const sessionDataKey = new Uint8Array(32).fill(23);
     const callerEnvelope = encodeBase64(sealEncryptedDataKeyEnvelopeV1({
-      dataKey: new Uint8Array(32).fill(23),
+      dataKey: sessionDataKey,
       recipientPublicKey: callerPublicKey,
       randomBytes: (length) => new Uint8Array(length).fill(7),
     }));
@@ -2222,6 +2324,7 @@ describe('Session access HTTP adapter', () => {
         id: 'session-e2ee',
         encryptionMode: 'e2ee',
         dataEncryptionKey: callerEnvelope,
+        ...sessionKeyBoundRowFields({ sessionDataKey, ownerMachineKey: callerMachineKey }),
         metadataVersion: 0,
         agentStateVersion: 0,
       }),
@@ -2688,6 +2791,7 @@ describe('Session access HTTP adapter', () => {
         id: 'session-e2ee',
         encryptionMode: 'e2ee',
         dataEncryptionKey: publishedCallerEnvelope,
+        ...sessionKeyBoundRowFields({ sessionDataKey, ownerMachineKey: callerMachineKey }),
         metadataVersion: 0,
         agentStateVersion: 0,
       }),

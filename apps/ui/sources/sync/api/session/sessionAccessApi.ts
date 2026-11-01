@@ -3,7 +3,7 @@ import { bindSessionAccessActionHttpRequestV1, isSessionAccessActionIdV1 } from 
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionGrantMutationV1Schema, type SessionGrantIntentV1, type SessionGrantMutationV1 } from '@happier-dev/protocol/sessions/access/sessionAccessGrantV1';
 import { UserRecipientEnvelopeResponseSchema } from '@happier-dev/protocol/social/friends';
-import { SessionAccessGrantsListResponseV1Schema, SetSessionAccessGrantResponseV1Schema, RemoveSessionAccessGrantResponseV1Schema, SetSessionAccessContextResponseV1Schema, ResolveSessionAccessPrincipalsRequestV1Schema, ResolveSessionAccessPrincipalsResponseV1Schema, type SessionAccessPrincipalSummaryV1, type SessionAccessCreationDecisionV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import { SessionAccessGrantsListResponseV1Schema, SetSessionAccessContextRequestV1Schema, SetSessionAccessGrantResponseV1Schema, RemoveSessionAccessGrantResponseV1Schema, SetSessionAccessContextResponseV1Schema, ResolveSessionAccessPrincipalsRequestV1Schema, ResolveSessionAccessPrincipalsResponseV1Schema, type SessionAccessPrincipalSummaryV1, type SessionAccessCreationDecisionV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { SessionPublicLinkGetActionResultV1Schema, SessionPublicLinkRemoveActionResultV1Schema, SessionPublicLinkCreateActionInputV1Schema, SessionPublicLinkCreateActionResultV1Schema, projectSessionPublicLinkActionResultV1, projectSessionPublicLinkCreateActionResultV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
@@ -30,7 +30,27 @@ import { SessionAccessEncryptionPrepareResultV1Schema, SessionAccessLayoutUpdate
 import { prepareSessionDataKeyEnvelopesDetached } from './sessionDataKeyEnvelopesApi';
 import type { CurrentSessionPreparationProgress } from '@/sync/encryption/prepareCurrentSessionDataKeyEnvelopes';
 import { migrateSessionForSharing } from '@/sync/ops/sessions/migrateSessionForSharing';
+import { recordSessionTeamShareStatement } from '@/sync/ops/sessions/recordSessionTeamShareStatement';
+import { log } from '@/log';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
+import { readSessionByIdHttp } from '@/sync/engine/sessions/sessionByIdHttp';
+
+/** The served Session row a reseal binds its key to; the hydrated snapshot keeps no ciphertext. */
+async function readServedSessionKeyRow(params: Readonly<{
+    authority: ServerAccountRequestAuthority;
+    sessionId: string;
+    check(): void;
+}>): Promise<Readonly<Record<string, unknown>> | null> {
+    const token = params.authority.context.credentials?.token;
+    if (!token) return null;
+    const read = await readSessionByIdHttp({ sessionId: params.sessionId, serverId: params.authority.scope.serverId,
+        token, request: params.authority.request, projection: 'detail' });
+    params.check();
+    const session = read.ok && read.body && typeof read.body === 'object'
+        ? (read.body as Readonly<{ session?: unknown }>).session : null;
+    return session && typeof session === 'object' && (session as Readonly<{ id?: unknown }>).id === params.sessionId
+        ? session as Readonly<Record<string, unknown>> : null;
+}
 
 /** Batch preview from the same Home policy owner that admits a grant. Older Homes fail closed. */
 export async function inspectSessionAccessCandidates(options: SessionAccessRequestOptions & Readonly<{
@@ -97,6 +117,36 @@ export type SessionAccessRequestOptions = Readonly<{
     onEncryptionPreparationProgress?: (progress: CurrentSessionPreparationProgress) => void;
 }>;
 
+/**
+ * On a device holding the key, states the Team share before it reaches the Home so a member's
+ * wake finds it. Failing it never fails the share: the Session stays on the manager path.
+ */
+async function recordTeamShareWhenKeyHeld(params: Readonly<{
+    authority: ServerAccountRequestAuthority;
+    check(): void;
+    sessionId: string;
+    teamId: string;
+    readSnapshot: () => ReturnType<typeof readSessionSnapshotForAuthority>;
+}>): Promise<void> {
+    try {
+        const snapshot = await params.readSnapshot();
+        params.check();
+        if ((snapshot.session.encryptionMode ?? 'e2ee') === 'plain') return;
+        const sessionDataKey = await readTransferableSessionDataKey({
+            session: await readServedSessionKeyRow(params),
+            encryption: params.authority.context.encryption,
+        });
+        params.check();
+        if (!sessionDataKey) return;
+        await recordSessionTeamShareStatement({ scope: params.authority.scope, sessionId: params.sessionId,
+            teamId: params.teamId, isCurrent: () => { params.check(); return true; } });
+    } catch (error) {
+        params.check();
+        log.log(`[session access] Team share statement not recorded: ${error instanceof Error && 'code' in error ? String(error.code) : 'unknown'}`);
+    }
+    params.check();
+}
+
 async function materializeSessionGrant(params: Readonly<{
     authority: ServerAccountRequestAuthority;
     check(): void;
@@ -138,6 +188,8 @@ async function materializeSessionGrant(params: Readonly<{
         checkEncryptionScope();
     }
     if (params.mutation.subject.kind !== 'account') {
+        await recordTeamShareWhenKeyHeld({ authority: params.authority, check: checkEncryptionScope, sessionId: params.sessionId,
+            teamId: params.mutation.subject.teamId, readSnapshot: async () => snapshot });
         return { mutation: params.mutation, retainedEnvelopeFallback: false, checkCurrentness: checkEncryptionScope };
     }
     if ((snapshot.session.encryptionMode ?? 'e2ee') === 'plain') {
@@ -168,7 +220,7 @@ async function materializeSessionGrant(params: Readonly<{
         contentPublicKeySigB64: recipient.contentPublicKeySig,
     })) throw new SessionAccessApiError('session_access_invalid_recipient_envelope');
     const sessionDataKey = await readTransferableSessionDataKey({
-        callerDataKeyEnvelope: snapshot.callerDataKeyEnvelope,
+        session: await readServedSessionKeyRow({ authority: params.authority, sessionId: params.sessionId, check: checkEncryptionScope }),
         encryption,
     });
     checkEncryptionScope();
@@ -239,7 +291,7 @@ async function materializePublicLinkCreateMaterial(params: Readonly<{
         return { ...material, checkCurrentness: checkEncryptionScope };
     }
     const sessionDataKey = await readTransferableSessionDataKey({
-        callerDataKeyEnvelope: snapshot.callerDataKeyEnvelope,
+        session: await readServedSessionKeyRow({ authority: params.authority, sessionId: params.sessionId, check: checkEncryptionScope }),
         encryption,
     });
     checkEncryptionScope();
@@ -337,6 +389,13 @@ export async function executeSessionAccessHttpAction(params: SessionAccessReques
                     : { lookupId: materialized.lookupId, keyDerivation: 'fragment_v1', encryptedDataKey: materialized.encryptedDataKey };
                 checkMaterializationCurrentness = materialized.checkCurrentness;
                 issuedPublicLink = { lookupId: materialized.lookupId, secret: materialized.secret };
+            }
+            if (actionId === 'session.access.context.set') {
+                const { sessionId, primaryTeamId } = SetSessionAccessContextRequestV1Schema.parse(publicInput);
+                if (primaryTeamId !== null) {
+                    await recordTeamShareWhenKeyHeld({ authority, check, sessionId, teamId: primaryTeamId,
+                        readSnapshot: () => readSessionSnapshotForAuthority({ authority, sessionId, isCurrent: () => { check(); return true; } }) });
+                }
             }
             if (actionId === 'session.access.grant.set') {
                 const { sessionId, ...grant } = publicInput as Record<string, unknown> & { sessionId: string };
