@@ -478,10 +478,11 @@ it.each([
     let lastPublicationReplay: string | undefined;
     const deps = createDiscussionActionDeps({ credentials, serverId, serverHttpBaseUrl: serverUrl,
       postAgentMessage: async (request, options) => {
-        lastPublicationReplay = options?.approvedActionReplay?.artifactId;
-        if (!('operation' in request) && participantPolicy === 'when_addressed' && options?.approvedActionReplay) {
+        const replayArtifactId = options?.approvedActionReplay?.artifactId;
+        lastPublicationReplay = replayArtifactId;
+        if (!('operation' in request) && participantPolicy === 'when_addressed' && replayArtifactId) {
           const reviewed = await readApprovedDiscussionPublication({
-            artifactId: options.approvedActionReplay.artifactId, request, credentials, sessionId, serverId, serverUrl,
+            artifactId: replayArtifactId, request, credentials, sessionId, serverId, serverUrl,
             callerAuthority: 'present_user', isApprovalExecutionOriginCurrent: currentness,
           });
           reviewedActorStamps.push(reviewed?.draftReview);

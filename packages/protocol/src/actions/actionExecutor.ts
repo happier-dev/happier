@@ -2801,7 +2801,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return { ok: false, errorCode: 'discussion_answer_policy_denied', error: 'discussion_answer_policy_denied' };
       }
       const review = ctx.presentUserApproval;
-      const reviewed = Boolean(ctx.approvedActionReplay && review?.artifactId === ctx.approvedActionReplay.artifactId
+      const reviewed = Boolean(ctx.approvedActionReplay && review && review.artifactId === ctx.approvedActionReplay.artifactId
         && review.actionId === actionId && review.requestId === ctx.actionRequestId && review.decidingAccountId
         && review.inputDigest === computeActionInputApprovalDigestV1(actionId, admittedInput));
       discussionDraftReviewRequired = discussionPolicy.answerPolicy === 'drafts_for_approval' && !reviewed;

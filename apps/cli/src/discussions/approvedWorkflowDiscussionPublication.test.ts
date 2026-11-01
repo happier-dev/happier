@@ -164,7 +164,9 @@ it.each(['publish', 'stable_delivery', 'foreign_delivery', 'unknown_delivery', '
     expectedRevision: observedRevision, state: 'interrupted', checkpointEnvelope: 'refreshed-root-progress' });
   const { executor } = createCliActionExecutorHarness({ token, credentials, sessionId: '', mode: 'plain', ctx: null,
     serverId, serverIdentityId, serverHttpBaseUrl: serverUrl, postWorkflowDiscussionMessage: async (request, options) => {
-      const verification = { artifactId: options.context.approvedActionReplay!.artifactId,
+      const replayArtifactId = options.context.approvedActionReplay?.artifactId;
+      if (!replayArtifactId) throw new Error('Expected admitted approval replay');
+      const verification = { artifactId: replayArtifactId,
         request, content: options.content, credentials, machineId, serverId, serverUrl,
         // The deciding ingress is present-user; replay context retains the
         // original automation authority, exactly as the daemon composition does.

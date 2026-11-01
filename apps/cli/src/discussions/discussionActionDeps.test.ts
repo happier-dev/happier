@@ -1236,21 +1236,51 @@ describe('Home Discussion resource transport', () => {
     expect(axiosRequest.mock.calls.some(([request]) => request.method === 'POST')).toBe(false);
   });
 
-  it('keeps host-only approval defaults out of the strict Discussion publication transport', async () => {
+  it.each([undefined, 'approval'])('publishes a reviewed Discussion with optional Artifact %s', async artifactId => {
     let transportIssues: readonly Readonly<{ code: string; path: readonly PropertyKey[] }>[] = [];
     const postAgentMessage: NonNullable<Parameters<typeof createDiscussionActionDeps>[0]['postAgentMessage']> = async (request, options) => {
-      const wire = DiscussionAgentPublisherRequestV1Schema.safeParse({ request, approvedActionReplay: options?.approvedActionReplay });
-      if (!wire.success) { transportIssues = wire.error.issues.map(({ code, path }) => ({ code, path })); throw new Error('Invalid private publication'); }
+      if (artifactId) {
+        const wire = DiscussionAgentPublisherRequestV1Schema.safeParse({ request, approvedActionReplay: options?.approvedActionReplay });
+        if (!wire.success) { transportIssues = wire.error.issues.map(({ code, path }) => ({ code, path })); throw new Error('Invalid private publication'); }
+      } else {
+        // Native confirmation keeps the actual Session publisher and its live
+        // turn custody; it has no persisted approval to reopen over RPC.
+        expect(options?.approvedActionReplay).toBeUndefined();
+      }
       return { v: 1, ok: true, value: { message: { ...wireMessage(), content: DiscussionAgentPostRequestV1Schema.parse(request).request.content,
         producerV1: { v: 1, kind: 'agent', sessionId: 'participant-session', runId: 'run-1', toolCallId: 'tool-1' } }, messageSeq: 1 } };
     };
     const result = await action({ postAgentMessage })({ actionId: 'discussion.post',
       input: { discussionId: 'discussion-1', localId: 'post-1', content },
       context: { serverId: 'server-1', surface: 'agent', authority: 'account_automation', defaultSessionId: 'participant-session',
-        approvedActionReplay: { artifactId: 'approval', origin: { surface: 'agent',
+        approvedActionReplay: { ...(artifactId ? { artifactId } : {}), origin: { surface: 'agent',
           caller: { kind: 'session', sessionId: 'participant-session', starterDepth: 0, turnDepth: 0 } } } } });
     expect(transportIssues).toEqual([]);
     expect(result).toMatchObject({ message: { content } });
+  });
+
+  it('keys approved retries by the operation rather than an optional Artifact', async () => {
+    const localIds: string[] = [];
+    axiosRequest.mockImplementation(async request => {
+      const path = new URL(request.url).pathname;
+      if (path === '/v1/discussions/discussion-1') return { status: 200, data: { discussion: wireSummary() } };
+      if (path === '/v1/discussions/discussion-1/messages' && request.method === 'POST') {
+        const body = DiscussionPostRequestV1Schema.parse(JSON.parse(request.data));
+        localIds.push(body.localId!);
+        return { status: 200, data: { message: { ...wireMessage(), localId: body.localId!, content: body.content }, messageSeq: 1 } };
+      }
+      throw new Error('Unexpected retry request');
+    });
+    const execute = action();
+    for (const [actionRequestId, artifactId] of [['operation-1', undefined], ['operation-1', 'artifact-1'],
+      ['operation-2', undefined], ['operation-2', 'artifact-2']] as const) {
+      expect(await execute({ actionId: 'discussion.post', input: { discussionId: 'discussion-1', content },
+        context: { ...context, actionRequestId, approvedActionReplay: artifactId ? { artifactId } : {} } }))
+        .toMatchObject({ message: { content } });
+    }
+    expect(localIds[0]).toBe(localIds[1]);
+    expect(localIds[2]).toBe(localIds[3]);
+    expect(localIds[0]).not.toBe(localIds[2]);
   });
 
   it('publishes an explicit MCP reply through the admitted participant transport with its exact parent', async () => {
