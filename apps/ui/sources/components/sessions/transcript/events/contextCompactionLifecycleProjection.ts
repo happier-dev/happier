@@ -16,6 +16,11 @@ function readContextCompactionLifecycleId(message: Message): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
+export function resolveTranscriptMessageItemId(message: Message): string {
+    const lifecycleId = readContextCompactionLifecycleId(message);
+    return lifecycleId === null ? `msg:${message.id}` : `context-compaction:${lifecycleId}`;
+}
+
 function collectContextCompactionLifecycleProjection(
     messageIdsOldestFirst: readonly string[],
     messagesById: Readonly<Record<string, Message>>,

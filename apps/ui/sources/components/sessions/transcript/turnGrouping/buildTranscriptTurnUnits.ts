@@ -3,6 +3,7 @@ import type { Message } from "@happier-dev/session-core/messages";
 
 import type { WorkflowTranscriptTurnItem } from './workflowTranscriptTurns';
 import { resolveToolCallsGroupPresentation } from '@/components/sessions/transcript/toolCalls/resolveToolCallsGroupPresentation';
+import { resolveTranscriptMessageItemId } from '@/components/sessions/transcript/events/contextCompactionLifecycleProjection';
 
 type ForkMessageMetadata = Readonly<{
     originSessionId: string;
@@ -105,7 +106,7 @@ function buildMessageItem(params: Readonly<{
     const metadata = readMessageMetadata(params.metadataByMessageId, params.messageId);
     return {
         kind: 'message',
-        id: `msg:${params.messageId}`,
+        id: message ? resolveTranscriptMessageItemId(message) : `msg:${params.messageId}`,
         messageId: params.messageId,
         ...metadataFields(metadata),
         createdAt: normalizeCreatedAt(message),

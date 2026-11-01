@@ -124,34 +124,6 @@ afterEach(async () => {
 });
 
 describe('Session defaults · Compact while idle', () => {
-  // First: no earlier test's Action write can still be settling while it counts.
-  it('re-renders only for its own Account keys, and opening the disclosure writes and reads nothing', async () => {
-    // Seeded locally so no earlier Action write is still settling while the count runs.
-    storage.getState().applySettingsLocal({ sessionIdleCompactionEnabledByTargetKey: { [EXTERNAL]: true } });
-    let commits = 0;
-    const screen = await renderScreen(hostAgentRows(() => { commits += 1; }));
-    expect(screen.findByTestId('settings.agents.detail.idleCompaction.when')).not.toBeNull();
-
-    // Closed, so the count is the rows' own subscription and not the open body's height settling.
-    commits = 0;
-    await act(async () => {
-      storage.getState().applySettingsLocal({ experiments: !storage.getState().settings.experiments });
-    });
-    expect(commits).toBe(0);
-    await act(async () => {
-      storage.getState().applySettingsLocal({
-        sessionIdleCompactionMinContextTokensByTargetKey: { [EXTERNAL]: 90_000 },
-      });
-    });
-    expect(commits).toBe(1);
-    expect(screen.getTextContent()).toContain('Over 90,000 tokens');
-
-    const writes = settingsWrites();
-    await screen.pressByTestIdAsync('settings.agents.detail.idleCompaction.when.header');
-    expect(screen.findByTestId('settings.agents.detail.idleCompaction.minContextTokens.input')).not.toBeNull();
-    expect(settingsWrites()).toBe(writes);
-    expect(daemon.state.requests).toHaveLength(0);
-  });
   it('shows Claude on by default with its declared minimum, and writes the switch and size once each', async () => {
     const screen = await renderScreen(section('claude'));
     await waitForHomeGovernance(() =>
@@ -303,5 +275,37 @@ describe('Session defaults · Compact while idle', () => {
     expect(settingsWrites()).toBe(before + 3);
     expect(stored().enabled[EXTERNAL]).toBe(true);
   });
+  it('re-renders only for its own Account keys, and opening the disclosure writes and reads nothing', async () => {
+    // Keep settings Action setup outside the profiler's measured interval.
+    storage.getState().applySettingsLocal({ sessionIdleCompactionEnabledByTargetKey: { [EXTERNAL]: true } });
+    let commits = 0;
+    const screen = await renderScreen(hostAgentRows(() => { commits += 1; }));
+    // The native switch mounts through Deferred; measure after that mount, not its timer.
+    await waitForHomeGovernance(() =>
+      expect(screen.findHostByTestId('settings.agents.detail.idleCompaction.switch')?.props.value).toBe(true),
+    );
+    expect(screen.findByTestId('settings.agents.detail.idleCompaction.when')).not.toBeNull();
+
+    // Closed, so the count is the rows' own subscription and not the open body's height settling.
+    commits = 0;
+    await act(async () => {
+      storage.getState().applySettingsLocal({ experiments: !storage.getState().settings.experiments });
+    });
+    expect(commits).toBe(0);
+    await act(async () => {
+      storage.getState().applySettingsLocal({
+        sessionIdleCompactionMinContextTokensByTargetKey: { [EXTERNAL]: 90_000 },
+      });
+    });
+    expect(commits).toBe(1);
+    expect(screen.getTextContent()).toContain('Over 90,000 tokens');
+
+    const writes = settingsWrites();
+    await screen.pressByTestIdAsync('settings.agents.detail.idleCompaction.when.header');
+    expect(screen.findByTestId('settings.agents.detail.idleCompaction.minContextTokens.input')).not.toBeNull();
+    expect(settingsWrites()).toBe(writes);
+    expect(daemon.state.requests).toHaveLength(0);
+  });
+
 
 });

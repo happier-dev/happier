@@ -7,13 +7,19 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
+import { act } from 'react-test-renderer';
+import type { Message } from '@happier-dev/session-core/messages';
 
-import { createToolCallMessageFixture, renderHook } from '@/dev/testkit';
+import { createToolCallMessageFixture, renderHook, renderScreen } from '@/dev/testkit';
+import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
+import { buildChatListItems, buildChatListItemsCached } from '@/components/sessions/chatListItems';
+import { buildTranscriptTurnsCached } from '../turnGrouping/buildTranscriptTurns';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
+const { TranscriptEventRow } = await import('../events/TranscriptEventRow');
 const { useTranscriptItemsPipeline, useTranscriptToolAutoExpandEffect } = await import('./useTranscriptItemsPipeline');
 const { AppSessionTranscriptSourceProvider } = await import('../source/appSessionTranscriptSource');
 
@@ -91,6 +97,76 @@ function buildDeps(members: ReturnType<typeof createStableMembers>): ItemsPipeli
 }
 
 describe('useTranscriptItemsPipeline identity stability', () => {
+    it.each(['full', 'cached-rebuild', 'cached-append', 'turns'] as const)(
+        'idleCompaction.F2 keeps one mounted lifecycle row and quiet neighbors through %s projection',
+        async (path) => {
+            for (const terminalPhase of ['completed', 'failed', 'cancelled'] as const) {
+                const lifecycleId = `idle-${terminalPhase}`;
+                const beforeMessage: Message = { kind: 'user-text', id: 'before', localId: null, createdAt: 1, seq: 1, text: 'Before' };
+                const afterMessage: Message = { kind: 'user-text', id: 'after', localId: null, createdAt: 3, seq: 3, text: 'After' };
+                const started: Message = { kind: 'agent-event', id: 'started', localId: null, createdAt: 2, seq: 2,
+                    event: { type: 'context-compaction', lifecycleId, trigger: 'idle', phase: 'started' } };
+                const terminal: Message = { kind: 'agent-event', id: terminalPhase, localId: null, createdAt: 4, seq: 4,
+                    event: { type: 'context-compaction', lifecycleId, trigger: 'idle', phase: terminalPhase } };
+                const messagesById = Object.fromEntries([beforeMessage, started, afterMessage, terminal].map((message) => [message.id, message]));
+                const initialIds = ['before', 'started', 'after'];
+                const finalIds = [...initialIds, terminalPhase];
+                const initial = buildChatListItemsCached({ cache: null, messageIdsOldestFirst: initialIds, messagesById, pendingMessages: [] });
+                const project = (ids: string[], next: boolean) => {
+                    if (path === 'turns') {
+                        return buildTranscriptTurnsCached({ cache: null, messageIdsOldestFirst: ids, messagesById,
+                            groupToolCalls: true, toolCallsGroupStrategy: 'consecutive_tools' }).turns.map((turn) => ({ kind: 'turn' as const, id: turn.id, turn }));
+                    }
+                    if (path === 'full') return buildChatListItems({ messageIdsOldestFirst: ids, messagesById, pendingMessages: [] });
+                    return buildChatListItemsCached({ cache: next && path === 'cached-append' ? initial.cache : null,
+                        messageIdsOldestFirst: ids, messagesById, pendingMessages: [] }).items;
+                };
+                const members = createStableMembers();
+                const counts = new Map<string, { mounts: number; commits: number; unmounts: number }>();
+                const Row = React.memo(function Row({ message }: { message: Message }) {
+                    const identity = message.kind === 'agent-event' ? lifecycleId : message.id;
+                    const count = counts.get(identity) ?? { mounts: 0, commits: 0, unmounts: 0 };
+                    counts.set(identity, count);
+                    React.useLayoutEffect(() => { count.commits += 1; });
+                    React.useEffect(() => { count.mounts += 1; return () => { count.unmounts += 1; }; }, [count]);
+                    return message.kind === 'agent-event' ? <TranscriptEventRow event={message.event} /> : null;
+                });
+                const { module: { LegendList } } = createCapturingLegendListMock({ memoizeItems: true });
+                let advance = () => {};
+                let visibleIds: string[] = [];
+                function List() {
+                    const [next, setNext] = React.useState(false);
+                    advance = () => setNext(true);
+                    const items = React.useMemo(() => project(next ? finalIds : initialIds, next), [next]);
+                    const pipeline = useTranscriptItemsPipeline({ ...buildDeps(members), items, messagesById,
+                        groupingMode: path === 'turns' ? 'turns' : 'linear', committedMessagesCount: next ? 4 : 3,
+                        getMessageById: (id) => messagesById[id] ?? null });
+                    const renderItem = React.useCallback(({ item }: { item: (typeof pipeline.listData)[number] }) => item.kind === 'message'
+                        ? <Row message={messagesById[item.messageId]!} /> : null, []);
+                    visibleIds = pipeline.listData.map(pipeline.keyExtractor);
+                    return <LegendList data={pipeline.listData} keyExtractor={pipeline.keyExtractor}
+                        renderItem={renderItem} />;
+                }
+                const screen = await renderScreen(<Source><List /></Source>);
+                const originalIds = [...visibleIds];
+                expect(new Set(originalIds).size).toBe(3);
+                expect(originalIds).toContain('msg:before');
+                expect(originalIds).toContain('msg:after');
+                const mountedRow = screen.findByType(TranscriptEventRow);
+                const beforeCounts = { ...counts.get('before')! };
+                const afterCounts = { ...counts.get('after')! };
+                await act(async () => { advance(); });
+                expect(visibleIds).toHaveLength(3);
+                expect(new Set(visibleIds)).toEqual(new Set(originalIds));
+                expect(screen.findByType(TranscriptEventRow)).toBe(mountedRow);
+                expect(screen.findByType(TranscriptEventRow).props.event.phase).toBe(terminalPhase);
+                expect(counts.get(lifecycleId)).toEqual({ mounts: 1, commits: 2, unmounts: 0 });
+                expect(counts.get('before')).toEqual(beforeCounts);
+                expect(counts.get('after')).toEqual(afterCounts);
+                await screen.unmount();
+            }
+        },
+    );
     it.each(['linear', 'turns'])('hides previews in %s without dropping tools and reveals all rows locally', async (groupingMode) => {
         const messages = ['tool-1', 'tool-2'].map((id) => createToolCallMessageFixture({ id }));
         const deps = { ...buildDeps(createStableMembers()), groupingMode, showToolCalls: false,

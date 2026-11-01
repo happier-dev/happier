@@ -2,7 +2,7 @@ import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/sta
 import type { Message } from "@happier-dev/session-core/messages";
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 import { isToolCallMessageGroupableInTranscript } from '@/components/sessions/transcript/toolCalls/isToolCallMessageGroupableInTranscript';
-import { filterVisibleContextCompactionLifecycleMessageIds } from '@/components/sessions/transcript/events/contextCompactionLifecycleProjection';
+import { filterVisibleContextCompactionLifecycleMessageIds, resolveTranscriptMessageItemId } from '@/components/sessions/transcript/events/contextCompactionLifecycleProjection';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { isSessionToolAnswerDeliveryMeta } from '@happier-dev/protocol/sessions/messages/sessionMessageMeta';
 import type {
@@ -312,7 +312,7 @@ export function buildChatListItems(opts: {
 
             items.push({
                 kind: 'message',
-                id: `msg:${m.id}`,
+                id: resolveTranscriptMessageItemId(m),
                 messageId: m.id,
                 createdAt: m.createdAt,
                 seq: typeof (m as any).seq === 'number' && Number.isFinite((m as any).seq) ? Math.trunc((m as any).seq) : null,
@@ -408,7 +408,7 @@ export function buildChatListItemsCached(opts: {
 
             committedItems.push({
                 kind: 'message',
-                id: `msg:${m.id}`,
+                id: resolveTranscriptMessageItemId(m),
                 messageId: m.id,
                 ...(readForkMetadata(opts.forkMetadataByMessageId, m.id)
                     ? {
@@ -450,7 +450,7 @@ export function buildChatListItemsCached(opts: {
 
             committedItems.push({
                 kind: 'message',
-                id: `msg:${m.id}`,
+                id: resolveTranscriptMessageItemId(m),
                 messageId: m.id,
                 ...(readForkMetadata(opts.forkMetadataByMessageId, m.id)
                     ? {
