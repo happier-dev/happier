@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -63,7 +64,7 @@ import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/fe
 import { useSessionHandoffSourceReachability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import { confirmSessionDelete } from '@/components/sessions/actions/confirmSessionDelete';
-import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
+import { selectSessionViewShellSessionForRouteState, useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
@@ -276,7 +277,7 @@ function buildSessionInfoMoveTargets(
 }
 
 function SessionInfoContent({
-  session,
+  session: shellSession,
   serverId: sessionServerId,
   presentation,
   onRequestClose,
@@ -286,6 +287,17 @@ function SessionInfoContent({
   presentation: SessionInfoPresentation;
   onRequestClose: () => void;
 }>) {
+  // The shared shell deliberately retains its Session across read-state updates.
+  // Info consumes the viewer/cursor itself: never invalidate the whole shell or
+  // subscribe this detail surface to unrelated Sessions or transcript arrivals.
+  const readStateInputs = storage(useShallow((state) => {
+    const current = selectSessionViewShellSessionForRouteState(state, shellSession.id, sessionServerId) ?? shellSession;
+    return [current.viewer, current.lastViewedSessionSeq] as const;
+  }));
+  const session = React.useMemo(
+    () => selectSessionViewShellSessionForRouteState(storage.getState(), shellSession.id, sessionServerId) ?? shellSession,
+    [shellSession, sessionServerId, readStateInputs],
+  );
   const contentUnavailable = isSessionInfoContentUnavailable(session);
   const metadata = contentUnavailable
     ? null

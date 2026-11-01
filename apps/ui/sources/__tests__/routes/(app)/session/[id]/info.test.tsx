@@ -25,7 +25,7 @@ import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionByIdResponseFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -43,7 +43,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { V2SessionByIdNotFoundSchema } from '@happier-dev/protocol/sessions/control/contract';
-import { SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_MOVE_TO_FOLDER_ID } from '@/components/sessions/actions/sessionActionIds';
+import { SESSION_ACTION_MARK_READ_ID, SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_MOVE_TO_FOLDER_ID } from '@/components/sessions/actions/sessionActionIds';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { ServerIdentityCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
@@ -556,8 +556,14 @@ describe('/session/[id]/info', () => {
                 snapshot: buildSessionOrganizationSnapshotFromFixtures(fixtureHomeId),
             }));
             if (/^\/v2\/sessions\/[^/]+\/read-state$/.test(url.pathname) && method === 'POST') {
-                return Response.json({ success: true, state: isPlainRecord(body) ? body.state : 'unread',
-                    lastViewedSessionSeq: 0, didChange: true });
+                const state = isPlainRecord(body) && body.state === 'read' ? 'read' : 'unread';
+                const lastViewedSessionSeq = state === 'read' ? sessionRecordForHttp?.seq ?? 0 : 0;
+                return Response.json({ success: true, state, lastViewedSessionSeq, didChange: true,
+                    ...(sessionRecordForHttp ? { viewer: createSessionOwnerViewerFixture({
+                        ...sessionRecordForHttp, viewer: undefined, lastViewedSessionSeq,
+                        unreadSince: state === 'unread' ? Date.now() : null,
+                    }) } : {}),
+                });
             }
             if (url.pathname === '/v2/sessions' || url.pathname === '/v2/sessions/active') return answerSessionHttp(Response.json({ sessions: sessionRecordForHttp?.serverId === fixtureHomeId && sessionRecordForHttp.encryptionMode === 'plain'
                     ? [sessionByIdForHttp!.session] : [], next: null, hasNext: false }), init?.signal);
@@ -761,7 +767,7 @@ describe('/session/[id]/info', () => {
         }
     }
 
-    async function renderInfoScreen(options?: Readonly<{ publishMachineCensus: true }>) {
+    async function renderInfoScreen(options?: Readonly<{ publishMachineCensus?: true; onRender?: React.ProfilerOnRenderCallback }>) {
         await restoreInfoAccountIfNeeded();
         const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
         const { getStorage } = await import('@/sync/domains/state/storageStore');
@@ -772,7 +778,10 @@ describe('/session/[id]/info', () => {
             expect(getStorage().getState().endpointStatus).toBe('online');
         });
         await applyInfoSessionFixture(options?.publishMachineCensus);
-        const screen = await renderScreen(<SessionInfoScreen />, { wrapper: SessionInfoTestProviders, createNodeMock: browserHostNode });
+        const content = options?.onRender
+            ? <React.Profiler id="session-info" onRender={options.onRender}><SessionInfoScreen /></React.Profiler>
+            : <SessionInfoScreen />;
+        const screen = await renderScreen(content, { wrapper: SessionInfoTestProviders, createNodeMock: browserHostNode });
         if (!machinePresenceObserved) {
             const serverId = mockSession?.serverId ?? mockServerId ?? resolvedServerId;
             // Settle the active Home's HTTP ingress before withdrawing it; a fresh
@@ -1627,9 +1636,10 @@ describe('/session/[id]/info', () => {
         expect(handoffItems).toHaveLength(0);
     });
 
-    it('shows manual mark-unread in quick actions for read sessions and uses scoped server mutations', async () => {
+    it('updates mounted read-state actions and status after scoped mark-unread and mark-read', async () => {
         // The suite already owns this exact restored Home/Account. A second
         // restoration would compete for its physical connection and cleanup.
+        mockServerId = 'server-1';
         mockSession = {
             id: 'session-read-state',
             active: false,
@@ -1644,9 +1654,9 @@ describe('/session/[id]/info', () => {
                 flavor: 'claude',
             },
         };
-        cachedSessionServerId = 'server-cached';
-
-        const screen = await renderInfoScreen();
+        let commits = 0;
+        const screen = await renderInfoScreen({ onRender: () => { commits += 1; } });
+        await flushHookEffects({ frames: 1 });
         const item = screen.findByProps({ testID: 'session-info-mark-unread' });
         expect(item).toBeTruthy();
 
@@ -1659,6 +1669,34 @@ describe('/session/[id]/info', () => {
             serverUrl: 'https://server-1.example', method: 'POST',
             path: '/v2/sessions/session-read-state/read-state', body: { state: 'unread' },
         }));
+        // The same mounted Info must consume the read-state owner's publication.
+        // Reopening would hide the shell's intentionally stable Session snapshot.
+        expect(screen.findAllByProps({ testID: 'session-info-mark-unread' })).toHaveLength(0);
+        expect(screen.findByProps({ testID: 'session-info-mark-read' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'session-info-status' }).props.children).toBe('status.unread');
+
+        await act(async () => { screen.findByProps({ testID: 'session-info-mark-read' }).props.onPress(); });
+        await settleSessionAction(SESSION_ACTION_MARK_READ_ID);
+        expect(screen.findAllByProps({ testID: 'session-info-mark-read' })).toHaveLength(0);
+        expect(screen.findByProps({ testID: 'session-info-mark-unread' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'session-info-status' }).props.children).not.toBe('status.unread');
+
+        // An unrelated Session's read frontier must not invalidate this Info tree.
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const store = getStorage();
+        const unrelated = createSessionFixture({ id: 'unrelated-read-state', serverId: mockSession.serverId, seq: 4, lastViewedSessionSeq: 4 });
+        await act(async () => { store.getState().applySessions([unrelated], 'projection'); });
+        await flushHookEffects();
+        commits = 0;
+        await act(async () => { store.getState().applySessions([{ ...unrelated, lastViewedSessionSeq: 0 }], 'projection'); });
+        await flushHookEffects();
+        expect(commits).toBe(0);
+
+        const current = store.getState().sessions[mockSession.id]!;
+        commits = 0;
+        await act(async () => { store.getState().applySessions([{ ...current, seq: current.seq + 1 }], 'projection'); });
+        await flushHookEffects();
+        expect(commits).toBe(0);
     });
 
     it('hides manual read-state quick actions for archived sessions', async () => {
