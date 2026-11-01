@@ -12,6 +12,7 @@ import { SessionListUnavailableQueryV1Schema } from '../../sessions/listing/quer
 import { SessionControlErrorCodeSchema } from '../../sessions/control/contract.js';
 import { SpawnSessionErrorCodeSchema } from '../../sessions/spawnSession.js';
 import { ArtifactAccessErrorCodeV1Schema } from '../../artifacts/artifactAccessV1.js';
+import { WorkflowOperationErrorCodeV1Schema } from '../../workflows/workflowProgressV1.js';
 import { MemoryDecisionSourceErrorCodeV1Schema } from '../../prompts/library/memoryActionsV1.js';
 import { SkillUnavailableReasonV1Schema } from '../../prompts/library/skills/skillLibraryItemV1.js';
 import { isActionOutcomeUnknownErrorCodeV1 } from '../actionExecutionResult.js';
@@ -92,6 +93,7 @@ export function normalizeActionExecutorThrownError(error: unknown): Readonly<{ e
     SessionControlErrorCodeSchema.safeParse(value).success
     || SpawnSessionErrorCodeSchema.safeParse(value).success
     || ArtifactAccessErrorCodeV1Schema.safeParse(value).success
+    || WorkflowOperationErrorCodeV1Schema.safeParse(value).success
     || MemoryDecisionSourceErrorCodeV1Schema.safeParse(value).success
     || SkillUnavailableReasonV1Schema.safeParse(value).success
     || value === 'workspace_sync_update_required'
