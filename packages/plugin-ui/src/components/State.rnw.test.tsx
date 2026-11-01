@@ -423,6 +423,27 @@ describe('plugin-ui resource state renders real React Native semantics', () => {
     mount.unmount();
   });
 
+  it('draws the Details disclosure with the host caret at its compact density, turning with the open state', async () => {
+    const mount = mountInHost(
+      <ErrorState title="The list could not be read" details="host_api_method_unavailable" />,
+      {
+        renderDisclosureCaret: ({ expanded, density }) => (
+          <i data-testid="host-caret" data-expanded={String(expanded)} data-density={density} />
+        ),
+      },
+    );
+    try {
+      const toggle = mount.container.querySelector<HTMLElement>('[aria-expanded="false"]')!;
+      const caret = () => toggle.querySelector('[data-testid="host-caret"]');
+      expect(caret()?.getAttribute('data-density')).toBe('compact');
+      expect(caret()?.getAttribute('data-expanded')).toBe('false');
+      await act(async () => { toggle.click(); });
+      expect(caret()?.getAttribute('data-expanded')).toBe('true');
+    } finally {
+      mount.unmount();
+    }
+  });
+
   it('offers a status notice its next action beside the sentence, outside the live region', () => {
     const mount = mountSurface(
       <Status

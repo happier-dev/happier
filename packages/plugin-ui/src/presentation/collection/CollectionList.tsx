@@ -29,6 +29,8 @@ import {
  */
 export type HappierCollectionListTextRole = 'title' | 'count' | 'subtitle' | 'groupTitle' | 'groupHeading' | 'groupCount';
 
+export type HappierCollectionRowRole = 'catalogRow' | 'item' | 'menu';
+
 export type HappierCollectionListHost = Readonly<{
   /** One line of text in an anatomy role. */
   Text: ComponentType<Readonly<{

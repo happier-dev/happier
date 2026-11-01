@@ -16,7 +16,7 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { useOpenApprovalArtifactsForSession } from '@/sync/domains/state/storage';
 import { answerSessionPermission } from '@/sync/ops/sessionPermissionAnswers';
 import { ChangesGlance } from './ChangesGlance';
-import { LocalServicesGlance } from './LocalServicesGlance';
+import { AppLocalServicesGlance, LocalServicesGlance } from './LocalServicesGlance';
 import { useSessionSummaryModel } from '../summary/useSessionSummaryModel';
 import { SessionSummaryCard, type SessionSummaryAnswerPermission } from '../summary/SessionSummaryCard';
 import { SessionAgentPlanCard } from '../plan/SessionAgentPlanCard';
@@ -35,6 +35,7 @@ export function BuiltinWidgetBody(props: Readonly<{ id: BuiltinWidgetIdV1;
         input={props.input} serverId={props.serverId} testID={props.testID} />;
     // The active Home's machines and sessions: an App read with no inputs.
     if (props.target.kind === 'app' && props.id === 'your_home') return <YourHomeWidgetBody testID={props.testID} />;
+    if (props.target.kind === 'app' && props.id === 'local_services_app') return <AppLocalServicesGlance serverId={props.serverId} testID={props.testID} />;
     if (props.target.kind === 'workspace') return <ProjectBuiltinWidgetBody id={props.id}
         workspace={props.target.workspace} checkout={props.target.checkout} testID={props.testID} />;
     if (props.target.kind !== 'session' || !props.target.session) return <UnavailableInstalledWidget

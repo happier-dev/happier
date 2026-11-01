@@ -18205,7 +18205,7 @@ settingsSession: {
         transportUnavailable: "Happier はこのビューの取得元に接続できませんでした。接続を確認して、もう一度お試しください。",
         sourceUnavailable: "選択したプラグインビューのファイルを利用できません。もう一度読み込んでください。",
         viewNotCurrent: "選択したプラグインビューは最新ではありません。ページを開き直すか、実行先のマシンでプラグインを更新するか、別のマシンを選択してください。",
-        unavailableGeneric: 'まだ起動中の可能性があります。しばらくしてからもう一度お試しください。',
+        unavailableGeneric: 'まだ起動中の可能性があります。',
         crashLoop: 'クラッシュが繰り返されたため、プラグインを停止しました。',
         disabledByPolicy: '現在の設定または互換性により、このプラグインビューは無効になっています。',
         hostedWebUnavailableTitle: 'ホストされたプラグインビューは利用できません',

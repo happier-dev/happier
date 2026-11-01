@@ -12,6 +12,7 @@ import type { HappierPageChromeInternal } from '../presentation/layout/pageChrom
 import type { HappierCollectionMotionDriver } from '../presentation/collection/collectionMotion.js';
 import type { CollectionVirtualizer } from '../presentation/collection/collectionVirtualizer.js';
 import type { HappierDisclosureMotionDriver } from '../presentation/collection/Disclosure.js';
+import type { HappierDisclosureCaretDensity } from '../presentation/collection/DisclosureToggle.js';
 import type { HappierStateSize } from '../presentation/state/InfoState.js';
 import type { HappierSceneRenderRequest } from '../presentation/state/scenes.js';
 import type { HappierCapsuleHost } from '../presentation/status/capsuleHost.js';
@@ -406,6 +407,12 @@ export type PluginUiPresentationHost = Readonly<{
     accessibilityLabel?: string;
     testID?: string;
   }>): ReactNode;
+  /**
+   * The caret the host's own disclosure rows end on (it turns down while open), so a package row that folds a body
+   * reads like the host's. `density` is `row` (the default) at the end of a row and `compact` beside a meta label.
+   * Absent, the package draws its shared chevron.
+   */
+  renderDisclosureCaret?(input: Readonly<{ expanded: boolean; density?: HappierDisclosureCaretDensity }>): ReactNode;
   /** The incumbent pane action; navigation stays with the caller. */
   renderDetailsPaneOpenAsPageButton?(input: DetailsPaneOpenAsPageButtonProps): ReactNode;
   /**

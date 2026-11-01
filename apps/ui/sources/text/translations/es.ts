@@ -18295,7 +18295,7 @@ settingsSession: {
         transportUnavailable: "Happier no pudo conectar con la fuente de esta vista. Comprueba la conexión e inténtalo de nuevo.",
         sourceUnavailable: "Los archivos de la vista seleccionada no están disponibles. Intenta cargarla de nuevo.",
         viewNotCurrent: "La vista seleccionada de este plugin ya no está actualizada. Vuelve a abrir la página, actualiza el plugin en su equipo o elige otro equipo.",
-        unavailableGeneric: 'Puede que aún se esté iniciando. Inténtalo de nuevo en un momento.',
+        unavailableGeneric: 'Puede que aún se esté iniciando.',
         crashLoop: 'El plugin se detuvo tras fallos repetidos.',
         disabledByPolicy: 'Esta vista del plugin está desactivada por la configuración o compatibilidad actuales.',
         hostedWebUnavailableTitle: 'La vista alojada del plugin no está disponible',

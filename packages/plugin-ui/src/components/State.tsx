@@ -42,6 +42,7 @@ import {
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import { HappierEmptySlot } from '../presentation/state/EmptySlot.js';
 import { HappierText } from '../presentation/text/Text.js';
+import { HappierDisclosureCaret } from './DisclosureCaret.js';
 import { PluginUiIconGlyph, type IconName } from './Icon.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
@@ -536,6 +537,7 @@ function SurfaceStateAdapter(authored: SurfaceStateProps & Readonly<{ actionSlot
       if (role === 'quietLink') {
         return <HappierText testID={testID} accessibilityRole="link" onPress={onPress} tone="secondary" style={{ textDecorationLine: 'underline' }}>{children}</HappierText>;
       }
+      if (role === 'details') return <HappierText accessible={false} variant="meta" tone="secondary">{children}</HappierText>;
       if (role === 'lineAction') return <HappierText tone="neutral" style={{ ...textMetrics, fontWeight: '600' }}>{children}</HappierText>;
       if (role === 'quiet') return <HappierText testID={testID} tone="muted" style={{ ...textMetrics, textAlign: align === 'start' ? 'auto' : 'center' }}>{children}</HappierText>;
       return <HappierText testID={testID} tone="secondary" tabularNumbers={role === 'live'} style={textMetrics}>{children}</HappierText>;
@@ -567,6 +569,8 @@ function SurfaceStateAdapter(authored: SurfaceStateProps & Readonly<{ actionSlot
       </HappierInfoState>
     ),
     detailsLabel: translate(STATE_DETAILS_TRANSLATION_KEY, 'Details'),
+    renderDetailsCaret: (open) => <HappierDisclosureCaret expanded={open} density="compact" />,
+    focusRing: theme.colors.focus,
     pressedFill: theme.colors.control,
   };
   return (

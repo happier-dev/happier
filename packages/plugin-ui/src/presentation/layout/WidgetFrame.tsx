@@ -58,8 +58,22 @@ export const HAPPIER_WIDGET_FRAME_METRICS = Object.freeze({
   plainInsetPx: 2,
   /** One header height in every placement; the menu inside it keeps its own touch target. */
   headerMinHeightPx: 40,
+  /** A card's identity line: its mark, title and controls stand in one row of this height. */
+  identityRowPx: 32,
   /** Between the header's mark, title block, meta and controls. */
   headerGapPx: 8,
+  /** Between a bound source's glyph and its text. */
+  sourceGlyphGapPx: 4,
+  /** Above and below a plain header whose source stands under its title. */
+  plainStackedHeaderPaddingPx: 8,
+  /** A plain footer rides up into the body's bottom inset by this much, and keeps it below. */
+  plainFooterOverlapPx: 6,
+  /** An item card (lab store `y:card`): below its identity row, to its title. */
+  cardTitleGapPx: 12,
+  /** A card: from its title to its description beneath. */
+  cardDescriptionGapPx: 2,
+  /** A card: above its one quiet facts line, which stands at the card's foot. */
+  cardFactsGapPx: 12,
   /** The menu's own hit area supplies the card's right inset. */
   headerTrailingInsetPx: 6,
   /** Below the body, above the footer or the frame's edge. */
@@ -193,9 +207,19 @@ export type HappierWidgetFrameTextRender = (
   }>,
 ) => ReactNode;
 
+/**
+ * What a card frames. `widget` (the default) is a glance on Home, a Board or the Companion: its mark, title,
+ * source, meta and controls share one identity line (atmosphere lab, berthd). `item` is one item of a
+ * Collection drawn as a card (a catalog entry, a Board column's card; lab store `y:card`): its mark and controls
+ * stand on an identity row, its full-width title and description beneath.
+ */
+export type HappierWidgetFrameAnatomy = 'widget' | 'item';
+
 export type HappierWidgetFrameProps = Readonly<{
   frameStyle: HappierWidgetFrameStyle;
   placement: HappierWidgetFramePlacement;
+  /** A card's anatomy; plain frames are always one line. */
+  anatomy?: HappierWidgetFrameAnatomy;
   /** The adapter's resolved card surface (background, radius, hairline edge, elevation). */
   cardStyle?: HappierStyleProp;
   gradient?: HappierSurfaceGradient | null;
@@ -223,6 +247,8 @@ export type HappierWidgetFrameProps = Readonly<{
   compactMeta?: ReactNode;
   /** The widget's own controls at the end of the header: its ⋯ menu, a move handle. */
   accessory?: ReactNode;
+  /** Quiet facts supplied by the domain, without a footer band or divider. */
+  facts?: ReactNode;
   /** Viewer-local controlled collapse, independent from header/body actions. */
   disclosure?: HappierControlledDisclosure;
   /** The host's existing disclosure driver; unhosted frames reveal immediately. */
@@ -332,7 +358,10 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
   const plain = props.frameStyle === 'plain';
   const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle);
   const renderText = props.renderText ?? renderDefaultFrameText;
-  const below = props.sourcePlacement === 'below';
+  const item = !plain && props.anatomy === 'item';
+  // An item card stacks its description under its title; a widget's source stands beside the title (under it
+  // on a phone, when asked), so a glance keeps one identity line.
+  const below = item || props.sourcePlacement === 'below';
   // Stacked under the title, the source never competes for the title's width.
   let source: ReactNode;
   if (isHappierWidgetFrameSourceDescriptor(props.source)) {
@@ -344,7 +373,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
         accessible
         accessibilityLabel={bound.accessibilityLabel ?? bound.text}
         aria-label={bound.accessibilityLabel ?? bound.text}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 4, minWidth: 0 }}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_WIDGET_FRAME_METRICS.sourceGlyphGapPx, minWidth: 0 }}
       >
         {props.renderSourceGlyph
           ? props.renderSourceGlyph(bound.binding)
@@ -381,6 +410,16 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
     !props.meta &&
     !props.accessory &&
     !props.disclosure;
+  const compact = !plain && isEmptySlot(source) && isEmptySlot(props.children)
+    && isEmptySlot(props.facts) && isEmptySlot(props.footer) && isEmptySlot(props.accessory) && isEmptySlot(meta);
+  // An item card stacks its title under an identity row (mark top-left, right slot top-right). A widget card, or
+  // an item with no mark, keeps one line: its title beside the mark and the right slot at its end.
+  const stacked = item && !compact && Boolean(props.mark || props.leading || props.disclosure);
+  const identityRowPx = HAPPIER_WIDGET_FRAME_METRICS.identityRowPx;
+  const plainStackedPadding = plain && below ? HAPPIER_WIDGET_FRAME_METRICS.plainStackedHeaderPaddingPx : 0;
+  // With no disclosure, leading slot or mark there is no identity to draw: its empty slot must not add the
+  // header gap, so the title keeps the frame's own inset (plain: the page column's edge).
+  const unmarked = !props.mark && !props.leading && !props.disclosure;
 
   return (
     <HappierMaterialSurface materialRole={plain ? undefined : 'card'} gradient={plain ? null : props.gradient} renderMaterialSurface={props.renderMaterialSurface}
@@ -414,17 +453,26 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
           headerless ? null : <View
             testID={`${testID}.header`}
             style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx,
+              flexDirection: stacked ? 'column-reverse' : 'row',
+              alignItems: stacked ? 'stretch' : 'center',
+              gap: stacked ? HAPPIER_WIDGET_FRAME_METRICS.cardTitleGapPx : HAPPIER_WIDGET_FRAME_METRICS.headerGapPx,
               minHeight: HAPPIER_WIDGET_FRAME_METRICS.headerMinHeightPx,
               paddingLeft: inset,
-              paddingRight: plain
-                ? 0
-                : HAPPIER_WIDGET_FRAME_METRICS.headerTrailingInsetPx,
-              paddingVertical: below ? 8 : 0,
+              paddingRight: plain ? 0 : inset,
+              paddingTop: plain ? plainStackedPadding : inset,
+              // A card's facts line keeps its own gap above it; the card's inset closes the card below.
+              paddingBottom: plain ? plainStackedPadding
+                : !isEmptySlot(props.facts) && isEmptySlot(props.children) ? HAPPIER_WIDGET_FRAME_METRICS.cardFactsGapPx : inset,
             }}
           >
+            {/* The identity and trailing controls keep one parent in both layouts. An item card's identity row
+                sits above its full-width title; a widget card and plain keep the same slots on one line. */}
+            <View style={{ flexDirection: 'row', alignItems: 'center',
+              ...(stacked ? { position: 'absolute', left: inset, top: inset, minHeight: identityRowPx } as const : {}),
+              ...(!plain && !stacked ? { minHeight: identityRowPx,
+                ...(compact && (props.mark || props.leading || props.disclosure) ? { marginRight: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx } : {}) } : {}),
+              ...(unmarked ? { display: 'none' } as const : {}),
+              flexShrink: 0, gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx }}>
             {props.disclosure ? (
               <HappierPressable
                 testID={`${testID}.disclosure`}
@@ -471,11 +519,12 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
                 {props.mark}
               </View>
             ) : null}
+            </View>
             <View
               testID={`${testID}.titleBlock`}
               style={
                 below
-                  ? { flexDirection: 'column', flex: 1, minWidth: 0, gap: 1 }
+                  ? { flexDirection: 'column', ...(stacked ? {} : { flex: 1 }), minWidth: 0, gap: stacked ? HAPPIER_WIDGET_FRAME_METRICS.cardDescriptionGapPx : 1 }
                   : {
                       flexDirection: 'row',
                       alignItems: 'center',
@@ -500,13 +549,21 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
                 )}
               </View>
               {source ? (
-                <View style={{ flexShrink: 1, minWidth: 0 }}>{source}</View>
+                <View
+                  style={{ flexShrink: 1, minWidth: 0 }}>{source}</View>
               ) : null}
             </View>
-            {meta ? (
-              <View style={{ flexShrink: 0 }}>{meta}</View>
-            ) : null}
-            {props.accessory ?? null}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
+              flexShrink: 0, gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx,
+              // A stacked card's right slot shares the identity row's line: it stops short of the mark's box and its
+              // words give way there, so a long state never draws over the mark.
+              ...(stacked ? { paddingLeft: identityRowPx + HAPPIER_WIDGET_FRAME_METRICS.headerGapPx, minWidth: 0 } : {}),
+              ...(plain ? (meta || props.accessory ? {} : { display: 'none' } as const)
+                : compact ? { display: 'none' } as const : { minHeight: identityRowPx }) }}>
+              {meta ? <View style={{ flexShrink: 0 }}>{meta}</View> : null}
+              {/* The slot is a box around its controls, not a target: words in it (a card's reason) pass a press on. */}
+              <View style={plain && !props.accessory ? { display: 'none' } : { flexShrink: 1, minWidth: 0 }}>{props.accessory ?? null}</View>
+            </View>
           </View>
         }
       >
@@ -538,7 +595,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
                   ? HAPPIER_WIDGET_FRAME_METRICS.plainFooterMinHeightPx
                   : HAPPIER_WIDGET_FRAME_METRICS.footerMinHeightPx,
               },
-              plain ? { marginTop: -6, paddingBottom: 6 } : hairline,
+              plain ? { marginTop: -HAPPIER_WIDGET_FRAME_METRICS.plainFooterOverlapPx, paddingBottom: HAPPIER_WIDGET_FRAME_METRICS.plainFooterOverlapPx } : hairline,
             ]}
           >
             {props.footer}

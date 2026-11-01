@@ -43,6 +43,7 @@ import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff
 import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
 import { SceneArt } from '@/components/ui/surfaces/SceneArt';
@@ -76,7 +77,7 @@ import type { PluginUiSessionPartPresentation, PluginUiWidgetAreaPresentation } 
 import type { FindSurfaceRegistrationHost } from '@happier-dev/plugin-ui/advanced';
 import { createPluginUiPrivateFocusPresentation } from './pluginUiPrivateFocusPresentation';
 import type { DragSourceProps, DropTargetProps, ItemProps, NavigationListDestination } from '@happier-dev/plugin-ui';
-import type { HappierPageChrome, HappierStateSize, HappierLiveStreamProps } from '@happier-dev/plugin-ui/presentation';
+import type { HappierDisclosureCaretDensity, HappierPageChrome, HappierStateSize, HappierLiveStreamProps } from '@happier-dev/plugin-ui/presentation';
 import type { DetailsPaneSlotBinding } from '@/components/appShell/panes/details/DetailsPaneSlot';
 import type { usePaneHeaderSlotBinding } from '@/components/appShell/panes/paneHeaderSlot';
 import { readPluginUiHostTypography } from '@/components/plugins/surfaces/pluginUiThemeProjection';
@@ -491,6 +492,10 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
                 testID={input.testID}
             />
         );
+    },
+    /** The disclosure caret of core's own rows: the app's caret icon on the shared turn, at the asked density. */
+    renderDisclosureCaret(input: Readonly<{ expanded: boolean; density?: HappierDisclosureCaretDensity }>) {
+        return <DisclosureCaret expanded={input.expanded} density={input.density ?? 'row'} />;
     },
     renderQRCode(input: Readonly<{ data: string; size: number; testID?: string }>) {
         return <PluginUiPrivateQRCode data={input.data} size={input.size} testID={input.testID} />;

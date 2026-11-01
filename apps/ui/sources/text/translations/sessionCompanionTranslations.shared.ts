@@ -98,7 +98,7 @@ export const sessionCompanionTranslationsEnglish = { en: {
             stepCurrent: 'Current step',
         },
         picker: {
-            open: 'Add to Companion',
+            open: 'Add to companion',
             chooseWidget: 'Choose a widget…',
             onTheBoard: ({ source }) => `${source} · on the board`,
         },

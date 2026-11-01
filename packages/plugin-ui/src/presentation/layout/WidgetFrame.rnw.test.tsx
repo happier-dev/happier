@@ -50,6 +50,19 @@ function byId(root: ParentNode, id: string): HTMLElement | null {
 }
 
 describe('HappierWidgetFrame', () => {
+  it('draws a widget card on one identity line (mark · title · source · meta · controls) and stacks only an item card', () => {
+    // A glance on Home or a Board (atmosphere lab, berthd): the mark sits on the title's line, and so do its controls.
+    for (const placement of ['home', 'board'] as const) {
+      const widget = mount({ placement });
+      expect(byId(widget.container, 'frame.header')!.style.flexDirection).toBe('row');
+      expect(byId(widget.container, 'frame.titleBlock')!.style.flexDirection).toBe('row');
+    }
+    // A Collection item card (lab store `y:card`) keeps its identity row above a full-width title.
+    const item = mount({ anatomy: 'item' });
+    expect(byId(item.container, 'frame.header')!.style.flexDirection).toBe('column-reverse');
+    expect(byId(item.container, 'frame.titleBlock')!.style.flexDirection).toBe('column');
+  });
+
   it('keeps controlled disclosure separate from header actions and retains the body input across collapse', async () => {
     let mounts = 0;
     let inspections = 0;
@@ -136,7 +149,7 @@ describe('HappierWidgetFrame', () => {
   });
 
   it('puts the source under the title when asked (phones), and beside it otherwise', () => {
-    const inline = mount();
+    const inline = mount({ frameStyle: 'plain' });
     const below = mount({ sourcePlacement: 'below' });
     const titleRowOf = (root: ParentNode) => byId(root, 'frame.titleBlock')!;
     expect(titleRowOf(inline.container).style.flexDirection).toBe('row');

@@ -18120,7 +18120,7 @@ settingsSession: {
         transportUnavailable: "Happier nie mógł połączyć się ze źródłem tego widoku. Sprawdź połączenie i spróbuj ponownie.",
         sourceUnavailable: "Pliki wybranego widoku wtyczki są niedostępne. Spróbuj załadować go ponownie.",
         viewNotCurrent: "Wybrany widok tej wtyczki jest nieaktualny. Otwórz stronę ponownie, zaktualizuj wtyczkę na jej komputerze lub wybierz inny komputer.",
-        unavailableGeneric: 'Może jeszcze się uruchamia. Spróbuj ponownie za chwilę.',
+        unavailableGeneric: 'Może jeszcze się uruchamia.',
         crashLoop: 'Wtyczka została zatrzymana po wielokrotnych awariach.',
         disabledByPolicy: 'Ten widok wtyczki jest wyłączony przez bieżące ustawienia lub zgodność.',
         hostedWebUnavailableTitle: 'Hostowany widok wtyczki jest niedostępny',

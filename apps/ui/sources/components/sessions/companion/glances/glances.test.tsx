@@ -222,6 +222,32 @@ describe('Changes glance', () => {
 });
 
 describe('Local services glance', () => {
+    it('gives the Home (App) glance a designed empty state, and says honestly which machine it could not list', async () => {
+        const app = (degraded: Extract<React.ComponentProps<typeof LocalServicesGlanceView>['state'], { scope: 'app' }>['degraded'], listedMachineCount = 0) => ({
+            kind: 'ready' as const, scope: 'app' as const, rows: [], runningCount: 0, degraded, listedMachineCount });
+        const empty = await renderScreen(<LocalServicesGlanceView testID="services" frameStyle="plain" machineName={null} state={app([])} />);
+        await flushHookEffects({ cycles: 2 });
+        expect(empty.findByTestId('services.empty')).toBeTruthy();
+        expect(empty.getTextContent()).toContain('widgetGlances.appEmptyReason');
+        expect(empty.getTextContent()).not.toContain('widgetGlances.nothingRunning');
+        // An offline machine replaces the promise with the reason, said once.
+        const offline = await renderScreen(<LocalServicesGlanceView testID="offline" frameStyle="plain" machineName={null}
+            state={app([{ kind: 'offline', machineId: 'm1', machineName: 'leeroy-mbp' }])} />);
+        await flushHookEffects({ cycles: 2 });
+        expect(offline.getTextContent()).not.toContain('widgetGlances.appEmptyReason');
+        // With no machine listed, the title says what is known, never "Nothing running", and the reason only why.
+        expect(offline.getTextContent()).toContain('widgetGlances.appUnlistedTitle');
+        expect(offline.getTextContent()).toContain('widgetGlances.appUnlistedOffline');
+        expect(offline.getTextContent()).not.toContain('widgetGlances.appEmptyTitle');
+        // Another machine answered with nothing running: that stays the title, the missing one its reason.
+        const partial = await renderScreen(<LocalServicesGlanceView testID="partial" frameStyle="plain" machineName={null}
+            state={app([{ kind: 'offline', machineId: 'm1', machineName: 'leeroy-mbp' }], 1)} />);
+        await flushHookEffects({ cycles: 2 });
+        expect(partial.getTextContent()).toContain('widgetGlances.appEmptyTitle');
+        expect(partial.getTextContent()).toContain('widgetGlances.machineOffline');
+        expect(partial.getTextContent()).not.toContain('widgetGlances.appUnlistedTitle');
+    });
+
     it('counts the running services, offers Open on them, and lists a stopped script as Not running with no action', async () => {
         const rows = buildLocalServiceRows({
             inventoryRows: [inventoryRow('web', 8081), inventoryRow('relay', 3011)],

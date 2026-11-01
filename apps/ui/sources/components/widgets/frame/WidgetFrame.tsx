@@ -13,6 +13,7 @@ import {
     type HappierSceneInput,
     type HappierWidgetFrameSourceBinding,
     type HappierWidgetFrameSourceDescriptor,
+    type HappierWidgetFrameAnatomy,
     type HappierWidgetFramePlacement,
     type HappierWidgetFrameStyle,
     type HappierWidgetFrameTextRender,
@@ -93,6 +94,8 @@ export type WidgetFrameProps = Readonly<{
     /** Card (its own surface) or plain (on the page, a hairline above). See `useWidgetFrameStyle`. */
     frameStyle: WidgetFrameStyle;
     placement: WidgetFramePlacement;
+    /** A card's anatomy: a glance's one identity line (default), or a Collection item's stacked card. */
+    anatomy?: HappierWidgetFrameAnatomy;
     /** The source's mark: its glyph, or a brand mark element. */
     mark?: IconName | React.ReactElement;
     /**
@@ -409,6 +412,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             testID={props.testID}
             frameStyle={props.frameStyle}
             placement={props.placement}
+            {...(props.anatomy ? { anatomy: props.anatomy } : {})}
             cardStyle={styles.card}
             gradient={resolveThemeSurfaceFinish(theme, 'card')}
             renderMaterialSurface={renderThemeMaterialSurface}

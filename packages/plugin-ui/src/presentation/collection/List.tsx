@@ -1,3 +1,4 @@
+import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
 import { createContext, useCallback, useContext, useId, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import { hasHappierPrecisePointer } from '../interaction/precisePointer.js';
 import { Platform, View, type TextStyle, type ViewStyle } from 'react-native';
@@ -42,6 +43,7 @@ import { useHappierItemGroupItemBehavior } from './ItemGroup.js';
 import { HappierRowActionRevealSlot } from './RowActionRevealSlot.js';
 import {
   HAPPIER_COLLECTION_LIST_METRICS,
+  type HappierCollectionRowRole,
   HAPPIER_COLLECTION_LIST_TEXT,
   HappierListRowOpenContext,
   HappierCardSelectionRingContext,
@@ -128,6 +130,7 @@ const ROW_LAYER_STYLE: ViewStyle = { width: '100%', minWidth: 0 };
 const ROW_LAYER_TARGET_STYLE: HappierPortableStyle = { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, minHeight: 0 };
 
 export type HappierListItemProps = Readonly<{
+  rowRole?: HappierCollectionRowRole;
   /**
    * The row's own content. Alone it owns the whole row structurally; beside a
    * semantic title/subtitle it is the row body, rendered after them in the
@@ -536,6 +539,7 @@ export function resolveHappierPageRowFieldMaxWidth(input: Readonly<{
  * semantic label first, then the children as its body.
  */
 export function HappierListItem({
+  rowRole,
   children,
   title,
   subtitle,
@@ -607,6 +611,8 @@ export function HappierListItem({
   // Inside a navigation column (a `HappierCollectionList`) a row takes the navigation anatomy: flat
   // on the plane, inset by the shared gutter, the plane's selected chip and a heavier open title.
   const navigationRow = useHappierCollectionListRow() && pageSection === null;
+  // A list row in a widget body stands on the body's edge: the frame's inset is the only one.
+  const bodyEdgeRow = useContext(HappierBodyEdgeContext) && rowRole !== 'menu';
   const navigationPalette = useOptionalHappierUiPalette(theme ?? environmentTheme);
   // Inside a Collection's table or list a row takes the dense collection anatomy (full bleed, hairline,
   // whole-row hover and open fills, the open row's leading edge); see `HappierCollectionTableRowContext`.
@@ -828,7 +834,7 @@ export function HappierListItem({
           flexWrap: accessoryWraps ? 'wrap' : 'nowrap',
           gap: resolvedTheme.spacing.small,
           minHeight: rowHeight,
-          paddingHorizontal: resolvedTheme.spacing.medium,
+          paddingHorizontal: bodyEdgeRow ? 0 : resolvedTheme.spacing.medium,
           paddingVertical: resolvedTheme.spacing.small,
         }}
       >

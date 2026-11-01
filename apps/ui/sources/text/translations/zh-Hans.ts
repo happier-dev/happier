@@ -17902,7 +17902,7 @@ settingsSession: {
         transportUnavailable: "Happier 无法连接到此视图的来源。请检查连接后重试。",
         sourceUnavailable: "所选插件视图的文件不可用。请尝试重新加载。",
         viewNotCurrent: "所选插件视图已不是当前版本。请重新打开页面、在运行它的机器上更新插件，或选择另一台机器。",
-        unavailableGeneric: '可能仍在启动。请稍后重试。',
+        unavailableGeneric: '可能仍在启动。',
         crashLoop: '插件因反复崩溃已被停止。',
         disabledByPolicy: '当前设置或兼容性已禁用此插件视图。',
         hostedWebUnavailableTitle: '托管插件视图不可用',

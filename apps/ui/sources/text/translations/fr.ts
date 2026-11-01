@@ -18169,7 +18169,7 @@ settingsSession: {
         transportUnavailable: "Happier n’a pas pu joindre la source de cette vue. Vérifie la connexion et réessaie.",
         sourceUnavailable: "Les fichiers de la vue sélectionnée ne sont pas disponibles. Essaie de la recharger.",
         viewNotCurrent: "La vue sélectionnée de ce plugin n’est plus à jour. Rouvre la page, mets le plugin à jour sur sa machine ou choisis une autre machine.",
-        unavailableGeneric: 'Elle est peut-être encore en cours de démarrage. Réessayez dans un instant.',
+        unavailableGeneric: 'Elle est peut-être encore en cours de démarrage.',
         crashLoop: 'Le plugin a été arrêté après des crashes répétés.',
         disabledByPolicy: 'Cette vue de plugin est désactivée par les réglages actuels ou pour raison de compatibilité.',
         hostedWebUnavailableTitle: 'Vue de plugin hébergée indisponible',

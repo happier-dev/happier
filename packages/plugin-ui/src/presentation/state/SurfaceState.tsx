@@ -54,7 +54,8 @@ export type HappierSurfaceStateTextRole =
   | 'lineAction'
   | 'live'
   | 'quiet'
-  | 'quietLink';
+  | 'quietLink'
+  | 'details';
 
 /**
  * What a host or plugin adapter supplies: its typography, button, spinner and tile, never layout.
@@ -102,10 +103,15 @@ export type HappierSurfaceStateBindings = Readonly<{
       action?: ReactNode;
     }>,
   ) => ReactNode;
-  /** The collapsed "Details" disclosure's toggle and code, when the host draws its own. */
-  renderDetailsToggle?: (open: boolean) => ReactNode;
+  /**
+   * The "Details" disclosure's compact caret for its open state; its label is the `details` text role and the
+   * toggle itself is the shared `HappierDisclosureToggle`.
+   */
+  renderDetailsCaret: (open: boolean) => ReactNode;
   renderDetailsCode?: (details: string) => ReactNode;
   detailsLabel: string;
+  /** The keyboard focus ring's ink; absent, the environment theme's. */
+  focusRing?: string;
   /** Fill under a pressed or hovered inline recovery. */
   pressedFill: string;
 }>;
@@ -243,7 +249,9 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
       label={bindings.detailsLabel}
       align={props.layout === 'inline' ? 'start' : 'center'}
       details={props.diagnosticCode}
-      renderToggle={bindings.renderDetailsToggle}
+      renderCaret={bindings.renderDetailsCaret}
+      renderLabel={(label) => bindings.renderText({ role: 'details', children: label })}
+      focusColor={bindings.focusRing}
       renderDetails={bindings.renderDetailsCode}
     />
   ) : diagnosticMarker;

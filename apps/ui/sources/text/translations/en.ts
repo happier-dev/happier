@@ -22135,7 +22135,7 @@ const enPluginRuntime = {
   transportUnavailable: "Happier could not reach the source for this plugin view. Check the connection and try again.",
   sourceUnavailable: "The selected plugin view’s files are unavailable. Try loading it again.",
   viewNotCurrent: "This plugin’s selected view is no longer current. Reopen the page, update the plugin on its machine, or choose another machine.",
-  unavailableGeneric: 'It may still be starting. Try again in a moment.',
+  unavailableGeneric: 'It may still be starting.',
   crashLoop: 'The plugin was stopped after repeated crashes.',
   disabledByPolicy:
     'This plugin view is disabled by current settings or compatibility.',

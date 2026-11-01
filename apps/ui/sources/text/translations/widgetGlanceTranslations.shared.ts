@@ -14,6 +14,14 @@ export type WidgetGlanceTranslation = Readonly<{
     servicesLoading: string;
     servicesReadFailed: string;
     noMachine: string;
+    appEmptyTitle: string;
+    appUnlistedTitle: string;
+    appUnlistedOffline: (params: Readonly<{ machine: string }>) => string;
+    appUnlistedMany: (params: Readonly<{ count: number }>) => string;
+    appEmptyReason: string;
+    machineOffline: (params: Readonly<{ machine: string }>) => string;
+    machineUnreadable: (params: Readonly<{ machine: string }>) => string;
+    machinesNotListed: (params: Readonly<{ count: number }>) => string;
     changedCount: (params: Readonly<{ count: number }>) => string;
     moreFiles: (params: Readonly<{ count: number }>) => string;
     runningCount: (params: Readonly<{ count: number }>) => string;
@@ -36,6 +44,14 @@ export const widgetGlanceTranslationsEnglish = { en: {
         servicesLoading: 'Loading local services',
         servicesReadFailed: 'Couldn’t read local services. Try again.',
         noMachine: 'This session has no machine to ask.',
+        appEmptyTitle: 'Nothing running',
+        appUnlistedTitle: 'Services aren’t listed',
+        appUnlistedOffline: ({ machine }) => `${machine} is offline.`,
+        appUnlistedMany: ({ count }) => `${count} machines can’t be reached.`,
+        appEmptyReason: 'Web servers you run on your machines will appear here.',
+        machineOffline: ({ machine }) => `${machine} is offline: its services aren’t listed.`,
+        machineUnreadable: ({ machine }) => `${machine}’s services couldn’t be read just now.`,
+        machinesNotListed: ({ count }) => `${count} machines can’t be reached: their services aren’t listed.`,
         changedCount: ({ count }) => `${count} changed`,
         moreFiles: ({ count }) => (count === 1 ? '1 more file' : `${count} more files`),
         runningCount: ({ count }) => `${count} running`,

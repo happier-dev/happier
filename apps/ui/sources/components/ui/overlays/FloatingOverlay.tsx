@@ -302,7 +302,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     </SurfaceFreshnessOnSheetProvider>;
 
     if (insideSheet) {
-        return <ListPresentationProvider value="grouped">
+        return <ListPresentationProvider value="grouped" floating>
             <Animated.View style={[{ maxHeight, flexShrink: 1, minHeight: 0 }, containerStyle, containerPaint]}>
                 <FloatingOverlaySheetContext.Provider value={false}>
                     {surfaceContent}
@@ -328,7 +328,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         </Animated.View>
     );
 
-    if (!arrowCfg || !arrowSide) return <ListPresentationProvider value="grouped">{overlay}</ListPresentationProvider>;
+    if (!arrowCfg || !arrowSide) return <ListPresentationProvider value="grouped" floating>{overlay}</ListPresentationProvider>;
 
     const arrowSize = arrowCfg.size;
     const protrusion = arrowSize / 2;
@@ -403,7 +403,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
             <View testID="floating-overlay-arrow" style={arrowWrapperStyle}>
                 <View style={arrowBoxStyle} {...(Platform.OS === 'web' ? { dataSet: { happyGlassBackdrop: 'true' } } : {})} />
             </View>
-            <ListPresentationProvider value="grouped">{overlay}</ListPresentationProvider>
+            <ListPresentationProvider value="grouped" floating>{overlay}</ListPresentationProvider>
         </Animated.View>
     );
 });

@@ -81,15 +81,16 @@ export type LocalServicesGlanceRow = Readonly<{
  * A script that is not running reads "Not running" and offers nothing: the daemon refuses
  * package-script starts (`package_script_start_unavailable`), and running one means a new terminal
  * tab — the terminal owns that, not this glance. Happier's own listeners and other machines' services
- * stay in the pane.
+ * stay in the pane. Machine scope instead maps every row already selected by the canonical feed,
+ * including stopped declarations; it adds no Services filter.
  */
-export function resolveLocalServicesGlanceRows(rows: readonly ServiceRow[]): readonly LocalServicesGlanceRow[] {
+export function resolveLocalServicesGlanceRows(rows: readonly ServiceRow[], scope: 'workspace' | 'machine' = 'workspace'): readonly LocalServicesGlanceRow[] {
     const result: LocalServicesGlanceRow[] = [];
     for (const row of rows) {
-        if (row.internal || row.scope === 'machine') continue;
+        if (scope === 'workspace' && (row.internal || row.scope === 'machine')) continue;
         const running = row.status === 'running' || row.status === 'starting' || row.status === 'stale';
         const script = row.target.source === 'package_script';
-        if (!running && !script) continue;
+        if (scope === 'workspace' && !running && !script) continue;
         result.push({
             id: row.id,
             title: row.title,

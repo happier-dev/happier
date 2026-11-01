@@ -13933,7 +13933,7 @@ settingsSession: {
       transportUnavailable: "Happier 無法連線到此檢視的來源。請檢查連線後再試。",
       sourceUnavailable: "所選外掛檢視的檔案無法使用。請嘗試重新載入。",
       viewNotCurrent: "所選外掛檢視已不是目前版本。請重新開啟頁面、在執行它的機器上更新外掛，或選擇另一台機器。",
-      unavailableGeneric: '可能仍在啟動。請稍後再試。',
+      unavailableGeneric: '可能仍在啟動。',
       crashLoop: '外掛因反覆當機已停止。',
       disabledByPolicy: '目前設定或相容性已停用此外掛檢視。',
       hostedWebUnavailableTitle: '託管外掛檢視無法使用',

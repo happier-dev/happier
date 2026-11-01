@@ -310,6 +310,7 @@ export {
   type HappierCollectionListProps,
   type HappierCollectionListSearch,
   type HappierCollectionListTextRole,
+  type HappierCollectionRowRole,
   type HappierCollectionRestingRows,
 } from './collection/CollectionList.js';
 export {
@@ -445,7 +446,7 @@ export {
   type HappierPageOperation,
   type HappierPageOperationTextResolver,
 } from './layout/pageOperations.js';
-export { HappierColumnEdgeContext } from './layout/columnEdge.js';
+export { HappierBodyEdgeContext, HappierColumnEdgeContext } from './layout/columnEdge.js';
 export {
   HappierPageSectionContext,
   HappierPageSectionHeader,
@@ -476,6 +477,7 @@ export {
   resolveHappierWidgetFrameInsetPx,
   type HappierWidgetFramePlacement,
   type HappierWidgetFrameProps,
+  type HappierWidgetFrameAnatomy,
   type HappierWidgetFrameStyle,
   type HappierWidgetFrameTextRender,
   type HappierWidgetFrameTextRole,

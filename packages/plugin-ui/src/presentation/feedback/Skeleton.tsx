@@ -1,8 +1,9 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useContext, useEffect, useRef, type ReactNode } from 'react';
 import { Animated, Platform, View, type ViewStyle } from 'react-native';
 
 import { useOptionalHappierUiAccessibility, useOptionalHappierUiPalette } from '../../environment/context.js';
 import type { HappierUiTheme } from '../../environment/types.js';
+import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
 import type { HappierDimension, HappierStyleProp } from '../portableTypes.js';
 
 /**
@@ -215,9 +216,11 @@ export function HappierSkeletonRows(props: HappierSkeletonRowsProps) {
   const lines = lineHeights?.length ?? props.lines ?? 2;
   const firstIndex = props.firstIndex ?? 0;
   const dividerPlacement = props.dividerPlacement ?? 'below';
+  // The theme's list row stands on a widget body's edge (as `HappierListItem` does), so the real rows land in place.
+  const bodyEdge = useContext(HappierBodyEdgeContext);
   const geometry = props.geometry ?? {
-    insetStart: theme.spacing.medium,
-    insetEnd: theme.spacing.medium,
+    insetStart: bodyEdge ? 0 : theme.spacing.medium,
+    insetEnd: bodyEdge ? 0 : theme.spacing.medium,
     glyphColumn: SKELETON_GLYPH.size,
     gap: theme.spacing.small,
   };

@@ -8,10 +8,8 @@ import { HAPPIER_COLLECTION_LIST_METRICS } from '../collection/CollectionList.js
 import { HappierText } from '../text/Text.js';
 import { HAPPIER_BALANCED_TEXT_WRAP } from '../text/balancedTextWrap.js';
 import type { HappierTone } from '../semantics.js';
-import { HappierPressable } from '../interaction/Pressable.js';
+import { HappierDisclosureToggle } from '../collection/DisclosureToggle.js';
 import { HAPPIER_MENU_ROW_METRICS } from '../interaction/Menu.js';
-import { happierDiscretePressStyle, happierPressTransitionStyle } from '../interaction/pressFeedback.js';
-import { useOptionalHappierUiAccessibility } from '../../environment/context.js';
 
 export type HappierSurfaceStateKind = 'empty' | 'loading' | 'success' | 'error' | 'warning' | 'unavailable' | 'denied';
 
@@ -137,23 +135,31 @@ export function HappierStateDetails(props: Readonly<{
   markerTestID?: string;
   label: string;
   details: string;
-  renderToggle?: (open: boolean) => ReactNode;
+  /** The compact caret for the open state (the host's caret, or the drawn chevron without a host). */
+  renderCaret: (open: boolean) => ReactNode;
+  /** The label in the host's meta text; absent, the environment's. */
+  renderLabel?: (label: string) => ReactNode;
+  focusColor?: string;
   renderDetails?: (details: string) => ReactNode;
   /** `start` for a state that stands on a left edge (an inline state): the disclosure joins that edge. */
   align?: 'start' | 'center';
 }>) {
   const start = props.align === 'start';
   const [open, setOpen] = useState(false);
-  const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion ?? true;
   return (
   <View testID={props.markerTestID} style={{ alignItems: start ? 'flex-start' : 'center', marginTop: start ? 4 : 12, gap: 6 }}>
-    <HappierPressable testID={props.testID ? `${props.testID}-details-toggle` : undefined} accessibilityRole="button" accessibilityLabel={props.label} expanded={open} hitSlop={8} onPress={() => setOpen((value) => !value)} style={(state) => [
-      { minHeight: 32, paddingHorizontal: start ? 0 : 8, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 4 },
-      happierDiscretePressStyle(state.pressed, reducedMotion),
-      happierPressTransitionStyle(state.pressed, ['transform', 'opacity'], reducedMotion),
-    ]}>
-      {props.renderToggle?.(open) ?? <HappierText accessible={false} variant="micro" tone="secondary">{props.label}</HappierText>}
-    </HappierPressable>
+    <HappierDisclosureToggle
+      testID={props.testID ? `${props.testID}-details-toggle` : undefined}
+      label={props.label}
+      open={open}
+      onPress={() => setOpen((value) => !value)}
+      caret={props.renderCaret(open)}
+      renderLabel={props.renderLabel}
+      focusColor={props.focusColor}
+      align={start ? 'start' : 'center'}
+      // The action above it owns the gap between them: the toggle's own hit area never reaches back up into it.
+      hitReach={{ top: 0 }}
+    />
     {open ? props.renderDetails?.(props.details) ?? <HappierText testID={props.testID ? `${props.testID}-details-code` : undefined} variant="code" tone="secondary" selectable style={{ textAlign: 'center' }}>{props.details}</HappierText> : null}
   </View>
   );

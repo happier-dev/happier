@@ -11,6 +11,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { DisclosedCodeText, useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
 import { t } from '@/text';
 
 import { useSurfaceStateCardSize } from './surfaceStateSize';
@@ -55,23 +56,9 @@ export type SurfaceStateLive = HappierSurfaceStateLive;
 const stylesheet = StyleSheet.create((theme) => ({
     detail: {
         ...Typography.variant('meta'),
-        color: theme.colors.text.secondary,
+        color: theme.colors.text.tertiary,
         textAlign: 'center',
-        opacity: 0.9,
         marginTop: theme.space.s6,
-    },
-    detailsToggleLabel: {
-        ...Typography.variant('meta'),
-        // Quiet by size and placement, not by contrast: small text keeps the
-        // secondary role so it stays legible.
-        color: theme.colors.text.secondary,
-    },
-    detailsCode: {
-        ...Typography.mono(),
-        fontSize: 12,
-        lineHeight: 18,
-        color: theme.colors.text.secondary,
-        textAlign: 'center',
     },
     quiet: {
         ...Typography.default(),
@@ -327,8 +314,10 @@ export function SurfaceStateCard(props: Readonly<{
 /** Core's typography, buttons, spinner and disclosure for the shared state composition. */
 function useSurfaceStateBindings(testID: string | undefined, animationEnabled: boolean): HappierSurfaceStateBindings {
     const { theme } = useUnistyles();
+    const disclosure = useCoreDisclosureToggleBinding();
     return React.useMemo<HappierSurfaceStateBindings>(() => ({
         renderText: ({ role, metrics, align, testID: textTestID, onPress, children }) => {
+            if (role === 'details') return disclosure.renderLabel(children);
             if (role === 'quietLink') {
                 return <Text testID={textTestID} accessibilityRole="link" onPress={onPress} style={stylesheet.quietLink}>{children}</Text>;
             }
@@ -359,15 +348,13 @@ function useSurfaceStateBindings(testID: string | undefined, animationEnabled: b
         detailsLabel: t('common.details'),
         // Quiet disclosure for the raw reason code: collapsed by default so the card leads with human
         // copy, one tap away when someone needs to report or debug.
-        renderDetailsToggle: (open) => <>
-            <Icon name={open ? 'caret-down' : 'caret-right'} size={12} color={theme.colors.text.secondary} />
-            <Text accessible={false} style={stylesheet.detailsToggleLabel}>{t('common.details')}</Text>
-        </>,
+        renderDetailsCaret: disclosure.renderCaret,
+        focusRing: disclosure.focusColor,
         renderDetailsCode: (detail) => (
-            <Text testID={testID ? `${testID}-details-code` : undefined} selectable style={stylesheet.detailsCode}>{detail}</Text>
+            <DisclosedCodeText testID={testID ? `${testID}-details-code` : undefined} align="center">{detail}</DisclosedCodeText>
         ),
         pressedFill: theme.colors.surface.pressed,
-    }), [animationEnabled, testID, theme]);
+    }), [animationEnabled, disclosure, testID, theme]);
 }
 
 /**

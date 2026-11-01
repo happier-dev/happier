@@ -50,13 +50,14 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
-import { useListPresentation } from './listPresentation';
+import { useListPresentation, useWidgetBodyRowEdge } from './listPresentation';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
 import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
 import { resolveHappierRowTitleMetaPlacement } from '@happier-dev/plugin-ui/advanced';
 import { useSectionLeadingColumn } from './sectionLeadingColumn';
 import {
     HAPPIER_COLLECTION_LIST_METRICS,
+    type HappierCollectionRowRole,
     HappierPageRowFieldLayoutContext,
     HAPPIER_META_COLUMN_STYLE,
     resolveHappierItemBehavior,
@@ -180,7 +181,7 @@ export interface ItemProps {
      * the flat {@link MENU_ROW_METRICS} — a smaller glyph on a shorter row — and ignores the list
      * density setting entirely. See that constant for why density has no business reaching a menu.
      */
-    rowRole?: 'item' | 'menu';
+    rowRole?: HappierCollectionRowRole;
     rightElement?: React.ReactNode;
     /**
      * The right element is facts (telemetry, a quiet word), not a control: when the title would fall below
@@ -314,6 +315,9 @@ export interface ItemProps {
  * wherever they are appended; see {@link MENU_ROW_METRICS} for why a menu ignores density at all.
  */
 const MENU_ROW_HEIGHT_STYLE = { minHeight: MENU_ROW_METRICS.minHeightPx } as const;
+// A list row in a widget body stands on the body's edge: the frame's inset is the only one, so its glyph sits under
+// the frame's mark and its meta on the frame's edge (lab `rw` C).
+const BODY_EDGE_ROW_INSET_STYLE = { paddingHorizontal: 0 } as const;
 // The inset too: a host menu row and a plugin menu row (and the state line among them) start on one edge.
 const MENU_ROW_PADDING_STYLE = {
     paddingVertical: MENU_ROW_METRICS.paddingVerticalPx,
@@ -972,8 +976,10 @@ export const Item = React.memo<ItemProps>((props) => {
     const resolvedIconDensity = isTight ? 'tight' : isCompact ? 'compact' : isCozy ? 'cozy' : 'comfortable';
     const hasSubtitleContent = Boolean(subtitle || subtitleAccessory);
     const isMenuRow = rowRole === 'menu';
+    const isCatalogRow = rowRole === 'catalogRow';
     const listPresentation = useListPresentation();
-    const isPageRow = listPresentation === 'page' && !isMenuRow;
+    const isPageRow = listPresentation === 'page' && !isMenuRow && !isCatalogRow;
+    const bodyEdgeRow = useWidgetBodyRowEdge() && !isPageRow && !isMenuRow && !isCatalogRow;
     // A page row is drawn at the user's density; a section's `compact` asks for its list shape.
     const pageRowMetrics = isPageRow
         ? resolvePageRowMetrics({
@@ -1133,13 +1139,14 @@ export const Item = React.memo<ItemProps>((props) => {
         : hasSubtitleContent
             ? (isTight ? styles.containerWithSubtitleTight : isCompact ? styles.containerWithSubtitleCompact : isCozy ? styles.containerWithSubtitleCozy : styles.containerWithSubtitle)
             : (isTight ? styles.containerWithoutSubtitleTight : isCompact ? styles.containerWithoutSubtitleCompact : isCozy ? styles.containerWithoutSubtitleCozy : styles.containerWithoutSubtitle);
+    const rowEdgeStyle = bodyEdgeRow ? BODY_EDGE_ROW_INSET_STYLE : null;
     const containerBase = isTight
-        ? [styles.container, styles.containerTight, isMenuRow ? MENU_ROW_HEIGHT_STYLE : null, pageContainerStyle, stackedContainerStyle]
+        ? [styles.container, styles.containerTight, rowEdgeStyle, isMenuRow ? MENU_ROW_HEIGHT_STYLE : null, pageContainerStyle, stackedContainerStyle]
         : isCompact
-            ? [styles.container, styles.containerCompact, isMenuRow ? MENU_ROW_HEIGHT_STYLE : null, pageContainerStyle, stackedContainerStyle]
+            ? [styles.container, styles.containerCompact, rowEdgeStyle, isMenuRow ? MENU_ROW_HEIGHT_STYLE : null, pageContainerStyle, stackedContainerStyle]
             : isCozy
-                ? [styles.container, styles.containerCozy, isMenuRow ? MENU_ROW_HEIGHT_STYLE : null, pageContainerStyle, stackedContainerStyle]
-            : [styles.container, isMenuRow ? MENU_ROW_HEIGHT_STYLE : null, pageContainerStyle, stackedContainerStyle];
+                ? [styles.container, styles.containerCozy, rowEdgeStyle, isMenuRow ? MENU_ROW_HEIGHT_STYLE : null, pageContainerStyle, stackedContainerStyle]
+            : [styles.container, rowEdgeStyle, isMenuRow ? MENU_ROW_HEIGHT_STYLE : null, pageContainerStyle, stackedContainerStyle];
     const alignsToFirstLine = contentAlign === 'start';
     const containerCore = alignsToFirstLine ? [containerBase, styles.containerAlignStart] : containerBase;
     const iconBoxSizeOverride = leadingMediaBox
@@ -1683,7 +1690,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const menuBottomText = bottomElementInset === 'text' && isMenuRow && (icon != null || leftElement != null);
     // A list row (a collection rail) with a glyph: the title's edge is the row's own padding, the glyph box and its gap.
     const listBottomTextStart = bottomElementInset === 'text' && !isPageRow && !isMenuRow && icon != null && leftElement == null
-        ? ITEM_ROW_PADDING_HORIZONTAL[resolvedIconDensity] + (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight
+        ? (bodyEdgeRow ? 0 : ITEM_ROW_PADDING_HORIZONTAL[resolvedIconDensity]) + (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight
         : null;
     const bottomTextInset = bottomElementInset === 'text' && isPageRow && (icon != null || leftElement != null || reservesLeadingColumn)
         ? PAGE_LIST_METRICS.rowLeadingColumnPx + resolvedIconMarginRight

@@ -28,8 +28,8 @@ export type UsageBuiltinWidgetIdV1 = (typeof USAGE_BUILTIN_WIDGET_IDS_V1)[number
 export const MACHINE_BUILTIN_WIDGET_IDS_V1 = ['machine_vitals', 'machine_fleet', 'machine_metric', 'machine_top_consumers',
     'machine_left_behind', 'machine_storage', 'machine_worktrees', 'machine_guard', 'machine_activity', 'machine_cleanup_suggestion'] as const;
 export type MachineBuiltinWidgetIdV1 = (typeof MACHINE_BUILTIN_WIDGET_IDS_V1)[number];
-/** Home atmosphere widgets: the Home as a planet with its machines as moons (atmosphere plan U9). */
-export const HOME_BUILTIN_WIDGET_IDS_V1 = ['your_home'] as const;
+/** No-input Home reads; a separate Services identity preserves saved Session-scoped copies. */
+export const HOME_BUILTIN_WIDGET_IDS_V1 = ['your_home', 'local_services_app'] as const;
 export type HomeBuiltinWidgetIdV1 = (typeof HOME_BUILTIN_WIDGET_IDS_V1)[number];
 export type BuiltinWidgetIdV1 = SessionBuiltinWidgetIdV1 | ProjectBuiltinWidgetIdV1 | UsageBuiltinWidgetIdV1 | MachineBuiltinWidgetIdV1 | HomeBuiltinWidgetIdV1;
 /** Saved executable declarations accept only identities owned by this catalog. */
@@ -87,11 +87,13 @@ export function projectOverviewDefaultPlacementsV1(): WidgetLayoutWidgetV1[] {
     } }));
 }
 
+const localServicesMetadata = { title: 'Local services', titleKey: 'widgetGlances.localServicesTitle', icon: 'hard-drives' } as const;
 const nativeMetadata = {
     session_summary: { title: 'Session summary', titleKey: 'sessionBoard.companion.summary.title', icon: 'stack' },
     agent_plan: { title: 'Agent plan', titleKey: 'sessionCompanion.plan.title', icon: 'list-checks' },
     changes: { title: 'Changes', titleKey: 'widgetGlances.changesTitle', icon: 'git-branch' },
-    local_services: { title: 'Local services', titleKey: 'widgetGlances.localServicesTitle', icon: 'hard-drives' },
+    local_services: localServicesMetadata,
+    local_services_app: localServicesMetadata,
     project_about: { title: 'About', titleKey: 'projects.widgets.about', icon: 'info' },
     project_code: { title: 'Code', titleKey: 'projects.pages.code', icon: 'code' },
     project_readme: { title: 'README', titleKey: 'projects.widgets.readme', icon: 'file-text' },

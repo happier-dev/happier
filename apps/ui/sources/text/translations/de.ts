@@ -18358,7 +18358,7 @@ settingsSession: {
         transportUnavailable: "Happier konnte die Quelle dieser Plugin-Ansicht nicht erreichen. Prüfe die Verbindung und versuche es erneut.",
         sourceUnavailable: "Die Dateien der ausgewählten Plugin-Ansicht sind nicht verfügbar. Lade sie erneut.",
         viewNotCurrent: "Die ausgewählte Plugin-Ansicht ist nicht mehr aktuell. Öffne die Seite erneut, aktualisiere das Plugin auf seinem Rechner oder wähle einen anderen Rechner.",
-        unavailableGeneric: 'Möglicherweise startet sie noch. Versuche es gleich noch einmal.',
+        unavailableGeneric: 'Möglicherweise startet sie noch.',
         crashLoop: 'Das Plugin wurde nach wiederholten Abstürzen gestoppt.',
         disabledByPolicy: 'Diese Plugin-Ansicht ist durch aktuelle Einstellungen oder Kompatibilität deaktiviert.',
         hostedWebUnavailableTitle: 'Gehostete Plugin-Ansicht nicht verfügbar',

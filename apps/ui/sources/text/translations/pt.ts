@@ -18402,7 +18402,7 @@ settingsSession: {
         transportUnavailable: "O Happier não conseguiu acessar a fonte desta visualização. Verifique a conexão e tente novamente.",
         sourceUnavailable: "Os arquivos da visualização selecionada não estão disponíveis. Tente carregá-la novamente.",
         viewNotCurrent: "A vista selecionada deste plugin já não está atualizada. Volte a abrir a página, atualize o plugin na respetiva máquina ou escolha outra máquina.",
-        unavailableGeneric: 'Pode ainda estar a iniciar. Tente novamente dentro de instantes.',
+        unavailableGeneric: 'Pode ainda estar a iniciar.',
         crashLoop: 'O plugin foi parado após falhas repetidas.',
         disabledByPolicy: 'Esta vista do plugin está desativada pelas definições ou compatibilidade atuais.',
         hostedWebUnavailableTitle: 'A visualização alojada do plugin não está disponível',

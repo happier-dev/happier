@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { HappierPageSectionContext } from '@happier-dev/plugin-ui/presentation';
+import { HappierBodyEdgeContext, HappierPageSectionContext } from '@happier-dev/plugin-ui/presentation';
 
 import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
 
@@ -22,6 +22,11 @@ type PageListInsets = 'standard' | 'contained';
 const PageListInsetsContext = React.createContext<PageListInsets>('standard');
 const PageNoticeActiveContext = React.createContext(false);
 
+/** Whether a list row here stands on a widget body's edge. Floating surfaces reset this context. */
+export function useWidgetBodyRowEdge(): boolean {
+    return React.useContext(HappierBodyEdgeContext);
+}
+
 /** Only repeated states explained by the current page notice defer to this fact. */
 export function usePageNoticeActive(): boolean {
     return React.useContext(PageNoticeActiveContext);
@@ -38,13 +43,20 @@ export function ListPresentationProvider(props: Readonly<{
     pageInsets?: PageListInsets;
     /** The page owns the cause and recovery; sections may omit repeats of that cause. */
     pageNoticeActive?: boolean;
+    /** The scope is a floating surface's (`FloatingOverlay`); a nested scope starts outside it again. */
+    floating?: boolean;
     children: React.ReactNode;
 }>) {
     return (
         <HappierPageSectionContext.Provider value={null}>
             <PageListInsetsContext.Provider value={props.pageInsets ?? 'standard'}>
                 <PageNoticeActiveContext.Provider value={props.value === 'page' && props.pageNoticeActive === true}>
-                    <ListPresentationContext.Provider value={props.value}>{props.children}</ListPresentationContext.Provider>
+                    {props.floating === true ? (
+                        // A floating surface opened from a widget body is off that body's edge: its rows keep their own inset.
+                        <HappierBodyEdgeContext.Provider value={false}>
+                            <ListPresentationContext.Provider value={props.value}>{props.children}</ListPresentationContext.Provider>
+                        </HappierBodyEdgeContext.Provider>
+                    ) : <ListPresentationContext.Provider value={props.value}>{props.children}</ListPresentationContext.Provider>}
                 </PageNoticeActiveContext.Provider>
             </PageListInsetsContext.Provider>
         </HappierPageSectionContext.Provider>
