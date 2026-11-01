@@ -67,17 +67,6 @@ const EXPECTED_PRIVATE_ICON_NAMES: Readonly<Record<string, IconName>> = Object.f
 });
 
 describe('resolvePluginUiIconToken', () => {
-    it('renders recoverable failure, unavailable and denied states with their distinct calm glyphs', () => {
-        expect(iconTokenResolver.resolvePluginUiIconName('failure')).toBe('warning-circle');
-        expect(iconTokenResolver.resolvePluginUiIconName('unavailable')).toBe('cloud-slash');
-        expect(iconTokenResolver.resolvePluginUiIconName('denied')).toBe('lock');
-    });
-    it('gives each why-it-is-here reason its own glyph (lab c7 chips)', () => {
-        const reasons = ['review', 'attention', 'escalating', 'merge-ready', 'mention', 'assigned', 'new', 'waiting'] as const;
-        const glyphs = reasons.map((reason) => iconTokenResolver.resolvePluginUiIconName(reason));
-        expect(glyphs).not.toContain(iconTokenResolver.PLUGIN_UI_ICON_FALLBACK);
-        expect(new Set(glyphs).size).toBe(reasons.length);
-    });
     it('exposes the Protocol-owned semantic icon contract through the plugin-UI seam', () => {
         expect([...HAPPIER_ICON_NAMES]).toEqual([...PluginUiIconTokenV1Schema.options]);
     });

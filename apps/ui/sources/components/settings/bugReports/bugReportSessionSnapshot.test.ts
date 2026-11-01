@@ -13,6 +13,12 @@ describe('bugReportSessionSnapshot', () => {
     });
 
     it('builds a sanitized summary for the latest session', () => {
+        const message = {
+            id: 'message-1', kind: 'assistant-text', createdAt: 29, localId: 'local-1',
+            text: 'private assistant content',
+            tool: { input: { token: 'private tool credential' }, result: 'private tool result' },
+        };
+        const pending = { id: 'pending-1', localId: 'pending-local', text: 'private pending prompt' };
         const snapshot = buildLatestSessionSnapshot({
             sessions: {
                 older: {
@@ -29,39 +35,35 @@ describe('bugReportSessionSnapshot', () => {
                     machineId: 'machine-1',
                     permissionMode: 'default',
                     modelMode: 'auto',
+                    metadata: { summary: { text: 'private session summary' }, path: '/private/workspace' },
                 },
             },
             sessionMessages: {
                 latest: {
                     messageIdsOldestFirst: ['message-1'],
                     messagesById: {
-                        'message-1': {
-                            id: 'message-1',
-                            kind: 'assistant-text',
-                            createdAt: 29,
-                            localId: 'local-1',
-                        },
+                        'message-1': message,
                     },
                 },
             },
             sessionPending: {
                 latest: {
-                    messages: [{ id: 'pending-1', localId: 'pending-local' }],
+                    messages: [pending],
                 },
             },
         });
 
-        expect(snapshot?.sessionId).toBe('latest');
-        expect(snapshot?.messageCount).toBe(1);
-        expect(snapshot?.pendingCount).toBe(1);
-        expect(snapshot?.recentMessages).toEqual([
-            {
+        expect(snapshot).toEqual({
+            sessionId: 'latest', createdAt: 20, updatedAt: 30,
+            agent: 'claude', machineId: 'machine-1', permissionMode: 'default', modelMode: 'auto',
+            messageCount: 1, pendingCount: 1,
+            recentMessages: [{
                 id: 'message-1',
                 kind: 'assistant-text',
                 createdAt: 29,
                 localId: 'local-1',
-            },
-        ]);
+            }],
+        });
     });
 
     it('chooses the latest user-facing session when a newer hidden carrier exists', () => {
@@ -122,15 +124,16 @@ describe('bugReportSessionSnapshot', () => {
             },
             sessionMessages: {
                 latest: {
-                    messageIdsOldestFirst: messages.map((m) => m.id),
+                    // Retained arrival order may differ from timestamp order.
+                    messageIdsOldestFirst: messages.map((m) => m.id).reverse(),
                     messagesById: Object.fromEntries(messages.map((m) => [m.id, m])),
                 },
             },
             sessionPending: {},
         });
 
-        expect(snapshot?.recentMessages).toHaveLength(30);
-        expect(snapshot?.recentMessages[0]?.id).toBe('message-11');
-        expect(snapshot?.recentMessages[29]?.id).toBe('message-40');
+        expect(snapshot?.recentMessages.map((message) => message.id)).toEqual(
+            Array.from({ length: 30 }, (_, index) => `message-${index + 11}`),
+        );
     });
 });

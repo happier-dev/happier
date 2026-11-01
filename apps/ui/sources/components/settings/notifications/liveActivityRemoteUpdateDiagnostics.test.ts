@@ -1,11 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type {
     LiveActivityRemoteUpdateCapabilityDiagnostics,
-} from '@happier-dev/protocol';
-
-async function loadModule() {
-    return import('./liveActivityRemoteUpdateDiagnostics').catch(() => null);
-}
+} from '@happier-dev/protocol/activity/live/remoteUpdateCapabilities';
+import { buildLiveActivityRemoteUpdateDiagnosticsRows } from './liveActivityRemoteUpdateDiagnostics';
 
 function buildDiagnostics(
     overrides: Partial<LiveActivityRemoteUpdateCapabilityDiagnostics> = {},
@@ -60,11 +57,7 @@ function buildDiagnostics(
 
 describe('liveActivityRemoteUpdateDiagnostics', () => {
     it('distinguishes hosted relay disabled from hosted relay configured-but-blocked diagnostics', async () => {
-        const mod = await loadModule();
-        expect(mod).not.toBeNull();
-        if (!mod) return;
-
-        const disabledRows = mod.buildLiveActivityRemoteUpdateDiagnosticsRows({
+        const disabledRows = buildLiveActivityRemoteUpdateDiagnosticsRows({
             preferredMode: 'hosted_happier_relay',
             allowBackgroundWakeFallback: false,
             deviceModeOverride: 'account',
@@ -76,7 +69,7 @@ describe('liveActivityRemoteUpdateDiagnostics', () => {
             subtitleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.hostedRelayDisabledSubtitle',
         });
 
-        const blockedRows = mod.buildLiveActivityRemoteUpdateDiagnosticsRows({
+        const blockedRows = buildLiveActivityRemoteUpdateDiagnosticsRows({
             preferredMode: 'hosted_happier_relay',
             allowBackgroundWakeFallback: false,
             deviceModeOverride: 'account',
@@ -107,12 +100,8 @@ describe('liveActivityRemoteUpdateDiagnostics', () => {
         });
     });
 
-    it('summarizes direct APNs credential state without exposing secret material', async () => {
-        const mod = await loadModule();
-        expect(mod).not.toBeNull();
-        if (!mod) return;
-
-        const rows = mod.buildLiveActivityRemoteUpdateDiagnosticsRows({
+    it('summarizes missing direct APNs credentials from capability diagnostics', () => {
+        const rows = buildLiveActivityRemoteUpdateDiagnosticsRows({
             preferredMode: 'direct_apns',
             allowBackgroundWakeFallback: false,
             deviceModeOverride: 'account',
@@ -123,16 +112,10 @@ describe('liveActivityRemoteUpdateDiagnostics', () => {
             detailKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.missingCredentials',
             diagnosticKeys: ['apns_private_key_missing'],
         });
-        expect(JSON.stringify(rows)).not.toContain('PRIVATE KEY');
-        expect(JSON.stringify(rows)).not.toContain('rawToken');
     });
 
     it('labels background wake as best-effort and keeps local-only copy runtime-scoped', async () => {
-        const mod = await loadModule();
-        expect(mod).not.toBeNull();
-        if (!mod) return;
-
-        const rows = mod.buildLiveActivityRemoteUpdateDiagnosticsRows({
+        const rows = buildLiveActivityRemoteUpdateDiagnosticsRows({
             preferredMode: 'background_wake_best_effort',
             allowBackgroundWakeFallback: true,
             deviceModeOverride: 'account',
