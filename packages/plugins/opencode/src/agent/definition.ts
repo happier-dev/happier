@@ -1,3 +1,9 @@
+const OPENCODE_SESSION_COMPACTION_CAPABILITY = {
+  events: true,
+  manual: true,
+  idle: { mode: 'host', defaultEnabled: false, defaultMinContextTokens: 100000 },
+} as const;
+
 const OPENCODE_AGENT_CORE = Object.freeze({
   id: 'opencode',
   cliSubcommand: 'opencode',
@@ -17,7 +23,8 @@ const OPENCODE_AGENT_CORE = Object.freeze({
     sessionFork: { conversation: 'supported', fromMessage: 'unsupported' },
     sessionRollback: { conversation: 'unsupported' },
     usageLimitRecovery: { checkNow: 'unsupported' },
-  },
+    compaction: OPENCODE_SESSION_COMPACTION_CAPABILITY,
+  } as const,
   runtimeKinds: {
     defaultKind: 'server',
     byKind: {
@@ -28,7 +35,8 @@ const OPENCODE_AGENT_CORE = Object.freeze({
           sessionStorage: { direct: false },
           sessionCapabilities: {
             usageLimitRecovery: { checkNow: 'unsupported' },
-          },
+            compaction: null,
+          } as const,
           localControl: null,
         },
       },

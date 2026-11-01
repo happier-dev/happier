@@ -6,11 +6,18 @@ import type {
 } from '@happier-dev/agents';
 import type { $brand } from 'zod/mini';
 import type { AgentTerminalLaunchPlan, AgentTerminalLaunchRequest } from './surfaces.js';
+import type { AgentSessionIdleCompactionPreferenceV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
 
 import type { JsonValue } from '../identity.js';
 import type { Disposable } from '../lifecycle.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { AgentSessionConversationRollbackControl, AgentSessionGoalControl, AgentSessionUsageLimitRecoveryControl } from './controls.js';
+
+export type {
+  AgentSessionCompactionCapability,
+  AgentSessionCompactionIdleCapability,
+  PluginAgentSessionCompactionCapabilityV2,
+} from '@happier-dev/protocol/plugins/agents';
 
 /** Agent-owned runtime identity carried across host-owned session lifecycle. */
 export type RuntimeDescriptorV1 = Readonly<{
@@ -748,6 +755,8 @@ export type AgentSessionOpenRequest =
     /** Agent-owned runtime identity, interpreted only by the target Agent. */
     runtimeDescriptorV1?: RuntimeDescriptorV1;
     configuration?: AgentSessionConfigurationSnapshot;
+    /** Immutable host preference, supplied only to a runtime declaring native idle compaction. */
+    idleCompaction?: AgentSessionIdleCompactionPreferenceV1;
     connectedAccounts?: readonly AgentSessionConnectedAccountSelection[];
     mcpServers?: Readonly<Record<string, AgentSessionMcpLaunchConfig>>;
     /** Host-resolved startup failure policy; optional servers may be skipped. */

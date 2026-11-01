@@ -1,4 +1,5 @@
-export { type IdleCompactionPreference } from './idleCompactionPreferences.js';
+import { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS } from './idleCompactionPreferences.js';
+export { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS, resolveIdleCompactionPreference, type IdleCompactionPreference } from './idleCompactionPreferences.js';
 import { backfillClaudeUnifiedTerminalResponseLocations } from '../../agents/claude/settingsPolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { normalizeScmBackendQualifiedId } from '../../scm/backendIdentity.js';
@@ -572,7 +573,9 @@ function backfillLegacyTargetKeyedAccountSettings(raw: Record<string, unknown>):
   }
 
   for (const key of ['backendEnabledByTargetKey', 'backendCliSourcePreferenceByTargetKey',
-    'sessionDefaultPermissionModeByTargetKey', 'newSessionDefaultPersistenceModeByTargetKeyV1'] as const) {
+    'sessionDefaultPermissionModeByTargetKey', 'newSessionDefaultPersistenceModeByTargetKeyV1',
+    'sessionIdleCompactionEnabledByTargetKey', 'sessionIdleCompactionMinContextTokensByTargetKey',
+    'sessionIdleCompactionCacheWindowOverrideMsByTargetKey'] as const) {
     if (Object.hasOwn(next, key)) next[key] = canonicalizeStoredBackendTargetMap(next[key]);
   }
 
@@ -1168,6 +1171,9 @@ const NewSessionWizardSectionPresentationByIdSchema = lazyDefinition(() => (<I e
 }), z._default(z.partialRecord(NewSessionWizardSectionIdSchema, NewSessionWizardSectionPresentationSchema), {})));
 const ACCOUNT_SESSION_AUTHORING_CATALOG_DEFINITIONS = {
     sessionDefaultPermissionModeByTargetKey: accountPolicy(z.record(BackendTargetKeyV2InputSchema, z.enum(SESSION_PERMISSION_MODES)), {}, 'default permission mode', 32 * 1024),
+    sessionIdleCompactionEnabledByTargetKey: accountPreference(z.record(BackendTargetKeyV2InputSchema, z.boolean()), {}, 'idle compaction', 32 * 1024),
+    sessionIdleCompactionMinContextTokensByTargetKey: accountPreference(z.record(BackendTargetKeyV2InputSchema, z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER))), {}, 'idle compaction', 32 * 1024),
+    sessionIdleCompactionCacheWindowOverrideMsByTargetKey: accountPreference(z.record(BackendTargetKeyV2InputSchema, z.number().check(z.int(), z.positive(), z.maximum(MAX_IDLE_COMPACTION_CACHE_WINDOW_MS))), {}, 'idle compaction', 32 * 1024),
     newSessionDefaultPersistenceModeV1: accountPreference(z.enum(['direct', 'persisted']), 'persisted', 'session authoring'),
     newSessionDefaultPersistenceModeByTargetKeyV1: accountPreference(z.record(BackendTargetKeyV2InputSchema, z.enum(['direct', 'persisted'])), {}, 'session authoring', 32 * 1024),
     newSessionDraftEntryMode: accountPreference(z.enum(NEW_SESSION_DRAFT_ENTRY_MODES), 'resumePrevious', 'session authoring'),

@@ -67,7 +67,7 @@ describe('host process-terminal metadata publication', () => {
       const runtime = createNativeAgentSessionOperations(provider, 'session-1', undefined, undefined, undefined, undefined, undefined, {
         context: {} as AgentSessionRuntimeContext, cwd: '/tmp/project', connectedAccounts: [],
         capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-        cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
       });
       const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
         mode => mode.permissionMode, { batcher: combinePermissionModeQueuedPrompts });

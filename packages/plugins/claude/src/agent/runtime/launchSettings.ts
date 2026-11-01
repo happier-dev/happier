@@ -1,6 +1,6 @@
 import { readClaudeSettingSourcesV2 } from '@happier-dev/protocol/agents/claude/predecessor-message-meta';
 import type { ClaudeSettingSourceV2 } from '@happier-dev/protocol/agents/claude/settings-policy';
-import type { AgentLaunchEnvironment, AgentSessionConfigurationSnapshot, AgentSessionMcpToolPolicy, AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentLaunchEnvironment, AgentSessionConfigurationSnapshot, AgentSessionMcpToolPolicy, AgentSessionOpenRequest, AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import { readFileSync } from 'node:fs';
 import {
   isSessionPermissionShellToolName,
@@ -101,6 +101,7 @@ export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
   interactionKind: 'interactive_terminal' | 'noninteractive_sdk';
   permissionMode: string | null;
   launchSettings: Readonly<Record<string, unknown>>;
+  idleCompaction?: AgentSessionOpenRequest['idleCompaction'];
   helperModelEnv?: ClaudeHelperModelEnv;
   skillOverrides?: Readonly<Record<string, 'off'>>;
   mcpToolPolicy?: Readonly<Record<string, AgentSessionMcpToolPolicy>>;
@@ -118,6 +119,8 @@ export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
   // protocols where Claude's ordinary permission/question handling remains authoritative.
   const launchSettings: Record<string, unknown> = {
     ...input.launchSettings,
+    ...(input.interactionKind === 'interactive_terminal' && input.idleCompaction
+      ? { idleCompaction: input.idleCompaction.enabled } : {}),
     ...(input.unlistedTools !== 'deny' && input.interactionKind === 'interactive_terminal' && input.permissionMode === 'bypassPermissions'
       ? { skipDangerousModePermissionPrompt: true }
       : {}),
@@ -269,6 +272,7 @@ export async function resolveClaudeNativeLaunchSettings(input: Readonly<{
   settings: ClaudeSettingsReader;
   launchEnv: Readonly<Record<string, string>>;
   includeAdvancedOptions: boolean;
+  idleCompaction?: AgentSessionOpenRequest['idleCompaction'];
   providerBinding?: Pick<AgentSessionProviderBinding, 'upstream'>;
 }>): Promise<Readonly<{
   launchEnv: Readonly<Record<string, string>>;
@@ -295,6 +299,9 @@ export async function resolveClaudeNativeLaunchSettings(input: Readonly<{
     ...(Object.keys(helperModelEnv).length ? { helperModelEnv } : {}),
     launchEnv: {
       ...input.launchEnv,
+      ...(input.idleCompaction?.minContextTokens === undefined ? {} : {
+        CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS: String(input.idleCompaction.minContextTokens),
+      }),
       ...(agentTeamsEnabled === true ? { [CLAUDE_AGENT_TEAMS_ENV_KEY]: '1' } : {}),
       // Claude Code 2.1.283/2.1.296 rewrite cli to sdk-cli; happier remains distinct.
       // This opt-in changes attribution on new launches without rewriting transcripts.

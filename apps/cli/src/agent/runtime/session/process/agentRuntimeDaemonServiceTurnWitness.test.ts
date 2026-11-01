@@ -23,7 +23,7 @@ describe('daemon service host turn depth', () => {
     const native = createNativeAgentSessionOperations(provider, 'receiver', undefined, undefined, undefined, undefined, undefined,
       { context: {} as AgentSessionRuntimeContext, cwd: '/workspace', connectedAccounts: [],
         capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false }, cancellation: { declared: false },
-        configuration: { declared: false }, manualCompaction: { declared: false } });
+        configuration: { declared: false }, compaction: { capability: null } });
     const discussionAddressing = { discussionId: 'discussion', messageId: 'question', throughSeq: 2, participantSessionId: 'receiver' };
     try {
       await native.sendTurnPrompt('Answer this question', { localId: 'question-input', turnId: 'question-turn', discussionAddressing });
@@ -46,7 +46,7 @@ describe('daemon service host turn depth', () => {
       provider, 'bot', undefined, undefined, undefined, undefined, undefined,
       { context: {} as AgentSessionRuntimeContext, cwd: '/workspace', connectedAccounts: [],
         capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-        cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false } },
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null } },
     );
     try {
       const attribution = {
@@ -99,7 +99,7 @@ describe('daemon service host turn depth', () => {
         context: {} as AgentSessionRuntimeContext,
         cwd: '/workspace', connectedAccounts: [],
         capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-        cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
       },
       undefined, [], undefined, undefined,
       async (witness) => {

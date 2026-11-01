@@ -39,7 +39,7 @@ function createSessionRuntimeWithLiveManualCompaction(
         },
         sessionRollback: { conversation: 'unsupported' },
         usageLimitRecovery: { checkNow: 'unsupported' },
-        compaction: { manual },
+        compaction: manual === 'supported' ? { events: true, manual: true } : null,
       },
     },
   } as unknown as AgentSessionRuntime;
@@ -66,6 +66,17 @@ function createOperations(
 }
 
 describe('native Agent Session interaction capability ownership', () => {
+  it('exposes the resolved host idle descriptor and a bound idle control without requiring manual support', async () => {
+    const session = createFullyCapableSessionRuntime();
+    const operations = createOperations({ open: ['create'], delivery: ['newTurn'], cancel: true,
+      compaction: { events: true, idle: { mode: 'host', defaultEnabled: false } },
+    }, session);
+    expect(operations.readSessionCompactionCapability?.()).toEqual({ events: true, idle: { mode: 'host', defaultEnabled: false } });
+    expect(operations.compactContext).toBeUndefined();
+    const signal = new AbortController().signal;
+    await operations.compact?.({ compactionId: 'idle-admission', trigger: 'idle' }, { signal });
+    expect(session.compact).toHaveBeenCalledWith({ compactionId: 'idle-admission', trigger: 'idle' }, { signal });
+  });
   it('uses the live Session runtime fact for dialect-dependent manual compaction', () => {
     expect('compactContext' in createOperations({
       open: ['create'],

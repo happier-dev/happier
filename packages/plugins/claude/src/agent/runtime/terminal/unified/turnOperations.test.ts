@@ -97,6 +97,109 @@ const RESUME_CHOICE_QUESTION = 'How should Claude resume this session?';
 const SAFEGUARD_CHOICE_QUESTION = 'How should Claude continue?';
 
 describe('createClaudeUnifiedTerminalTurnOperations', () => {
+  it('admits manual compact through the native command owner and preserves instructions and request identity', async () => {
+    const terminalHost = createTerminalHostFixture();
+    const transcripts = createManualTranscriptFollowFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, createEventsFixture().service, {
+      transcripts: { ...transcripts.service, followSource: vi.fn(async () => ({ dispose: vi.fn(async () => undefined) })) },
+    });
+    const operations = createClaudeUnifiedTerminalProviderOperations({ ctx, directory: '/tmp/claude-project',
+      happierSessionId: 'manual-native', hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default' });
+    const session = createClaudeNativeSessionRuntimeFromOperations(operations, {
+      kind: 'create', sessionId: 'manual-native', cwd: '/tmp/claude-project',
+    }, { session: { services: {
+      activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) },
+    } } } as unknown as AgentSessionRuntimeContext);
+    const events: AgentSessionRuntimeEvent[] = [];
+    const subscription = session.watch(event => events.push(event));
+    try {
+      await operations.startProviderSession();
+      const hook = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]?.[0].onSessionHook;
+      if (!hook || !session.observeSourceTranscript || !session.compact) throw new Error('native compact was not exposed');
+      await hook('native-manual-session', { hook_event_name: 'SessionStart', session_id: 'native-manual-session',
+        source: 'resume', transcript_path: '/tmp/native-manual-session.jsonl' });
+      await expect(session.compact({ compactionId: 'host-manual-operation', trigger: 'manual', instructions: 'Keep current decisions' }))
+        .resolves.toMatchObject({ status: 'admitted' });
+      await expect(session.compact({ compactionId: 'overlapping-manual-operation', trigger: 'manual' }))
+        .resolves.toMatchObject({ status: 'rejected', retryable: true });
+      const injections = vi.mocked(terminalHost.service.injectUserPrompt).mock.calls;
+      expect(injections).toHaveLength(1);
+      expect(injections[0]?.[1]).toMatchObject({ text: '/compact Keep current decisions' });
+      await session.observeSourceTranscript({ providerSessionId: 'native-manual-session', sourceId: 'manual:boundary', row: {
+        type: 'system', subtype: 'compact_boundary', uuid: 'manual-boundary', sessionId: 'native-manual-session',
+        compactMetadata: { trigger: 'manual', preTokens: 240_000, postTokens: 40_000 },
+      } });
+      expect(events.filter(event => event.kind === 'context-compaction')).toMatchObject([
+        { compactionId: 'host-manual-operation', trigger: 'manual', tokenCountBefore: 240_000, tokenCountAfter: 40_000, tokenCountSource: 'providerReported' },
+      ]);
+      await expect(session.compact({ compactionId: 'host-idle-operation', trigger: 'idle' })).resolves.toMatchObject({ status: 'unsupported' });
+      expect(injections).toHaveLength(1);
+    } finally { subscription.dispose(); await session.dispose(); }
+  });
+
+  it.each([
+    { noticeFirst: false, summaryAdoption: false, replay: false },
+    { noticeFirst: true, summaryAdoption: false, replay: false },
+    { noticeFirst: false, summaryAdoption: true, replay: true },
+  ])('publishes canonical idle compaction once across raw, ordered and replay ingress ($noticeFirst/$summaryAdoption/$replay)', async ({ noticeFirst, summaryAdoption, replay }) => {
+    const terminalHost = createTerminalHostFixture();
+    const transcripts = createManualTranscriptFollowFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, createEventsFixture().service, {
+      transcripts: { ...transcripts.service, followSource: vi.fn(async () => ({ dispose: vi.fn(async () => undefined) })) },
+    });
+    const operations = createClaudeUnifiedTerminalProviderOperations({ ctx, directory: '/tmp/claude-project',
+      happierSessionId: 'idle-native', hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default' });
+    const session = createClaudeNativeSessionRuntimeFromOperations(operations, {
+      kind: 'create', sessionId: 'idle-native', cwd: '/tmp/claude-project',
+    }, { session: { services: {
+      activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) },
+    } } } as unknown as AgentSessionRuntimeContext);
+    const events: AgentSessionRuntimeEvent[] = [];
+    const subscription = session.watch(event => events.push(event));
+    const providerSessionId = 'native-idle-session';
+    const boundary = { type: 'system', subtype: 'compact_boundary', uuid: 'native-idle-boundary',
+      sessionId: providerSessionId, timestamp: '2026-11-01T10:00:00.000Z',
+      compactMetadata: { trigger: 'auto', preTokens: 240_000, postTokens: 40_000 } };
+    const summary = { type: 'user', uuid: 'native-idle-summary', sessionId: providerSessionId,
+      isCompactSummary: true, message: { role: 'user', content: 'Native compact summary' } };
+    const notice = { type: 'system', subtype: 'informational', level: 'notice', uuid: 'native-idle-notice',
+      sessionId: providerSessionId, timestamp: '2026-11-01T10:00:01.000Z',
+      content: `${summaryAdoption ? 'Compacted using a summary written while you were away' : 'Compacted while idle, before the prompt cache expired'} · turn off with "idleCompaction": false in settings.json` };
+    try {
+      await operations.startProviderSession();
+      const hook = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]?.[0].onSessionHook;
+      if (!hook || !session.observeSourceTranscript) throw new Error('native transcript transport was not registered');
+      await hook(providerSessionId, { hook_event_name: 'SessionStart', session_id: providerSessionId,
+        source: 'resume', transcript_path: '/tmp/native-idle-session.jsonl' });
+      const foregroundActivity = events.filter(event => event.kind === 'runtime-activity-snapshot');
+      expect(operations.isTurnInFlight()).toBe(false);
+      await hook(providerSessionId, { hook_event_name: 'PreCompact', session_id: providerSessionId, trigger: 'auto' });
+      expect(operations.isTurnInFlight()).toBe(false);
+      await hook(providerSessionId, { hook_event_name: 'PostCompact', session_id: providerSessionId, trigger: 'auto' });
+      expect(operations.isTurnInFlight()).toBe(false);
+      expect(events.filter(event => event.kind === 'context-compaction')).toEqual([]);
+      const rows = noticeFirst ? [notice, boundary, summary] : [boundary, summary, notice];
+      for (const row of rows) await transcripts.emitRow(row);
+      expect(events.filter(event => event.kind === 'context-compaction')).toEqual([]);
+      for (const row of rows) {
+        const input = { providerSessionId, sourceId: `native:${row.uuid}`, row, ...(replay ? { phase: 'initial_replay' as const } : {}) };
+        await session.observeSourceTranscript(input);
+        await session.observeSourceTranscript(input);
+      }
+      const compactions = events.filter(event => event.kind === 'context-compaction');
+      expect(compactions).toHaveLength(noticeFirst ? 2 : 1);
+      expect(new Set(compactions.map(event => event.compactionId)).size).toBe(1);
+      expect(compactions.every(event => event.trigger === 'idle')).toBe(true);
+      expect(compactions.at(-1)).toMatchObject({ tokenCountBefore: 240_000, tokenCountAfter: 40_000, tokenCountSource: 'providerReported' });
+      expect(events.filter(event => event.kind === 'turn-start' || event.kind === 'turn-complete')).toEqual([]);
+      expect(events.filter(event => event.kind === 'runtime-activity-snapshot')).toEqual(foregroundActivity);
+      expect(operations.isTurnInFlight()).toBe(false);
+      const rawPublications = vi.mocked(ctx.agentRuntime.sessionHooks.publishProviderTranscript).mock.calls;
+      expect(rawPublications.some(([payload]) => payload.kind === 'compact_boundary')).toBe(false);
+      expect(JSON.stringify(rawPublications)).not.toContain('settings.json');
+    } finally { subscription.dispose(); await session.dispose(); }
+  });
+
   it.each([false, true])('prepares native onboarding before launching the isolated terminal without granting workspace trust (existing=%s)', async (existing) => {
     const configDir = await mkdtemp(join(tmpdir(), 'claudeterm-onboarding-'));
     const configPath = join(configDir, '.claude.json');
@@ -3800,7 +3903,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       });
       await Promise.resolve();
       expect(completionSettled).toBe(false);
-      expect(compactionEvents).toContainEqual(expect.objectContaining({ kind: 'context-compaction', phase: 'completed', trigger: 'unknown' }));
+      expect(compactionEvents).toEqual([]);
 
       await nativeRuntime.observeTerminalLifecycle({
         agentId: 'claude',

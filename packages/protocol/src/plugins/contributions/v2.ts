@@ -25,6 +25,10 @@ import {
 } from '../../hooks/hookExecutionSemantics.js';
 import { PluginOptionalStringSchema } from '../_shared.js';
 import {
+  PluginAgentSessionCompactionCapabilityV2Schema,
+  type PluginAgentSessionCompactionCapabilityV2,
+  type AgentSessionCompactionCapability,
+  type AgentSessionCompactionIdleCapability,
   PluginAgentSessionCapabilitiesV2Schema,
   type PluginAgentSessionCapabilitiesV2,
 } from './agentSessionCapabilities.js';
@@ -408,6 +412,10 @@ export type PluginAgentRuntimeV2 = z.infer<typeof PluginAgentRuntimeV2Schema>;
 // module so small runtime contracts can consume it without importing this
 // aggregate manifest. It is re-exported here unchanged for manifest consumers.
 export {
+  PluginAgentSessionCompactionCapabilityV2Schema,
+  type PluginAgentSessionCompactionCapabilityV2,
+  type AgentSessionCompactionCapability,
+  type AgentSessionCompactionIdleCapability,
   PluginAgentSessionCapabilitiesV2Schema,
   type PluginAgentSessionCapabilitiesV2,
 };

@@ -220,7 +220,7 @@ describe('plugin session runtime adapters', () => {
         return createNativeAgentSessionOperations(native, 'host-session-1', undefined, undefined, undefined, undefined, undefined, {
           context: { signal: new AbortController().signal } as AgentSessionRuntimeContext,
           cwd: host.directory, connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-          cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+          cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
         }, publications);
       },
     });
@@ -279,7 +279,7 @@ describe('plugin session runtime adapters', () => {
       context: { signal: new AbortController().signal } as AgentSessionRuntimeContext,
       cwd: '/tmp/plugin-backend', connectedAccounts: [],
       capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-      cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+      cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
     });
     const plan = await createPublicPluginSessionRuntimePlan({
       backend: createBackendFixture(), agent: createAgentFixture(),

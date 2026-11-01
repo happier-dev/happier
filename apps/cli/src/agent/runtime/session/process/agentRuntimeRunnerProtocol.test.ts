@@ -158,6 +158,13 @@ describe('Runner Agent protocol', () => {
     const deliveredRequest = { ...request, skills, mcpServersStrictMode: true };
     expect(AgentRuntimeDaemonSessionOpenRequestV1Schema.parse(deliveredRequest).skills).toEqual(skills);
     expect(AgentRuntimeDaemonSessionOpenRequestV1Schema.parse(deliveredRequest).mcpServersStrictMode).toBe(true);
+    const idleCompaction = { enabled: false, minContextTokens: 0 };
+    expect(AgentRuntimeDaemonSessionOpenRequestV1Schema.parse({ ...request, idleCompaction }).idleCompaction).toEqual(idleCompaction);
+    expect(projectAgentRuntimeDaemonSessionOpenAttestationRequestV1({ ...request, idleCompaction })).toMatchObject({ idleCompaction });
+    for (const invalid of [
+      { enabled: true, cacheWindowOverrideMs: 1 }, { enabled: true, minContextTokens: -1 },
+      { enabled: true, minContextTokens: 0.5 }, { enabled: true, minContextTokens: Number.MAX_SAFE_INTEGER + 1 },
+    ]) expect(AgentRuntimeDaemonSessionOpenRequestV1Schema.safeParse({ ...request, idleCompaction: invalid }).success).toBe(false);
     expect(projectAgentRuntimeDaemonSessionOpenAttestationRequestV1(deliveredRequest)).toEqual({ ...request, mcpServersStrictMode: true });
     expect(AgentRuntimeDaemonSessionOpenAttestationRequestV1Schema.safeParse(deliveredRequest).success).toBe(false);
     for (const invalidSkills of [

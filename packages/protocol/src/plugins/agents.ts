@@ -30,3 +30,9 @@ export {
 export {
   ExternalAgentObservationLeafFactV1Schema,
 } from '../sessions/external/externalAgentObservationV1.js';
+export {
+  PluginAgentSessionCompactionCapabilityV2Schema,
+  type PluginAgentSessionCompactionCapabilityV2,
+  type AgentSessionCompactionCapability,
+  type AgentSessionCompactionIdleCapability,
+} from './contributions/agentSessionCapabilities.js';

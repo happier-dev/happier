@@ -238,7 +238,7 @@ describe('runSessionLoopLifecycle presence renewal', () => {
     const runtime = createNativeAgentSessionOperations(provider, 'session-1', undefined, undefined, undefined, undefined, undefined, {
       context: {} as AgentSessionRuntimeContext, cwd: '/workspace', connectedAccounts: [],
       capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-      cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+      cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
     });
     const fixture = createMutableApiSessionClientFixture({ sessionId: 'session-1', metadata: createMetadata() });
     const session = Object.assign(fixture, {
@@ -299,7 +299,7 @@ describe('runSessionLoopLifecycle presence renewal', () => {
     const runtime = createNativeAgentSessionOperations(provider, 'session-1', undefined, undefined, undefined, undefined, undefined, {
       context: {} as AgentSessionRuntimeContext, cwd: '/workspace', connectedAccounts: [],
       capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-      cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+      cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
     });
     const fixture = createMutableApiSessionClientFixture({ sessionId: 'session-1', metadata: createMetadata() });
     let acknowledgeTerminal!: () => void;
@@ -1701,7 +1701,7 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
     const runtime = createNativeAgentSessionOperations(provider, 'session-1', undefined, undefined, undefined, undefined, undefined,
       { context: { signal: new AbortController().signal } as AgentSessionRuntimeContext,
         cwd: '/workspace', connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-        cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false } });
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null } });
     try {
       await runSessionLoopLifecycle({ ...base, runtime, hookRuntime: runtime,
         permissionModeState: { ...base.permissionModeState, messageQueue: queue },
@@ -1821,7 +1821,7 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
           context: { signal: new AbortController().signal } as AgentSessionRuntimeContext,
           cwd: '/workspace', connectedAccounts: [],
           capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-          cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+          cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
         },
         undefined, [], undefined, undefined,
         async (witness) => {
@@ -1943,7 +1943,7 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
         },
         cancellation: { declared: false },
         configuration: { declared: false },
-        manualCompaction: { declared: false },
+        compaction: { capability: null },
       },
       undefined,
       [],
@@ -2099,7 +2099,7 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
         listener?.(canonicalRuntimeEvent({ kind: 'turn-cancelled', sessionId: 'session-1', emittedAtMs: 2, turnId, cause: 'user' }));
         return { status: 'requested', turnId };
       } },
-      configuration: { declared: false }, manualCompaction: { declared: false },
+      configuration: { declared: false }, compaction: { capability: null },
     });
     const abortTurn: { current?: (() => void | Promise<void>) | null } = {};
     let readTurnSignal: (() => AbortSignal) | undefined;
@@ -2271,7 +2271,7 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
         listener?.(canonicalRuntimeEvent({ kind: 'turn-cancelled', sessionId: session.sessionId, emittedAtMs: 2, turnId, cause: 'user' }));
         return { status: 'requested', turnId };
       } },
-      configuration: { declared: false }, manualCompaction: { declared: false },
+      configuration: { declared: false }, compaction: { capability: null },
     });
     let readTurnSignal: (() => AbortSignal) | undefined;
     let terminate: ((event: RunnerTerminationEvent) => void) | undefined;
@@ -2456,7 +2456,7 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
           turnId, emittedAtMs: 2, cause: 'user' }));
         return { status: 'requested', turnId };
       } },
-      configuration: { declared: false }, manualCompaction: { declared: false },
+      configuration: { declared: false }, compaction: { capability: null },
     });
     let stop: (() => Promise<void>) | undefined;
     let termination: ReturnType<typeof registerRunnerTerminationHandlers> | undefined;
@@ -2697,7 +2697,7 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
       context: { signal: new AbortController().signal } as AgentSessionRuntimeContext,
       cwd: '/workspace', connectedAccounts: [],
       capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-      cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+      cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
     });
     let closed = false;
     const outcomes: unknown[] = [];
@@ -3617,7 +3617,7 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
             context: { signal: new AbortController().signal } as AgentSessionRuntimeContext,
             cwd: '/workspace', connectedAccounts: [],
             capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-            cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+            cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
           }, undefined, [], undefined, undefined, async () => ({ status: 'admitted' }),
         );
         const reports: unknown[] = [];
@@ -4490,7 +4490,7 @@ describe('runSessionLoopLifecycle required transcript admission', () => {
       const runtime = createNativeAgentSessionOperations(provider, 'session-1', undefined, undefined, undefined, undefined, undefined, {
         context: {} as AgentSessionRuntimeContext, cwd: '/workspace', connectedAccounts: [],
         capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-        cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
       });
       const committedBodies: unknown[] = [];
       const session = Object.assign(base.session, {

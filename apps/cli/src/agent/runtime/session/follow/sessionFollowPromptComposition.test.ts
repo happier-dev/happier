@@ -183,7 +183,7 @@ describe('Session Follow prompt composition through the canonical owner', () => 
             // The selected newTurn-only external fixture consumes only cancellation.
             context: { signal } as AgentSessionRuntimeContext, cwd: '/tmp', connectedAccounts: [],
             capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-            cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+            cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
           });
         const settled: string[] = [];
         const binding = createSessionProviderInputOutcomeBinding({

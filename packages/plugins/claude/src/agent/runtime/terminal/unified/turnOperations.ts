@@ -106,6 +106,7 @@ import { createClaudePermissionHookHandler } from '../../shared/permissionHookHa
 import { createClaudeUnifiedPromptEchoSuppressor } from './promptEchoSuppression.js';
 import { readClaudeJsonlRowTimestampMs } from '../../../transcripts/jsonlReplaySuppression.js';
 import { classifyClaudeNativeTranscriptRow } from '../../../transcripts/nativeSemanticProjection.js';
+import { createClaudeUnifiedCompactionProjection } from './compaction.js';
 import { isClaudeTaskLifecycleResultEnvelope, readClaudeTaskLifecycleEnvelope } from '../../../transcripts/taskNotification.js';
 import { createClaudeUnifiedTerminalOriginLocalIdAllocator } from './terminalOriginLocalIds.js';
 import { buildClaudeJsonlProviderFactLocalIdFromParts } from '../../../transcripts/providerFactIdentity.js';
@@ -383,6 +384,7 @@ export type ClaudeUnifiedTerminalTurnOperationsParams = Readonly<{
   hostPreference: TerminalHostPreference;
   launchEnv: Readonly<Record<string, string>>;
   skills?: AgentSessionSkillDelivery;
+  idleCompaction?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionOpenRequest['idleCompaction'];
   mcpToolPolicy?: Readonly<Record<string, AgentSessionMcpToolPolicy>>;
   mcpServers?: Readonly<Record<string, unknown>>;
   helperModelEnv?: ClaudeHelperModelEnv;
@@ -477,6 +479,7 @@ type ClaudeUnifiedPromptDeliveryBlockerClear = Readonly<{
 }>;
 
 export type ClaudeUnifiedTerminalNativeRuntime = ClaudeRuntimeTurnOperations & Readonly<{
+  compact: NonNullable<AgentSessionRuntime['compact']>;
   refreshSkills: NonNullable<AgentSessionRuntime['refreshSkills']>;
   prepareTerminalPresentation: NonNullable<AgentSessionRuntime['prepareTerminalPresentation']>;
   promptCustody: 'unified_terminal';
@@ -784,7 +787,10 @@ export function createClaudeUnifiedTerminalTurnOperations(
     ...(params.publishGoalWorkState
       ? { publishWorkStateSnapshot: params.publishGoalWorkState }
       : {}),
-    injectGoalCommand: async (message) => await injectGoalCommand(message),
+    injectGoalCommand: async (message) => {
+      await injectTurnNeutralControlCommand(message);
+      return { kind: 'sent-to-terminal' };
+    },
     logError: (message, error) => { params.ctx.logger.debug(`[ClaudeUnifiedTerminal] ${message}`, { error }); },
   });
   // Centralized Claude Dynamic Workflow ACTIVITY runtime (CWF2/CWF3/CWF4). Observes the SAME raw
@@ -847,6 +853,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
       }
     }
   }
+  const compactionProjection = createClaudeUnifiedCompactionProjection();
+  let requestedManualCompactionId: string | null = null;
   const providerTranscriptPublisher = createClaudeUnifiedProviderTranscriptPublisher({
     ctx: params.ctx,
     onSourceFollowFailure: noteRequiredSourceHistoryLost,
@@ -867,6 +875,17 @@ export function createClaudeUnifiedTerminalTurnOperations(
         });
       }
       const replayingSource = observation.phase === 'initial_replay';
+      if ((observation.orderedSource || replayingSource)
+        && isClaudeUnifiedPrimaryTranscriptRow(row, observation.providerSessionId)) {
+        for (const compaction of compactionProjection.observe(row, observation.providerSessionId,
+          readClaudeJsonlRowTimestampMs(row) ?? Date.now())) {
+          const manualCompactionId = compaction.trigger === 'manual' ? requestedManualCompactionId : null;
+          if (manualCompactionId) requestedManualCompactionId = null;
+          publishClaudeUnifiedRuntimeEvent({ handlers, logger: params.ctx.logger,
+            event: { kind: 'context-compaction', sessionId: params.happierSessionId, ...compaction,
+              ...(manualCompactionId ? { compactionId: manualCompactionId, trigger: 'manual' } : {}) } });
+        }
+      }
       if (!observation.historicalReplay) await resumeChoiceStartupHandler?.observeTranscript(row);
       // Replay pages already display ordinary tool results; only task projections are runtime-owned there.
       const orderedTaskResult = isClaudeTaskLifecycleResultEnvelope(readClaudeTaskLifecycleEnvelope(row));
@@ -1808,7 +1827,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     },
   });
 
-  async function injectGoalCommand(message: string): Promise<ClaudeGoalCommandDelivery> {
+  async function injectTurnNeutralControlCommand(message: string): Promise<void> {
     assertExplicitResumeIdentityDidNotFail();
     await observeCurrentReadiness();
     state.promptNonce += 1;
@@ -1820,7 +1839,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
     const delivery = arbiter.enqueueTurnNeutralControl(input);
     ensureReadinessWake();
     await delivery;
-    return { kind: 'sent-to-terminal' };
   }
 
   function scheduleQueuedBannerCustodyCheck(input: TerminalPromptInput, acceptedAs: 'new_turn' | 'in_flight_steer'): void {
@@ -1985,6 +2003,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
             mcpToolPolicy: params.mcpToolPolicy,
             permissionMode: mapToClaudePermissionMode(launchPermissionMode),
             launchSettings: settingsOverlay,
+            idleCompaction: params.idleCompaction,
             workspaceWrites: launchWorkspaceWrites,
             helperModelEnv: params.helperModelEnv,
             allowedTools: params.allowedTools,
@@ -3543,6 +3562,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       return () => usageObservationListeners.delete(listener);
     },
     beginProviderTurn(turnId) {
+      requestedManualCompactionId = null;
       publishedAssistantReply = null;
       pendingStopReply = null;
       publishProviderTaskInventory('new-turn');
@@ -3563,6 +3583,23 @@ export function createClaudeUnifiedTerminalTurnOperations(
         hostSessionName: handle.sessionName,
         ...(handle.paneId ? { paneId: handle.paneId } : {}),
       };
+    },
+    async compact(request, options) {
+      if (request.trigger !== 'manual') return { status: 'unsupported', retryable: false,
+        diagnostic: { code: 'unsupported', severity: 'info', message: 'Claude manages native idle compaction.' } };
+      if (state.disposed || options?.signal?.aborted) return { status: 'unavailable', retryable: false,
+        diagnostic: { code: 'unavailable', severity: 'warning', message: 'The native Claude command is unavailable.' } };
+      if (requestedManualCompactionId) return { status: 'rejected', retryable: true,
+        diagnostic: { code: 'compaction_in_progress', severity: 'info', message: 'A manual compaction is already pending.' } };
+      requestedManualCompactionId = request.compactionId;
+      try {
+        await injectTurnNeutralControlCommand(`/compact${request.instructions ? ` ${request.instructions}` : ''}`);
+        return { status: 'admitted' };
+      } catch (error) {
+        requestedManualCompactionId = null;
+        return { status: 'unavailable', retryable: false,
+          diagnostic: { code: 'unavailable', severity: 'warning', message: error instanceof Error ? error.message : 'The native Claude command failed.' } };
+      }
     },
     async sendProviderTurnPrompt(prompt: string, meta?: ClaudeUnifiedPromptDeliveryMeta) {
       assertExplicitResumeIdentityDidNotFail();
@@ -4197,14 +4234,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
         } as const;
         const acceptedCompactPrompt = await nativeRuntime.confirmProviderAcceptance(compactAcceptanceEvidence);
         const completesActiveCompactPrompt = acceptedCompactPrompt || isCompactPromptText(state.activePromptText);
-        publishClaudeUnifiedRuntimeEvent({
-          handlers, logger: params.ctx.logger,
-          event: { kind: 'context-compaction', sessionId: params.happierSessionId, emittedAtMs: Date.now(),
-            compactionId: observation.agentEventId ?? randomUUID(), phase: 'completed',
-            trigger: completesActiveCompactPrompt ? 'manual' : 'unknown',
-            ...(state.activeTurnId ? { turnId: state.activeTurnId } : {}),
-          },
-        });
         arbiter.observeCompaction({ phase: 'completed' });
         if (completesActiveCompactPrompt) {
           state.providerAccepted = true;

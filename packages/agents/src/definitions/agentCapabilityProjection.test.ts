@@ -23,6 +23,15 @@ const MINIMAL_SESSIONS = {
 } as const;
 
 describe('projectAgentCapabilitiesV2FromDefinition', () => {
+  it('projects the single definition-owned compaction descriptor to its manifest', () => {
+    const compaction = { events: true, idle: { mode: 'native', defaultEnabled: true, nativeHonorsMinimum: true, defaultMinContextTokens: 200000 } } as const;
+    const projected = projectAgentCapabilitiesV2FromDefinition({
+      ...NO_CAPABILITIES, sessionCapabilities: { ...NO_CAPABILITIES.sessionCapabilities, compaction },
+    }, { sessions: MINIMAL_SESSIONS });
+    expect(projected.sessions.compaction).toEqual(compaction);
+    expect(projectAgentCapabilitiesV2FromDefinition(NO_CAPABILITIES, { sessions: MINIMAL_SESSIONS }).sessions)
+      .not.toHaveProperty('compaction');
+  });
   it('projects MCP control and loading only from explicit definition facts', () => {
     expect(projectAgentCapabilitiesV2FromDefinition({ ...NO_CAPABILITIES, tools: {
       delivery: 'native_mcp', mcpToolControl: { off: 'blocked', approval: 'host' }, mcpToolLoading: 'on_demand', mcpToolCallIdMetaKey: 'fixture/nativeCall',
@@ -256,7 +265,7 @@ function withoutDefinitionOwnedFacts(capabilities: Readonly<Record<string, unkno
       Object.entries({
         ...publishedSessions,
         open: (publishedSessions.open as readonly string[]).filter((route) => route !== 'fork'),
-      }).filter(([key]) => key !== 'conversationRollback'),
+      }).filter(([key]) => key !== 'conversationRollback' && key !== 'compaction'),
     )
     : undefined;
   return {

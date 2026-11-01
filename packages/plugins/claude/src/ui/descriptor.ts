@@ -57,6 +57,14 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
   },
   behavior: {
     descriptorId: 'claude.uiBehavior.v1',
+    payload: {
+      sessionExtras: {
+        values: ['agentSdk', 'unifiedTerminal'],
+        settingKey: { scope: 'account', localId: 'claudeUnifiedTerminalEnabled' },
+        booleanValues: { true: 'unifiedTerminal', false: 'agentSdk' },
+        defaultValue: 'agentSdk',
+      },
+    },
     // The attached-terminal viewer and the pending-input custody presentation are
     // host-owned decisions over host-owned facts (`terminal.controlServiceabilityV1`
     // and the `pendingInputInterruptAndRunLocalId` runtime capability). Claude only

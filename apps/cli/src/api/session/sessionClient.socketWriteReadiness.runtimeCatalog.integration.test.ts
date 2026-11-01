@@ -554,7 +554,7 @@ describe('ApiSessionClient socket write readiness', () => {
     const runtime = createNativeAgentSessionOperations(provider, session.id, undefined, undefined, undefined, undefined, undefined, {
       context: {} as AgentSessionRuntimeContext, cwd: '/tmp/native-offline-close', connectedAccounts: [],
       capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false }, cancellation: { declared: false },
-      configuration: { declared: false }, manualCompaction: { declared: false },
+      configuration: { declared: false }, compaction: { capability: null },
     });
     const base = createLifecycleParams({ runPermissionModePromptLoopFn: runPermissionModePromptLoop });
     const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
@@ -849,7 +849,7 @@ describe('ApiSessionClient socket write readiness', () => {
             goals: { source: 'goals', active: { get: true, clear: true,
               set: { fields: ['objective', 'status', 'tokenBudget'], writableStatuses: ['active', 'paused', 'complete'] } } } },
           goals: runtime.sessions.goals, cancellation: { declared: false }, configuration: { declared: false },
-          manualCompaction: { declared: false } });
+          compaction: { capability: null } });
       try {
         expect(requests.some(request => request.method === 'thread/goal/get')).toBe(true);
         expect(readSessionWorkStateV1FromMetadata(client.getMetadataSnapshot())).toEqual(retained);

@@ -179,12 +179,13 @@ const AgentUiPayloadSchema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('static'),
     value: z.record(z.string(), SpawnConfigOptionValueSchema),
   })),
-  /** A setting-backed session configuration option contributed on create. */
+  /** A configured runtime selection; an output key also contributes a create-time configuration option. */
   sessionExtras: z.optional(z.strictObject({
-    outputKey: AgentUiIdSchema,
+    outputKey: z.optional(AgentUiIdSchema),
     values: AgentUiIdArraySchema.check(z.minLength(1)),
     settingKey: z.optional(AgentUiSettingReferenceSchema),
     aliases: z.optional(AgentUiStringRecordSchema),
+    booleanValues: z.optional(z.strictObject({ true: AgentUiIdSchema, false: AgentUiIdSchema })),
     defaultValue: z.optional(AgentUiIdSchema),
   })),
   environmentVariables: z.optional(AgentUiEnvironmentVariablesSchema),

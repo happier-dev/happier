@@ -28,6 +28,48 @@ an unknown or unavailable target stays absent.
 
 ---
 
+## Session compaction capabilities and preferences (0.3 development)
+
+The Agent definition owns `capabilities.sessions.compaction`: `events: true`,
+optional `manual: true`, and optional `idle` support. Protocol's
+`AgentSessionCompactionCapability` is the shared descriptor; bundled manifests,
+Agents projections and the public runtime SDK consume that declaration. There
+is no separate SupportLevel grammar or bundled manifest capability literal.
+An opened runtime's published capability takes precedence over the catalog;
+omitted or null compaction in that publication means unsupported. Before open,
+the plugin's existing terminal-presentation selection can supply the selected
+mode's descriptor without the host interpreting its opaque runtime descriptor.
+
+Before a Session opens, the UI reads the configured runtime through the plugin's
+`sessionExtras` behavior declaration and the shared registry resolver. A declaration
+can omit `outputKey` when it selects a runtime without adding a spawn option;
+`booleanValues` maps boolean preferences to runtime kinds and `defaultValue`
+handles an absent preference. Claude maps `claudeUnifiedTerminalEnabled` to
+`unifiedTerminal` or `agentSdk` here, so native mode omits the host cache-window row.
+
+The host owns three deliberate per-Agent Account preferences through
+`agentPreferenceStorage`: `sessionIdleCompactionEnabledByTargetKey`,
+`sessionIdleCompactionMinContextTokensByTargetKey`, and
+`sessionIdleCompactionCacheWindowOverrideMsByTargetKey`. The same
+`resolveIdleCompactionPreference` resolves descriptor defaults and explicit
+values for UI and CLI. The CLI captures the resolved preference once when a
+Session starts and reuses it across native reopen. Preference changes apply to
+the next Session. Observed context size, cache clocks and scheduling state never
+belong in these maps.
+
+Native-mode launch receives only enabled and a declared, honored minimum;
+cache-window overrides apply to host scheduling. Host mode uses the default
+minimum only when no explicit minimum is stored. Clearing a target restores its
+descriptor default; **Automatic** clears only that target's cache window. The
+maximum window is the platform's single-timer maximum, 2,147,483,647 ms; invalid
+values are rejected rather than silently clamped. See the existing
+[settings Actions](actions.md#idle-compaction-preferences-03-development) and
+[runtime owner](runtime-core.md#idle-compaction-unreleased-03).
+
+This describes unreleased 0.3 development behavior, not loaded-runtime or release
+certification. Nondeclaring Agents and finite Execution Runs have no idle
+Session preference or scheduler.
+
 ## Key concepts (shared language)
 
 - **AgentId**: canonical routing id for an agent across packages (CLI + app + server).

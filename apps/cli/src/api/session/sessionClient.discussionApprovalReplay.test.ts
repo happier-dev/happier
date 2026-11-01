@@ -673,7 +673,7 @@ it.each([
         const runtime = createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined, {
           context: contextFixture.context, cwd: '/workspace', connectedAccounts: [],
           capabilities: { open: ['create'], delivery: ['newTurn'], cancel: true },
-          cancellation: { declared: true, cancel }, configuration: { declared: false }, manualCompaction: { declared: false },
+          cancellation: { declared: true, cancel }, configuration: { declared: false }, compaction: { capability: null },
         });
         const running = runSessionLoopLifecycle({
           ...base, session: lifecycleSession, runtime, hookRuntime: runtime,

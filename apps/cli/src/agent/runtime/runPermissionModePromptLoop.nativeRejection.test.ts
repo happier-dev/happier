@@ -56,7 +56,7 @@ describe('native prompt loop non-admission recovery', () => {
                     cwd: '/repo', connectedAccounts: [],
                     capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
                     cancellation: { declared: false }, configuration: { declared: false },
-                    manualCompaction: { declared: false },
+                    compaction: { capability: null },
                 }, undefined, [], undefined, undefined,
                 async (_witness, { signal }) => {
                     if (++admissionCount === 1 && failure === 'slow_cleanup') {

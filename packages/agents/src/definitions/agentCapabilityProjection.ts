@@ -38,6 +38,7 @@ export type AgentDefinitionCapabilityFacts = Readonly<{
       checkNow: string;
     }>;
     usageReporting?: string;
+    compaction?: PluginAgentSessionCapabilitiesV2['compaction'] | null;
   }>;
   localControl?: AgentLocalControlDeclaration | null;
   tools?: Readonly<{
@@ -75,11 +76,11 @@ export type AuthoredAgentCapabilitySurfaceV2 = Exclude<PluginAgentCapabilitySurf
  *
  * The definition-owned facts are absent from this type on purpose: the
  * compiler, not a review convention, is what stops a manifest from stating
- * `'fork'`, `conversationRollback`, usage reporting/recovery, tool delivery or
+ * `'fork'`, `conversationRollback`, compaction, usage reporting/recovery, tool delivery or
  * the `'terminal'` surface a second time.
  */
 export type AuthoredAgentSessionCapabilitiesV2 =
-  & Omit<PluginAgentSessionCapabilitiesV2, 'open' | 'conversationRollback' | 'usageLimitRecovery' | 'usageReporting'>
+  & Omit<PluginAgentSessionCapabilitiesV2, 'open' | 'conversationRollback' | 'usageLimitRecovery' | 'usageReporting' | 'compaction'>
   & Readonly<{ open: readonly AuthoredAgentSessionOpenRouteV2[] }>;
 
 export type AuthoredAgentCapabilitiesV2 = Readonly<{ skills?: PluginAgentSkillsCapabilityV2 }> & (
@@ -198,6 +199,7 @@ export function projectAgentCapabilitiesV2FromDefinition(
       ],
       ...(declaresConversationRollback(facts) ? { conversationRollback: true as const } : {}),
       ...(facts.sessionCapabilities.usageReporting === 'supported' ? { usageReporting: true as const } : {}),
+      ...(facts.sessionCapabilities.compaction ? { compaction: facts.sessionCapabilities.compaction } : {}),
       ...(declaresUsageLimitRecoveryCheckNow(facts)
         ? {
           usageLimitRecovery: {

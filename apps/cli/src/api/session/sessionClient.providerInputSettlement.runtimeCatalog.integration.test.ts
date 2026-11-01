@@ -1029,7 +1029,7 @@ describe('ApiSessionClient provider-input settlement', () => {
       undefined, undefined, {
         context, cwd: '/tmp/claude-project', connectedAccounts: [],
         capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-        cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
       }, publications, [], lifecycle);
     try {
       // Server materialization is already owned by the real Pending client before dispatch.

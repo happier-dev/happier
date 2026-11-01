@@ -354,6 +354,8 @@ export {
 export {
   UNSUPPORTED_AGENT_SESSION_CAPABILITIES,
   evaluateAgentSessionCapabilitySupport,
+  evaluateAgentSessionCompactionCapability,
+  readEffectiveAgentSessionCompactionCapability,
   getAgentSessionCapabilities,
   getAgentSessionCapability,
   isAgentSessionCapabilitySupported,

@@ -107,7 +107,7 @@ async function composeCustody(identity: 'matching' | 'missing-session' | 'foreig
     const context = { signal: lifetime.signal } as AgentSessionRuntimeContext;
     const host = createNativeAgentSessionOperations(native, sessionId, undefined, undefined, undefined, undefined, undefined, {
         context, cwd: '/repo', connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-        cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
     });
     const binding = createSessionProviderInputOutcomeBinding({ getTarget: () => ({ sessionId,
         hasPendingProviderInput: localId => localId === inputId,

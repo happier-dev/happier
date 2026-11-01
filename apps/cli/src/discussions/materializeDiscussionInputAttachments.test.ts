@@ -136,7 +136,7 @@ describe('Discussion source at actual provider preparation', () => {
         const runtime = createNativeAgentSessionOperations(native, sessionId, () => context.dispose(), undefined, undefined,
           undefined, undefined, { context: context.context, cwd: workspace, connectedAccounts: [],
             capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-            cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false } });
+            cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null } });
         try {
           await runtime.sendTurnPrompt(prepared.renderPrompt(), { localId: 'original', turnId: 'answer-turn',
             ...(prepared.structuredInput ? { structuredInput: prepared.structuredInput } : {}) });

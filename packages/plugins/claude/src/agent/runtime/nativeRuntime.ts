@@ -1,3 +1,4 @@
+import { AGENT_DEFINITION } from '../definition.js';
 import type {
   AgentExecutionRunConversationEventV1,
   AgentExecutionRunConversationRuntimeV1,
@@ -470,6 +471,10 @@ async function submitClaudeProviderInput(
   return await operations.sendProviderTurnPrompt(prompt, meta);
 }
 
+function readClaudeSessionCompactionCapability(mode: 'agentSdk' | 'unifiedTerminal') {
+  return AGENT_DEFINITION.core.runtimeKinds.byKind[mode].overrides.sessionCapabilities.compaction;
+}
+
 /**
  * Native AgentRuntime projection over Claude's provider operations. This consumes the operation
  * owner directly: the reachable native path never constructs or adapts a predecessor session
@@ -785,7 +790,13 @@ export function createClaudeNativeSessionRuntimeFromOperations(
         return await operations.refreshSkills!(...args);
       },
     } : {}),
-    ...(unifiedPromptAcceptanceOperations ? { runtimeCapabilities: { localControl: { supported: false } } } : {}),
+    runtimeCapabilities: {
+      sessionCapabilities: {
+        ...AGENT_DEFINITION.core.sessionCapabilities,
+        compaction: readClaudeSessionCompactionCapability(unifiedPromptAcceptanceOperations ? 'unifiedTerminal' : 'agentSdk'),
+      },
+      ...(unifiedPromptAcceptanceOperations ? { localControl: { supported: false } } : {}),
+    },
     ...(operations.prepareTerminalPresentation ? {
       async prepareTerminalPresentation(presentationRequest: Parameters<NonNullable<AgentSessionRuntime['prepareTerminalPresentation']>>[0]) {
         if (disposed) throw new Error('Claude runtime is disposed.');
@@ -1346,6 +1357,7 @@ export function createClaudeNativeRuntime(
         return {
           kind: unified && (host === 'tmux' || host === 'zellij') ? 'managed_terminal' : 'runner',
           startingMode: unified ? 'terminal' : 'remote',
+          compaction: readClaudeSessionCompactionCapability(unified ? 'unifiedTerminal' : 'agentSdk'),
           ...(unified ? { retainedTerminalRecovery: 'adopt' as const } : {}),
           runtimeDescriptorV1: {
             ...(source?.agentId === 'claude' ? source : {}),

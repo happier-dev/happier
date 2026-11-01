@@ -5,6 +5,8 @@ import { isForegroundTurnRuntimeTranscriptEvent } from '@/agent/runtime/session/
 import { readRegistryCatalogHook } from '@/agent/catalog/runtimeEntry';
 import { projectNativeVendorPluginCatalog } from '@/session/catalogControls/nativeVendorPluginCatalog';
 import { randomUUID } from 'node:crypto';
+import { nativeIdleCompactionOpenPreference, resolveSessionIdleCompactionSeed } from '@/settings/agents/idleCompactionSeed';
+import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { AsyncLock } from '@/utils/lock';
 import { probeMcpStdioServerTools } from '@/mcp/servers/probeMcpStdioServerTools';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
@@ -39,6 +41,7 @@ import { SessionRuntimeIssueSourceV1Schema } from '@happier-dev/protocol/session
 import type { ExternalSessionsSource, SessionEnvOverlayV1, SessionRuntimeIssueV1, SessionInputCausalPermissionAuthorityV1, PluginMachineMaterializationRefV1, PluginSourceCustodyV1, AgentStartSessionCallerV1, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 import {
     getAgentLocalControlCapability,
+    readEffectiveAgentSessionCompactionCapability,
     parsePermissionIntentAlias,
     readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata,
     resolvePermissionIntentFromSessionMetadata,
@@ -1457,6 +1460,7 @@ function buildNativeAgentSessionOpenInputs(
     buildOptions: Readonly<{
         allowPendingProviderBinding?: boolean;
         sessionConnectedAccounts?: NonNullable<AgentSessionOpenRequest['connectedAccounts']>;
+        idleCompaction?: AgentSessionOpenRequest['idleCompaction'];
     }> = {},
 ): Readonly<{
     sessionDirectoryKind: NonNullable<AgentSessionOpenRequest['sessionDirectoryKind']>;
@@ -1466,6 +1470,7 @@ function buildNativeAgentSessionOpenInputs(
     stateSharing: NonNullable<AgentSessionOpenRequest['stateSharing']>;
     connectedAccounts?: NonNullable<AgentSessionOpenRequest['connectedAccounts']>;
     providerBinding?: NonNullable<AgentSessionOpenRequest['providerBinding']>;
+    idleCompaction?: AgentSessionOpenRequest['idleCompaction'];
 }> {
     const sessionDirectoryKind = readSessionDirectoryKind(metadata);
     const stateSharing = resolveNativeAgentSessionStateSharingPolicy(agentId);
@@ -1547,6 +1552,7 @@ function buildNativeAgentSessionOpenInputs(
             ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
             configuration,
             stateSharing,
+            ...(buildOptions.idleCompaction ? { idleCompaction: buildOptions.idleCompaction } : {}),
             ...(connectedAccounts ? { connectedAccounts } : {}),
         });
     }
@@ -1558,6 +1564,7 @@ function buildNativeAgentSessionOpenInputs(
                 ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
                 configuration,
                 stateSharing,
+                ...(buildOptions.idleCompaction ? { idleCompaction: buildOptions.idleCompaction } : {}),
                 ...(connectedAccounts ? { connectedAccounts } : {}),
             });
         }
@@ -1587,6 +1594,7 @@ function buildNativeAgentSessionOpenInputs(
         ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
         configuration,
         stateSharing,
+        ...(buildOptions.idleCompaction ? { idleCompaction: buildOptions.idleCompaction } : {}),
         ...(connectedAccounts ? { connectedAccounts } : {}),
         providerBinding: projectAgentSessionProviderBindingV1({
             metadata: providerBindingMetadata,
@@ -1726,7 +1734,7 @@ type NativeAgentSessionDirectFacets = Readonly<{
     capabilities: AgentSessionCapabilities;
     cancellation: NativeAgentSessionCancellation;
     configuration: NativeAgentSessionConfiguration;
-    manualCompaction: NativeAgentSessionManualCompaction;
+    compaction: NativeAgentSessionCompaction;
 }>;
 
 type NativeAgentSessionCancellation =
@@ -1781,37 +1789,31 @@ function resolveNativeAgentSessionConfiguration(
     };
 }
 
-type NativeAgentSessionManualCompaction =
-    | Readonly<{ declared: false }>
-    | Readonly<{
-        declared: true;
-        compact: NonNullable<AgentSessionRuntime['compact']>;
-    }>;
+type NativeAgentSessionCompaction = Readonly<{
+    capability: import('@happier-dev/protocol/plugins/agents').AgentSessionCompactionCapability | null;
+    compact?: NonNullable<AgentSessionRuntime['compact']>;
+}>;
 
-function resolveNativeAgentSessionManualCompaction(
+function resolveNativeAgentSessionCompaction(
     agentId: string,
     capabilities: AgentSessionCapabilities,
     session: AgentSessionRuntime,
-): NativeAgentSessionManualCompaction {
-    const runtimeSupport = session.runtimeCapabilities
-        ?.sessionCapabilities
-        ?.compaction
-        ?.manual;
-    const supported = runtimeSupport === undefined
-        ? capabilities.compaction?.manual === true
-        : runtimeSupport === 'supported';
-    if (!supported) return { declared: false };
+): NativeAgentSessionCompaction {
+    const capability = readEffectiveAgentSessionCompactionCapability({
+        declaredCapability: capabilities.compaction,
+        publishedSessionCapabilities: session.runtimeCapabilities?.sessionCapabilities,
+    });
+    if (capability?.manual !== true && capability?.idle?.mode !== 'host') return { capability };
     const compact = session.compact;
     if (typeof compact !== 'function') {
         throw new PluginError({
             code: 'agent_session_manual_compaction_contract_mismatch',
-            message: `Native Agent '${agentId}' publishes manual compaction support but its session runtime does not implement compact`,
+            message: `Native Agent '${agentId}' publishes ${capability.manual ? 'manual' : 'host idle'} compaction support but its session runtime does not implement compact`,
         });
     }
-    return {
-        declared: true,
-        compact: (request) => compact.call(session, request),
-    };
+    return { capability, compact: (request, options) => options === undefined
+        ? compact.call(session, request)
+        : compact.call(session, request, options) };
 }
 
 type NativeAgentSessionInteractionLifecycle = Readonly<{
@@ -2412,7 +2414,7 @@ export function createNativeAgentSessionInteractionOperations(params: Readonly<{
                 capabilities,
                 params.session,
             ),
-            manualCompaction: resolveNativeAgentSessionManualCompaction(
+            compaction: resolveNativeAgentSessionCompaction(
                 params.context.agent.id,
                 capabilities,
                 params.session,
@@ -3626,7 +3628,16 @@ export function createNativeAgentSessionOperations(
                 : {}),
         })
         : Object.freeze({});
-    const manualCompaction = directFacets.manualCompaction;
+    const compaction = directFacets.compaction;
+    const compact: AgentSessionRuntime['compact'] = compaction.compact
+        ? async (request, options) => {
+            if (disposeStarted || invariant.read().runtimeEnded) {
+                throw new Error('Native Agent runtime is ended, disposing, or disposed');
+            }
+            ensureSubscription();
+            return await compaction.compact!(request, options);
+        }
+        : undefined;
     const operations: PluginRuntimeHookOperations = Object.freeze({
         ...directHostControls,
         isProviderNativeCommand(prompt: string) {
@@ -4282,7 +4293,9 @@ export function createNativeAgentSessionOperations(
                     : `Native Agent runtime cancel is ${result.status}`,
             );
         },
-        ...(manualCompaction.declared === true
+        readSessionCompactionCapability: () => compaction.capability,
+        ...(compact ? { compact } : {}),
+        ...(compaction.capability?.manual === true && compact
             ? {
                 async compactContext(command: string) {
                     if (disposeStarted || invariant.read().runtimeEnded) {
@@ -4291,7 +4304,7 @@ export function createNativeAgentSessionOperations(
                     ensureSubscription();
                     const normalized = command.trim();
                     const instructions = normalized.replace(/^\/compact(?:\s+|$)/u, '').trim();
-                    const result = await manualCompaction.compact({
+                    const result = await compact({
                         compactionId: `host-compact-${randomUUID()}`,
                         trigger: 'manual',
                         ...(instructions ? { instructions } : {}),
@@ -4603,6 +4616,13 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
     const contributionId = params.agent.identity?.localId ?? identity.agentId;
     let currentTerminalTranscriptFollowService: HostTerminalTranscriptFollowService | null = null;
     let runtimeExecutionSurfaces = params.executionSurfaces;
+    let startupPresentation: ReturnType<NonNullable<BackendExecutionSurfaces['resolveTerminalPresentation']>> | undefined;
+    const resolveStartupPresentation = (selection: Parameters<NonNullable<BackendExecutionSurfaces['resolveTerminalPresentation']>>[0]) => {
+        startupPresentation ??= params.executionSurfaces?.resolveTerminalPresentation?.(selection)
+            ?? Promise.resolve({ kind: 'none' as const });
+        return startupPresentation;
+    };
+    let startupIdleCompaction: Readonly<{ nativePreference: AgentSessionOpenRequest['idleCompaction'] }> | undefined;
     const prepareSessionSource = async (sessionId: string, signal: AbortSignal) => {
         const lateEnvironment = await params.sessionInput.bootstrap.resolveLateEnvironment?.({ sessionId }) ?? null;
         signal.throwIfAborted();
@@ -4665,6 +4685,28 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             const sessionCapabilities = params.sessionCapabilities ?? readAgentSessionCapabilities(
                 params.agent.richDefinition?.definition,
             );
+            if (!startupIdleCompaction) {
+                const selected = await resolveStartupPresentation({
+                    cwd,
+                    runtimeDescriptorV1: params.sessionInput.bootstrap.runtimeDescriptorV1
+                        ?? readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata(hostRuntimeParams.metadata) ?? undefined,
+                    launchEnvironment: { values: params.sessionInput.bootstrap.environmentVariables ?? {},
+                        unset: params.sessionInput.bootstrap.unsetEnvironmentVariables ?? [] },
+                    configuration: { options: Object.fromEntries(Object.entries(params.sessionInput.runtimePreferences.configurationOptions?.overrides ?? {})
+                        .map(([id, option]) => [id, { value: option.value, updatedAtMs: option.updatedAt }])) },
+                });
+                const compaction = selected.compaction === undefined ? sessionCapabilities?.compaction : selected.compaction;
+                const idle = compaction?.idle;
+                const preference = idle?.mode === 'native' ? resolveSessionIdleCompactionSeed({
+                    accountSettings: hostRuntimeParams.accountSettings,
+                    backendTarget: params.sessionInput.bootstrap.target
+                        ?? resolveBackendTargetFromSessionMetadata(hostRuntimeParams.metadata)
+                        ?? { kind: 'agent', identity: { pluginId: identity.pluginId, localId: contributionId } },
+                    idle,
+                }) : undefined;
+                startupIdleCompaction = Object.freeze({ nativePreference: nativeIdleCompactionOpenPreference(idle, preference) });
+            }
+            const idleCompaction = startupIdleCompaction.nativePreference;
             const resumeId = openIntent.kind === 'resume'
                 ? openIntent.providerSessionId
                 : null;
@@ -4781,7 +4823,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     hostRuntimeParams.providerBindingMaterialization,
                     hostRuntimeParams.getPermissionMode(),
                     hostRuntimeParams.getWorkspaceWrites,
-                    { allowPendingProviderBinding: resolveLateEnvironment !== undefined
+                    { idleCompaction,
+                        allowPendingProviderBinding: resolveLateEnvironment !== undefined
                         || (useRunnerManagedProviderBinding && params.prepareManagedProviderBinding !== undefined) },
                 );
                 if (
@@ -4909,6 +4952,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         hostRuntimeParams.getPermissionMode(),
                         hostRuntimeParams.getWorkspaceWrites,
                         {
+                            idleCompaction,
                             allowPendingProviderBinding:
                                 useRunnerManagedProviderBinding,
                             ...(resolvedLateEnvironment.sessionConnectedAccounts
@@ -5363,12 +5407,13 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         publicBinding.handoff.materialization,
                         hostRuntimeParams.getPermissionMode(),
                         hostRuntimeParams.getWorkspaceWrites,
-                        resolvedLateSessionConnectedAccounts
-                            ? {
+                        {
+                            idleCompaction,
+                            ...(resolvedLateSessionConnectedAccounts ? {
                                 sessionConnectedAccounts:
                                     resolvedLateSessionConnectedAccounts,
-                            }
-                            : {},
+                            } : {}),
+                        },
                     );
                     cleanupLateProviderBindingMaterialization();
                     lateProviderBindingMaterializationCleanup =
@@ -6026,7 +6071,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             }
             let cancellation: NativeAgentSessionCancellation;
             let configuration: NativeAgentSessionConfiguration;
-            let manualCompaction: NativeAgentSessionManualCompaction;
+            let compaction: NativeAgentSessionCompaction;
             try {
                 assertGenerationCurrent();
                 assertNativeAgentSessionModeAvailable(openInputs.configuration, publications);
@@ -6042,7 +6087,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     sessionCapabilities,
                     session,
                 );
-                manualCompaction = resolveNativeAgentSessionManualCompaction(
+                compaction = resolveNativeAgentSessionCompaction(
                     identity.agentId,
                     sessionCapabilities,
                     session,
@@ -6219,7 +6264,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         capabilities: sessionCapabilities,
                         cancellation,
                         configuration,
-                        manualCompaction,
+                        compaction,
                     },
                 publications,
                 persistedRollbackTurns,
@@ -6409,7 +6454,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
     }
     if (plan.opts.startedBy === 'daemon' && plan.opts.existingSessionId
         && plan.opts.terminalRuntime?.mode === 'plain') {
-        const selected = await params.executionSurfaces?.resolveTerminalPresentation?.({
+        const selected = await resolveStartupPresentation({
             cwd: plan.opts.directory ?? process.cwd(),
             runtimeDescriptorV1: plan.opts.runtimeDescriptorV1,
             launchEnvironment: { values: params.sessionInput.bootstrap.environmentVariables ?? {},

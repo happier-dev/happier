@@ -1267,7 +1267,7 @@ describe('ApiSessionClient pending queue materialization', () => {
                 capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
                 cancellation: { declared: false },
                 configuration: { declared: false },
-                manualCompaction: { declared: false },
+                compaction: { capability: null },
             },
             undefined,
             [],

@@ -174,6 +174,9 @@ export type RuntimeTurnOperations = Readonly<{
    */
   sendTurnPrompt: (prompt: string, meta?: RuntimeTurnPromptMeta) => Promise<void>;
   compactContext?: (command: string) => Promise<void>;
+  /** Effective opened-runtime descriptor and its bound control share one owner. */
+  readSessionCompactionCapability?: () => import('@happier-dev/protocol/plugins/agents').AgentSessionCompactionCapability | null;
+  compact?: AgentSessionRuntime['compact'];
   steerInFlightTurn: (message: string, meta?: RuntimeTurnPromptMeta) => Promise<void>;
   waitForTurnCompletion: (opts?: RuntimeTurnCompletionOptions) => Promise<void>;
   subscribeRuntimeEvents: (handler: RuntimeTurnMessageHandler) => () => void;

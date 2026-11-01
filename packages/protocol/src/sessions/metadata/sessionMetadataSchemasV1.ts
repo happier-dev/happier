@@ -26,6 +26,7 @@ import {
 } from '../../connect/connectedServiceBindings.js';
 import { ConnectedServiceCredentialRevisionV1Schema } from '../../connect/connectedServiceSchemas.js';
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
+import { PluginAgentSessionCompactionCapabilityV2Schema } from '../../plugins/contributions/agentSessionCapabilities.js';
 import {
   SessionAppliedModelV1Schema,
   SessionModelSelectionIntentV1Schema,
@@ -969,6 +970,7 @@ const SessionOwnerAgentRuntimeCapabilitiesV1Schema = lazyZodSchema(() => z.stric
       conversation: SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema,
     }),
     usageReporting: z.optional(SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema),
+    compaction: z.optional(z.nullable(PluginAgentSessionCompactionCapabilityV2Schema)),
   }))),
   tools: z.optional(z.nullable(z.strictObject({
     delivery: z.enum([

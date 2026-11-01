@@ -22,6 +22,15 @@ function defineAgentWithPublicModelConfig<TDefinition extends Readonly<Record<st
 }
 
 const CLAUDE_AGENT_ID = 'claude';
+const CLAUDE_NATIVE_COMPACTION_CAPABILITY = {
+  events: true,
+  idle: { mode: 'native', defaultEnabled: true, defaultMinContextTokens: 200000, nativeHonorsMinimum: true },
+} as const;
+const CLAUDE_SDK_COMPACTION_CAPABILITY = {
+  events: true,
+  manual: true,
+  idle: { mode: 'host', defaultEnabled: true, defaultMinContextTokens: 200000 },
+} as const;
 
 // IMPORTANT: this must stay JSON-serializable (data-only).
 export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
@@ -60,6 +69,14 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
       sessionRollback: { conversation: 'unsupported' },
       usageLimitRecovery: { checkNow: 'unsupported' },
       usageReporting: 'supported',
+      compaction: CLAUDE_NATIVE_COMPACTION_CAPABILITY,
+    },
+    runtimeKinds: {
+      defaultKind: 'agentSdk',
+      byKind: {
+        agentSdk: { kind: 'agentSdk', overrides: { sessionCapabilities: { compaction: CLAUDE_SDK_COMPACTION_CAPABILITY } } },
+        unifiedTerminal: { kind: 'unifiedTerminal', overrides: { sessionCapabilities: { compaction: CLAUDE_NATIVE_COMPACTION_CAPABILITY } } },
+      },
     },
     handoff: { vendorStateTransfer: 'supported' },
     localControl: {

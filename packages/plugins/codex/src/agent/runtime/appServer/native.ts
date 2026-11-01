@@ -468,8 +468,10 @@ function readCommittedMessage(
 function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventInput | null {
   switch (event.kind) {
     case 'context-compaction':
-      return { kind: event.kind, compactionId: event.compactionId, phase: event.phase, trigger: event.trigger,
-        ...(event.turnId ? { turnId: event.turnId } : {}) };
+      {
+        const { sessionId: _sessionId, executionRunId: _executionRunId, emittedAtMs: _emittedAtMs, ...compaction } = event;
+        return compaction;
+      }
     case 'turn-start':
       return {
         kind: 'turn-start',

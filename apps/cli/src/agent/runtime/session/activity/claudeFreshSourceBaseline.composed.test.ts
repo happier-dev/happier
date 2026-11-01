@@ -116,7 +116,7 @@ it.each(['fresh', 'source_loss', 'disposed_source_loss'] as const)(
     undefined, undefined, undefined, undefined, undefined, {
       context, cwd: directory, connectedAccounts: [],
       capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-      cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+      cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
     });
   subscription = subscribeSessionRuntimePublicationToMetadata({ session: metadataSession, sessionState: state,
     runtime, providerSessionMetadataKey: 'claudeSessionId' });

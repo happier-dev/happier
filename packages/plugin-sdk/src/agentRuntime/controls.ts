@@ -12,6 +12,7 @@ import type { AgentRuntimeContext, AgentSessionHostServices, AgentSessionRuntime
 import type {
   AgentSessionConnectedAccountSelection,
   AgentSessionConfigurationSnapshot,
+  AgentSessionCompactionCapability,
   AgentSessionOpenRequest,
   AgentSessionRuntime,
 } from './session.js';
@@ -224,6 +225,8 @@ export interface AgentSessionRuntimeFactory {
     kind: 'runner' | 'managed_terminal' | 'provider_attach' | 'none';
     startingMode?: 'terminal' | 'remote';
     runtimeDescriptorV1?: AgentSessionOpenRequest['runtimeDescriptorV1'];
+    /** Selected-mode capability resolved by the Agent before native Session open. */
+    compaction?: AgentSessionCompactionCapability | null;
     /** Resume may rebind a surviving owned terminal through this runtime's admission owner. */
     retainedTerminalRecovery?: 'adopt';
     /** Applied over the already prepared environment; never replaces credentials or unset keys. */

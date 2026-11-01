@@ -60,6 +60,12 @@ import type { AgentExecutionRunEvent } from './executionRun.js';
 import type { AgentAcpToolNameInference } from './acpTypes.js';
 import type { JsonValue } from '../identity.js';
 
+export type {
+  AgentSessionCompactionCapability,
+  AgentSessionCompactionIdleCapability,
+  PluginAgentSessionCompactionCapabilityV2,
+} from './session.js';
+
 /** @realm any */
 export { buildAgentAccountUsageRecordId } from './accountUsage.js';
 /**

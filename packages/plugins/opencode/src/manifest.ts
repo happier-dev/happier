@@ -171,7 +171,6 @@ export const OPENCODE_PLUGIN = definePlugin({
             delivery: ['newTurn', 'steer', 'followUp'],
             cancel: true,
             configuration: true,
-            compaction: { events: true },
             catalog: { active: ['skills'] },
             workStateSources: [{ id: 'opencode-todos', itemKinds: ['todo'] }],
           },

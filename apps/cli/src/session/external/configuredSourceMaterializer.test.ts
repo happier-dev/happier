@@ -1449,7 +1449,7 @@ describe('configured external-session source materializer', () => {
       undefined, undefined, undefined, undefined, undefined, {
         context, cwd, connectedAccounts: [],
         capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-        cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
       });
     // The host runtime feeds Activity and the runtime-publication observer from the same
     // event watch (runHostSessionRuntime publishHostRuntimeEvent).

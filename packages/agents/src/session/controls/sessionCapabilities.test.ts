@@ -4,14 +4,30 @@ import { AGENTS_CORE } from '../../manifest.js';
 
 import {
     evaluateAgentSessionCapabilitySupport,
+    evaluateAgentSessionCompactionCapability,
     getAgentSessionCapability,
     readRuntimeCapabilitiesForSession,
     isAgentSessionCapabilitySupported,
 } from './sessionCapabilities.js';
 
 describe('sessionCapabilities', () => {
+  it('uses opened-mode compaction publication before a prelaunch declaration', () => {
+    const declaredCapability = { events: true, manual: true, idle: { mode: 'host', defaultEnabled: false } } as const;
+    const evaluate = (sessionCapabilities?: unknown) => evaluateAgentSessionCompactionCapability({
+      agentId: 'external/agent', declaredCapability,
+      metadata: sessionCapabilities === undefined ? {} : { agentRuntimeCapabilitiesV1: { sessionCapabilities } },
+    });
+    expect(evaluate()).toEqual(declaredCapability);
+    expect(evaluate({})).toBeNull();
+    expect(evaluate({ compaction: null })).toBeNull();
+    expect(evaluate({ compaction: { events: true } })).toEqual({ events: true });
+    expect(evaluate({ compaction: { manual: 'supported' } })).toBeNull();
+    expect(evaluate({ compaction: { events: true, idle: { mode: 'native', defaultEnabled: true } } }))
+      .toEqual({ events: true, idle: { mode: 'native', defaultEnabled: true } });
+  });
   it('exposes shared session capability support levels in the agent manifest', () => {
     expect(AGENTS_CORE.claude.sessionCapabilities).toEqual({
+      compaction: { events: true, idle: { mode: 'native', defaultEnabled: true, defaultMinContextTokens: 200000, nativeHonorsMinimum: true } },
       usageReporting: 'supported',
       sessionListing: 'supported',
       sessionFork: {
@@ -27,6 +43,7 @@ describe('sessionCapabilities', () => {
     });
 
     expect(AGENTS_CORE.codex.sessionCapabilities).toEqual({
+      compaction: { events: true, manual: true, idle: { mode: 'host', defaultEnabled: false, defaultMinContextTokens: 180000 } },
       usageReporting: 'supported',
       sessionListing: 'supported',
       sessionFork: {
@@ -42,6 +59,7 @@ describe('sessionCapabilities', () => {
     });
 
     expect(AGENTS_CORE.opencode.sessionCapabilities).toEqual({
+      compaction: { events: true, manual: true, idle: { mode: 'host', defaultEnabled: false, defaultMinContextTokens: 100000 } },
       sessionListing: 'supported',
       sessionFork: {
         conversation: 'unsupported',
@@ -56,6 +74,7 @@ describe('sessionCapabilities', () => {
     });
 
     expect(AGENTS_CORE.pi.sessionCapabilities).toEqual({
+      compaction: { events: true, manual: true, idle: { mode: 'host', defaultEnabled: false, defaultMinContextTokens: 100000 } },
       usageReporting: 'supported',
       sessionListing: 'unsupported',
       sessionFork: {

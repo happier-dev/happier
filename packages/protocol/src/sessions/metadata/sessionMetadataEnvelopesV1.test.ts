@@ -1160,6 +1160,34 @@ describe('session metadata privacy envelopes v1', () => {
     }
   });
 
+  it('preserves opened-runtime compaction and usage recovery through the owner envelope', () => {
+    const publish = (compaction: unknown) => createSessionOwnerMetadataV1({ metadata: {
+      agentRuntimeCapabilitiesV1: { sessionCapabilities: {
+        sessionListing: 'unsupported',
+        sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+        sessionRollback: { conversation: 'unsupported' },
+        usageLimitRecovery: { checkNow: 'supported' },
+        compaction,
+      } },
+    } });
+    for (const compaction of [
+      { events: true, manual: true, idle: { mode: 'host', defaultEnabled: true, defaultMinContextTokens: 200000 } },
+      { events: true, idle: { mode: 'native', defaultEnabled: true, defaultMinContextTokens: 200000, nativeHonorsMinimum: true } },
+      null,
+    ]) {
+      const created = publish(compaction);
+      expect(created.ok).toBe(true);
+      if (!created.ok) throw new Error('Runtime publication rejected');
+      const projected = projectSessionOwnerCompatibilityViewV1({
+        sharedMetadata: projectSessionSharedMetadataV1({ metadata: {} }), ownerMetadata: created.ownerMetadata,
+      });
+      expect(projected.agentRuntimeCapabilitiesV1?.sessionCapabilities?.compaction).toEqual(compaction);
+      expect(projected.agentRuntimeCapabilitiesV1?.sessionCapabilities?.usageLimitRecovery).toEqual({ checkNow: 'supported' });
+    }
+    expect(publish({ manual: 'supported' }).ok).toBe(false);
+    expect(publish({ events: true, idle: { mode: 'native', defaultEnabled: true, defaultMinContextTokens: 200000 } }).ok).toBe(false);
+  });
+
   it('uses Account mode, independently of Session mode, as owner-envelope authority', () => {
     const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
       v: 1,

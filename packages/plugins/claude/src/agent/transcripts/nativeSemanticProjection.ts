@@ -12,6 +12,7 @@ import {
 import { parseRawJsonLinesObject } from './parseRawJsonLines.js';
 import type { RawJSONLines } from './rawJsonLines.js';
 import { normalizeClaudeToolUseNamesInRawJsonLines } from './toolUseNames.js';
+import { readClaudeCompactionMetadata } from './compactionMetadata.js';
 import {
   isClaudeInternalTranscriptMessage,
   isClaudeLocalCommandCaveatTranscriptMessage,
@@ -66,7 +67,8 @@ export type ClaudeNativeTranscriptLifecycleMeaning =
   | Readonly<{ kind: 'synthetic_no_response' }>
   | Readonly<{ kind: 'assistant_api_error' }>
   | Readonly<{ kind: 'assistant_stop'; stopReason: string }>
-  | Readonly<{ kind: 'compact_boundary' }>;
+  | Readonly<{ kind: 'idle_compaction_notice' }>
+  | Readonly<{ kind: 'compact_boundary' } & ReturnType<typeof readClaudeCompactionMetadata>>;
 
 export type ClaudeNativeTranscriptBoundary = Readonly<{
   kind: 'assistant_api_error' | 'assistant_stop' | 'compact_boundary';
@@ -412,6 +414,21 @@ export function classifyClaudeNativeTranscriptRow(
   }
 
   const row = normalizeClaudeToolUseNamesInRawJsonLines(parsed);
+  const systemContent = row.content;
+  // Claude Code 2.1.316 emits these native informational notices after applying
+  // compaction. Only this characterized envelope gives idle meaning to its text.
+  if (row.type === 'system' && row.subtype === 'informational' && row.level === 'notice'
+    && typeof systemContent === 'string' && [
+      'Compacted while idle, before the prompt cache expired',
+      'Compacted using a summary written while you were away',
+    ].some(prefix => systemContent === prefix || systemContent.startsWith(`${prefix} `))) {
+    return {
+      ...createBaseClassification({ rawObject, rawType, row, visibility: 'hidden',
+        messageRole: 'event', content: { kind: 'none' } }),
+      knownNonTranscriptRecord: true,
+      lifecycle: { kind: 'idle_compaction_notice' },
+    };
+  }
   const compactSummary = readClaudeVisibleCompactSummaryText(row);
   if (compactSummary) {
     return createBaseClassification({
@@ -479,7 +496,7 @@ export function classifyClaudeNativeTranscriptRow(
   if (row.type === 'system' && readString((row as Record<string, unknown>).subtype) === 'compact_boundary') {
     return {
       ...base,
-      lifecycle: { kind: 'compact_boundary' },
+      lifecycle: { kind: 'compact_boundary', ...readClaudeCompactionMetadata(row) },
       nativeBoundary: { kind: 'compact_boundary', id: readNativeBoundaryId(row) },
     };
   }

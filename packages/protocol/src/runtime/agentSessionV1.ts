@@ -57,6 +57,13 @@ const HostIdSchema = lazyZodSchema(() => exactString(HOST_ID_MAX));
  */
 const ProviderIdSchema = lazyZodSchema(() => opaqueNonBlankString(PROVIDER_ID_MAX));
 const InputIdSchema = lazyZodSchema(() => opaqueNonBlankString(HOST_ID_MAX));
+/** Host-resolved controls supported by a native idle-compaction runtime. */
+export const AgentSessionIdleCompactionPreferenceV1Schema = lazyZodSchema(() => z.strictObject({
+  enabled: z.boolean(),
+  minContextTokens: z.optional(SafeIntegerSchema),
+}));
+export type AgentSessionIdleCompactionPreferenceV1 = z.infer<typeof AgentSessionIdleCompactionPreferenceV1Schema>;
+
 const SafeIntegerSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(), z.maximum(LIMITS.safeIntegerMax)));
 /**
  * The strict runtime JSON value used at admission boundaries. Aggregate byte

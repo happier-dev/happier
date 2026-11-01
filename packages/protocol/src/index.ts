@@ -1218,6 +1218,7 @@ export {
   PluginAgentAcpSkillsSessionDeliveryV2Schema,
   PluginAgentStructuredOutputCapabilityV2Schema,
   PluginAgentSessionCapabilitiesV2Schema,
+  PluginAgentSessionCompactionCapabilityV2Schema,
   PluginAgentExecutionRunCapabilitiesV2Schema,
   PluginAgentAcpDefinitionV2Schema,
   PluginAgentRuntimeAcpV2Schema,
@@ -1281,6 +1282,9 @@ export {
   type PluginAgentAcpMcpInputPolicyV2,
   type PluginAgentStructuredOutputCapabilityV2,
   type PluginAgentSessionCapabilitiesV2,
+  type PluginAgentSessionCompactionCapabilityV2,
+  type AgentSessionCompactionCapability,
+  type AgentSessionCompactionIdleCapability,
   type PluginAgentExecutionRunCapabilitiesV2,
   type PluginAgentAcpDefinitionV2,
   type PluginAgentAcpNativeSessionMcpConfigV2,
@@ -2368,6 +2372,9 @@ export {
   SessionInactiveResumePolicySchema,
   type NewSessionDraftEntryMode,
   UsageLimitRecoverySettingsV1Schema,
+  MAX_IDLE_COMPACTION_CACHE_WINDOW_MS,
+  resolveIdleCompactionPreference,
+  type IdleCompactionPreference,
 } from './account/settings/accountSettings.js';
 export {
   LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS,

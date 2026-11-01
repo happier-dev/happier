@@ -1,4 +1,5 @@
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { PluginAgentSessionCompactionCapabilityV2Schema, type AgentSessionCompactionCapability } from '@happier-dev/protocol/plugins/agents';
 
 import {
   isBundledAgentId,
@@ -35,6 +36,41 @@ export const UNSUPPORTED_AGENT_SESSION_CAPABILITIES: AgentSessionCapabilities = 
 
 export function getAgentSessionCapabilities(agentId: AgentId): AgentSessionCapabilities {
   return getAgentCore(agentId)?.sessionCapabilities ?? UNSUPPORTED_AGENT_SESSION_CAPABILITIES;
+}
+
+/** An opened runtime's publication replaces the declaration, including absence. */
+export function readEffectiveAgentSessionCompactionCapability(params: Readonly<{
+  declaredCapability?: AgentSessionCompactionCapability | null;
+  publishedSessionCapabilities?: Pick<AgentSessionCapabilities, 'compaction'> | null;
+}>): AgentSessionCompactionCapability | null {
+  return params.publishedSessionCapabilities === undefined
+    ? params.declaredCapability ?? null
+    : params.publishedSessionCapabilities?.compaction ?? null;
+}
+
+export function evaluateAgentSessionCompactionCapability(params: Readonly<{
+  agentId: string;
+  metadata: unknown;
+  accountSettings?: Record<string, unknown> | null;
+  declaredCapability?: AgentSessionCompactionCapability | null;
+}>): AgentSessionCompactionCapability | null {
+  if (params.metadata && typeof params.metadata === 'object' && !Array.isArray(params.metadata)) {
+    const publication = (params.metadata as Readonly<Record<string, unknown>>).agentRuntimeCapabilitiesV1;
+    if (publication && typeof publication === 'object' && !Array.isArray(publication)) {
+      const capabilities = (publication as Readonly<Record<string, unknown>>).sessionCapabilities;
+      if (capabilities !== undefined) {
+        if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) return null;
+        const descriptor = (capabilities as Readonly<Record<string, unknown>>).compaction;
+        if (descriptor == null) return null;
+        const parsed = PluginAgentSessionCompactionCapabilityV2Schema.safeParse(descriptor);
+        return parsed.success ? parsed.data : null;
+      }
+    }
+  }
+  if (params.declaredCapability !== undefined) return params.declaredCapability;
+  if (!isBundledAgentId(params.agentId)) return null;
+  const surface = resolveAgentRuntimeControlSurfaceForSession(params);
+  return surface?.sessionCapabilities.compaction ?? null;
 }
 
 export function getAgentSessionCapability(agentId: AgentId, capability: AgentSessionCapabilityKey): AgentSessionCapabilitySupportLevel {

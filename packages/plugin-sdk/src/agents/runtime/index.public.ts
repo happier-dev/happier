@@ -1,4 +1,9 @@
 export { ACP_AGENT_CLI_TRANSPORT_TIMEOUTS } from '../../agentRuntime/projections.js';
+export type {
+  AgentSessionCompactionCapability,
+  AgentSessionCompactionIdleCapability,
+  PluginAgentSessionCompactionCapabilityV2,
+} from '../../agentRuntime/projections.js';
 export { canPublishSessionResumeIdentity } from '../../agentRuntime/projections.js';
 export {
   AGENT_STARTUP_FAILURE_PREVIEWS,

@@ -2,7 +2,7 @@ import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
-import { AgentLaunchEnvironmentV1Schema, AgentRuntimeJsonValueV1Schema, AgentSessionConfigurationSnapshotV1Schema, AgentSessionProviderCheckpointV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { AgentLaunchEnvironmentV1Schema, AgentRuntimeJsonValueV1Schema, AgentSessionConfigurationSnapshotV1Schema, AgentSessionProviderCheckpointV1Schema, AgentSessionIdleCompactionPreferenceV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
 import { AgentSessionSkillDeliveryV1Schema } from '@happier-dev/protocol/prompts/library/skills/resolveSessionSkillPlanV1';
 import { McpToolLaunchPoliciesV1Schema } from '@happier-dev/protocol/mcp/servers/tools/resolveMcpToolDecisionV1';
@@ -491,6 +491,7 @@ const AgentSessionOpenBaseSchema = lazyZodSchema(() => z.object({
   launchEnvironment: z.optional(AgentLaunchEnvironmentV1Schema),
   runtimeDescriptorV1: z.optional(RuntimeDescriptorV1Schema),
   configuration: z.optional(AgentSessionConfigurationSnapshotV1Schema),
+  idleCompaction: z.optional(AgentSessionIdleCompactionPreferenceV1Schema),
   connectedAccounts: z.optional(AgentSessionConnectedAccountsV1Schema),
   mcpServers:
     z.optional(z.record(BoundedIdSchema, McpLaunchConfigSchema)),

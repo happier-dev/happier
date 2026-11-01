@@ -182,7 +182,7 @@ describe('host ready after a provider successor starts', () => {
     const runtime = createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined, {
       context: {} as AgentSessionRuntimeContext, cwd: '/tmp/ready-handoff', connectedAccounts: [],
       capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-      cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+      cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
     });
     const metadata = createTestMetadata({ path: checkpointRoot ?? '/tmp/ready-handoff', permissionMode: 'default' });
     const snapshots = createTurnAssistantTextSnapshotStore();

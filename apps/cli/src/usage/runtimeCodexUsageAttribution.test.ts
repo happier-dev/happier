@@ -47,7 +47,7 @@ describe('native Codex request scope → host → ingest', () => {
                 context: {} as AgentSessionRuntimeContext, cwd: '/private/repository',
                 connectedAccounts: [{ purpose: 'agent', usageAccountScope: 'personal', account: { service, accountId: 'account-A' } }],
                 capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-                cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+                cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
             });
             const unsubscribe = bridge.subscribeRuntimeEvents(() => undefined);
             try {

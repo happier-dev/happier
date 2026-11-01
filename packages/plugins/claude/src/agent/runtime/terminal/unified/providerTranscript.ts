@@ -442,7 +442,12 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
   async function emitPayload(payload: ClaudeProviderTranscriptPayload): Promise<void> {
     if (disposed) return;
     await params.onPublishPayload?.(payload);
-    await params.ctx.agentRuntime.sessionHooks.publishProviderTranscript(payload);
+    // The ordered native compaction assembler is the canonical event producer.
+    // Retain this boundary for local readiness/manual settlement only; publishing
+    // its raw payload as well would create an attention-bearing duplicate row.
+    if (payload.kind !== 'compact_boundary') {
+      await params.ctx.agentRuntime.sessionHooks.publishProviderTranscript(payload);
+    }
   }
 
   async function observeRawRow(activeBinding: TranscriptBinding, row: RawJSONLines): Promise<void> {

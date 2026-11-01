@@ -10,6 +10,37 @@ import {
 } from './launchSettings.js';
 
 describe('resolveClaudeNativeLaunchSettings', () => {
+  it.each(['inline', 'equals', 'file'] as const)('maps the resolved idle preference through one %s settings overlay', async (form) => {
+    const directory = await mkdtemp(join(tmpdir(), 'claude-idle-settings-'));
+    const settingsPath = join(directory, 'settings.json');
+    const base = { idleCompaction: 'previous', env: { KEEP: 'yes' }, permissions: { deny: ['WebFetch'] } };
+    await writeFile(settingsPath, JSON.stringify(base));
+    try {
+      for (const enabled of [true, false]) {
+        const inputArgs = form === 'file' ? ['--settings', settingsPath]
+          : form === 'equals' ? [`--settings=${JSON.stringify(base)}`] : ['--settings', JSON.stringify(base)];
+        const args = resolveClaudeLaunchSettingsOverlayArgs({ args: inputArgs,
+          interactionKind: 'interactive_terminal', permissionMode: 'default', launchSettings: {},
+          idleCompaction: { enabled, minContextTokens: 75_000 },
+        });
+        expect(args.filter(arg => arg === '--settings' || arg.startsWith('--settings='))).toHaveLength(1);
+        expect(JSON.parse(args[args.indexOf('--settings') + 1])).toMatchObject({
+          idleCompaction: enabled, env: { KEEP: 'yes' }, permissions: { deny: ['WebFetch'] },
+        });
+      }
+      expect(JSON.parse(await readFile(settingsPath, 'utf8'))).toEqual(base);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
+  it.each([undefined, 75_000, 200_000, 350_000])('delivers the resolved minimum %s without applying a native clamp', async (minContextTokens) => {
+    const result = await resolveClaudeNativeLaunchSettings({
+      settings: { get: () => null, snapshot: async () => ({ values: {} }) },
+      launchEnv: { KEEP: 'yes', CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS: 'existing' },
+      includeAdvancedOptions: false, idleCompaction: { enabled: true, ...(minContextTokens === undefined ? {} : { minContextTokens }) },
+    });
+    expect(result.launchEnv).toEqual({ KEEP: 'yes', CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS: minContextTokens === undefined ? 'existing' : String(minContextTokens) });
+  });
+
   it.each(['interactive_terminal', 'noninteractive_sdk'] as const)(
     'projects MCP Off and Ask into the existing overlay without irrevocable Allow for %s',
     (interactionKind) => {

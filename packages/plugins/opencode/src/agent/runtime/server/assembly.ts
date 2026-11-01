@@ -1,3 +1,4 @@
+import { AGENT_DEFINITION } from '../../definition.js';
 import type {
   AgentExecutionRunOpenRequest,
   AgentExecutionRunConversationRuntimeV1,
@@ -388,18 +389,7 @@ export async function createOpenCodeServerRuntimeAssembly(
           request: params.request,
           disposeOperations: dispose,
           runtimeCapabilities: {
-            sessionCapabilities: {
-              sessionListing: 'supported',
-              sessionFork: {
-                conversation: 'supported',
-                fromMessage: 'unsupported',
-              },
-              sessionRollback: { conversation: 'unsupported' },
-              usageLimitRecovery: { checkNow: 'unsupported' },
-              compaction: {
-                manual: 'supported',
-              },
-            },
+            sessionCapabilities: AGENT_DEFINITION.core.sessionCapabilities,
             tools: { delivery: 'native_mcp', support: 'supported' },
           },
           prepareTerminalPresentation: async () => {

@@ -121,7 +121,6 @@ export const PI_PLUGIN = definePlugin({
             startupInstructions: { versions: [1], revisionChanges: 'resume' },
             cancel: true,
             configuration: true,
-            compaction: { events: true, manual: true },
             executionRunContext: { versions: [1] },
           },
         }),

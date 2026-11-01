@@ -8,6 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { readEffectiveAgentSessionCompactionCapability } from '@happier-dev/agents';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
 import { createSessionRoleContext } from '@/session/roles/sessionRoleContext';
 import { createWorkspaceWritesPolicyPreparation } from '@/session/roles/workspaceWritesPolicyPreparation';
@@ -301,7 +302,7 @@ const credentials: Credentials = {
 
 type NativeAgentSessionOperationsTestDirectFacets = Omit<
     NonNullable<Parameters<typeof createNativeAgentSessionOperationsBase>[7]>,
-    'cancellation' | 'configuration' | 'manualCompaction'
+    'cancellation' | 'configuration' | 'compaction'
 >;
 
 type NativeAgentSessionOperationsTestArguments = [
@@ -379,20 +380,23 @@ function createNativeAgentSessionOperations(
             };
         })()
         : { declared: false as const };
-    const manualCompaction = capabilities.compaction?.manual === true
+    const capability = readEffectiveAgentSessionCompactionCapability({
+        declaredCapability: capabilities.compaction,
+        publishedSessionCapabilities: session.runtimeCapabilities?.sessionCapabilities,
+    });
+    const compaction = capability?.manual === true || capability?.idle?.mode === 'host'
         ? (() => {
             const compact = session.compact;
             if (typeof compact !== 'function') {
-                throw new Error('manual-compaction-capable test session must implement compact');
+                throw new Error('compact-capable test session must implement compact');
             }
             return {
-                declared: true as const,
-                compact: (request: Parameters<typeof compact>[0]) =>
-                    compact.call(session, request),
+                capability,
+                compact: (request: Parameters<typeof compact>[0], options?: Parameters<typeof compact>[1]) =>
+                    options === undefined ? compact.call(session, request) : compact.call(session, request, options),
             };
         })()
-        : { declared: false as const };
-
+        : { capability };
     return createNativeAgentSessionOperationsBase(
         session,
         expectedSessionId,
@@ -403,13 +407,13 @@ function createNativeAgentSessionOperations(
         abortSessionScope,
         {
             ...suppliedDirectFacets,
-            context: suppliedDirectFacets?.context ?? {} as AgentSessionRuntimeContext,
+            context: suppliedDirectFacets?.context ?? { agent: { id: 'acme-agent' } } as AgentSessionRuntimeContext,
             cwd: suppliedDirectFacets?.cwd ?? '/repo',
             connectedAccounts: suppliedDirectFacets?.connectedAccounts ?? [],
             capabilities,
             cancellation,
             configuration,
-            manualCompaction,
+            compaction,
         },
         publications,
         initialRollbackTurns,
@@ -2048,6 +2052,56 @@ describe('native Agent session host adapter', () => {
         else expect(childSignals).toEqual(['SIGINT']);
         generation.abort();
         await expect(localPass).resolves.toBe(0);
+    });
+
+    it.each(['create', 'resume', 'fork'] as const)('captures idle compaction once and delivers the native %s operand', async (kind) => {
+        const agentId = 'acme-idle-compaction';
+        const contributions = createExternalContributionFixtures(agentId);
+        const agent: ResolvedAgentContribution = { ...contributions.agent, richDefinition: {
+            ...contributions.agent.richDefinition, definition: { ...contributions.agent.richDefinition.definition,
+                capabilities: { ...contributions.agent.richDefinition.definition.capabilities, sessions: {
+                    ...contributions.agent.richDefinition.definition.capabilities.sessions,
+                    open: ['create', 'resume', 'fork'],
+                    compaction: { events: true, idle: { mode: 'native', defaultEnabled: true, nativeHonorsMinimum: true } },
+                } },
+            },
+        } };
+        const requests: AgentSessionOpenRequest[] = [];
+        // The external Agent runtime is the native IO boundary; host orchestration stays real.
+        const open = async (request: AgentSessionOpenRequest) => {
+            requests.push(request);
+            return { send: async () => ({ status: 'admitted' as const }),
+                watch: () => ({ dispose() {} }), dispose: async () => undefined };
+        };
+        const target = { kind: 'agent' as const, identity: { pluginId: contributions.agent.pluginId, localId: agentId } };
+        const key = buildBackendTargetKeyV2(target);
+        const settings = {
+            sessionIdleCompactionEnabledByTargetKey: { [key]: false },
+            sessionIdleCompactionMinContextTokensByTargetKey: { [key]: 0 },
+            sessionIdleCompactionCacheWindowOverrideMsByTargetKey: { [key]: 1234 },
+        };
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            runtime: { sessions: { open } }, lease: createLease(agentId), backend: contributions.backend, agent,
+            createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({ credentials, directory: '/tmp/acme-idle-compaction',
+                ...(kind === 'resume' ? { resume: 'provider-idle' } : {}),
+                ...(kind === 'fork' ? { nativeForkSource: { sessionId: 'parent-idle', providerSessionId: 'provider-idle', cwd: '/tmp/acme-idle-compaction' } } : {}),
+            }),
+        });
+        if (!plan.config.createSessionRuntime) throw new Error('expected native factory');
+        const factoryParams = { directory: '/tmp/acme-idle-compaction', metadata: {}, machineId: 'machine-idle',
+            session: createNativeSessionClientTestPort('session-idle'), transcriptSession: {}, messageBuffer: {},
+            mcpServers: {}, permissionHandler: {}, getPermissionMode: () => 'default', setThinking() {},
+            memoryRecallGuidanceEnabled: false, accountSettings: settings };
+        const created = await plan.config.createSessionRuntime(factoryParams as never);
+        expect(requests[0]).toMatchObject({ kind, idleCompaction: { enabled: false, minContextTokens: 0 } });
+        expect(requests[0]?.idleCompaction).not.toHaveProperty('cacheWindowOverrideMs');
+        await created.operations.resetOrDisposeRuntime('runtime_recovery');
+        settings.sessionIdleCompactionEnabledByTargetKey[key] = true;
+        settings.sessionIdleCompactionMinContextTokensByTargetKey[key] = 42;
+        const reopened = await plan.config.createSessionRuntime(factoryParams as never);
+        expect(requests[1]?.idleCompaction).toEqual({ enabled: false, minContextTokens: 0 });
+        await reopened.operations.resetOrDisposeRuntime('runtime_recovery');
     });
 
     it.each(['applied', 'unsupported'] as const)('routes the merged full plan to native startup without a second raw caller delivery (%s)', async (nativeSupport) => {

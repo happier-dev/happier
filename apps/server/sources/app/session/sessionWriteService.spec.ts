@@ -2642,6 +2642,34 @@ describe("sessionWriteService", () => {
             });
         });
 
+        it.each(['e2ee', 'plain'] as const)('keeps owner idle-compaction writes quiet for %s Sessions', async (mode) => {
+            storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            const createdAt = new Date("2020-01-01T00:00:00.000Z");
+            const localId = 'context-compaction:idle:native-compact:completed:8';
+            const content: PrismaJson.SessionMessageContent = mode === 'e2ee'
+                ? { t: 'encrypted', c: 'opaque' }
+                : { t: 'plain', v: { role: 'agent', content: { type: 'event', id: localId,
+                    data: { type: 'context-compaction', phase: 'completed', trigger: 'idle', lifecycleId: 'native-compact' } } } };
+            currentTx.session.findUnique.mockResolvedValueOnce({ accountId: 'u1', encryptionMode: mode, shares: [],
+                seq: 9, lastViewedSessionSeq: 9, pendingCount: 0, pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0, latestTurnStatus: null, lastRuntimeIssue: null, active: true, archivedAt: null });
+            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            currentTx.sessionMessage.create.mockResolvedValue({ id: 'm-idle', seq: 10, localId, sidechainId: null,
+                messageRole: 'event', content, createdAt, updatedAt: createdAt });
+            accountCursorRows.mockResolvedValueOnce([{ cursor: 101 }]);
+            const result = await createSessionMessage({ authentication, inputAdmission: 'authenticatedAccount',
+                actorUserId: 'u1', sessionId: 's1', content, localId, messageRole: 'event' });
+            expect(result.ok).toBe(true);
+            if (!result.ok || result.didWrite === false) throw new Error('Expected the owner event to be written');
+            expect(result.badgeAttentionChanged).toBe(false);
+            expect(result.attentionImpact).toEqual({ affectsUnread: false, affectsMeaningfulActivity: false });
+            expect(currentTx.session.updateMany).not.toHaveBeenCalled();
+            expect(currentTx.accountSessionReadState.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                data: { lastViewedSessionSeq: 10, unreadSince: null },
+            }));
+        });
+
         it("derives non-unread attention for owner-authored encrypted maintenance event local ids", async () => {
             const createdAt = new Date("2020-01-01T00:00:00.000Z");
 

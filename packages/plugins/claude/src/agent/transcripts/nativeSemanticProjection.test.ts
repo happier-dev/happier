@@ -1,5 +1,31 @@
 import { describe, expect, it } from 'vitest';
 
+describe('Claude native idle compaction notices', () => {
+  it.each([
+    'Compacted while idle, before the prompt cache expired',
+    'Compacted using a summary written while you were away',
+  ])('classifies the characterized native notice before visible prose (%s)', content => {
+    const row = { type: 'system', subtype: 'informational', level: 'notice', uuid: 'idle-notice',
+      content: `${content} · turn off with "idleCompaction": false in settings.json` };
+    expect(classifyClaudeNativeTranscriptRow(row)).toMatchObject({ visibility: 'hidden', content: { kind: 'none' },
+      lifecycle: { kind: 'idle_compaction_notice' } });
+    expect(projectClaudeJsonlLineToDirectMessages({ fileRelPath: 'session.jsonl', lineStartOffsetBytes: 0, lineValue: row })).toEqual([]);
+  });
+  it('does not classify quoted prose or an ordinary automatic boundary as idle', () => {
+    expect(classifyClaudeNativeTranscriptRow({ type: 'assistant', uuid: 'quoted',
+      message: { content: 'Compacted while idle, before the prompt cache expired' } }).lifecycle.kind).not.toBe('idle_compaction_notice');
+    expect(classifyClaudeNativeTranscriptRow({ type: 'system', subtype: 'compact_boundary', uuid: 'auto',
+      compactMetadata: { trigger: 'auto', preTokens: 200_000 } }).lifecycle.kind).toBe('compact_boundary');
+  });
+  it('keeps compact boundary source custody free of an unsupported visible precursor', () => {
+    const row = { type: 'system', subtype: 'compact_boundary', uuid: 'boundary',
+      compactMetadata: { trigger: 'auto', preTokens: 220_000, postTokens: 35_000 } };
+    expect(projectClaudeJsonlLineToDirectMessages({ fileRelPath: 'session.jsonl', lineStartOffsetBytes: 0, lineValue: row })).toEqual([]);
+    expect(classifyClaudeNativeTranscriptRow(row)).toMatchObject({ lifecycle: { kind: 'compact_boundary',
+      tokenCountBefore: 220_000, tokenCountAfter: 35_000, tokenCountSource: 'providerReported' } });
+  });
+});
+
 import {
   classifyClaudeNativeTranscriptRow,
   classifyClaudeNativeHookLifecycle,

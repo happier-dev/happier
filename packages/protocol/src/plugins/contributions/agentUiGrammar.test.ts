@@ -112,6 +112,12 @@ function parse(value: unknown) {
 }
 
 describe('public Agent UI authoring grammar', () => {
+  it('admits boolean runtime selection without a spawn configuration output', () => {
+    expect(parse({ behavior: { payload: { sessionExtras: {
+      values: ['sdk', 'terminal'], settingKey: { scope: 'account', localId: 'useTerminal' },
+      booleanValues: { true: 'terminal', false: 'sdk' }, defaultValue: 'sdk',
+    } } } }).success).toBe(true);
+  });
   it('admits an optional Agent identity hue without requiring behavior or controls', () => {
     const declaration = { identityColor: { light: '#eb6834', dark: '#d95926' } };
     const result = parse(declaration);

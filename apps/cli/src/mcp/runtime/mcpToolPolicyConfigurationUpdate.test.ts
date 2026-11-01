@@ -94,7 +94,7 @@ it('a real tools.set row-only publication sends one native SDK update with uncha
         const context = { signal } as AgentSessionRuntimeContext;
         const operations = createNativeAgentSessionOperations(sdkSession, session.sessionId, undefined, undefined, undefined,
           { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 }, permissionIntent: { value: 'default', updatedAtMs: 1 }, options: {} }, undefined,
-          { context, cwd: metadata.path, connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false, configuration: true }, cancellation: { declared: false }, manualCompaction: { declared: false },
+          { context, cwd: metadata.path, connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false, configuration: true }, cancellation: { declared: false }, compaction: { capability: null },
             configuration: { declared: true, updateConfiguration: request => sdkSession.updateConfiguration!(request) }, resolveMcpToolPolicy: params.resolveMcpToolPolicy });
         return { operations, nativeRuntime: operations };
       },

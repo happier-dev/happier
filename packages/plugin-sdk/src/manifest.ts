@@ -236,10 +236,11 @@ export type AgentUiBehaviorDeclarationV1 = {
     };
     /** A setting-backed session configuration option contributed on create. */
     sessionExtras?: {
-      outputKey: string;
+      outputKey?: string;
       values: string[];
       settingKey?: AgentUiSettingReferenceV1;
       aliases?: Record<string, string>;
+      booleanValues?: { true: string; false: string };
       defaultValue?: string;
     };
     environmentVariables?: {

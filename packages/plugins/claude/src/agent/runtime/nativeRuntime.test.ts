@@ -158,6 +158,17 @@ const context = {
 } as unknown as AgentSessionRuntimeContext;
 
 describe('createClaudeNativeRuntime', () => {
+  it('publishes the opened SDK compaction descriptor instead of inheriting the native prelaunch declaration', async () => {
+    const session = createClaudeNativeSessionRuntimeFromOperations(
+      createNativeOperations('compaction-capability').runtime,
+      { kind: 'create', sessionId: 'compaction-capability', cwd: '/repo' },
+      context,
+    );
+    expect(session.runtimeCapabilities?.sessionCapabilities?.compaction).toEqual({
+      events: true, manual: true, idle: { mode: 'host', defaultEnabled: true, defaultMinContextTokens: 200000 },
+    });
+    await session.dispose();
+  });
   it('reports failed local hook resource cleanup without losing positive provider exit', async () => {
     const exec = createSdkExecFixture();
     const hooks = createSessionHooksFixture();

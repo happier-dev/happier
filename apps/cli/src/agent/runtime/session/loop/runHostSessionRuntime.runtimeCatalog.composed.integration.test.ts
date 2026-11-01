@@ -4063,7 +4063,7 @@ describe('runHostSessionRuntime', () => {
     const runtime = createNativeAgentSessionOperations(native, sessionId, undefined, undefined, undefined, undefined, undefined, {
       context: {} as import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionRuntimeContext,
       cwd: '/tmp/workspace', connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
-      cancellation: { declared: false }, configuration: { declared: false }, manualCompaction: { declared: false },
+      cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
     });
     setSessionRuntimeFactory(harness.config, () => ({ operations: runtime, nativeRuntime: runtime }));
     const { withHostSessionRuntimeIdentityPublication } = await import('@/agent/runtime/identity/publication/withHostSession');
@@ -12494,7 +12494,7 @@ describe('runHostSessionRuntime', () => {
         const runtime = createNativeAgentSessionOperations(native, harness.session.sessionId, undefined, undefined, undefined, undefined, undefined, {
           context, cwd: '/tmp/host-wake', connectedAccounts: [],
           capabilities: { open: ['create'], delivery: ['newTurn'], cancel: true },
-          cancellation: { declared: true }, configuration: { declared: false }, manualCompaction: { declared: false },
+          cancellation: { declared: true }, configuration: { declared: false }, compaction: { capability: null },
         });
         const snapshot = createTurnAssistantTextSnapshotStore();
         let observedSeq = 16;
@@ -12826,7 +12826,7 @@ describe('runHostSessionRuntime', () => {
       const nativeSubscription = native.watch(event => nativeEvents.push(event));
       const runtime = createNativeAgentSessionOperations(native, harness.session.sessionId, undefined, undefined, undefined, undefined, undefined, {
         context, cwd: directory, connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn', 'steer'], cancel: true },
-        cancellation: { declared: true }, configuration: { declared: false }, manualCompaction: { declared: false },
+        cancellation: { declared: true }, configuration: { declared: false }, compaction: { capability: null },
       }, publications);
       const contribution = createExternalContributionFixtures('acme.actual');
       const plan = await createNativeAgentHostSessionRuntimePlan({ backend: contribution.backend, agent: contribution.agent,

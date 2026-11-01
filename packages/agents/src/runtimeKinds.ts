@@ -17,7 +17,14 @@ export type AgentRuntimeKindFor<TAgentId extends AgentId> = TAgentId extends Age
     : never;
 
 export type AgentRuntimeKindOverrideSurface = AgentCoreRuntimeControlSurface;
-export type AgentRuntimeKindOverrides = Readonly<PartialDeep<AgentRuntimeKindOverrideSurface>>;
+export type AgentRuntimeKindOverrides = Readonly<
+    Omit<PartialDeep<AgentRuntimeKindOverrideSurface>, 'sessionCapabilities'> & {
+        sessionCapabilities?: Readonly<
+            Omit<PartialDeep<AgentRuntimeKindOverrideSurface['sessionCapabilities']>, 'compaction'>
+            & Pick<AgentRuntimeKindOverrideSurface['sessionCapabilities'], 'compaction'>
+        >;
+    }
+>;
 
 export type AgentRuntimeKindDefinition<TKind extends string = string> = Readonly<{
     kind: TKind;
@@ -45,6 +52,12 @@ function mergeRuntimeOverrides<T>(base: T, overrides: PartialDeep<T> | undefined
         for (const key of Object.keys(overrides)) {
             const overrideValue = overrides[key];
             if (overrideValue === undefined) continue;
+            // A descriptor is one resolved capability: merging modes would
+            // retain fields belonging to the previously selected mode.
+            if (key === 'compaction') {
+                merged[key] = overrideValue;
+                continue;
+            }
             merged[key] = key in merged
                 ? mergeRuntimeOverrides(merged[key], overrideValue as never)
                 : overrideValue;

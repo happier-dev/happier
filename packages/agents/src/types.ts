@@ -4,6 +4,7 @@ import type { SessionNativeVendorResumeIdFieldV1 } from '@happier-dev/protocol/s
 import {
     type ConnectedServiceId,
     type PluginAgentSkillsCapabilityV2,
+    type AgentSessionCompactionCapability,
     type AgentToolsDelivery,
     type ConnectedServicesProviderConfigSharingModeV1,
     type ConnectedServicesProviderStateSharingModeV1,
@@ -77,9 +78,8 @@ export type AgentSessionCapabilities = Readonly<{
         checkNow: AgentSessionCapabilitySupportLevel;
     }>;
     usageReporting?: AgentSessionCapabilitySupportLevel;
-    compaction?: Readonly<{
-        manual: AgentSessionCapabilitySupportLevel;
-    }>;
+    /** Null explicitly withdraws support for an opened runtime mode. */
+    compaction?: AgentSessionCompactionCapability | null;
 }>;
 
 export type VendorResumeIdField = SessionNativeVendorResumeIdFieldV1;
