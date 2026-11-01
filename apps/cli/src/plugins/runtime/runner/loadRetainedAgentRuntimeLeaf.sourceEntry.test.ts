@@ -8,24 +8,17 @@ import { resolveBuiltInContributions } from '../../projection/registry/resolveBu
 import { resolvePluginStorePaths } from '../../store/paths';
 import { createBundledActivationSourceResolver } from '../bundledActivationSource';
 import { loadPluginModule } from '../loadPluginModule';
+import { attestFreshRunnerAgentBinding } from '../retainedPluginSourceAttestation';
 import { bindPluginRuntimeSourceAuthority } from '../sourceAuthority';
 import { createAgentSessionRunnerFactoryBinding } from './agentSessionRunnerFactoryBinding';
 import { loadRetainedAgentRuntimeLeaf } from './loadRetainedAgentRuntimeLeaf';
 
 describe('retained development source entries', () => {
-    it('loads an already-selected TypeScript entry under development authority and rejects it as packaged code', async () => {
+    it('rejects a packaged TypeScript entry', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-selected-source-entry-'));
         try {
             const entryPath = join(root, 'index.ts');
             await writeFile(entryPath, 'export const value: string = "source-entry";');
-            const sourceAuthority = bindPluginRuntimeSourceAuthority({
-                custody: { kind: 'development', registeredRootId: root },
-                resolvedRoot: root,
-                observedRevision: 0,
-            });
-            await expect(loadPluginModule({
-                source: { kind: 'file_backed', entryPath, sourceAuthority },
-            })).resolves.toMatchObject({ value: 'source-entry' });
             await expect(loadPluginModule({
                 source: {
                     kind: 'file_backed', entryPath,
@@ -55,9 +48,10 @@ describe('retained development source entries', () => {
                 },
             })({ pluginId: agent.identity.pluginId, daemonEntryPath: agent.daemonEntryPath });
             if (source?.sourceAuthority?.kind !== 'development') throw new Error('Development source unavailable');
-            leaf = await loadRetainedAgentRuntimeLeaf({
-                paths: resolvePluginStorePaths({ happyHomeDir }),
-                developmentOccurrenceId: `source-entry:${agentId}`,
+            const paths = resolvePluginStorePaths({ happyHomeDir });
+            const runnerSnapshotIdentity = `path:${join(source.sourceAuthority.registeredRootId, '..', '..', '..', 'apps', 'cli')}`;
+            const binding = await attestFreshRunnerAgentBinding({
+                paths, runnerSnapshotIdentity,
                 binding: createAgentSessionRunnerFactoryBinding({
                     v: 1, pluginId: agent.identity.pluginId, pluginVersion: '0.0.0',
                     agentId: agent.id, localAgentId: agent.identity.localId,
@@ -65,6 +59,10 @@ describe('retained development source entries', () => {
                     locator: { module: './agent/runtime/factory', export: agentId === 'claude' ? 'createClaudeAgentRuntime' : 'createCodexAgentRuntime', runtimeApiVersion: 1 },
                     normalizedModulePath: 'src/agent/runtime/factory.ts', loadMode: 'source-ts',
                 }),
+            });
+            leaf = await loadRetainedAgentRuntimeLeaf({
+                paths, binding,
+                developmentRunnerSnapshotIdentity: runnerSnapshotIdentity,
             });
             expect(leaf.factory).toEqual(expect.any(Function));
             expect(leaf.catalogEntry?.id).toBe(agent.id);

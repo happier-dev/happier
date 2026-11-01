@@ -569,6 +569,7 @@ describe('createBundledActivationSourceResolver', () => {
     });
     expect(importModule).toHaveBeenCalledWith(
       expect.stringMatching(/\/packages\/plugins\/session-owner\/src\/index\.ts$/u),
+      { loadMode: 'source-ts' },
     );
   });
 

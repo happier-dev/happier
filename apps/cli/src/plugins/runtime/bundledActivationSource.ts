@@ -52,7 +52,10 @@ type BundledActivationSource = Readonly<{
     ) => Promise<PluginRelativeModuleResolution<Record<string, unknown>>>;
 }>;
 
-type ImportModule = (specifier: string) => Promise<PluginDaemonModuleNamespace>;
+type ImportModule = (
+    specifier: string,
+    selection: Readonly<{ loadMode: 'immutable-js' | 'source-ts' }>,
+) => Promise<PluginDaemonModuleNamespace>;
 
 type PrepareSourceDevSharedDeps = (params: Readonly<{
     packageName: string;
@@ -762,7 +765,7 @@ export function createBundledActivationSourceResolver(params: Readonly<{
             const normalizedModulePath =
                 relativeModulePath.split(sep).join('/');
             const moduleNamespace = (
-                await loadImport(pathToFileURL(modulePath).href)
+                await loadImport(pathToFileURL(modulePath).href, { loadMode: selected.loadMode })
             ) as Record<string, unknown>;
             return Object.freeze({
                 module: moduleNamespace,
@@ -799,6 +802,7 @@ export function createBundledActivationSourceResolver(params: Readonly<{
                 if (selectedEntry) {
                     return await loadImport(
                         pathToFileURL(selectedEntry.entryPath).href,
+                        { loadMode: selectedEntry.loadMode },
                     );
                 }
                 if (
@@ -808,7 +812,7 @@ export function createBundledActivationSourceResolver(params: Readonly<{
                     throw new Error(`Bundled immutable artifact is unavailable for '${daemonEntryPath}'`);
                 }
 
-                return await loadImport(daemonEntryPath);
+                return await loadImport(daemonEntryPath, { loadMode: 'immutable-js' });
             },
         };
     };

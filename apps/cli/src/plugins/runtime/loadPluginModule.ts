@@ -283,7 +283,6 @@ function resolveSelectedEntryPath(params: Readonly<{
     entryPath: string;
     devEntryPath?: string | null;
     useDevelopmentEntry?: boolean;
-    sourceAuthority?: PluginRuntimeSourceAuthority;
 }>): Readonly<{ entryPath: string; isDevEntry: boolean }> {
     const devEntryPath = params.devEntryPath?.trim();
     if (params.useDevelopmentEntry === true) {
@@ -295,11 +294,7 @@ function resolveSelectedEntryPath(params: Readonly<{
         }
         return { entryPath: devEntryPath, isDevEntry: true };
     }
-    // Retained source entries are already selected; custody supplies their mode.
-    return {
-        entryPath: params.entryPath,
-        isDevEntry: params.sourceAuthority?.kind === 'development',
-    };
+    return { entryPath: params.entryPath, isDevEntry: false };
 }
 
 function assertSupportedEntryExtension(params: Readonly<{
@@ -495,7 +490,6 @@ async function loadFileBackedModule(params: Readonly<{
         entryPath: params.entryPath,
         devEntryPath: params.devEntryPath,
         useDevelopmentEntry: params.useDevelopmentEntry,
-        sourceAuthority: params.sourceAuthority,
     });
     return await loadVerifiedPluginModule({
         entryPath: selectedEntry.entryPath,

@@ -197,7 +197,7 @@ async function projectRetainedAgentCatalogEntry(input: Readonly<{
         && declaredEntry.vendorResumeSupport !== 'experimental')
         || attested.bindingKind !== 'plugin_factory_v1') return { catalogEntry: declaredEntry, dispose: async () => {} };
     const rootPath = await realpath(attested.rootPath);
-    const loadModule = async (entryPath: string) => {
+    const loadModule = async (entryPath: string, loadMode = attested.fact.loadMode) => {
         const normalizedPath = relative(rootPath, resolve(entryPath)).split(sep).join('/');
         if (attested.sourceKind === 'managed') {
             await assertContainedRegularGenerationFile(rootPath, normalizedPath, 'Retained Agent catalog module');
@@ -209,7 +209,7 @@ async function projectRetainedAgentCatalogEntry(input: Readonly<{
             }
         }
         return await loadVerifiedPluginModule({
-            entryPath, loadMode: attested.fact.loadMode, generationScope: attested.binding,
+            entryPath, loadMode, generationScope: attested.binding,
             cacheKey: `${attested.cacheIdentity}:${normalizedPath}`, nativeFileUrlMode: 'canonical',
         });
     };
@@ -223,7 +223,7 @@ async function projectRetainedAgentCatalogEntry(input: Readonly<{
         if (!locator?.daemonEntryPath) throw new Error('Retained development Agent catalog has no bundled locator');
         const source = createBundledActivationSourceResolver({
             bundledPackageNames: [locator.daemonEntryPath],
-            importModule: async specifier => await loadModule(fileURLToPath(specifier)),
+            importModule: async (specifier, selection) => await loadModule(fileURLToPath(specifier), selection.loadMode),
             resolveDevelopmentSourceAuthority: ({ rootPath: selectedRoot }) => {
                 if (realpathSync(selectedRoot) !== rootPath) {
                     throw new Error('Retained Agent catalog selected a foreign development root');
