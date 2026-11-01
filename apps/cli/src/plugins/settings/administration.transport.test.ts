@@ -13,7 +13,7 @@ import { createApiSessionSocketStub, type ApiSessionSocketStub } from '@/testkit
 import { fetchServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { configuration } from '@/configuration';
 import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';

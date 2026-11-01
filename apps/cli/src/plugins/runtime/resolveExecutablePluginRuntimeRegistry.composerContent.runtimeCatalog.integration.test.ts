@@ -11,7 +11,7 @@ import { configuration } from '@/configuration';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createActiveDaemonComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 import { createDaemonPluginTransferRpcResolver } from '@/plugins/daemon/runtimeOwner';

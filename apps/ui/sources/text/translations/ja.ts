@@ -8209,6 +8209,7 @@ localTailscale: {
         provider_endpoint_unavailable: "プロバイダーのエンドポイントを利用できません。Gateway とそのマシンへの接続を確認してから、セッションを再試行してください。",
         plugin_mcp_preparation_unavailable: "プラグインの MCP 準備を利用できません。対象のマシンを確認してから、セッションを再試行してください。",
         agent_runtime_daemon_service_generation_not_current: "ランナーのエージェント世代が最新ではありません。対象のマシンでセッションを再試行してください。",
+        plugin_disabled: "このエージェントのプラグインは無効です。「プラグイン」で再度有効にすると、このセッションを再開できます。",
         native_agent_privileged_effect_authority_unavailable: "ランナーの daemon 権限を利用できません。対象のマシンを確認してから、セッションを再試行してください。",
         native_agent_privileged_effect_outcome_unknown: "ランナーの daemon の準備を確認できませんでした。再試行する前に、セッションと対象のマシンを確認してください。",
         daemon_draining: "対象のマシンは新しい作業を一時的に停止しています。準備ができたらセッションを再試行してください。",

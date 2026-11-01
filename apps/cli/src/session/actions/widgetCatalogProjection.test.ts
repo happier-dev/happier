@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
 import { createStablePluginDeclarativeModel } from '@/plugins/runtime/invocation/services/declarativeModel';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';

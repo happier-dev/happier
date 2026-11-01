@@ -52,7 +52,9 @@ const DistributionSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
 export const InstalledPluginCapabilityEntryV1Schema = lazyZodSchema(() => z.readonly(z.object({
   pluginId: z.string(), desiredGeneration: z.optional(z.nullable(z.string())), appliedGeneration: z.optional(z.nullable(z.string())),
   admittedIntegrity: z.optional(z.nullable(z.string())), title: z.string(), description: z.nullable(z.string()),
-  version: z.string(), enabled: z.boolean(), rollbackAvailability: z.optional(z.enum(['available', 'unavailable'])),
+  version: z.string(), enabled: z.boolean(),
+  accountEnabled: z.optional(z.boolean()), machineEnabled: z.optional(z.boolean()),
+  rollbackAvailability: z.optional(z.enum(['available', 'unavailable'])),
   source: z.readonly(z.object({
     kind: z.string(), locator: z.string(), devWatch: z.optional(z.boolean()), trustPolicy: z.optional(z.string()),
     installPolicy: z.optional(z.string()), resolvedPath: z.optional(z.string()),

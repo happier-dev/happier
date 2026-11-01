@@ -9,7 +9,7 @@ import type { ResolvedContributionRegistry } from '@/plugins/projection/registry
 
 import { buildPluginProjectionV2 } from './v2';
 import { readDeclaredConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeSelectionV1';
-import { projectLoadedPluginContributes } from '../resolvePluginContributions';
+import { projectLoadedPluginContributes } from '../fullProjection';
 import { createResolvedContributionRegistry } from '../createResolvedContributionRegistry';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 

@@ -10,8 +10,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
-import { createResolvedContributionRegistry, getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
 import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
 import { createBackgroundServiceRunnerHost } from '@/plugins/runtime/lifecycle/contributions/backgroundServices';

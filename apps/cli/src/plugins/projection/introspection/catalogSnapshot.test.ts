@@ -135,6 +135,25 @@ describe('plugin catalog introspection snapshot', () => {
     });
     expect(projectPluginCatalogEntriesSnapshot([entry], runtimeSnapshot)[0]).toEqual(snapshots[0]);
     expect(projectPluginCatalogEntrySnapshot(entry, runtimeSnapshot)).toEqual(snapshots[0]);
+    // Desired disable governs the next admission even while admitted work still
+    // reports an active occurrence in the serving runtime.
+    expect(projectPluginCatalogEntrySnapshot({ ...entry, enabled: false }, runtimeSnapshot)
+      .contributions.contributions[0]).toMatchObject({
+      registration: { requirement: 'required', state: 'unavailable' },
+      activation: { state: 'unavailable' },
+      projection: { state: 'unavailable', reason: 'Plugin disabled' },
+    });
+    const unavailable = projectPluginCatalogEntrySnapshot({
+      ...entry, enabled: false, unavailableCode: 'plugin_account_execution_unavailable',
+    }, runtimeSnapshot);
+    expect(unavailable.contributions.contributions[0]?.projection)
+      .toMatchObject({ state: 'unavailable', reason: 'Plugin unavailable' });
+    expect(unavailable.diagnostics).toContainEqual(expect.objectContaining({
+      data: expect.objectContaining({
+        code: 'plugin_runtime_capability_missing',
+        details: { reason: 'plugin_account_execution_unavailable' },
+      }),
+    }));
 
     const occurrenceId = createPluginRuntimeOccurrenceId('acme.snapshot');
     const joinedEntries = joinInstalledCatalogRuntimeIntrospection([entry], {

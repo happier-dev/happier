@@ -5,7 +5,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { decideUserPluginChange, requestUserPluginChange } from '@/plugins/daemon/changeClient';
 import type { DaemonPluginChangeService } from '@/plugins/daemon/changeService';
 import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
-import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { executePluginDevLoopAction } from '@/plugins/devLoop/actions';
 import type { executePluginSettingsAdministrationAction } from '@/plugins/settings/administration';
 import type { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
@@ -88,6 +88,15 @@ export function createCliPluginAdministrationActionDeps(
     : null;
   return {
 pluginsDevLoopAction: async ({ actionId, input, context }) => {
+      const accountEnablement = (actionId === 'plugins.enable' || actionId === 'plugins.disable') && readRecord(input).scope === 'account';
+      if (accountEnablement) {
+        if (!params.credentials) return notSupported();
+        const requesterAccountId = context.externalActionCredential?.accountId
+          ?? context.externalActionExecutionAuthorization?.binding.accountId;
+        if (requesterAccountId && requesterAccountId !== readAccountIdFromToken(params.credentials.token)) {
+          return { ok: false, errorCode: 'permission_denied', error: 'permission_denied' };
+        }
+      }
       const marketplaceInstall = actionId === 'plugins.install' && input !== null && typeof input === 'object'
         && 'source' in input && input.source !== null && typeof input.source === 'object'
         && 'kind' in input.source && input.source.kind === 'marketplace';
@@ -126,6 +135,8 @@ pluginsDevLoopAction: async ({ actionId, input, context }) => {
           context,
         }, {
           ...pluginChangeServices,
+          ...(accountEnablement && params.credentials ? { account: { credentials: params.credentials,
+            serverUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl() } } : {}),
           ...(actionId === 'plugins.install' ? { installEffectAdmitted: true as const } : {}),
           ...(registry ? { marketplaceIndexService: createMarketplaceIndexService({ happyHomeDir: params.happyHomeDir,
             readRegistrySources: registry.readSources }) } : {}),

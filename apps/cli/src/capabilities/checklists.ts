@@ -1,5 +1,5 @@
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { BUILT_IN_INSTALLABLES_REGISTRY } from '@happier-dev/protocol/installables';
 import type { InstallablesRegistry } from '@happier-dev/protocol/installables';
 

@@ -12,6 +12,7 @@ import type { SessionStartFailureNotice } from './sessionStartFailureNotice';
 export const SessionStartFailureBanner = React.memo(function SessionStartFailureBanner(props: Readonly<{
     notice: SessionStartFailureNotice;
     retry: Readonly<{ run: () => void; busy: boolean }> | null;
+    managePlugin?: () => void;
 }>) {
     const { notice, retry } = props;
     return (
@@ -21,7 +22,14 @@ export const SessionStartFailureBanner = React.memo(function SessionStartFailure
                 tone={retry ? 'warning' : 'neutral'}
                 title={t('session.startFailure.title')}
                 body={notice.message}
-                {...(retry
+                {...(notice.code === 'plugin_disabled' && props.managePlugin
+                    ? {
+                        actionTestID: 'session-start-failure-manage-plugin',
+                        actionLabel: t('settingsPlugins.managePlugin'),
+                        actionAccessibilityLabel: t('settingsPlugins.managePlugin'),
+                        onActionPress: props.managePlugin,
+                    }
+                    : retry
                     ? {
                         actionTestID: 'session-start-failure-retry',
                         actionLabel: t('common.retry'),

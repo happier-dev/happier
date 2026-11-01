@@ -14,7 +14,7 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { RpcHandler } from '@/api/rpc/types';
 import { reloadConfiguration } from '@/configuration';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { resolveDefaultScmBackendRegistry } from '@/scm/scmBackendCatalog';

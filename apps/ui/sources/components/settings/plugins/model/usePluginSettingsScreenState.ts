@@ -251,7 +251,7 @@ export type PluginSettingsScreenState = Readonly<{
     resolveDevelopmentEditTarget: (pluginId: string) => Promise<DevelopmentEditTargetSettlement>;
     runDevelopmentSourceInstall: (sourceRootPath: string) => void;
     runDevelopmentAction: (action: 'test' | 'pack' | 'unregister', sourceRootPath: string) => void;
-    runInstalledPluginAction: (action: InstalledPluginActionId, pluginId: string) => void;
+    runInstalledPluginAction: (action: InstalledPluginActionId, pluginId: string, scope?: 'account' | 'machine') => void;
     setInstalledPluginUpdatePolicy: (pluginId: string, policy: PluginUpdatePolicyV1) => void;
     setActiveView: (view: PluginSettingsViewId) => void;
     setDiscoverSearchText: (value: string) => void;
@@ -893,6 +893,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                         const execution = await installedExecution.execute(actionId[params.method], {
                             machineId: initialTarget.machine.id,
                             pluginId: params.pluginId,
+                            ...(params.scope ? { scope: params.scope } : {}),
                             ...(params.policy ? { policy: params.policy } : {}),
                             ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
                         }, { signal: installLifetime.controller.signal });
@@ -1007,6 +1008,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     const runInstalledPluginAction = React.useCallback((
         action: InstalledPluginActionId,
         pluginId: string,
+        scope?: 'account' | 'machine',
     ) => {
         const installed = installedPluginByIdRef.current.get(pluginId) ?? null;
         if (
@@ -1017,7 +1019,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         ) {
             return;
         }
-        const capabilities = projectInstalledPluginLifecycleCapabilities(installed);
+        const capabilities = projectInstalledPluginLifecycleCapabilities(installed, scope);
         if (
             (action === 'enable' && !capabilities.canEnable)
             || (action === 'disable' && !capabilities.canDisable)
@@ -1030,7 +1032,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         }
         // Action policy owns confirmation. Retained-resource responsibility is
         // a distinct daemon-issued review handled by the mutation loop above.
-        runCatalogAction({ method: action, pluginId });
+        runCatalogAction({ method: action, pluginId, ...(scope ? { scope } : {}) });
     }, [isPluginActionInFlight, mutationAuthorityKey, runCatalogAction]);
 
     const setInstalledPluginUpdatePolicy = React.useCallback((

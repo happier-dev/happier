@@ -13,10 +13,16 @@ import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliR
 import { defaultCanImportFirstPartyPluginSource, isExecutingFirstPartySourceRuntime } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { readGeneratedPluginUiArtifactsManifestSync } from '@/plugins/install/ui/generatedArtifacts';
 import { ingestCanonicalPluginManifest } from '../../../manifest/ingest';
+import { projectPluginManifestCompatibilityDiagnostic } from '../../../manifest/diagnostics';
 import { pluginSourceProvenanceForKind } from '../../../manifest/sourceProvenance';
 import type { BundledPluginPublicationFailure } from '@/plugins/validation/diagnostics/types';
 import * as generatedBundledPluginManifests from '../sources/generatedBundledPluginManifests';
-import { readBundledPluginManifest } from './manifestFile';
+import { readBundledPluginManifest, readBundledPluginManifestInput } from './manifestFile';
+import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '../sources/generatedBundledPlugins';
+import { admitPluginContributionGraph, isPluginAdmissionExclusion, type AdmittedPluginContributionGraph } from '../normalize/admission';
+import type { BundledAgentRegistrationBinding } from './agentIdentity';
+import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import type { ResolvedPluginEnablement } from '../types';
 export { readBundledPluginManifest } from './manifestFile';
 
 export type BundledPluginLocator = Readonly<{
@@ -138,16 +144,23 @@ function resolveInstalledBundledPluginRootPath(packageName: string): string | nu
 export function loadBundledPluginLocatorResult(
     locators: readonly BundledPluginLocator[],
     publicationFailures: readonly BundledPluginPublicationFailure[] = [],
+    registrationBindings: readonly BundledAgentRegistrationBinding[] = [],
+    selectedPluginIds?: ReadonlySet<string>,
 ): Readonly<{
     loadedPlugins: readonly LoadedPlugin[];
-    pluginFailures: readonly BundledPluginPublicationFailure[];
+    pluginFailures: readonly BundledPluginAdmissionFailure[];
+    admittedGraph: AdmittedPluginContributionGraph;
 }> {
     const seenPluginIds = new Set<string>();
-    const unavailableProviderKeys = readUnavailableManagedProviderKeys();
+    const unavailableProviderKeys = new Set([...readUnavailableManagedProviderKeys()]
+        .filter(key => !selectedPluginIds || selectedPluginIds.has(key.slice(0, key.indexOf('\u0000')))));
     const unmatchedProviderKeys = new Set(unavailableProviderKeys);
     const loadedPlugins: LoadedPlugin[] = [];
-    const pluginFailures = [...publicationFailures];
+    const pluginFailures: BundledPluginAdmissionFailure[] = [...publicationFailures];
     const failedPluginIds = new Set(publicationFailures.map((failure) => failure.pluginId));
+    const agentPluginIds = new Set(registrationBindings
+        .filter(binding => binding.registrationFamily === 'agents')
+        .map(binding => binding.identity.pluginId));
     for (const locator of locators) {
         if (seenPluginIds.has(locator.pluginId)) {
             throw new Error(`Duplicate bundled plugin locator '${locator.pluginId}'`);
@@ -157,11 +170,12 @@ export function loadBundledPluginLocatorResult(
 
         try {
 
-        const manifest = projectManagedRuntimePublicationManifest(
-            locator,
-            unavailableProviderKeys,
-            unmatchedProviderKeys,
-        );
+        // File JSON already supplies the data boundary. Avoid decoding it into
+        // an object only for ingress to normalize, serialize and decode again.
+        // A managed-facet rewrite still needs the parsed declaration.
+        const manifest = unavailableProviderKeys.size === 0
+            ? readBundledPluginManifestInput(locator)
+            : projectManagedRuntimePublicationManifest(locator, unavailableProviderKeys, unmatchedProviderKeys);
         const ingestion = ingestCanonicalPluginManifest(manifest, {
             purpose: 'installedRead',
             manifestAuthority: 'bundled_first_party',
@@ -169,7 +183,7 @@ export function loadBundledPluginLocatorResult(
         });
         if (!ingestion.ok) {
             throw new Error(
-                `Invalid bundled plugin manifest '${locator.pluginId}': ${formatPluginManifestIngestionDiagnostics(ingestion.diagnostics.map(diagnostic => ({ ...diagnostic, code: 'plugin_manifest_invalid' as const })))}`,
+                `Invalid bundled plugin manifest '${locator.pluginId}': ${formatPluginManifestIngestionDiagnostics(ingestion.diagnostics)}`,
             );
         }
         if (ingestion.manifest.id !== locator.pluginId) {
@@ -196,11 +210,18 @@ export function loadBundledPluginLocatorResult(
             daemonEntryPath: locator.daemonEntryPath,
             devDaemonEntryPath: locator.devDaemonEntryPath ?? null,
             manifest: ingestion.manifest,
+            ...(ingestion.diagnostics?.length ? { admissionDiagnostics: ingestion.diagnostics.map(projectPluginManifestCompatibilityDiagnostic) } : {}),
             sourceSpec: locator.sourceSpec,
             ...(generatedUiArtifactsManifest ? { generatedUiArtifactsManifest } : {}),
         }));
         } catch (error) {
-            assertHostCanExcludeBundledPlugin('', locator.sourceSpec.locator, error);
+            // Required package imports/builds remain host obligations. An
+            // unavailable Agent declaration cannot authorize that Agent, but
+            // does not remove its package's independent host-imported code.
+            if (!agentPluginIds.has(locator.pluginId)) {
+                assertHostCanExcludeBundledPlugin('', locator.sourceSpec.locator, error);
+            }
+            failedPluginIds.add(locator.pluginId);
             pluginFailures.push(Object.freeze({
                 packageName: locator.sourceSpec.locator,
                 pluginId: locator.pluginId,
@@ -216,9 +237,40 @@ export function loadBundledPluginLocatorResult(
             `CLI managed runtime publication references unknown provider facets: ${[...unmatchedProviderKeys].map((key) => key.replace('\u0000', ':')).join(', ')}`,
         );
     }
+    for (const binding of registrationBindings) {
+        if (binding.registrationFamily !== 'agents' || failedPluginIds.has(binding.identity.pluginId)) continue;
+        const plugin = loadedPlugins.find(candidate => candidate.pluginId === binding.identity.pluginId);
+        // A host binding is a locator, not a registration. An unavailable Agent
+        // contribution must not withdraw this plugin's healthy siblings; the
+        // actual activation scope still refuses anything outside admitted rights.
+        if (plugin) continue;
+        failedPluginIds.add(binding.identity.pluginId);
+        pluginFailures.push({
+            pluginId: binding.identity.pluginId,
+            packageName: locators.find(locator => locator.pluginId === binding.identity.pluginId)?.sourceSpec.locator
+                ?? generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_METADATA.find(metadata => metadata.pluginId === binding.identity.pluginId)?.packageName
+                ?? binding.identity.pluginId,
+            diagnostic: { code: 'plugin_manifest_missing', stage: 'normalization',
+                message: `Missing bundled manifest for agent '${binding.implementationOwnerId}'`,
+                details: { reason: 'plugin_manifest_missing', agentId: binding.implementationOwnerId } },
+        });
+    }
+    const admittedGraph = admitPluginContributionGraph({
+        loadedPlugins: loadedPlugins.filter(plugin => !failedPluginIds.has(plugin.pluginId)),
+    });
+    for (const [pluginId, diagnostics] of Object.entries(admittedGraph.diagnosticsByPluginId)) {
+        const fatal = diagnostics.find(isPluginAdmissionExclusion);
+        if (!fatal) continue;
+        const plugin = loadedPlugins.find(candidate => candidate.pluginId === pluginId)!;
+        if (!agentPluginIds.has(pluginId)) {
+            assertHostCanExcludeBundledPlugin('', plugin.sourceSpec.locator, new Error(fatal.message));
+        }
+        pluginFailures.push({ packageName: plugin.sourceSpec.locator, pluginId, diagnostic: fatal });
+    }
     return Object.freeze({
-        loadedPlugins: Object.freeze(loadedPlugins),
+        loadedPlugins: admittedGraph.loadedPlugins,
         pluginFailures: Object.freeze(pluginFailures),
+        admittedGraph,
     });
 }
 
@@ -234,7 +286,49 @@ export function loadBundledPluginLocators(
 
 let admittedBundledPlugins: ReturnType<typeof loadBundledPluginLocatorResult> | null = null;
 
-export function loadCurrentBundledPluginLocatorResult() {
+/** Scope intent withdraws declarations from the existing admission graph. */
+export function loadEnabledBundledPluginLocatorResult(params?: Readonly<{
+    pluginIds?: readonly string[];
+    pluginEnablementById?: Readonly<Record<string, ResolvedPluginEnablement>>;
+}>): ReturnType<typeof loadBundledPluginLocatorResult> {
+    // Withdrawals can affect references outside an exact selection; admit that
+    // universe once before the existing family projection selects its output.
+    const hasWithdrawal = Object.values(params?.pluginEnablementById ?? {}).some(fact => !fact.enabled);
+    const bundled = loadCurrentBundledPluginLocatorResult(!hasWithdrawal && params?.pluginIds
+        ? { pluginIds: params.pluginIds } : undefined);
+    if (!hasWithdrawal) return bundled;
+    const admittedGraph = admitPluginContributionGraph({ loadedPlugins: bundled.loadedPlugins,
+        pluginEnablementById: params?.pluginEnablementById });
+    return Object.freeze({ ...bundled, loadedPlugins: admittedGraph.loadedPlugins, admittedGraph });
+}
+
+export function loadCurrentBundledPluginLocatorResult(params?: Readonly<{ pluginIds: readonly string[] }>): ReturnType<typeof loadBundledPluginLocatorResult> {
+    if (params) {
+        const selected = new Set(params.pluginIds);
+        if (!admittedBundledPlugins) {
+            const result = loadBundledPluginLocatorResult(
+                generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter(locator => selected.has(locator.pluginId)),
+                defaultCanImportFirstPartyPluginSource()
+                    ? [] : readCurrentBundledPluginPublicationFailures().filter(failure => selected.has(failure.pluginId)),
+                BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS.filter(binding => selected.has(binding.identity.pluginId)),
+                selected,
+            );
+            // A real cross-plugin reference demands its existing full admission
+            // universe. Never withdraw a valid selected declaration just because
+            // a narrow read omitted its dependency, or bypass graph validation.
+            if (Object.keys(result.admittedGraph.diagnosticsByPluginId).length === 0) return result;
+        }
+        const full = loadCurrentBundledPluginLocatorResult();
+        const loadedPlugins = Object.freeze(full.loadedPlugins.filter(plugin => selected.has(plugin.pluginId)));
+        return Object.freeze({
+            loadedPlugins,
+            pluginFailures: Object.freeze(full.pluginFailures.filter(failure => selected.has(failure.pluginId))),
+            admittedGraph: Object.freeze({ loadedPlugins,
+                diagnosticsByPluginId: Object.freeze(Object.fromEntries(Object.entries(full.admittedGraph.diagnosticsByPluginId)
+                    .filter(([pluginId]) => selected.has(pluginId)))),
+            }),
+        });
+    }
     // Admit the executing closure's bundled declarations on the first catalog
     // demand. Installed-plugin discovery then reuses that graph instead of
     // rereading and validating every bundled manifest on each refresh.
@@ -246,5 +340,12 @@ export function loadCurrentBundledPluginLocatorResult() {
         generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
         defaultCanImportFirstPartyPluginSource()
             ? [] : readCurrentBundledPluginPublicationFailures(),
+        BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS,
     );
 }
+
+export type BundledPluginAdmissionFailure = Readonly<{
+    packageName: string;
+    pluginId: string;
+    diagnostic: PluginCompatibilityDiagnostic;
+}>;

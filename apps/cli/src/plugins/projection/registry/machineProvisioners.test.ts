@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
-import { projectLoadedPluginContributes } from './resolvePluginContributions';
+import { projectLoadedPluginContributes } from './fullProjection';
 import { createResolvedContributionRegistry } from './createResolvedContributionRegistry';
 import { buildPluginProjectionV2 } from './projection/v2';
 import { createLoadedMachineProvisionerFixture } from './machineProvisioners.testkit';

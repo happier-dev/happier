@@ -46,9 +46,7 @@ import {
   CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE,
 } from '@happier-dev/plugins-claude/agent';
 import { CODEX_PLUGIN } from '@happier-dev/plugins-codex/manifest';
-import {
-  getResolvedContributionRegistry,
-} from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import {
   resolveQualifiedPurposeBindingSnapshotForAgentSpawn,
   resolveQualifiedPurposeBindingsForAgentSpawn,

@@ -137,6 +137,8 @@ export type PluginReloadController = Readonly<{
         registry: ResolvedExecutablePluginRuntimeRegistry;
         changedPluginIds: readonly string[];
         durableRevision?: number;
+        /** Re-admits current persisted state after an Account intent change. */
+        admissionRefresh?: true;
         /** Process-local development candidates use source revision currentness, never a fake durable revision. */
         isDevelopmentCandidateCurrent?: () => boolean;
         runningSessionDisposition: PluginRunningSessionDisposition;
@@ -737,15 +739,16 @@ export function createPluginReloadController(params?: Readonly<{
             }
 
             const changedPluginIds = normalizePluginIds(adoption.changedPluginIds);
+            const observedDurableRevision = controller.readCurrentDurableRevision();
             if (
                 adoption.durableRevision !== undefined
-                && highestObservedDurableRevision !== null
-                && adoption.durableRevision <= highestObservedDurableRevision
+                && (adoption.durableRevision < observedDurableRevision
+                    || (adoption.durableRevision === highestObservedDurableRevision && adoption.admissionRefresh !== true))
             ) {
                 await adoption.registry.dispose();
                 throw new Error(
                     `Prepared plugin runtime registry durable revision ${adoption.durableRevision} `
-                    + `is not newer than observed revision ${highestObservedDurableRevision}`,
+                    + `is not newer than observed revision ${observedDurableRevision}`,
                 );
             }
             // Durable currentness does not roll back while cold initialization or

@@ -5,7 +5,7 @@ import { PLUGIN_MANIFEST } from '@happier-dev/plugins-triage/manifest';
 
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';

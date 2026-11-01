@@ -8450,6 +8450,7 @@ const Domain_pluginSettingsPresentationTranslations = (() => {
 const english = Shared_pluginSettingsPresentationTranslations.english;
 
 const pluginSettingsPresentationTranslations = { ja: {
+        enablement: {"account": "アカウントで有効", "machine": "このマシンで有効", "description": "ここでプラグインを実行するには両方を有効にしてください。無効にしてもデータと接続は保持されます。"},
         rowStatus: { enabled: '有効', disabled: '無効', incompatible: '非対応', trustRemoved: '信頼を取り消し済み', needsAttention: '要確認' },
         developmentPhase: { observing: '監視中', preparingDependencies: '依存関係を準備中', compiling: 'コンパイル中', validating: '検証中', active: '有効', retainedIncumbent: '以前のバージョンが稼働中', unavailable: '利用不可' },
         developmentDiagnostic: { manifestMissing: 'このフォルダーにはプラグインのマニフェストがありません。.happier-plugin/plugin.json を追加するか、プラグインのフォルダーを選択してください。', projectMissing: 'このフォルダーはもうありません。開発から削除するか、プラグインの現在の場所を選択してください。' },

@@ -12,7 +12,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { createPluginReloadController } from './reload/controller';
 import { createDaemonPluginRuntimeOwner } from '@/plugins/daemon/runtimeOwner';

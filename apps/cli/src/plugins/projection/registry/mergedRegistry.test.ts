@@ -7,10 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
-import {
-    getResolvedContributionRegistry,
-    resolveMergedContributionRegistry,
-} from './createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from './builtIn/snapshot';
+import { resolveMergedContributionRegistry } from './createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from './resolveBuiltInContributions';
 
 function createTestAgentContribution(overrides: Record<string, unknown> = {}): Record<string, unknown> {

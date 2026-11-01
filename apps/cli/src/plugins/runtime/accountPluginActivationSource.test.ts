@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
-import { createResolvedContributionRegistry, getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { readCurrentAccountPluginExecutionSelection, resolveAccountPluginActivationSources } from './accountPluginActivationSource';
@@ -15,7 +16,7 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH } from '@/plugins/install/ui/generatedArtifacts';
 import { createBundledActivationSourceResolver } from './bundledActivationSource';
 import * as daemonControlClient from '@/daemon/controlClient';

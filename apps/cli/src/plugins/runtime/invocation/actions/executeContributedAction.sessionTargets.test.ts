@@ -10,7 +10,7 @@ import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/appro
 
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';

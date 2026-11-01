@@ -15,7 +15,7 @@ import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { activateContributionModule } from '@/plugins/runtime/lifecycle/activation/activateContributionModule';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createTargetActionInvocationRegistry, type TargetActionInvocationRegistration } from '../targetActionRegistry';
 import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';

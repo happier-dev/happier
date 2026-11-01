@@ -86,7 +86,7 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { PLUGIN_MANIFEST as triageManifest } from '@happier-dev/plugins-triage/manifest';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocation/actions/clientActionMachineRpc';

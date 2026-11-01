@@ -38,10 +38,8 @@ import { resolvePreflightSessionControlsProbeAdapter } from '@/capabilities/prob
 import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
 import { invokeAgentCliInstallCapability } from '@/capabilities/cliUpdate/invokeAgentCliInstallCapability';
 import { withAgentCliUpdateFacts } from '@/capabilities/cliUpdate/agentCliUpdates';
-import {
-    getResolvedContributionRegistry,
-    resolveMergedContributionRegistry,
-} from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/merged';
 import {
     readInstalledPluginCatalogEntry,
     type PluginCatalogEntry,
@@ -68,6 +66,8 @@ function projectInstalledPluginCapabilityEntry(entry: PluginCatalogEntry): Insta
         description: entry.description,
         version: entry.version,
         enabled: entry.enabled,
+        ...(entry.accountEnabled === undefined ? {} : { accountEnabled: entry.accountEnabled }),
+        ...(entry.machineEnabled === undefined ? {} : { machineEnabled: entry.machineEnabled }),
         source: entry.source,
         install: entry.install,
         compatibility: entry.compatibility,

@@ -13,7 +13,7 @@ import { configuration } from '@/configuration';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { createMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createLocalPathPluginDistributionIdentity, createPluginTrustRecord } from '@/plugins/store/install/trustIdentity';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
@@ -150,7 +150,7 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
     const createRegistry = async (changed: ReadonlySet<string>) => {
         const contributes = createMergedContributionRegistry(projectLoadedPluginContributes({
             loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external', existingAgentIds: new Set(),
-        }), input.includeBundledDeclarations ? undefined : {});
+        }), input.includeBundledDeclarations ? (await import('@/plugins/projection/registry/builtIn/snapshot')).getResolvedContributionRegistry() : {});
         const generationAuthority = await readCurrentCommittedPluginGenerations(resolvePluginStorePaths({ happyHomeDir }), {});
         if (!generationAuthority) throw new Error('Expected installed generation authority');
         const serving = controller.retainServingSlots?.(changed);

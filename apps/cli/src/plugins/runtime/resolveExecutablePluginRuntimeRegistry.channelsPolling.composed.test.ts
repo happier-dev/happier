@@ -3,7 +3,7 @@ import { definePlugin, PluginError, type PluginServices } from '@happier-dev/plu
 import { ConversationProvidersContributionPointV1, ConversationProvidersContributionProtocolV1 } from '@happier-dev/channels-protocol/v1';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createIngressSupervisor } from '../../../../../packages/plugins/channels/src/checkpointedPollSupervisor';

@@ -316,7 +316,7 @@ describe('installed plugin lifecycle capabilities', () => {
       expect(row.description).toBe(presentation?.description ?? null);
     }
   });
-  it('does not advertise user-managed lifecycle mutations for host-bundled plugins', () => {
+  it('allows bundled enablement while preserving host package custody', () => {
     expect(
       projectInstalledPluginLifecycleCapabilities({
         ...installed,
@@ -330,12 +330,21 @@ describe('installed plugin lifecycle capabilities', () => {
       }),
     ).toEqual({
       canEnable: false,
-      canDisable: false,
+      canDisable: true,
       canRollback: false,
       canUninstall: false,
       canForgetTrust: false,
       canUpdate: false,
     });
+  });
+
+  it('offers each scope from its own desired state when Account disablement masks Machine enablement', () => {
+    const bundled = {
+      ...installed, enabled: false, accountEnabled: false, machineEnabled: true,
+      source: { kind: 'bundled', locator: 'example.bundled' },
+    };
+    expect(projectInstalledPluginLifecycleCapabilities(bundled, 'account')).toMatchObject({ canEnable: true, canDisable: false });
+    expect(projectInstalledPluginLifecycleCapabilities(bundled, 'machine')).toMatchObject({ canEnable: false, canDisable: true });
   });
 
   it('projects only currently meaningful lifecycle actions for user-managed plugins', () => {

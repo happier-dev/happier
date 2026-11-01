@@ -45,6 +45,7 @@ import { useExistingSessionCapabilitiesChip } from "@/components/sessions/capabi
 import { executeSessionLifecycleAction } from "@/components/sessions/actions/sessionActionExecution";
 import { type SessionConnectedServiceAuthSwitchResult, setSessionConnectedServiceAuthBinding } from "@/sync/ops/connectedServices/sessionAuthSwitch";
 import { resolveResumeFailurePresentation } from "@/sync/domains/session/resume/resolveResumeFailurePresentation";
+import { buildPluginDetailRoute, storeMachineRouteParams } from "@/components/settings/plugins/model/pluginsSurfaceRoutes";
 import { resolvePortableServerIdentityForRoutingId } from "@/sync/domains/server/resolvePortableServerIdentityForRoutingId";
 import { alertActionFailure } from "@/utils/errors/alertActionFailure";
 import { readRpcErrorCode } from "@happier-dev/protocol/rpcErrors";
@@ -4621,9 +4622,22 @@ export function useSessionComposerController({
             });
 
             if (!result.ok) {
-                const presentation = resolveResumeFailurePresentation({ errorCode: result.errorCode, errorMessage: result.error }, t('session.resumeFailed'));
+                const presentation = resolveResumeFailurePresentation({ errorCode: result.errorCode, errorMessage: result.error },
+                    t('session.resumeFailed'), resolveSessionActionDefaultTarget(sessionActionDefaultBackend));
                 if (presentation.kind === 'directory_missing') {
                     setDirectoryRecovery({ scopeKey: sessionAccountScopeKey, busy: false });
+                } else if (presentation.kind === 'plugin_disabled' && presentation.pluginId) {
+                    const pluginId = presentation.pluginId;
+                    if (!silent) alertActionFailure({ reason: presentation.message, code: presentation.errorCode,
+                        context: { phase: 'session.open', targetHome },
+                        recovery: { label: t('settingsPlugins.managePlugin'),
+                            onPress: () => {
+                                const route = buildPluginDetailRoute('settings', pluginId);
+                                router.push({ ...route, params: { ...route.params, ...storeMachineRouteParams(
+                                    resumeMachineId ? { serverId: sessionRouteServerId, machineId: resumeMachineId } : null,
+                                ) } });
+                            } },
+                    });
                 } else {
                     maybeAlert(presentation.message, presentation.errorCode ?? null);
                 }

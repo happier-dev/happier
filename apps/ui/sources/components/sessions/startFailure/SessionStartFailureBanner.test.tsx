@@ -38,4 +38,17 @@ describe('SessionStartFailureBanner', () => {
         expect(screen.getTextContent()).toContain('Runner daemon authority is unavailable');
         expect(screen.findByTestId('session-start-failure-retry')).toBeNull();
     });
+
+    it('opens plugin recovery for a disabled Agent while its Machine is unavailable', async () => {
+        const managePlugin = vi.fn();
+        const screen = await renderScreen(<SessionStartFailureBanner
+            notice={{ code: 'plugin_disabled', message: 'This Agent plugin is disabled.', retryable: false }}
+            retry={null}
+            managePlugin={managePlugin}
+        />);
+        await pressTestInstanceAsync(screen.findByTestId('session-start-failure-manage-plugin'));
+        expect(managePlugin).toHaveBeenCalledOnce();
+        expect(screen.findByTestId('session-start-failure-retry')).toBeNull();
+    });
+
 });

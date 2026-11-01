@@ -208,10 +208,13 @@ interface SessionRipgrepResponse {
 }
 
 // Response types for spawn session
-// Resume's in-process callers can retain the typed transport refusal without
+// Resume's in-process callers retain a typed launch or transport refusal without
 // changing the established spawn wire envelope or exposing private error prose.
 export type ResumeSessionResult = Exclude<SpawnSessionResult, { type: 'error' }>
-    | (Extract<SpawnSessionResult, { type: 'error' }> & Readonly<{ rpcErrorCode?: string }>);
+    | (Omit<Extract<SpawnSessionResult, { type: 'error' }>, 'errorCode'> & Readonly<{
+        errorCode: Extract<SpawnSessionResult, { type: 'error' }>['errorCode'] | 'plugin_disabled';
+        rpcErrorCode?: string;
+    }>);
 /** Local pending-input projection, not a daemon spawn acknowledgement. */
 export type PendingInputRuntimeEnsureResult = ResumeSessionResult | Readonly<{ type: 'pending' }>;
 
@@ -536,7 +539,11 @@ async function runResumeSession(
                 storage.getState().armSessionResumingFallback(sessionId);
             }
         }
-        return normalizedResult;
+        return normalizedResult.type === 'error'
+            && normalizedResult.errorDetail?.kind === 'launch_error'
+            && normalizedResult.errorDetail.code === 'plugin_disabled'
+            ? { ...normalizedResult, errorCode: 'plugin_disabled' }
+            : normalizedResult;
     } catch (error) {
         if (shouldPresentAsResuming && canProjectResumePresentation()) {
             storage.getState().clearSessionResuming(options.sessionId);

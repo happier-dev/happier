@@ -45,6 +45,22 @@ function configuredAgentTargetKey(definitionId: string) {
 }
 
 describe('getResolvedBackendCatalogEntries', () => {
+    it('uses the admitted daemon Agent set instead of restoring an omitted bundled Agent', () => {
+        const enabledAgentIds = ['claude', 'codex'];
+        const mergedProviderProjectionById = { claude: {
+            agentId: 'claude', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.claude, isBuiltIn: true,
+        } };
+        expect(getResolvedBackendCatalogEntries({ enabledAgentIds, mergedProviderProjectionById })
+            .map(entry => entry.backendTarget)).toEqual([bundledAgentTarget('claude')]);
+        expect(resolveAgentCatalogProjection('codex', { enabledAgentIds, mergedProviderProjectionById }).enabled).toBe(false);
+        expect(getResolvedBackendCatalogEntries({ enabledAgentIds, mergedProviderProjectionById: {} })).toEqual([]);
+        // No admitted answer yet: preserve the existing bundled discovery fallback.
+        expect(getResolvedBackendCatalogEntries({ enabledAgentIds, mergedProviderProjectionById: null })
+            .map(entry => entry.backendTarget)).toEqual([bundledAgentTarget('claude'), bundledAgentTarget('codex')]);
+        expect(getResolvedBackendCatalogEntries({ enabledAgentIds: ['codex'], mergedProviderProjectionById: {
+            codex: { agentId: 'codex', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex, isBuiltIn: true },
+        } }).map(entry => entry.backendTarget)).toEqual([bundledAgentTarget('codex')]);
+    });
     it('keeps Agent catalog order deterministic when declaration insertion order changes, including equal titles', () => {
         const declared = ['zeta', 'alpha', 'beta'].map(agentId => [agentId, {
             agentId, title: agentId === 'zeta' ? 'Zeta' : 'Review',
@@ -155,6 +171,7 @@ describe('getResolvedBackendCatalogEntries', () => {
             enabledAgentIds: ['claude'],
             acpCatalogSettingsV1: { v: 2, backends: [] },
             mergedProviderProjectionById: {
+                claude: { agentId: 'claude', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.claude, isBuiltIn: true },
                 'acme.review': {
                     agentId: 'acme.review',
                     identity: { pluginId: 'acme.review', localId: 'review' },
@@ -875,6 +892,7 @@ describe('getResolvedBackendCatalogEntries', () => {
             backendEnabledByTargetKey: { 'agent:acme.review/review': false },
             mergedBackendProjectionById: {},
             mergedProviderProjectionById: {
+                claude: { agentId: 'claude', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.claude, isBuiltIn: true },
                 'acme.review': {
                     agentId: 'acme.review',
                     identity: { pluginId: 'acme.review', localId: 'review' },

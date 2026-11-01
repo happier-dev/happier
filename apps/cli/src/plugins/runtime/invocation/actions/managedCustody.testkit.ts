@@ -1,5 +1,5 @@
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import type { JsonValue } from '@happier-dev/protocol';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';

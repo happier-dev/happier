@@ -8,7 +8,7 @@ import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/acti
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';

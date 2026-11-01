@@ -12,7 +12,7 @@ import {
     projectDaemonEmbeddedPluginUiRenderer,
     projectDaemonComposerSurfaceCatalog,
 } from './composer';
-import { projectLoadedPluginContributes } from './resolvePluginContributions';
+import { projectLoadedPluginContributes } from './fullProjection';
 import type {
     ResolvedComposerAttachmentContribution,
     ResolvedComposerControlContribution,

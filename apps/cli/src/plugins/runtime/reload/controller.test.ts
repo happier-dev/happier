@@ -864,6 +864,17 @@ describe('createPluginReloadController', () => {
             lastResult: { generation: 2, registry: revisionTwo },
         });
         expect(controller.isRuntimeRegistryCurrent(revisionTwo)).toBe(true);
+        const accountRefresh = await createRuntimeRegistry('account-refresh');
+        await expect(controller.adoptPreparedRuntimeRegistry({ registry: accountRefresh,
+            changedPluginIds: ['acme.second'], durableRevision: 2, admissionRefresh: true,
+            runningSessionDisposition: 'retainRunningSessions',
+        })).resolves.toMatchObject({ generation: 3, registry: accountRefresh });
+        const staleRefresh = await createRuntimeRegistry('stale-refresh');
+        await expect(controller.adoptPreparedRuntimeRegistry({ registry: staleRefresh,
+            changedPluginIds: ['acme.second'], durableRevision: 1, admissionRefresh: true,
+            runningSessionDisposition: 'retainRunningSessions',
+        })).rejects.toThrow(/not newer than observed revision 2/i);
+        expect(controller.getState().activeRegistry).toBe(accountRefresh);
     });
 
     it('keeps unrelated plugin admission live and publishes a higher revision while a lower revision awaits reconciliation', async () => {

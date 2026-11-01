@@ -15,7 +15,7 @@ import { createBundledActivationSourceResolver } from '../runtime/bundledActivat
 import { bindPluginRuntimeSourceAuthority } from '../runtime/sourceAuthority';
 import { activateContributionModule } from '../runtime/lifecycle/activation/activateContributionModule';
 import { createPluginRuntimeOccurrenceId } from '../runtime/runtimeSlots';
-import { projectLoadedPluginContributes } from '../projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '../projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
 import { buildPluginProjectionV2 } from '../projection/registry/projection/v2';
 

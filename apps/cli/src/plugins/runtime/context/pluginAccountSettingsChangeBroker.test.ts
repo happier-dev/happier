@@ -8,9 +8,28 @@ import {
     retirePluginAccountCollectionWatchScope,
     subscribePluginAccountCollectionWatchInvalidation,
     subscribePluginAccountSettingsWatchInvalidation,
+    publishPluginAccountAvailabilityChanges,
+    subscribePluginAccountAvailabilityChanges,
 } from './pluginAccountSettingsChangeBroker';
 
 describe('Account plugin Settings watch broker', () => {
+    it('wakes availability consumers once per changed Account page and skips duplicate cursors', () => {
+        const listener = vi.fn();
+        const unsubscribe = subscribePluginAccountAvailabilityChanges(listener);
+        const change = { cursor: 41, kind: 'pluginDomain' as const, entityId: 'pluginDomain/example.tasks/availability', changedAt: 1,
+            hint: { pluginDomain: 'availability' as const, pluginId: 'example.tasks' } };
+        try {
+            publishPluginAccountAvailabilityChanges('availability-scope', [change]);
+            publishPluginAccountAvailabilityChanges('availability-scope', [change, { ...change, cursor: 40 }]);
+            expect(listener).toHaveBeenCalledExactlyOnceWith('availability-scope', ['example.tasks']);
+            publishPluginAccountAvailabilityChanges('availability-scope', [{ ...change, cursor: 42 }]);
+            expect(listener).toHaveBeenCalledTimes(2);
+            publishPluginAccountCollectionWatchInvalidation({ accountScopeKey: 'availability-scope', kind: 'reset', changeCursor: 10 });
+            expect(listener).toHaveBeenLastCalledWith('availability-scope', null);
+            publishPluginAccountAvailabilityChanges('availability-scope', [{ ...change, cursor: 11 }]);
+            expect(listener).toHaveBeenCalledTimes(4);
+        } finally { unsubscribe(); retirePluginAccountCollectionWatchScope('availability-scope'); }
+    });
     it('admits only the closed settings AccountChange arm and carries no settings content', () => {
         expect(readPluginAccountSettingsWatchInvalidations([
             {

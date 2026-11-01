@@ -9,7 +9,7 @@ import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { buildPluginContributionRegistry } from './normalize/package';
-import { projectLoadedPluginContributes } from './resolvePluginContributions';
+import { projectLoadedPluginContributes } from './fullProjection';
 import { createMergedContributionRegistry, createResolvedContributionRegistry } from './createResolvedContributionRegistry';
 import { buildPluginProjectionV2 } from './projection/v2';
 

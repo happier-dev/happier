@@ -8473,6 +8473,7 @@ const Domain_pluginSettingsPresentationTranslations = (() => {
 const english = Shared_pluginSettingsPresentationTranslations.english;
 
 const pluginSettingsPresentationTranslations = { pl: {
+        enablement: {"account": "Na Twoim koncie", "machine": "Na tym komputerze", "description": "Oba ustawienia muszą być włączone, aby wtyczka działała tutaj. Wyłączenie zachowuje dane i połączenia."},
         rowStatus: { enabled: 'Włączone', disabled: 'Wyłączone', incompatible: 'Niezgodne', trustRemoved: 'Zaufanie cofnięte', needsAttention: 'Wymaga uwagi' },
         developmentPhase: { observing: 'Obserwowanie', preparingDependencies: 'Przygotowywanie zależności', compiling: 'Kompilowanie', validating: 'Sprawdzanie', active: 'Aktywne', retainedIncumbent: 'Poprzednia wersja aktywna', unavailable: 'Niedostępne' },
         developmentDiagnostic: { manifestMissing: 'W tym folderze nie ma manifestu wtyczki. Dodaj .happier-plugin/plugin.json albo wybierz folder wtyczki.', projectMissing: 'Ten folder już nie istnieje. Usuń go z rozwoju albo wybierz, gdzie jest teraz wtyczka.' },

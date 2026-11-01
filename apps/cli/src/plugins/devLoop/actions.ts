@@ -25,6 +25,8 @@ import { resolveArchiveExpectedIntegrity } from '@/plugins/distribution/archive/
 import type { PluginChangeRequest } from '@/plugins/daemon/changeContract';
 import { ManagedResourceDispositionV1Schema } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { PluginUpdatePolicyV1Schema } from '@happier-dev/protocol/marketplace/pluginUpdatePolicyV1';
+import { setCurrentAccountPluginEnabled } from '@/plugins/runtime/accountPluginActivationSource';
+import type { StoredCredentials } from '@/persistence';
 
 export type PluginDevLoopActionId = PluginDevLoopActionIdV1;
 
@@ -34,6 +36,7 @@ type PluginPendingReview = Extract<
 >;
 
 export type PluginDevLoopActionServices = Readonly<{
+  account?: Readonly<{ credentials: StoredCredentials; serverUrl: string }>;
   runPluginAuthorToolchain?: typeof runPluginAuthorToolchain;
   runPluginAuthorDoctor?: typeof runPluginAuthorDoctor;
   packLocalPlugin?: typeof packLocalPlugin;
@@ -216,6 +219,18 @@ export async function executePluginDevLoopAction(
   services: PluginDevLoopActionServices = {},
 ): Promise<unknown> {
   const input = readInput(params.input);
+
+  if ((params.actionId === 'plugins.enable' || params.actionId === 'plugins.disable') && input.scope === 'account') {
+    if (!services.account) return { ok: false, errorCode: 'not_supported', error: 'not_supported' };
+    const pluginId = readString(input, 'pluginId');
+    const enabled = params.actionId === 'plugins.enable';
+    const { intent } = await setCurrentAccountPluginEnabled({ ...services.account, pluginId, enabled,
+      ...(Array.isArray(input.managedResourceDispositions)
+        ? { managedResourceDispositions: input.managedResourceDispositions.map(value => ManagedResourceDispositionV1Schema.parse(value)) } : {}),
+      ...(params.context?.signal ? { signal: params.context.signal } : {}),
+    });
+    return { ok: true, kind: params.actionId.replaceAll('.', '_'), pluginId, scope: 'account', enabled: intent.enabled, intent };
+  }
 
   if (params.actionId === 'plugins.enable' || params.actionId === 'plugins.disable'
     || params.actionId === 'plugins.rollback' || params.actionId === 'plugins.trust.forget'

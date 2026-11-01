@@ -6,7 +6,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { CapabilitiesDescribeResponse, CapabilitiesInvokeRequest, CapabilitiesInvokeResponse } from '@/capabilities/types';
 import { probeAgentCatalogs } from '@/capabilities/probes/agentCatalogsProbe';
 import { reloadConfiguration } from '@/configuration';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { bindPluginRuntimeSourceAuthority } from '@/plugins/runtime/sourceAuthority';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';

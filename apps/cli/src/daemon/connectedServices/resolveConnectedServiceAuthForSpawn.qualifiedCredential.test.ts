@@ -7,7 +7,7 @@ import { ConnectedServiceBindingsV2IngressSchema, SPAWN_SESSION_ERROR_CODES } fr
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildConnectedServiceCredentialRecord, FeaturesResponseSchema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, sealAccountScopedBlobCiphertext, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol';
 import type { ApiClient } from '@/api/api';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';

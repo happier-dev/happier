@@ -11,7 +11,7 @@ import type {
   ResolvedAgentContribution,
   ResolvedAgentRuntimeContribution,
 } from '@/plugins/projection/registry/types';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import type { PluginContributionRuntimeLifecycle, ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';

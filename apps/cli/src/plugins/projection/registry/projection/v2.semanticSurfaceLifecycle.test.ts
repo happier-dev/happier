@@ -9,7 +9,7 @@ import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { createTargetActionHostBindingResolver, createTargetActionHostPolicyResolver } from '@/plugins/runtime/hostAccess/resolve';
 import { buildTargetActionInvocationRegistry } from '@/plugins/runtime/invocation/buildTargetActionRegistry';

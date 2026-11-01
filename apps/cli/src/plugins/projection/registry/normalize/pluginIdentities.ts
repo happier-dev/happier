@@ -8,3 +8,14 @@ export function assertUniquePluginIdentities(plugins: readonly Readonly<{ plugin
     seenPluginIds.add(plugin.pluginId);
   }
 }
+
+/** A selected source replaces its fallback identity, never another selected source. */
+export function excludeReplacedPluginIdentities<T extends Readonly<{ pluginId: string }>>(
+  fallback: readonly T[],
+  selected: readonly Readonly<{ pluginId: string }>[],
+): readonly T[] {
+  assertUniquePluginIdentities(fallback);
+  assertUniquePluginIdentities(selected);
+  const selectedIds = new Set(selected.map(plugin => plugin.pluginId));
+  return fallback.filter(plugin => !selectedIds.has(plugin.pluginId));
+}

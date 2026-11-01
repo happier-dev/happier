@@ -83,6 +83,20 @@ describe('Installed plugins collection', () => {
         expect(onRunAction).not.toHaveBeenCalled();
     });
 
+    it('controls the bundled Machine setting even when the Account setting makes the plugin inactive', async () => {
+        const onRunAction = vi.fn();
+        const screen = await renderInstalled({
+            collectionState: 'ready', onRunAction,
+            plugins: [installed('bundled', { enabled: false, accountEnabled: false, machineEnabled: true,
+                source: { kind: 'bundled', locator: 'bundled' } })],
+        });
+        const toggle = screen.findByTestId('settings.plugins.marketplace.installed.bundled.action.disable')!;
+        expect(toggle.props.value).toBe(true);
+        expect(toggle.props.disabled).toBe(false);
+        await React.act(async () => { toggle.props.onValueChange(false); });
+        expect(onRunAction).toHaveBeenCalledExactlyOnceWith('disable', 'bundled');
+    });
+
     it('puts Review where the switch was for a plugin that needs a decision', async () => {
         const screen = await renderInstalled({
             collectionState: 'ready',
@@ -179,7 +193,7 @@ describe('Installed plugins collection', () => {
         const text = screen.getTextContent();
         // The section header names the source once; its cards do not repeat it.
         expect(text.split(t('settingsPlugins.rowSource.bundled'))).toHaveLength(2);
-        // A healthy included plugin that cannot be switched off has no control, so nothing to label.
+        // A healthy included plugin's switch conveys its setting without repeated status text.
         expect(text).not.toContain(t('settingsPlugins.rowStatus.enabled'));
         expect(text).toContain(t('settingsPlugins.rowStatus.disabled'));
         expect(text).toContain('On 3 machines');

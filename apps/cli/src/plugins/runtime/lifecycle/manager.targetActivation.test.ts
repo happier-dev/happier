@@ -51,7 +51,7 @@ import { createPluginRuntimeOccurrenceId } from '../runtimeSlots';
 import { pixiPlugin, pixiRuntime, pixiAdapter, importedPixiTask, importedPixiEnvironment, persistedQualifiedArms } from '../../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/project-native-source';
 import { authorizePluginExecLaunchForHost, authorizeResolvedProjectExecLaunchForHost, createStablePluginExecService } from '../invocation/services/exec';
 import { createLoadedMachineProvisionerFixture, machineProvisionerFixtureRoleIds } from '../../projection/registry/machineProvisioners.testkit';
-import { projectLoadedPluginContributes } from '../../projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '../../projection/registry/fullProjection';
 import { buildPluginProjectionV2 } from '../../projection/registry/projection/v2';
 import { resolveExecutableManagedDependenciesRegistry } from '../../projection/registry/managedDependencyExecutables';
 import { createStableManagedExecutableResolver } from '../invocation/services/managedExecutableResolver';

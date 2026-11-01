@@ -17,7 +17,7 @@ import { resolveSessionCapabilitiesV1 } from '@happier-dev/protocol/reach/resolv
 import { loadPluginsFromState } from '@/plugins/discovery/load/installed';
 import { PluginStateFileV1Schema } from '@/plugins/store/state';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
 import { prepareSessionSkillPlan } from '../runtime/prepareSessionSkillPlan';

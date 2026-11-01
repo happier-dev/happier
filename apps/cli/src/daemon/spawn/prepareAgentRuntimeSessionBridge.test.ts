@@ -27,6 +27,40 @@ import {
 } from './prepareAgentRuntimeSessionBridge';
 
 describe('prepareRunnerAgentSessionBootstrapForLease', () => {
+    it('preserves Account execution unavailability instead of calling it disabled', async () => {
+        await expect(prepareRunnerAgentSessionBootstrapForLease({
+            target: { kind: 'backend', sourceKind: 'built_in', backendId: 'pi' },
+            lease: { registry: { contributes: {
+                agentDefinitionsById: new Map(),
+                unavailableAgentPluginsByBackendId: {
+                    pi: { pluginId: 'happier.agent.pi', code: 'plugin_account_execution_unavailable', machineEnabled: true },
+                },
+            } } },
+        } as never)).rejects.toMatchObject({ code: 'plugin_account_execution_unavailable' });
+    });
+
+    it.each([
+        { accountEnabled: false, machineEnabled: true },
+        { accountEnabled: true, machineEnabled: false },
+    ])('reports a withdrawn Agent as plugin_disabled without activating it (%j)', async (enablement) => {
+        const activateContributionsOnDemand = vi.fn(async () => []);
+        await expect(prepareRunnerAgentSessionBootstrapForLease({
+            target: { kind: 'backend', sourceKind: 'built_in', backendId: 'pi' },
+            lease: {
+                registry: {
+                    contributes: {
+                        agentDefinitionsById: new Map(),
+                        unavailableAgentPluginsByBackendId: {
+                            pi: { pluginId: 'happier.agent.pi', code: 'plugin_disabled', ...enablement },
+                        },
+                    },
+                    activateContributionsOnDemand,
+                },
+            },
+        } as never)).rejects.toMatchObject({ code: 'plugin_disabled' });
+        expect(activateContributionsOnDemand).not.toHaveBeenCalled();
+    });
+
     it('fails before spawn when the selected backend is absent from the admitted registry', async () => {
         const activateContributionsOnDemand = vi.fn(async () => []);
 

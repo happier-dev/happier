@@ -10,7 +10,7 @@ import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots'
 
 import { createResolvedContributionRegistry } from '../createResolvedContributionRegistry';
 import { buildPluginProjectionV2 } from '../projection/v2';
-import { projectLoadedPluginContributes } from '../resolvePluginContributions';
+import { projectLoadedPluginContributes } from '../fullProjection';
 import { resolveDeclarativeProjectionModels } from '../ui/declarativeModels';
 import { listDeclarativeNodesInPreorder } from '@/plugins/runtime/invocation/services/declarativeModel.testkit';
 

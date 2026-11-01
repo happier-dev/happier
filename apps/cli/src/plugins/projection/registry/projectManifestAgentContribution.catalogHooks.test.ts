@@ -6,7 +6,7 @@ import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 
 import { projectManifestAgentContribution } from './projectManifestAgentContribution';
-import { projectLoadedPluginContributes } from './resolvePluginContributions';
+import { projectLoadedPluginContributes } from './fullProjection';
 
 const { readAgentCatalogSnapshot } = vi.hoisted(() => ({
     readAgentCatalogSnapshot: vi.fn(),

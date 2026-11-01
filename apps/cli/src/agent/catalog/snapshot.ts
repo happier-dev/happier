@@ -1,4 +1,4 @@
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 

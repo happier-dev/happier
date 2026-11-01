@@ -36,7 +36,9 @@ import {
   resolveExecutablePluginRuntimeRegistry,
   type ResolvedExecutablePluginRuntimeRegistry,
 } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { createResolvedContributionRegistry, getResolvedContributionRegistry, resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
 import {
   evaluatePluginDevelopmentCandidate,

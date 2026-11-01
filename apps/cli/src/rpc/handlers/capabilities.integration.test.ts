@@ -17,6 +17,8 @@ import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '@/plugins/projection/regist
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createCliCapabilitiesService } from './capabilities';
+import { resolveBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/enablement';
+import { InstalledPluginCapabilityEntryV1Schema } from '@happier-dev/protocol/capabilities';
 
 const decideDaemonPluginChangeMock = vi.hoisted(() => vi.fn());
 
@@ -351,6 +353,31 @@ describe('createCliCapabilitiesService tool.plugins', () => {
         expect(Object.hasOwn(installed as object, 'manifestPath')).toBe(false);
         expect(Object.hasOwn(installed as object, 'contributionIntrospection')).toBe(false);
     });
+
+    it.each([[false, true], [true, false], [true, true]] as const)(
+        'projects canonical Account=%s Machine=%s bundled enablement through the capability schema',
+        async (accountEnabled, machineEnabled) => {
+            const pluginId = 'happier.app-context';
+            const pluginEnablementById = resolveBundledPluginEnablement({
+                pluginIds: [pluginId],
+                accountEnabledById: new Map([[pluginId, accountEnabled]]),
+                machineEnabledById: { [pluginId]: machineEnabled },
+            });
+            const catalog = projectBundledPluginCatalogEntries({
+                loadedPlugins: loadBundledPluginLocators(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter(locator => locator.pluginId === pluginId)),
+                pluginEnablementById,
+            });
+            const service = await createCliCapabilitiesService({ readPluginCatalog: async () => catalog });
+            const response = await service.detect({ requests: [{ id: 'tool.plugins' }] });
+            const entries = (response.results['tool.plugins'] as { data?: { installedPlugins?: unknown[] } })
+                .data?.installedPlugins ?? [];
+            expect(entries).toHaveLength(1);
+            expect(InstalledPluginCapabilityEntryV1Schema.parse(entries[0])).toMatchObject({
+                pluginId,
+                ...pluginEnablementById[pluginId],
+            });
+        },
+    );
 
     it('keeps bundled manifest detail out of the marketplace capability response', async () => {
         const catalog = projectBundledPluginCatalogEntries({

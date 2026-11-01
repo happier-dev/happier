@@ -5,7 +5,7 @@ import { createWorkflowMaterializationHostV1 } from '@/session/actions/workflowM
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
-import { projectLoadedPluginContributes } from './resolvePluginContributions';
+import { projectLoadedPluginContributes } from './fullProjection';
 import { createResolvedContributionRegistry, createMergedContributionRegistry } from './createResolvedContributionRegistry';
 import { buildPluginProjectionV2 } from './projection/v2';
 import { readPluginWorkflowSources } from './workflows';

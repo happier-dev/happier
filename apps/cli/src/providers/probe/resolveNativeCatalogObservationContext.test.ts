@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ProviderContributionV1Schema } from '@happier-dev/protocol';
-import type { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 
 import { resolveNativeCatalogObservationContext } from './resolveNativeCatalogObservationContext';
 

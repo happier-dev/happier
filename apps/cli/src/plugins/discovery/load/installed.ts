@@ -22,6 +22,7 @@ export type LoadedPlugin = Readonly<{
   devDaemonEntryPath: string | null;
   generatedUiArtifactsManifest?: PluginUiArtifactsManifestV2;
   manifest: CanonicalPluginManifest;
+  admissionDiagnostics?: readonly PluginCompatibilityDiagnostic[];
   sourceSpec: PluginSourceSpecV1;
 }>;
 

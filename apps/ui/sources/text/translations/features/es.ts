@@ -8457,6 +8457,7 @@ const Domain_pluginSettingsPresentationTranslations = (() => {
 const english = Shared_pluginSettingsPresentationTranslations.english;
 
 const pluginSettingsPresentationTranslations = { es: {
+        enablement: {"account": "En tu cuenta", "machine": "En esta máquina", "description": "Ambos deben estar activados para que el complemento funcione aquí. Al desactivarlo se conservan sus datos y conexiones."},
         rowStatus: { enabled: 'Activado', disabled: 'Desactivado', incompatible: 'No compatible', trustRemoved: 'Confianza retirada', needsAttention: 'Requiere atención' },
         developmentPhase: { observing: 'Observando', preparingDependencies: 'Preparando dependencias', compiling: 'Compilando', validating: 'Validando', active: 'Activo', retainedIncumbent: 'Versión anterior activa', unavailable: 'No disponible' },
         developmentDiagnostic: { manifestMissing: 'No hay manifiesto de complemento en esta carpeta. Añade .happier-plugin/plugin.json o elige la carpeta del complemento.', projectMissing: 'Esta carpeta ya no existe. Quítala de desarrollo o elige dónde está ahora el complemento.' },

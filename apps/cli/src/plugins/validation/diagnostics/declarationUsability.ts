@@ -128,6 +128,7 @@ const PLUGIN_DIAGNOSTIC_USABILITY_CLASS: Readonly<Record<
     target_semantics_unavailable: 'runtime',
     descriptor_semantic_invalid: 'runtime',
     surface_semantic_invalid: 'runtime',
+    plugin_contribution_skipped: 'runtime',
 } satisfies Record<PluginDiagnosticCode, PluginDiagnosticUsabilityClass>);
 
 /**

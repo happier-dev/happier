@@ -7,7 +7,7 @@ import { PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { loadPluginsFromState } from '@/plugins/discovery/load/installed';
 import { PluginStateFileV1Schema } from '@/plugins/store/state';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
-import { projectLoadedPluginContributes } from './resolvePluginContributions';
+import { projectLoadedPluginContributes } from './fullProjection';
 import { createResolvedContributionRegistry } from './createResolvedContributionRegistry';
 import { buildPluginProjectionV2 } from './projection/v2';
 

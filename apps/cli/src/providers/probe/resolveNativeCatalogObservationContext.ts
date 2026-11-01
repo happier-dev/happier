@@ -5,7 +5,7 @@ import type {
   QualifiedConnectedAccountPurposeV1,
   QualifiedConnectedAccountRequestAuthUseV1,
 } from '@happier-dev/protocol';
-import type { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 
 export type NativeCatalogObservationContext = Readonly<{

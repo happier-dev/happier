@@ -58,6 +58,7 @@ function isResolvedEntryEnabled(
     backendEnabledByTargetKey: Readonly<Record<string, boolean>> | null | undefined,
     entry: ResolvedBackendCatalogEntry,
 ): boolean {
+    if (entry.agentCatalogEntry.enabled === false) return false;
     return readBackendTargetEnabled({
         backendEnabledByTargetKey,
         canonicalTargetKey: entry.backendTargetKey,
@@ -164,8 +165,8 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
     // is this machine's open Agent catalog and is the only place a standalone
     // installed Session Agent appears: the V2 projection carries no parallel
     // backend registry, and `enabledAgentIds` is the closed bundled seed which
-    // can never name one. A bundled id stays owned by that seed so its
-    // selection policy is applied exactly once.
+    // can never name one. A bundled id stays in that seed's path, which consumes
+    // the catalog's admitted enablement alongside the person's backend preference.
     for (const projectedAgentId of Object.keys(params.mergedProviderProjectionById ?? {})) {
         const agentId = String(projectedAgentId ?? '').trim();
         if (!agentId || isBundledAgentId(agentId)) continue;

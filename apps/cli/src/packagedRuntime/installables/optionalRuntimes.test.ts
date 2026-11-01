@@ -58,7 +58,7 @@ vi.mock('node:module', async (importOriginal) => {
 });
 
 import { createInstallableCapabilitiesFromContributions } from '@/capabilities/registry/installables';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { ensureInstalledFirstPartyComponent } from '@happier-dev/cli-common/firstPartyRuntime';
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol';
 import { ensureOptionalRuntime, resolveInstalledOptionalRuntime } from './optionalRuntimes';

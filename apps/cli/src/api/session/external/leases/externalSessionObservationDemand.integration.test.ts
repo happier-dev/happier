@@ -33,7 +33,7 @@ import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type {
     tryDecryptSessionOwnerMetadataView,
 } from '@/session/transport/encryption/sessionEncryptionContext';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';

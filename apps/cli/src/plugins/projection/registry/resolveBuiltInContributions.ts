@@ -1,16 +1,8 @@
-import { BUILT_IN_INSTALLABLE_CONTRIBUTIONS } from '@happier-dev/protocol/installables';
-
-import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from './sources/generatedBundledPlugins';
-import { projectBuiltInAgents } from './builtIn/agents';
-import { loadCurrentBundledPluginLocatorResult } from './builtIn/locators';
-import { projectLoadedPluginContributes } from './resolvePluginContributions';
-import type { ResolvedContributionInputs, ResolvedInstallableContribution } from './types';
-
-const EMPTY_CONTRIBUTIONS = Object.freeze([]);
-
-type ResolvedBuiltInContributionInputs = ResolvedContributionInputs & Required<
-    Pick<ResolvedContributionInputs, 'agents' | 'providers'>
->;
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import { loadEnabledBundledPluginLocatorResult } from './builtIn/locators';
+import { projectLoadedPluginContributes } from './fullProjection';
+import { projectBuiltInContributionInputs, type ResolvedBuiltInContributionInputs } from './builtIn/project';
+import type { ResolvedPluginEnablement } from './types';
 
 /**
  * Projects first-party packages through the same canonical manifest path as
@@ -18,8 +10,13 @@ type ResolvedBuiltInContributionInputs = ResolvedContributionInputs & Required<
  * bundled backend-compatibility facts. Author-owned CLI, catalog, capability,
  * and presentation facts remain on the public manifest projection.
  */
-export function resolveBuiltInContributions(): ResolvedBuiltInContributionInputs {
-    const bundled = loadCurrentBundledPluginLocatorResult();
+export function resolveBuiltInContributions(params?: Readonly<{ providerContributionKeys?: readonly string[]; agentIdentity?: PluginContributionIdentityV1;
+    pluginEnablementById?: Readonly<Record<string, ResolvedPluginEnablement>>;
+}>): ResolvedBuiltInContributionInputs {
+    const bundled = loadEnabledBundledPluginLocatorResult({
+        ...(params?.agentIdentity ? { pluginIds: [params.agentIdentity.pluginId] } : {}),
+        pluginEnablementById: params?.pluginEnablementById,
+    });
     const projected = projectLoadedPluginContributes({
         loadResult: {
             loadedPlugins: bundled.loadedPlugins,
@@ -29,25 +26,9 @@ export function resolveBuiltInContributions(): ResolvedBuiltInContributionInputs
             ])),
         },
         provenance: 'first_party',
+        admittedGraph: bundled.admittedGraph,
+        providerContributionKeys: params?.providerContributionKeys,
+        agentIdentity: params?.agentIdentity,
     });
-    const agents = projectBuiltInAgents({
-        manifestAgents: projected.agents ?? EMPTY_CONTRIBUTIONS,
-        registrationBindings: BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS,
-    });
-
-    return Object.freeze({
-        ...projected,
-        agents,
-        providers: projected.providers ?? EMPTY_CONTRIBUTIONS,
-        catalogEntries: EMPTY_CONTRIBUTIONS,
-        managedDependencies: Object.freeze([
-            ...BUILT_IN_INSTALLABLE_CONTRIBUTIONS.map(({ descriptor, owner }) => ({
-                provenance: 'first_party',
-                source: { kind: 'bundled' },
-                pluginId: owner.ownerId,
-                definition: descriptor,
-            } satisfies ResolvedInstallableContribution)),
-            ...(projected.managedDependencies ?? EMPTY_CONTRIBUTIONS),
-        ]),
-    });
+    return projectBuiltInContributionInputs(projected, params);
 }

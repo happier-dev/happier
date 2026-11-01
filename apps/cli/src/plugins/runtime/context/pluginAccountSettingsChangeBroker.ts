@@ -10,6 +10,15 @@ export type PluginAccountSettingsWatchInvalidation =
     | Readonly<{ kind: 'full' }>;
 
 const listeners = new Set<(invalidation: PluginAccountSettingsWatchInvalidation) => void>();
+const availabilityListeners = new Set<(accountScopeKey: string, pluginIds: readonly string[] | null) => void>();
+
+/** Runtime admission consumes the scoped Account feed; null re-reads its cursor-gone reset. */
+export function subscribePluginAccountAvailabilityChanges(
+    listener: (accountScopeKey: string, pluginIds: readonly string[] | null) => void,
+): () => void {
+    availabilityListeners.add(listener);
+    return () => { availabilityListeners.delete(listener); };
+}
 
 /**
  * Collection watchers consume the same canonical AccountChange cursor as
@@ -245,6 +254,7 @@ export function publishPluginAccountCollectionWatchInvalidation(
         state.latestInvalidations.clear();
         state.latestFullInvalidations.clear();
         state.latestAvailabilityCursors.clear();
+        for (const listener of availabilityListeners) listener(invalidation.accountScopeKey, null);
         for (const registration of collectionListeners) {
             if (registration.subscription.accountScopeKey === invalidation.accountScopeKey) {
                 scheduleCollectionListener(registration, invalidation);
@@ -378,11 +388,12 @@ export function readPluginAccountSettingsWatchInvalidations(
     return Object.freeze(invalidations);
 }
 
-/** Availability hints invalidate claim refusals, never select an intent locally. */
+/** Availability hints wake their readers, never select an intent locally. */
 export function publishPluginAccountAvailabilityChanges(
     accountScopeKey: string,
     changes: readonly ChangeEntry[],
 ): void {
+    const changedPluginIds = new Set<string>();
     for (const change of changes) {
         const parsed = PluginDomainChangeEntrySchema.safeParse(change);
         if (!parsed.success || parsed.data.hint.pluginDomain !== 'availability') continue;
@@ -390,8 +401,14 @@ export function publishPluginAccountAvailabilityChanges(
         const { cursor, hint } = parsed.data;
         if (state.latestResetCursor !== null && cursor <= state.latestResetCursor) continue;
         const previous = state.latestAvailabilityCursors.get(hint.pluginId);
-        if (previous === undefined || cursor > previous) state.latestAvailabilityCursors.set(hint.pluginId, cursor);
+        if (previous === undefined || cursor > previous) {
+            state.latestAvailabilityCursors.set(hint.pluginId, cursor);
+            changedPluginIds.add(hint.pluginId);
+        }
     }
+    if (changedPluginIds.size === 0) return;
+    const pluginIds = Object.freeze([...changedPluginIds]);
+    for (const listener of availabilityListeners) listener(accountScopeKey, pluginIds);
 }
 
 /** Read the existing AccountChange ordering inputs, including cursor-domain resets. */

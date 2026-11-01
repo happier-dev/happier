@@ -18,6 +18,17 @@ export function projectPluginManifestCompatibilityDiagnostic(
   diagnostic: CanonicalPluginManifestIngestionDiagnostic,
 ): PluginCompatibilityDiagnostic {
   const attributed = diagnostic.pluginId && diagnostic.contributionId;
+  if (diagnostic.code === 'plugin_contribution_skipped') {
+    return {
+      code: diagnostic.code,
+      stage: 'normalization',
+      message: 'A plugin contribution was skipped because its declaration is unknown, invalid, or references an unavailable contribution.',
+      ...(attributed ? { contribution: { pluginId: diagnostic.pluginId!, localId: diagnostic.contributionId! } } : {}),
+      details: { ...(diagnostic.path ? { path: [...diagnostic.path] } : {}),
+        ...(diagnostic.reason ? { reason: diagnostic.reason } : {}) },
+    };
+  }
+
   return {
     code: 'plugin_manifest_invalid',
     message: projectPluginFailureMessage(attributed

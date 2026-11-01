@@ -1,3 +1,4 @@
+import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import type { IconName } from '@/components/ui/icons/Icon';
 
@@ -145,4 +146,8 @@ export function readPluginListingRouteParams(params: Readonly<Record<string, unk
     const sourceId = readParam(params.sourceId);
     const pluginId = readParam(params.pluginId);
     return sourceId && pluginId ? { sourceId, pluginId } : null;
+}
+
+export function storeMachineRouteParams(machine: QualifiedMachineV1 | null) {
+    return { machine: machine ? JSON.stringify({ serverId: machine.serverId, machineId: machine.machineId }) : undefined };
 }

@@ -7,6 +7,7 @@ export function alertActionFailure(failure: Readonly<{
     reason: string;
     code: string | null;
     context?: Readonly<{ phase: string; targetHome: string | null }>;
+    recovery?: Readonly<{ label: string; onPress: () => void }>;
 }>): void {
     if (!failure.code) {
         Modal.alert(t('common.error'), failure.reason);
@@ -20,6 +21,7 @@ export function alertActionFailure(failure: Readonly<{
         t(uncertain ? 'toolView.pending.unknownTitle' : 'common.error'),
         uncertain ? t('toolView.pending.unknownDescription') : failure.reason,
         [
+            ...(failure.recovery ? [{ text: failure.recovery.label, onPress: failure.recovery.onPress }] : []),
             { text: t('approvals.technicalDetails'), onPress: () => Modal.alert(t('approvals.technicalDetails'), details) },
             { text: t('common.ok'), style: 'cancel' },
         ],

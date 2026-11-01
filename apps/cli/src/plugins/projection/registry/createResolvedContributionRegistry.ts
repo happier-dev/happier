@@ -56,6 +56,7 @@ import type {
 } from './types';
 import { resolveAdmittedTargetedContributions } from './targetedContributions';
 import { resolveLocalSettingsDeclarations } from '@/plugins/settings/localSettingsContributions';
+import { isPluginAdmissionExclusion } from './normalize/admission';
 import {
     isExecutableManagedDependency,
     resolveExecutableManagedDependenciesRegistry,
@@ -550,6 +551,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         },
         activationTargets,
         pluginDeclarations: inputs.pluginDeclarations,
+        pluginEnablementById: inputs.pluginEnablementById,
+        unavailableAgentPluginsByBackendId: inputs.unavailableAgentPluginsByBackendId,
         materializationIdsByPluginId,
         immutableGenerationIdsByPluginId,
         occurrenceIdsByPluginId,
@@ -944,46 +947,52 @@ function resolveScmBackendContributions(
     };
 }
 
-/**
- * The immutable built-in contribution snapshot.
- *
- * This is built exactly once from the generated bundled declarations and never
- * mutated afterwards. It is the only registry that candidate preparation and
- * cold built-in consumers may read: there is no module-global "primed" cache
- * that a standalone CLI merge could silently overwrite for every other
- * consumer. Callers that need installed-plugin contributions build an explicit
- * ephemeral merged snapshot via `resolveMergedContributionRegistry` (standalone
- * CLI) or read the reload controller's active registry via
- * `readCurrentContributionRegistry` — no authority is cached across reloads.
- */
-let builtInResolvedContributionRegistry: ResolvedContributionRegistry | null = null;
+export { resolveMergedContributionRegistry } from './merged';
 
-export function getResolvedContributionRegistry(): ResolvedContributionRegistry {
-    builtInResolvedContributionRegistry ??= Object.freeze(
-        createResolvedContributionRegistry(resolveBuiltInContributions()),
-    );
-    return builtInResolvedContributionRegistry;
-}
-
-export async function resolveMergedContributionRegistry(
-    params?: Readonly<{ happyHomeDir?: string }>,
-): Promise<ResolvedContributionRegistry> {
-    // Bundled declarations are already admitted for this process. Reuse their
-    // immutable projection; only installed-plugin inputs need a fresh read.
-    const builtIn = getResolvedContributionRegistry();
-    const { resolvePluginContributes } = await import('./resolvePluginContributions');
-    const plugin = await resolvePluginContributes({
-        happyHomeDir: params?.happyHomeDir,
-        existingAgentIds: new Set(builtIn.agents.map((agent) => agent.id)),
-    });
-
-    return createMergedContributionRegistry(plugin, builtIn);
+export function selectPluginContributionInputs(
+    registry: ResolvedContributionInputs,
+    includePlugin: (pluginId: string | undefined) => boolean,
+): ResolvedContributionInputs {
+    const filtered = Object.fromEntries(Object.entries(registry).map(([key, value]) => {
+        if (Array.isArray(value)) {
+            return [key, Object.freeze(value.filter((entry: unknown) => includePlugin(
+                entry && typeof entry === 'object' && 'pluginId' in entry && typeof entry.pluginId === 'string'
+                    ? entry.pluginId
+                    : undefined,
+            )))];
+        }
+        if (
+            value
+            && typeof value === 'object'
+            && (key === 'pluginDiagnosticsByPluginId'
+                || key === 'pluginEnablementById'
+                || key === 'materializationIdsByPluginId'
+                || key === 'immutableGenerationIdsByPluginId'
+                || key === 'occurrenceIdsByPluginId')
+        ) {
+            return [key, Object.freeze(Object.fromEntries(
+                Object.entries(value).filter(([entryPluginId]) => includePlugin(entryPluginId)),
+            ))];
+        }
+        if (key === 'unavailableAgentPluginsByBackendId' && value && typeof value === 'object') {
+            return [key, Object.freeze(Object.fromEntries(Object.entries(registry.unavailableAgentPluginsByBackendId ?? {})
+                .filter(([, unavailable]) => includePlugin(unavailable.pluginId))))];
+        }
+        return [key, value];
+    }));
+    // This boundary mechanically selects plugin-owned entries without changing their shapes.
+    return filtered as ResolvedContributionInputs;
 }
 
 export function createMergedContributionRegistry(
     plugin: ResolvedContributionInputs,
-    builtIn: ResolvedContributionInputs = getResolvedContributionRegistry(),
+    fallback: ResolvedContributionInputs,
 ): ResolvedContributionRegistry {
+    const selectedPluginIds = new Set((plugin.pluginDeclarations ?? []).map(declaration => declaration.pluginId));
+    for (const [pluginId, diagnostics] of Object.entries(plugin.pluginDiagnosticsByPluginId ?? {})) {
+        if (diagnostics.some(isPluginAdmissionExclusion)) selectedPluginIds.add(pluginId);
+    }
+    const builtIn = selectPluginContributionInputs(fallback, pluginId => pluginId === undefined || !selectedPluginIds.has(pluginId));
     return createResolvedContributionRegistry({
         introspectionContributions: Object.freeze([
             ...(builtIn.introspectionContributions ?? []),
@@ -1078,6 +1087,8 @@ export function createMergedContributionRegistry(
         ]),
         activationTargets: Object.freeze([...(builtIn.activationTargets ?? []), ...(plugin.activationTargets ?? [])]),
         pluginDeclarations: Object.freeze([...(builtIn.pluginDeclarations ?? []), ...(plugin.pluginDeclarations ?? [])]),
+        pluginEnablementById: Object.freeze({ ...(fallback.pluginEnablementById ?? {}), ...(plugin.pluginEnablementById ?? {}) }),
+        unavailableAgentPluginsByBackendId: Object.freeze({ ...(fallback.unavailableAgentPluginsByBackendId ?? {}), ...(plugin.unavailableAgentPluginsByBackendId ?? {}) }),
         materializationIdsByPluginId: Object.freeze({
             ...(builtIn.materializationIdsByPluginId ?? {}),
             ...(plugin.materializationIdsByPluginId ?? {}),
@@ -1370,6 +1381,4 @@ function compareExecutionRunProfileContributes(
     return left.definition.id.localeCompare(right.definition.id);
 }
 
-export function getBuiltInCatalogEntries(): Record<CatalogAgentId, AgentCatalogEntry> {
-    return getResolvedContributionRegistry().catalogEntriesById as Record<CatalogAgentId, AgentCatalogEntry>;
-}
+export { getResolvedContributionRegistry, getBuiltInCatalogEntries } from './builtIn/snapshot';

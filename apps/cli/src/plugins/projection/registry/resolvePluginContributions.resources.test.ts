@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 
-import { projectLoadedPluginContributes } from './resolvePluginContributions';
+import { projectLoadedPluginContributes } from './fullProjection';
 
 describe('resolved plugin resource projection', () => {
     it('preserves the canonical dynamic Resource scope into the runtime owner', () => {

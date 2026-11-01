@@ -97,6 +97,17 @@ export async function resolveRunnerAgentSessionDescriptorForLease(
     backendId,
   ) : null;
   if (!backend) {
+    const unavailable = lease.registry.contributes.unavailableAgentPluginsByBackendId?.[input.target.backendId];
+    const pluginId = unavailable?.pluginId ?? (selected?.kind === 'agent' ? selected.identity.pluginId : null);
+    const enablement = pluginId ? lease.registry.contributes.pluginEnablementById?.[pluginId] : undefined;
+    if (pluginId && (unavailable || enablement?.enabled === false)) {
+      const code = unavailable?.code ?? enablement?.unavailableCode ?? 'plugin_disabled';
+      throw Object.assign(new Error(code === 'plugin_disabled'
+        ? 'This Agent plugin is disabled. Re-enable it in Plugins to resume this Session.'
+        : 'Account plugin execution is unavailable.'), {
+        code,
+      });
+    }
     if (isConfigured) return null;
     throw new Error(
       `Runner Agent backend '${input.target.backendId}' is unavailable in the admitted plugin registry`,

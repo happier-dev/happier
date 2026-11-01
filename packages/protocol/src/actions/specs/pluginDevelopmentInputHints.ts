@@ -7,6 +7,9 @@ const root = { path: 'projectRoot', title: 'Plugin project folder', widget: 'tex
 const registry = { path: 'sdkRegistryOrigin', title: 'SDK registry', widget: 'url' } as const;
 const locator = { path: 'locator', title: 'Plugin folder or package', widget: 'text', required: true } as const;
 const dispositions = { path: 'managedResourceDispositions', title: 'Managed resource choices', widget: 'json' } as const;
+const scope = { path: 'scope', title: 'Scope', widget: 'select', options: [
+  { value: 'machine', label: 'This Machine' }, { value: 'account', label: 'Account' },
+] } as const;
 const development = [root, registry];
 
 export const PLUGIN_DEVELOPMENT_INPUT_FIELDS = {
@@ -30,8 +33,8 @@ export const PLUGIN_DEVELOPMENT_INPUT_FIELDS = {
     { path: 'force', title: 'Replace existing install', widget: 'boolean' },
   ],
   'plugins.uninstall': [plugin, machine, dispositions, { path: 'deleteData', title: 'Delete plugin data', widget: 'boolean' }],
-  'plugins.enable': [plugin, machine],
-  'plugins.disable': [plugin, machine, dispositions],
+  'plugins.enable': [plugin, machine, scope],
+  'plugins.disable': [plugin, machine, scope, dispositions],
   'plugins.rollback': [plugin, machine],
   'plugins.trust.forget': [plugin, machine],
   'plugins.update_policy.set': [plugin, machine, { path: 'policy', title: 'Update policy', widget: 'json', required: true }],

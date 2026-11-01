@@ -1,6 +1,6 @@
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
-import { SPAWN_SESSION_ERROR_CODES, SpawnSessionExecutionAuthorizationSchema } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES, SpawnSessionExecutionAuthorizationSchema, normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
@@ -36,7 +36,7 @@ export type InactiveSessionResumeResult =
   | Readonly<{ ok: true }>
   | Readonly<{
       ok: false;
-      code: 'session_archived' | 'held_by_person' | 'authority_unavailable' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'timeout' | 'SESSION_DIRECTORY_MISSING' | 'machine_target_not_current';
+      code: 'session_archived' | 'held_by_person' | 'authority_unavailable' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'timeout' | 'SESSION_DIRECTORY_MISSING' | 'machine_target_not_current' | 'plugin_disabled';
       message: string;
     }>;
 
@@ -279,7 +279,10 @@ export async function requestInactiveSessionResume(params: Readonly<{
       const message = response && typeof response === 'object' && typeof (response as { errorMessage?: unknown }).errorMessage === 'string'
         ? (response as { errorMessage: string }).errorMessage
         : 'Inactive session resume was rejected; pending custody was retained';
-      const code = response && typeof response === 'object'
+      const detail = response && typeof response === 'object'
+        ? normalizeSpawnSessionErrorDetail(Reflect.get(response, 'errorDetail')) : undefined;
+      const code = detail?.kind === 'launch_error' && detail.code === 'plugin_disabled' ? 'plugin_disabled'
+        : response && typeof response === 'object'
         && (response as { errorCode?: unknown }).errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING
         ? SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING : 'resume_failed';
       return refuse({ ok: false, code, message }, response && typeof response === 'object'

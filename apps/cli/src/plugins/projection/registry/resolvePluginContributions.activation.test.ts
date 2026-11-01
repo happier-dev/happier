@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createResolvedContributionRegistry } from './createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from './resolvePluginContributions';
+import { projectLoadedPluginContributes } from './fullProjection';
 
 describe('resolved plugin activation projection', () => {
   it('resolves external qualified Connected Account access against bundled manifests without projecting bundled contributions', () => {

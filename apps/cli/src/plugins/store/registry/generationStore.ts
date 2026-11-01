@@ -379,6 +379,8 @@ export type PluginInstallationStateRevision = {
   revisionId: z.infer<typeof PortableStorageIdSchema>;
   createdAtMs: number;
   plugins: Record<PluginId, PluginInstallationStateRecord>;
+  /** Machine desired enablement for host-bundled declarations; absent means enabled. */
+  bundledPluginEnabledById?: Record<PluginId, boolean>;
   rollbackRetention: PluginRollbackRetentionRecord[];
   hardRevocationRevisions?: Record<PluginId, number>;
   runtimeCatalog?: z.infer<typeof PluginStateFileV1Schema>;
@@ -391,6 +393,7 @@ export type PluginInstallationStateRevision = {
 const CanonicalPluginInstallationStateRevisionSchema: z.ZodMiniType<PluginInstallationStateRevision> = z.strictObject({
   ...installationStateRevisionEnvelopeShape,
   plugins: z.record(asHostProtocolZod(PluginIdSchema), PluginInstallationStateRecordSchema),
+  bundledPluginEnabledById: z.optional(z.record(asHostProtocolZod(PluginIdSchema), z.boolean())),
   rollbackRetention: z.array(PluginRollbackRetentionRecordSchema),
   hardRevocationRevisions: z.optional(z.record(
     asHostProtocolZod(PluginIdSchema),

@@ -8,7 +8,7 @@ import { createLanguageServerDefinitions } from '@/lsp/languageServerDefinitions
 import { loadPluginsFromState } from '@/plugins/discovery/load/installed';
 import { PluginStateFileV1Schema } from '@/plugins/store/state';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
-import { projectLoadedPluginContributes } from './resolvePluginContributions';
+import { projectLoadedPluginContributes } from './fullProjection';
 import { createMergedContributionRegistry, createResolvedContributionRegistry } from './createResolvedContributionRegistry';
 import { buildPluginProjectionV2 } from './projection/v2';
 

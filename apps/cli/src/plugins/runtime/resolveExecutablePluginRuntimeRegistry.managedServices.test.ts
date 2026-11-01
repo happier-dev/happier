@@ -24,7 +24,7 @@ import type {
 } from './invocation/services/connectedAccounts';
 import { resolvePluginStorePaths } from '../store/paths';
 import { loadInstalledPlugins } from '../discovery/load/installed';
-import { projectLoadedPluginContributes } from '../projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '../projection/registry/fullProjection';
 import { seedCurrentLocalPathPluginFixture } from '../store/registry/currentState.testkit';
 import { readCurrentCommittedPluginGenerations } from '../store/registry/generationStore';
 import {

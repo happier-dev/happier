@@ -5,7 +5,7 @@ import { PLUGIN_MANIFEST as LIMA_MANIFEST } from '@happier-dev/plugins-machine-l
 
 import type { PluginSourceCustody } from '@/plugins/runtime/sourceAuthority';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectPluginUiDeclarationEntries } from '@/plugins/projection/registry/ui/projection';
 

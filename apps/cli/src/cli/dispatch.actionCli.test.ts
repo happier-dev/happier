@@ -27,6 +27,12 @@ import { dispatchCli } from './dispatch';
 import '@/cli/commands/actions';
 
 describe('dispatchCli compiled Action entrypoint', () => {
+  it('binds plugin enablement scope through the shared lifecycle command', async () => {
+    execute.mockResolvedValue({ ok: true, result: { ok: true } });
+    await dispatchCli({ args: ['plugins', 'disable', 'happier.language.markdown', '--scope', 'account'],
+      rawArgv: ['happier', 'plugins', 'disable', 'happier.language.markdown', '--scope', 'account'], terminalRuntime: null });
+    expect(execute).toHaveBeenCalledWith('plugins.disable', { pluginId: 'happier.language.markdown', scope: 'account' }, expect.objectContaining({ surface: 'cli' }));
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     process.exitCode = 0;

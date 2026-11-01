@@ -20,7 +20,7 @@ export type CanonicalPluginManifestIngestionDiagnostic = Omit<PluginManifestInge
   }>;
 
 export type CanonicalPluginManifestIngestionResult =
-  | Readonly<{ ok: true; manifest: CanonicalPluginManifest }>
+  | Readonly<{ ok: true; manifest: CanonicalPluginManifest; diagnostics?: readonly CanonicalPluginManifestIngestionDiagnostic[] }>
   | Readonly<{ ok: false; diagnostics: readonly CanonicalPluginManifestIngestionDiagnostic[] }>;
 
 export type PluginManifestReadPurpose = 'admission' | 'installedRead';

@@ -8484,6 +8484,7 @@ const Domain_pluginSettingsPresentationTranslations = (() => {
 const english = Shared_pluginSettingsPresentationTranslations.english;
 
 const pluginSettingsPresentationTranslations = { ru: {
+        enablement: {"account": "В вашем аккаунте", "machine": "На этом компьютере", "description": "Оба параметра должны быть включены для работы плагина здесь. Отключение сохраняет данные и подключения."},
         rowStatus: { enabled: 'Включено', disabled: 'Отключено', incompatible: 'Несовместимо', trustRemoved: 'Доверие отозвано', needsAttention: 'Требует внимания' },
         developmentPhase: { observing: 'Наблюдение', preparingDependencies: 'Подготовка зависимостей', compiling: 'Компиляция', validating: 'Проверка', active: 'Активно', retainedIncumbent: 'Предыдущая версия активна', unavailable: 'Недоступно' },
         developmentDiagnostic: { manifestMissing: 'В этой папке нет манифеста плагина. Добавьте .happier-plugin/plugin.json или выберите папку плагина.', projectMissing: 'Этой папки больше нет. Уберите её из разработки или укажите, где сейчас находится плагин.' },

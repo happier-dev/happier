@@ -145,18 +145,20 @@ export type InstalledPluginLifecycleCapabilities = Readonly<{
 
 /**
  * Projects only lifecycle operations the canonical catalog can perform for
- * this exact installed source. Bundled entries are host-derived, always-on
- * inventory: presenting ordinary install mutations for them would promise a
- * lifecycle the daemon deliberately rejects.
+ * this exact installed source. Bundled package custody stays with the host;
+ * desired enablement remains an ordinary lifecycle operation.
  */
 export function projectInstalledPluginLifecycleCapabilities(
     installed: InstalledPluginEntry,
+    scope: 'account' | 'machine' = 'machine',
 ): InstalledPluginLifecycleCapabilities {
     const userManaged = installed.accountInstallations === undefined && installed.source.kind !== 'bundled';
     const trusted = installed.source.trustPolicy !== 'untrusted';
+    const canChangeEnablement = installed.accountInstallations === undefined;
+    const enabled = scope === 'account' ? installed.accountEnabled : installed.machineEnabled ?? installed.enabled;
     return Object.freeze({
-        canEnable: userManaged && !installed.enabled,
-        canDisable: userManaged && installed.enabled,
+        canEnable: canChangeEnablement && enabled === false,
+        canDisable: canChangeEnablement && enabled === true,
         canRollback: userManaged && installed.rollbackAvailability === 'available',
         canUninstall: userManaged,
         canForgetTrust: userManaged && trusted,
@@ -183,6 +185,7 @@ export type PluginMarketplaceActionRequest = Readonly<{
     pluginId: string;
     sourceId?: string;
     policy?: PluginUpdatePolicyV1;
+    scope?: 'account' | 'machine';
 }>;
 
 /**

@@ -13,6 +13,7 @@ import { projectPluginFailureText } from '../../runtime/lifecycle/utils';
 import type { PreparedPluginActivationGraph } from '../../runtime/types';
 import type { PreparedPluginDevelopmentActivationGraph } from '../../authoring/sourceModule';
 import type { CanonicalPluginManifest } from '../../manifest/types';
+import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '../../projection/registry/sources/generatedBundledPluginManifests';
 import type {
   DevelopmentPluginSourceCustody,
   PluginRuntimeSourceAuthority,
@@ -73,6 +74,19 @@ function createPluginMaterializationId(): string {
   return `materialization-${randomUUID()}`;
 }
 
+/** Installed replacements own their Machine desired bit while present. */
+export function resolveBundledPluginMachineEnablement(params: Readonly<{
+  state: PluginStateFileV1;
+  bundledPluginEnabledById?: Readonly<Record<string, boolean>>;
+}>): Readonly<Record<string, boolean>> {
+  const enabledById = { ...params.bundledPluginEnabledById };
+  for (const { pluginId } of BUNDLED_FIRST_PARTY_PLUGIN_METADATA) {
+    const installed = params.state.plugins[pluginId];
+    if (installed) enabledById[pluginId] = installed.state.enabled;
+  }
+  return Object.freeze(enabledById);
+}
+
 function createRevision(params: Readonly<{
   revisionId: string;
   createdAtMs: number;
@@ -101,6 +115,9 @@ function createRevision(params: Readonly<{
     revisionId: params.revisionId,
     createdAtMs: params.createdAtMs,
     plugins,
+    ...(prior?.bundledPluginEnabledById
+      ? { bundledPluginEnabledById: prior.bundledPluginEnabledById }
+      : {}),
     rollbackRetention: prior?.rollbackRetention ?? [],
     ...(prior?.hardRevocationRevisions
       ? { hardRevocationRevisions: prior.hardRevocationRevisions }
@@ -156,6 +173,8 @@ export type PluginRunningSessionRevocationScope = Readonly<{
 
 export type PluginRegistryRuntimeCandidate = Readonly<{
   mutationKind: 'state' | 'install' | 'rollback' | 'uninstall';
+  /** Reprojects external admission intent without creating an installation revision. */
+  admissionRefresh?: true;
   runningSessionDisposition: PluginRunningSessionDisposition;
   runningSessionRevocationScope?: PluginRunningSessionRevocationScope;
   changedPluginIds: readonly string[];
@@ -301,6 +320,8 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   readSnapshot: () => Promise<Readonly<{
     revision: number;
     state: PluginStateFileV1;
+    /** Machine desired enablement for bundled declarations; absent entries default on. */
+    bundledPluginEnabledById: Readonly<Record<string, boolean>>;
     pluginOccurrenceIds: PluginRegistryCommitRecord['pluginOccurrenceIds'];
     /** Exact persisted installation epoch for each current plugin in this commit. */
     materializationIdsByPluginId: Readonly<Record<string, string>>;
@@ -321,6 +342,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   write: (next: PluginStateFileV1) => Promise<void>;
   update: (transform: StateTransform) => Promise<PluginStateFileV1>;
   updateWithResult: (transform: StateTransform) => Promise<PluginRegistryStateMutationResult>;
+  refreshRuntime: (pluginIds: readonly string[]) => Promise<void>;
   install: (input: CommitPluginRegistryInstallationInput) => Promise<PluginRegistryTransactionResult>;
   rollback: (pluginId: string) => Promise<PluginStateFileV1>;
   rollbackWithResult: (pluginId: string) => Promise<PluginRegistryStateMutationResult>;
@@ -671,6 +693,26 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       throw new Error('Plugin registry mutation requires a runtime lifecycle');
     }
     return runtimeLifecycle;
+  }
+
+  async function refreshRuntime(pluginIds: readonly string[]): Promise<void> {
+    const lifecycle = requireRuntimeLifecycle();
+    const current = await readCurrent();
+    const prepared = await lifecycle.prepare({
+      mutationKind: 'state',
+      admissionRefresh: true,
+      runningSessionDisposition: 'retainRunningSessions',
+      changedPluginIds: pluginIds,
+      runtimeCatalog: current.catalog,
+      installationState: current.revision,
+      pluginOccurrenceIds: current.commit.pluginOccurrenceIds,
+    });
+    try {
+      await prepared.adopt(current.commit);
+    } catch (error) {
+      await prepared.abort();
+      throw error;
+    }
   }
 
   async function updateWithResult(transform: StateTransform): Promise<PluginRegistryStateMutationResult> {
@@ -1203,6 +1245,9 @@ export function createPluginRegistryStateStore(params?: Readonly<{
             approvedAuthorityManifest,
           },
         },
+        ...(current.revision.bundledPluginEnabledById
+          ? { bundledPluginEnabledById: current.revision.bundledPluginEnabledById }
+          : {}),
         rollbackRetention,
         runtimeCatalog,
         retainedRuntimeCatalog,
@@ -1489,6 +1534,31 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       const catalogRecord = current.catalog.plugins[pluginId];
       const installation = current.revision.plugins[pluginId];
       const reference = current.commit.pluginOccurrenceIds[pluginId];
+      if (!catalogRecord && !installation && BUNDLED_FIRST_PARTY_PLUGIN_METADATA.some(entry => entry.pluginId === pluginId)) {
+        if ((current.revision.bundledPluginEnabledById?.[pluginId] ?? true) === enabled) return null;
+        const bundledPluginEnabledById = { ...current.revision.bundledPluginEnabledById };
+        if (enabled) delete bundledPluginEnabledById[pluginId];
+        else bundledPluginEnabledById[pluginId] = false;
+        const createdAtMs = nowMs();
+        const committed = await commitRevision({
+          current,
+          revision: {
+            ...current.revision,
+            revisionId: `state-${randomUUID()}`,
+            createdAtMs,
+            bundledPluginEnabledById,
+          },
+          pluginOccurrenceIds: current.commit.pluginOccurrenceIds,
+          transactionId: `state-${randomUUID()}`,
+          createdAtMs,
+          mutationKind: 'state',
+          runningSessionDisposition: 'retainRunningSessions',
+          changedPluginIds: Object.freeze([pluginId]),
+        });
+        if (committed.status === 'conflict') continue;
+        if (committed.status === 'aborted' || committed.status === 'precommit_failed') throwPrecommitFailure(committed);
+        return Object.freeze({ catalog: current.catalog, transaction: committed });
+      }
       const isSourceInPlaceDevelopment = catalogRecord?.source.kind === 'path'
         && catalogRecord.source.devWatch === true;
       if (!catalogRecord || !installation || (!reference && !isSourceInPlaceDevelopment)) {
@@ -1536,7 +1606,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         transactionId: `state-${randomUUID()}`,
         createdAtMs,
         mutationKind: 'state',
-        runningSessionDisposition: enabled
+        runningSessionDisposition: enabled || BUNDLED_FIRST_PARTY_PLUGIN_METADATA.some(entry => entry.pluginId === pluginId)
           ? 'retainRunningSessions'
           : 'revokeRunningSessions',
         changedPluginIds: Object.freeze([pluginId]),
@@ -1829,6 +1899,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         return Object.freeze({
           revision: -1,
           state: emptyState(),
+          bundledPluginEnabledById: Object.freeze({}),
           pluginOccurrenceIds: Object.freeze({}),
           materializationIdsByPluginId: Object.freeze({}),
           rollbackAvailabilityByPluginId: Object.freeze({}),
@@ -1841,6 +1912,9 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       return Object.freeze({
         revision: current.commit.revision,
         state: current.catalog,
+        bundledPluginEnabledById: resolveBundledPluginMachineEnablement({
+          state: current.catalog, bundledPluginEnabledById: current.revision.bundledPluginEnabledById,
+        }),
         pluginOccurrenceIds: current.commit.pluginOccurrenceIds,
         materializationIdsByPluginId: Object.freeze(Object.fromEntries(
           Object.entries(current.revision.plugins).flatMap(([pluginId, installation]) => (
@@ -1884,6 +1958,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     write: async (next) => { await update(() => next); },
     update,
     updateWithResult,
+    refreshRuntime,
     install,
     rollback,
     rollbackWithResult,

@@ -139,10 +139,8 @@ import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/pr
 import { prepareAccountSettingsV2Content } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { encodeStoredCredentials } from '@/persistence';
 import { COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1 } from '@happier-dev/protocol/plugins/ui/composerRef';
-import {
-    createResolvedContributionRegistry,
-    getResolvedContributionRegistry,
-} from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import type {
     ResolvedComposerAttachmentContribution,
     ResolvedContributionRegistry,

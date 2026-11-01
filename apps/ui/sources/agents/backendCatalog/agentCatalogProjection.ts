@@ -292,6 +292,10 @@ function resolveProviderEnabled(
         mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
     }>,
 ): boolean | null {
+    // A loaded daemon catalog owns the admitted set. Bundled declarations keep
+    // display continuity, but cannot restore a contribution the daemon omitted.
+    if (params.mergedProviderProjectionById != null && isBundledAgentId(agentId)
+        && !readMergedProviderProjection(agentId, params.mergedProviderProjectionById)) return false;
     if (!backendTargetKey) return null;
     const targetKey = backendTargetKey;
     return readBackendTargetEnabled({
@@ -423,7 +427,7 @@ export function resolveAgentCatalogProjection(agentId: string, params: Readonly<
     const behaviorProjection = resolveBundledAgentUiBehaviorProjection(behaviorProviderId);
     const iconAgentId = resolveProviderIconAgentId(normalizedProviderId, mergedProviderProjection, settingsBackendProjection);
     // A current daemon declaration wins, including explicit removals. Only a
-    // canonical bundled Agent without a daemon row uses admitted static facts.
+    // canonical bundled Agent without a daemon row uses static display facts.
     const declaration = !mergedProviderProjection && isBuiltIn && isBundledAgentId(normalizedProviderId)
         ? BUNDLED_CANONICAL_AGENT_DECLARATIONS[normalizedProviderId] : null;
     const identity = mergedProviderProjection?.identity ?? declaration?.identity ?? null;

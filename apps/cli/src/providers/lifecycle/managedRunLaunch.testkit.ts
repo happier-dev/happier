@@ -5,7 +5,7 @@ import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderSettingsV1
 import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 import { createLocalPathPluginDistributionIdentity, createPluginTrustRecord } from '@/plugins/store/install/trustIdentity';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
@@ -170,7 +170,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
   } });
   const mergedContributes = createMergedContributionRegistry(projectLoadedPluginContributes({
     loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external', existingAgentIds: new Set(),
-  }), input.includeBundledDeclarations ? undefined : {});
+  }), input.includeBundledDeclarations ? (await import('@/plugins/projection/registry/builtIn/snapshot')).getResolvedContributionRegistry() : {});
   if (!mergedContributes.providersByContributionKey) throw new Error('Missing committed Provider projection');
   const contributes = { ...mergedContributes, providersByContributionKey: mergedContributes.providersByContributionKey };
   const generationAuthority = await readCurrentCommittedPluginGenerations(resolvePluginStorePaths({ happyHomeDir }), {});

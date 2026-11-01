@@ -31,3 +31,12 @@ it('keeps a definite refusal as an error with its original reason', () => {
     alertActionFailure({ reason: 'Not allowed', code: RPC_ERROR_CODES.FORBIDDEN });
     expect(Modal.alert).toHaveBeenCalledWith(t('common.error'), 'Not allowed', expect.any(Array));
 });
+
+it('offers the supplied recovery action beside deliberate technical details', () => {
+    const onPress = vi.fn();
+    alertActionFailure({ reason: 'Plugin disabled', code: 'plugin_disabled', recovery: { label: 'Manage plugin', onPress } });
+    const buttons = vi.mocked(Modal.alert).mock.calls[0]?.[2];
+    buttons?.find(button => button.text === 'Manage plugin')?.onPress?.();
+    expect(onPress).toHaveBeenCalledOnce();
+    expect(buttons?.some(button => button.text === t('approvals.technicalDetails'))).toBe(true);
+});

@@ -766,7 +766,22 @@ export type ResolvedActivationTarget = Readonly<{
     manifest: CanonicalPluginManifest;
 }>;
 
+export type ResolvedPluginEnablement = Readonly<{
+    accountEnabled?: boolean;
+    machineEnabled: boolean;
+    enabled: boolean;
+    unavailableCode?: 'plugin_account_execution_unavailable';
+}>;
+
+export type UnavailableAgentPlugin = ResolvedPluginEnablement & Readonly<{
+    pluginId: string;
+    code: 'plugin_disabled' | 'plugin_account_execution_unavailable';
+}>;
+
 export type ResolvedContributionInputs = Readonly<{
+    /** One bundled admission result shared by runtime, catalog and recovery. */
+    pluginEnablementById?: Readonly<Record<string, ResolvedPluginEnablement>>;
+    unavailableAgentPluginsByBackendId?: Readonly<Record<string, UnavailableAgentPlugin>>;
     /** Complete admitted source declarations, including sources with no executable entry. */
     pluginDeclarations?: readonly import('@/plugins/discovery/load/installed').LoadedPlugin[];
     introspectionContributions?: readonly PluginContributionIntrospectionCandidate[];
@@ -835,6 +850,8 @@ export type ResolvedContributionInputs = Readonly<{
 }>;
 
 export type ResolvedContributionRegistry = Readonly<{
+    pluginEnablementById?: Readonly<Record<string, ResolvedPluginEnablement>>;
+    unavailableAgentPluginsByBackendId?: Readonly<Record<string, UnavailableAgentPlugin>>;
     introspectionContributions?: readonly PluginContributionIntrospectionCandidate[];
     uiViewsV2?: readonly ResolvedUiViewV2Contribution[];
     openableContentViewers?: readonly ResolvedOpenableContentViewerContribution[];

@@ -143,6 +143,9 @@ import { resolveSessionRoutePathForSurface } from "@/components/workspaceCockpit
 import { ComposerAuxiliaryFrame } from "./view/ComposerAuxiliaryFrame";
 import { SessionStartFailureBanner } from "@/components/sessions/startFailure/SessionStartFailureBanner";
 import { resolveSessionStartFailureNotice } from "@/components/sessions/startFailure/sessionStartFailureNotice";
+import { resolveResumeFailurePresentation } from "@/sync/domains/session/resume/resolveResumeFailurePresentation";
+import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from "@/sync/domains/session/resolveSessionActionDefaultBackend";
+import { buildPluginDetailRoute, storeMachineRouteParams } from "@/components/settings/plugins/model/pluginsSurfaceRoutes";
 import { SessionComputerPresenceLine } from "@/components/computer/SessionComputerPresenceLine";
 import { SessionViewerHost } from "@/components/sessions/viewer/SessionViewerHost";
 import { SessionViewerScope } from "@/components/sessions/viewer/SessionViewerScope";
@@ -2494,8 +2497,19 @@ function SessionViewLoadedContent({
           }
           : null;
       const startFailureNotice = resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true });
+      const startFailureRecovery = startFailureNotice?.code === 'plugin_disabled'
+          ? resolveResumeFailurePresentation({ errorCode: startFailureNotice.code }, startFailureNotice.message,
+              resolveSessionActionDefaultTarget(resolveSessionActionDefaultBackend({ session })))
+          : null;
+      const disabledPluginId = startFailureRecovery?.kind === 'plugin_disabled' ? startFailureRecovery.pluginId : null;
       const startFailureBanner = startFailureNotice
-          ? <SessionStartFailureBanner notice={startFailureNotice} retry={startFailureRetry} />
+          ? <SessionStartFailureBanner notice={startFailureNotice} retry={startFailureRetry}
+              {...(disabledPluginId ? { managePlugin: () => {
+                  const route = buildPluginDetailRoute('settings', disabledPluginId);
+                  router.push({ ...route, params: { ...route.params, ...storeMachineRouteParams(
+                      machineId ? { serverId: sessionRouteServerId, machineId } : null,
+                  ) } });
+              } } : {})} />
           : null;
       const content = (
           <>

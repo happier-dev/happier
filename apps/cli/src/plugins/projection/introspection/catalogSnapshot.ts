@@ -15,7 +15,8 @@ import {
   type PluginTargetActivationFact,
   type PluginTargetActivationIntrospectionSnapshot,
 } from './targetActivationFacts';
-import type { PluginContributionIntrospectionCandidate } from './types';
+import type { PluginContributionIntrospectionCandidate, PluginContributionRuntimeFacts } from './types';
+import { isPluginAdmissionExclusion } from '../registry/normalize/admission';
 
 export type PluginCatalogEntryIntrospectionSnapshot = Readonly<{
   pluginId: PluginCatalogEntry['pluginId'];
@@ -42,14 +43,46 @@ export function projectPluginCatalogEntrySnapshot(
     ? new Map([...runtimeSnapshot.runtimeFactsByQualifiedId].filter(([qualifiedId]) => (
         qualifiedId.startsWith(`${entry.pluginId}/`)
       )))
-    : undefined;
+    : new Map<string, PluginContributionRuntimeFacts>();
+  if (!entry.enabled) {
+    for (const contribution of entry.contributionIntrospection.contributions) {
+      const reason = entry.unavailableCode || entry.compatibility.status === 'load_error'
+        ? 'Plugin unavailable' : 'Plugin disabled';
+      contributionRuntimeFacts.set(contribution.contribution.qualifiedId, {
+        registration: contribution.registration.requirement === 'required'
+          ? { requirement: 'required', state: 'unavailable', reason }
+          : { requirement: 'notRequired', state: 'notRequired' },
+        activation: contribution.registration.requirement === 'required'
+          ? { state: 'unavailable', reason }
+          : { state: 'notRequired' },
+        projection: { state: 'unavailable', reason },
+      });
+    }
+  }
   const runtimeDiagnostics = runtimeSnapshot?.diagnosticRecords.filter((diagnostic) => (
     diagnostic.plugin.id === entry.pluginId
   )) ?? [];
   const entryAdditionalDiagnostics = additionalDiagnosticRecords.filter((diagnostic) => (
     diagnostic.plugin.id === entry.pluginId
   ));
-  const contributions = runtimeSnapshot || entryAdditionalDiagnostics.length > 0
+  const unavailabilityDiagnostics = entry.unavailableCode && ![
+    ...entry.contributionIntrospection.diagnostics, ...runtimeDiagnostics, ...entryAdditionalDiagnostics,
+  ].some(({ data }) => (
+    data.code === 'plugin_runtime_capability_missing'
+    && typeof data.details === 'object' && data.details !== null && !Array.isArray(data.details)
+    && data.details.reason === entry.unavailableCode
+  ))
+    ? projectPluginCompatibilityDiagnostics({
+        diagnostics: [{
+          code: 'plugin_runtime_capability_missing',
+          message: 'Plugin unavailable',
+          details: { reason: entry.unavailableCode },
+        }],
+        plugin: { id: entry.pluginId, version: entry.version, source: mapPluginSourceToDiagnosticSource(entry.source) },
+        defaultStage: 'normalization', host: 'daemon', platform: process.platform, occurredAtMs: 0,
+      })
+    : [];
+  const contributions = !entry.enabled || runtimeSnapshot || entryAdditionalDiagnostics.length > 0
     ? projectPluginContributionIntrospection({
         generation: runtimeSnapshot?.generation ?? entry.contributionIntrospection.generation,
         candidates: collectCatalogEntryCandidates(entry),
@@ -59,6 +92,7 @@ export function projectPluginCatalogEntrySnapshot(
           )),
           ...runtimeDiagnostics,
           ...entryAdditionalDiagnostics,
+          ...unavailabilityDiagnostics,
         ],
         runtimeFactsByQualifiedId: contributionRuntimeFacts,
         progression: { merged: true },
@@ -171,7 +205,7 @@ export function joinPluginCatalogEntriesIntrospection(
   runtimeSnapshot?: PluginTargetActivationIntrospectionSnapshot,
   additionalDiagnosticRecords: readonly PluginDiagnosticRecordV1[] = [],
 ): readonly PluginCatalogEntry[] {
-  if (!runtimeSnapshot && additionalDiagnosticRecords.length === 0) return entries;
+  if (!runtimeSnapshot && additionalDiagnosticRecords.length === 0 && entries.every(entry => entry.enabled)) return entries;
   return entries.map((entry) => ({
     ...entry,
     contributionIntrospection: projectPluginCatalogEntrySnapshot(

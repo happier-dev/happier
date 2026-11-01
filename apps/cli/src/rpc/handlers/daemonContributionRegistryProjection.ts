@@ -41,10 +41,8 @@ import type { DaemonPluginSettingsWatchResponse } from '@happier-dev/protocol/da
 import type { DaemonPluginTargetedSourceDeclarationV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { DaemonPluginUiResourceDeclarationsByPluginIdV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
-import {
-    createResolvedContributionRegistry,
-    resolveMergedContributionRegistry,
-} from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { pluginSourceCustodyEqual } from '@/plugins/runtime/sourceAuthority';
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import type {

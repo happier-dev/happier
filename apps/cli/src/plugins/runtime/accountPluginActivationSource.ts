@@ -1,3 +1,4 @@
+import type { ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import axios from 'axios';
@@ -5,6 +6,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/ca
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionOutputV1Schema,
     PluginAvailabilityUiArtifactReadActionInputV1Schema, PluginAvailabilityUiArtifactReadActionOutputV1Schema,
     PluginAvailabilityIntentsListActionOutputV1Schema, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
+    PluginAvailabilityIntentSetActionInputV1Schema, PluginAvailabilityIntentSetActionOutputV1Schema,
     resolvePluginAccountExecutionSelectionV1, createPluginAccountBundledSelectionV1, isPluginUiReleaseSlotCompatibleWithArtifactLinkV1, snapshotPluginReleaseFactsV1,
     type PluginAvailabilityIntentReadActionOutputV1, type PluginAccountExecutionSelectionV1 } from '@happier-dev/protocol/plugins/availability';
 import { createPluginUiArtifactArchiveV1, decodePluginUiArtifactArchiveBodyV1, openPluginUiArtifactArchiveV1,
@@ -18,16 +20,18 @@ import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { normalizeParsedPluginManifestV2 } from '@/plugins/manifest/normalize';
 import { GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH } from '@/plugins/install/ui/generatedArtifacts';
 import { createMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { PluginStorePaths } from '@/plugins/store/paths';
 import type { PluginActivationSource } from './activationSources';
-import { collectActivationTargets, type ActivationTarget } from './lifecycle/activation/targets';
+import { collectActivationTargets } from './lifecycle/activation/targets';
 import type { PluginDaemonModuleNamespace } from './types';
 import { bindPluginRuntimeSourceAuthority, resolvePluginSourceCustody } from './sourceAuthority';
 import { loadPluginModule } from './loadPluginModule';
-import type { BundledActivationSourceSelectionOptions } from './bundledActivationSource';
-import type { ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import type { createBundledActivationSourceResolver } from './bundledActivationSource';
+import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
+import { resolveBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/enablement';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 
 type AccountBundledSelection = Parameters<typeof resolvePluginAccountExecutionSelectionV1>[0]['bundled'];
 type AccountReadBinding = Readonly<{ credentials: StoredCredentials; serverUrl: string; signal?: AbortSignal }>;
@@ -60,6 +64,59 @@ async function readIntent(input: AccountReadBinding & Readonly<{ pluginId: strin
     return snapshotIntentRead(input.pluginId, response);
 }
 
+/** Preserves the Account selection and hosting contract while changing only enablement. */
+export async function setCurrentAccountPluginEnabled(input: AccountReadBinding & Readonly<{
+    pluginId: string; enabled: boolean;
+    managedResourceDispositions?: import('@happier-dev/protocol/machines/managed/managedDependencyV1').ManagedResourceDispositionV1[];
+}>) {
+    const { intent } = await readIntent(input);
+    const body = PluginAvailabilityIntentSetActionInputV1Schema.parse({
+        pluginId: input.pluginId, enabled: input.enabled,
+        desiredVersion: intent?.desiredVersion ?? null,
+        offlineUiHosting: intent?.offlineUiHosting ?? 'disabled',
+        writableCollections: intent?.writableCollections ?? [], expectedRevision: intent?.revision ?? null,
+        ...(input.managedResourceDispositions ? { managedResourceDispositions: input.managedResourceDispositions } : {}),
+    });
+    return PluginAvailabilityIntentSetActionOutputV1Schema.parse(await postAvailability(input,
+        PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.set'], body));
+}
+
+async function readCurrentAccountPluginIntentReads(input: AccountReadBinding & Readonly<{
+    pluginIds: readonly string[]; isCurrent?: () => boolean;
+}>) {
+    const knownPluginIds = [...new Set(input.pluginIds)].sort();
+    const reads = new Map<string, PluginAvailabilityIntentReadActionOutputV1>();
+    let cursor: string | undefined;
+    do {
+        const page = PluginAvailabilityIntentsListActionOutputV1Schema.parse(await postAvailability(input,
+            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], {
+                knownPluginIds: knownPluginIds.filter(id => !cursor || id > cursor).slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1),
+                ...(cursor ? { cursor } : {}),
+            }));
+        if (input.isCurrent?.() === false) throw new Error('plugin_account_execution_retired');
+        for (const entry of page.intentReads) {
+            const response = snapshotIntentRead(entry.pluginId, entry.response);
+            if (reads.has(entry.pluginId)) throw new Error('plugin_account_execution_duplicate_read');
+            reads.set(entry.pluginId, response);
+        }
+        if (page.nextCursor && cursor && page.nextCursor <= cursor) throw new Error('plugin_account_execution_invalid_cursor');
+        cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    return reads;
+}
+
+/** Account intent is default-on; an unavailable census never becomes an enabled fact. */
+export async function readCurrentAccountPluginEnablements(input: AccountReadBinding & Readonly<{
+    pluginIds: readonly string[];
+}>): Promise<ReadonlyMap<string, boolean>> {
+    const reads = await readCurrentAccountPluginIntentReads(input);
+    return new Map(input.pluginIds.map(pluginId => {
+        const read = reads.get(pluginId);
+        if (!read) throw new Error('plugin_account_execution_unavailable');
+        return [pluginId, read.intent?.enabled ?? true];
+    }));
+}
+
 /** One strict Account read for provenance consumers; it owns no cache or occurrence. */
 export async function readCurrentAccountPluginExecutionSelection(input: AccountReadBinding & Readonly<{
     pluginId: string; bundled?: AccountBundledSelection;
@@ -89,12 +146,13 @@ export async function readCurrentMountedAccountPluginExecutionSelection(input: R
 
 export type AccountPluginActivationSourcesInput = Readonly<{
     contributes: ResolvedContributionRegistry;
+    machineEnabledById?: Readonly<Record<string, boolean>>;
     paths: PluginStorePaths;
     credentials: StoredCredentials;
     serverUrl: string;
     isCurrent: () => boolean;
     isCredentialCurrent?: () => boolean | Promise<boolean>;
-    resolveBundledActivationSource: (target: ActivationTarget, options?: BundledActivationSourceSelectionOptions) => PluginActivationSource<PluginDaemonModuleNamespace> | null;
+    resolveBundledActivationSource: (...args: Parameters<ReturnType<typeof createBundledActivationSourceResolver>>) => PluginActivationSource<PluginDaemonModuleNamespace> | null;
     signal?: AbortSignal;
 }>;
 
@@ -111,23 +169,11 @@ export type AccountPluginActivationSources = Readonly<{
 export async function resolveAccountPluginActivationSources(input: AccountPluginActivationSourcesInput): Promise<AccountPluginActivationSources> {
     const bundledDeclarations = (input.contributes.pluginDeclarations ?? []).filter(plugin => plugin.sourceSpec.kind === 'bundled');
     const knownPluginIds = bundledDeclarations.map(plugin => plugin.pluginId).sort();
-    const reads = new Map<string, PluginAvailabilityIntentReadActionOutputV1>();
-    let cursor: string | undefined;
-    do {
-        const page = PluginAvailabilityIntentsListActionOutputV1Schema.parse(await postAvailability(input,
-            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], {
-                knownPluginIds: knownPluginIds.filter(id => !cursor || id > cursor).slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1),
-                ...(cursor ? { cursor } : {}),
-            }));
-        if (!input.isCurrent()) throw new Error('plugin_account_execution_retired');
-        for (const entry of page.intentReads) {
-            const response = snapshotIntentRead(entry.pluginId, entry.response);
-            if (reads.has(entry.pluginId)) throw new Error('plugin_account_execution_duplicate_read');
-            reads.set(entry.pluginId, response);
-        }
-        if (page.nextCursor && cursor && page.nextCursor <= cursor) throw new Error('plugin_account_execution_invalid_cursor');
-        cursor = page.nextCursor ?? undefined;
-    } while (cursor);
+    const reads = await readCurrentAccountPluginIntentReads({ ...input, pluginIds: knownPluginIds });
+    const pluginEnablementById = resolveBundledPluginEnablement({ pluginIds: [...reads.keys()],
+        accountEnabledById: new Map([...reads].map(([pluginId, read]) => [pluginId, read.intent?.enabled ?? true])),
+        machineEnabledById: input.machineEnabledById,
+    });
 
     const sourcesByPluginId = new Map<string, PluginActivationSource<PluginDaemonModuleNamespace>>();
     const selected = new Map<string, Readonly<{ selection: PluginAccountExecutionSelectionV1;
@@ -164,7 +210,9 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
             daemonEntryPath: hostDeclaration.daemonEntryPath, devDaemonEntryPath: hostDeclaration.devDaemonEntryPath,
             ...(hostAccountAction?.execution.target === 'account' ? { account: hostAccountAction.execution.account } : {}),
             provenance: 'first_party' as const, source: { kind: 'bundled' as const } } : null;
-        let accountSelection = resolvePluginAccountExecutionSelectionV1({ pluginId, intentRead: read });
+        let accountSelection: PluginAccountExecutionSelectionV1 = pluginEnablementById[pluginId]?.enabled === false
+            ? { kind: 'unavailable', code: 'plugin_disabled' }
+            : resolvePluginAccountExecutionSelectionV1({ pluginId, intentRead: read });
         let hostSource: PluginActivationSource<PluginDaemonModuleNamespace> | null = null;
         let bundledSelection: AccountBundledSelection;
         // An explicit Account override is authoritative independently of the
@@ -264,6 +312,8 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
     // Agents and Resources have only a Machine/daemon execution host. Keep
     // their declarations in the selected manifest without synthesizing an
     // executable Agent runtime or demanding an Account Resource registration.
-    return { contributes: { ...contributes, agents: [], resources: [], activationTargets }, sourcesByPluginId, isCurrent, revalidate,
+    return { contributes: { ...contributes, agents: [], resources: [], activationTargets, pluginEnablementById,
+        unavailableAgentPluginsByBackendId: getResolvedContributionRegistry({ pluginEnablementById }).unavailableAgentPluginsByBackendId,
+    }, sourcesByPluginId, isCurrent, revalidate,
         readSelection: pluginId => selected.get(pluginId)?.selection ?? null };
 }

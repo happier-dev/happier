@@ -19,6 +19,12 @@ function issue(overrides: Partial<SessionRuntimeIssueV1>): SessionRuntimeIssueV1
 }
 
 describe('resolveSessionStartFailureNotice', () => {
+    it('explains a disabled Agent without offering another resume attempt', () => {
+        const notice = resolveSessionStartFailureNotice({ issue: issue({ code: 'plugin_disabled', source: 'dependency_failure' }), sessionActive: false });
+        expect(notice).toMatchObject({ code: 'plugin_disabled', retryable: false });
+        expect(notice?.message).toBe(t('session.startFailure.cause.plugin_disabled'));
+    });
+
     const startFailure = issue({
         code: 'native_agent_privileged_effect_authority_unavailable',
         source: 'dependency_failure',

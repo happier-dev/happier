@@ -58,7 +58,7 @@ import {
 } from '../projection/registry/sources/generatedBundledPluginManifests';
 import type { PluginCompatibilityDiagnostic } from '../validation/diagnostics/types';
 import { createResolvedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
-import { resolveMergedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
+import { resolveMergedContributionRegistry } from '../projection/registry/merged';
 import { projectManifestAgentAcpCatalogPreflight, projectManifestAgentContribution } from '../projection/registry/projectManifestAgentContribution';
 import { projectNativeAgentCliRuntimeDescriptor } from '../projection/registry/agentCliMetadata';
 import { resolveAgentContributionQualifiedId } from '../projection/registry/agentRoutingIdentity';
@@ -1957,6 +1957,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     let contributes = params?.contributes
         ?? (params?.accountExecution ? createResolvedContributionRegistry(resolveBuiltInContributions()) : await resolveMergedContributionRegistry({
             happyHomeDir: params?.happyHomeDir,
+            accountStorageDependencies: params?.accountStorageDependencies,
         }));
     const committed = params?.accountExecution ? null : params?.generationAuthority ?? await readCurrentCommittedPluginGenerations(
         pluginStorePaths,
@@ -2038,6 +2039,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const accountActivationSources = params?.accountExecution
         ? await resolveAccountPluginActivationSources({
             ...params.accountExecution, contributes, paths: pluginStorePaths,
+            machineEnabledById: (await (await import('@/plugins/store/registry/currentState'))
+                .createPluginRegistryStateStore({ happyHomeDir: params?.happyHomeDir }).readSnapshot()).bundledPluginEnabledById,
             resolveBundledActivationSource,
             ...(params.signal ? { signal: params.signal } : {}),
         }) : null;

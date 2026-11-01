@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildPluginProjectionV2 } from '../projection/v2';
 import { projectPluginUiDeclarationEntries, projectPluginUiRendererAvailability, projectPluginUiRendererRef } from './projection';
-import { projectLoadedPluginContributes } from '../resolvePluginContributions';
+import { projectLoadedPluginContributes } from '../fullProjection';
 import { createResolvedContributionRegistry } from '../createResolvedContributionRegistry';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import type {

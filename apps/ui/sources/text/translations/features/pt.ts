@@ -8457,6 +8457,7 @@ const Domain_pluginSettingsPresentationTranslations = (() => {
 const english = Shared_pluginSettingsPresentationTranslations.english;
 
 const pluginSettingsPresentationTranslations = { pt: {
+        enablement: {"account": "Na sua conta", "machine": "Nesta máquina", "description": "Ambos devem estar ativados para o plugin funcionar aqui. Desativá-lo mantém os dados e as conexões."},
         rowStatus: { enabled: 'Ativado', disabled: 'Desativado', incompatible: 'Não compatível', trustRemoved: 'Confiança removida', needsAttention: 'Requer atenção' },
         developmentPhase: { observing: 'A observar', preparingDependencies: 'A preparar dependências', compiling: 'A compilar', validating: 'A validar', active: 'Ativo', retainedIncumbent: 'Versão anterior ativa', unavailable: 'Indisponível' },
         developmentDiagnostic: { manifestMissing: 'Esta pasta não tem manifesto de plugin. Adicione .happier-plugin/plugin.json ou escolha a pasta do plugin.', projectMissing: 'Esta pasta já não existe. Remova-a do desenvolvimento ou escolha onde o plugin está agora.' },

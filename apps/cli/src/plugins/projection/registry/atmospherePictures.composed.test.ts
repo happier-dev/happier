@@ -5,7 +5,7 @@ import { ATMOSPHERE_PICTURES } from '@happier-dev/brand/atmosphere';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
-import { projectLoadedPluginContributes } from './resolvePluginContributions';
+import { projectLoadedPluginContributes } from './fullProjection';
 import { createResolvedContributionRegistry } from './createResolvedContributionRegistry';
 import { buildPluginProjectionV2 } from './projection/v2';
 import { normalizePluginUiProjection } from '../../../../../ui/sources/sync/domains/plugins/ui/projection';

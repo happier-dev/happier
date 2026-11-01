@@ -6,6 +6,7 @@ export type SessionStartFailureNotice = Readonly<{
     code: string;
     /** The localized cause and recovery step for the closed startup failure. */
     message: string;
+    retryable?: boolean;
 }>;
 
 /**
@@ -20,5 +21,5 @@ export function resolveSessionStartFailureNotice(input: Readonly<{
     const { issue } = input;
     if (input.sessionActive || !issue || issue.scope !== 'primary_session' || issue.status !== 'failed') return null;
     const message = presentSessionStartupFailureCause(issue.code);
-    return message === null ? null : { code: issue.code, message };
+    return message === null ? null : { code: issue.code, message, retryable: issue.code !== 'plugin_disabled' };
 }

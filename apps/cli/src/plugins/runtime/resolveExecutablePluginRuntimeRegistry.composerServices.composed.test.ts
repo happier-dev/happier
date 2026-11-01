@@ -9,7 +9,7 @@ import { prepareSessionInputForProviderDispatch } from '@/agent/runtime/turns/pr
 import { admitPluginSessionInputAttachmentsV1 } from '@/session/composer/admitPluginSessionInputAttachmentsV1';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { TRIAGE_PLUGIN } from '../../../../../packages/plugins/triage/src/manifest';

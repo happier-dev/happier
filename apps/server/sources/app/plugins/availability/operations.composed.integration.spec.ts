@@ -309,6 +309,25 @@ describe("plugin Availability operations", () => {
         });
     }
 
+    it("retains a release-less bundled Account disable intent and re-enables it without a release", async () => {
+        await seedAccountAndMachine();
+        const service = operations();
+        const pluginId = "happier.language.markdown";
+        const disabled = await service.setIntent({ accountId: ACCOUNT_ID, input: {
+            pluginId, desiredVersion: null, enabled: false, offlineUiHosting: "disabled",
+            writableCollections: [], expectedRevision: null,
+        } });
+        expect(disabled.intent).toMatchObject({ pluginId, enabled: false, desiredVersion: null });
+        const enabled = await service.setIntent({ accountId: ACCOUNT_ID, input: {
+            pluginId, desiredVersion: null, enabled: true, offlineUiHosting: "disabled",
+            writableCollections: [], expectedRevision: disabled.intent.revision,
+        } });
+        expect(enabled.intent).toMatchObject({ pluginId, enabled: true, desiredVersion: null });
+        expect(await db.accountPluginRelease.count()).toBe(0);
+        expect(await db.accountPluginIntent.findUnique({ where: { accountId_pluginId: { accountId: ACCOUNT_ID, pluginId } } }))
+            .toMatchObject({ enabled: true, desiredVersion: null });
+    });
+
     it("reviews retained native resources before disabling their provisioner and permits exact manual responsibility", async () => {
         await seedAccountAndMachine();
         const service = operations();

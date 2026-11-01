@@ -8445,6 +8445,7 @@ const Domain_pluginSettingsPresentationTranslations = (() => {
 const english = Shared_pluginSettingsPresentationTranslations.english;
 
 const pluginSettingsPresentationTranslations = { 'zh-Hant': {
+        enablement: {"account": "在你的帳戶中", "machine": "在此機器上", "description": "兩項均須啟用，此外掛程式才能在這裡執行。關閉後會保留資料和連線。"},
         rowStatus: { enabled: '已啟用', disabled: '已停用', incompatible: '不相容', trustRemoved: '已撤銷信任', needsAttention: '需要處理' },
         developmentPhase: { observing: '正在監看', preparingDependencies: '正在準備相依項目', compiling: '正在編譯', validating: '正在驗證', active: '作用中', retainedIncumbent: '上一版本仍在執行', unavailable: '無法使用' },
         developmentDiagnostic: { manifestMissing: '此資料夾中沒有外掛資訊清單。請新增 .happier-plugin/plugin.json，或選擇外掛所在的資料夾。', projectMissing: '此資料夾已不存在。請將其從開發中移除，或選擇外掛目前所在的位置。' },

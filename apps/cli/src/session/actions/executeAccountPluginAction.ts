@@ -12,7 +12,7 @@ import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import type { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import axios from 'axios';
 import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/accountPluginActivationSource';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 
 /** Selects Account custody for the incumbent runtime and invocation owners. */
 export async function executeAccountPluginAction(params: Readonly<{

@@ -1,4 +1,5 @@
 import type { MachineRecipeV1, MachineSetupPresetContributionV1 } from './machineSetup.js';
+import type { PluginManifestIngestionDiagnostic } from '@happier-dev/protocol/plugins/manifest/ingest';
 // Portable declarative grammar is projected by the single Action DTO producer.
 import type { PluginDeclarativeToneV2 as DtoPluginDeclarativeToneV2, PluginDeclarativeControlV2 as DtoPluginDeclarativeControlV2, PluginDeclarativeActionNodeV2 as DtoPluginDeclarativeActionNodeV2, PluginContributionReference as DtoPluginContributionReference, PluginDeclarativeComposerApplyEffectV1 as DtoPluginDeclarativeComposerApplyEffectV1, PluginDeclarativeActionVariantV2 as DtoPluginDeclarativeActionVariantV2, PluginDeclarativeListNodeV2 as DtoPluginDeclarativeListNodeV2, PluginDeclarativeSectionNodeV2 as DtoPluginDeclarativeSectionNodeV2, PluginDeclarativeRowNodeV2 as DtoPluginDeclarativeRowNodeV2, PluginDeclarativeItemNodeV2 as DtoPluginDeclarativeItemNodeV2, PluginDeclarativeStateNodeV2 as DtoPluginDeclarativeStateNodeV2, PluginDeclarativeStateV2 as DtoPluginDeclarativeStateV2, PluginDeclarativeTargetedSurfaceNodeV2 as DtoPluginDeclarativeTargetedSurfaceNodeV2, PluginDeclarativeTargetedSurfaceReferenceV1 as DtoPluginDeclarativeTargetedSurfaceReferenceV1, PluginDeclarativeMetadataNodeV2 as DtoPluginDeclarativeMetadataNodeV2, PluginDeclarativeMetadataEntryV2 as DtoPluginDeclarativeMetadataEntryV2, PluginDeclarativeActionPanelNodeV2 as DtoPluginDeclarativeActionPanelNodeV2, PluginDeclarativeCollectionListNodeV2 as DtoPluginDeclarativeCollectionListNodeV2, PluginCollectionProjectedScalarFieldRefV1 as DtoPluginCollectionProjectedScalarFieldRefV1, PluginCollectionRowCommandV1 as DtoPluginCollectionRowCommandV1 } from './actions/dtos/actionDeclarativeNodeDto.generated.js';
 import type { PluginDeclarativeNodeV2, PluginLocalizedStringV2 } from './actions/dtos/pluginActionDtoSupport.generated.js';
@@ -843,19 +844,7 @@ export type PluginTestkitManifest =
   }>);
 
 /** Structured portable-validation diagnostic suitable for author tooling. */
-export type PluginManifestDiagnostic = Readonly<{
-  code:
-    | 'plugin_manifest_invalid_json'
-    | 'plugin_manifest_invalid'
-    | 'plugin_manifest_duplicate_contribution_id'
-    | 'plugin_manifest_invalid_contribution_id'
-    | 'plugin_manifest_dangling_reference'
-    | 'plugin_manifest_wrong_family_reference'
-    | 'plugin_manifest_missing_agent_setting_reference'
-    | 'plugin_manifest_wrong_scope_agent_setting_reference';
-  path?: readonly (string | number)[];
-  message: string;
-}>;
+export type PluginManifestDiagnostic = PluginManifestIngestionDiagnostic;
 /** Portable structural parse result; host compatibility and installation checks are separate. */
 export type PluginManifestParseResult =
   | Readonly<{ ok: true; manifest: ParsedPluginManifest }>

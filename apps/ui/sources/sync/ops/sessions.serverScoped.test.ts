@@ -226,6 +226,17 @@ describe('session resume and fork routing through the Home and Account boundary'
         });
     });
 
+    it('preserves a disabled Agent launch refusal and resumes after it is re-enabled', async () => {
+        boundary.respond(RPC_METHODS.SPAWN_HAPPY_SESSION, { type: 'error', errorCode: 'SPAWN_FAILED',
+            errorMessage: 'Plugin disabled', errorDetail: { kind: 'launch_error', code: 'plugin_disabled', message: 'Plugin disabled' } });
+        await expect(ops.resumeSession(resumeOptions())).resolves.toMatchObject({
+            type: 'error', errorCode: 'plugin_disabled',
+        });
+        boundary.respond(RPC_METHODS.SPAWN_HAPPY_SESSION, { type: 'success', sessionId: 'session-1' });
+        await expect(ops.resumeSession(resumeOptions())).resolves.toMatchObject({ type: 'success', sessionId: 'session-1' });
+        expect(resumeRequests()).toHaveLength(2);
+    });
+
     it('keeps automatic Pending wake distinct from explicit Resume intent', async () => {
         await expect(ops.ensureSessionRuntimeForPendingInput(resumeOptions()))
             .resolves.toMatchObject({ type: 'success', sessionId: 'session-1' });

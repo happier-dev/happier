@@ -4,7 +4,7 @@ import { manifest as INSPECTOR_PLUGIN_MANIFEST } from '@happier-dev/plugins-insp
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 

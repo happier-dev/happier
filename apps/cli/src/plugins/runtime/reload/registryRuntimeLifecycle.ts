@@ -1,10 +1,6 @@
-import {
-  createMergedContributionRegistry,
-  getResolvedContributionRegistry,
-} from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import {
-  projectLoadedPluginContributes,
-} from '@/plugins/projection/registry/resolvePluginContributions';
+import { createMergedContributionRegistry, selectPluginContributionInputs } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/snapshot';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { loadPluginsFromState } from '@/plugins/discovery/load/installed';
 import { readGeneratedPluginUiArtifactsManifest } from '@/plugins/install/ui/generatedArtifacts';
 import {
@@ -17,7 +13,8 @@ import type {
   PluginRegistryRuntimeCandidate,
   PluginRegistryRuntimeLifecycle,
 } from '@/plugins/store/registry/currentState';
-import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
+import { createPluginRegistryStateStore, resolveBundledPluginMachineEnablement } from '@/plugins/store/registry/currentState';
+import { admitPluginContributionGraph } from '@/plugins/projection/registry/normalize/admission';
 import type { PluginRegistryCommitRecord } from '@/plugins/store/registry/commitRecord';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import {
@@ -76,36 +73,6 @@ import {
   bootstrapPrimaryAgentRuntimesForReadiness,
 } from './readiness';
 
-function selectPluginContributionInputs(
-  registry: ResolvedContributionRegistry,
-  includePlugin: (pluginId: string | undefined) => boolean,
-): ResolvedContributionInputs {
-  const filtered = Object.fromEntries(Object.entries(registry).map(([key, value]) => {
-    if (Array.isArray(value)) {
-      return [key, Object.freeze(value.filter((entry: unknown) => includePlugin(
-        entry && typeof entry === 'object' && 'pluginId' in entry && typeof entry.pluginId === 'string'
-          ? entry.pluginId
-          : undefined,
-      )))];
-    }
-    if (
-      value
-      && typeof value === 'object'
-      && (key === 'pluginDiagnosticsByPluginId'
-        || key === 'materializationIdsByPluginId'
-        || key === 'immutableGenerationIdsByPluginId'
-        || key === 'occurrenceIdsByPluginId')
-    ) {
-      return [key, Object.freeze(Object.fromEntries(
-        Object.entries(value).filter(([entryPluginId]) => includePlugin(entryPluginId)),
-      ))];
-    }
-    return [key, value];
-  }));
-  // createResolvedContributionRegistry consumes only ResolvedContributionInputs
-  // fields; this boundary mechanically selects plugin-owned entries from that shape.
-  return filtered as ResolvedContributionInputs;
-}
 
 async function projectDevelopmentContributes(
   candidate: PluginDevelopmentRuntimeCandidate,
@@ -114,8 +81,7 @@ async function projectDevelopmentContributes(
   const generatedUiArtifactsManifest = await readGeneratedPluginUiArtifactsManifest(
     candidate.preparedActivationGraph.rootPath,
   );
-  const replacement = projectLoadedPluginContributes({
-    loadResult: {
+  const loadResult = {
       loadedPlugins: [Object.freeze({
         pluginId: candidate.pluginId,
         pluginRootPath: candidate.preparedActivationGraph.rootPath,
@@ -134,8 +100,14 @@ async function projectDevelopmentContributes(
         }),
       })],
       diagnosticsByPluginId: Object.freeze({}),
-    },
+    };
+  const referenceGraph = { loadedPlugins: active.pluginDeclarations ?? [], diagnosticsByPluginId: active.pluginDiagnosticsByPluginId };
+  const replacement = projectLoadedPluginContributes({
+    loadResult,
+    admittedGraph: admitPluginContributionGraph({ loadedPlugins: loadResult.loadedPlugins, referenceGraph,
+      pluginEnablementById: active.pluginEnablementById }),
     provenance: 'external',
+    referenceGraph,
     existingAgentIds: new Set(active.agents
       .filter((agent) => agent.pluginId !== candidate.pluginId)
       .map((agent) => agent.id)),
@@ -193,8 +165,13 @@ async function createCandidateGenerationAuthority(params: Readonly<{
 async function resolveCandidateContributes(
   candidate: PluginRegistryRuntimeCandidate,
   startupMode: 'normal' | 'pluginRecovery',
+  happyHomeDir: string,
+  accountStorageDependencies?: AccountPluginDataStorageHostDependencies,
 ) {
-  const builtIn = getResolvedContributionRegistry();
+  const builtIn = getResolvedContributionRegistry({ pluginEnablementById: await readCurrentBundledPluginEnablement({
+    happyHomeDir, machineEnabledById: resolveBundledPluginMachineEnablement({ state: candidate.runtimeCatalog,
+      bundledPluginEnabledById: candidate.installationState.bundledPluginEnabledById }), accountStorageDependencies,
+  }) });
   if (startupMode === 'pluginRecovery') return builtIn;
   const materializationIdsByPluginId = Object.freeze(Object.fromEntries(
     Object.entries(candidate.installationState.plugins).flatMap(([pluginId, installation]) => (
@@ -214,10 +191,14 @@ async function resolveCandidateContributes(
   );
   const plugin = projectLoadedPluginContributes({
     loadResult,
+    admittedGraph: admitPluginContributionGraph({ loadedPlugins: loadResult.loadedPlugins,
+      referenceGraph: { loadedPlugins: builtIn.pluginDeclarations ?? [], diagnosticsByPluginId: builtIn.pluginDiagnosticsByPluginId },
+      pluginEnablementById: builtIn.pluginEnablementById }),
     provenance: 'external',
+    referenceGraph: { loadedPlugins: builtIn.pluginDeclarations ?? [], diagnosticsByPluginId: builtIn.pluginDiagnosticsByPluginId },
     existingAgentIds: new Set(builtIn.agents.map((agent) => agent.id)),
   });
-  return createMergedContributionRegistry(plugin);
+  return createMergedContributionRegistry(plugin, builtIn);
 }
 
 export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
@@ -347,7 +328,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
                 (pluginId) => pluginId !== developmentRemoval.pluginId,
               ),
             )
-          : await resolveCandidateContributes(candidate!, params.startupMode ?? 'normal');
+          : await resolveCandidateContributes(candidate!, params.startupMode ?? 'normal', params.happyHomeDir, params.accountStorageDependencies);
       const generationAuthority = developmentCandidate || developmentRemoval
         ? Object.freeze({
             commit: null,
@@ -364,7 +345,16 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
         ? Object.freeze([developmentCandidate.pluginId])
         : developmentRemoval
           ? Object.freeze([developmentRemoval.pluginId])
-        : candidate!.changedPluginIds;
+        : candidate!.admissionRefresh && activeRegistry
+          ? candidate!.changedPluginIds.filter(pluginId => {
+              const before = activeRegistry.contributes.pluginEnablementById?.[pluginId];
+              const after = candidateContributes.pluginEnablementById?.[pluginId];
+              return before?.accountEnabled !== after?.accountEnabled
+                || before?.machineEnabled !== after?.machineEnabled
+                || before?.enabled !== after?.enabled
+                || before?.unavailableCode !== after?.unavailableCode;
+            })
+          : candidate!.changedPluginIds;
       const changedPluginIds = new Set(changedPluginIdList);
       const candidatePluginGenerations: PluginRegistryRuntimeCandidate['pluginOccurrenceIds'] =
         candidate?.pluginOccurrenceIds ?? Object.freeze({});
@@ -808,8 +798,9 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
             }
             const adoption = await params.reloadController.adoptPreparedRuntimeRegistry({
               registry,
-              changedPluginIds: durableCandidate.changedPluginIds,
+              changedPluginIds: changedPluginIdList,
               durableRevision: record.revision,
+              ...(durableCandidate.admissionRefresh ? { admissionRefresh: true } : {}),
               runningSessionDisposition: durableCandidate.runningSessionDisposition,
               beforePublish: async (candidateRegistry, publish) => {
                 if (durableCandidate.mutationKind === 'install') await params.beforeInstallPublish?.(candidateRegistry, durableCandidate.changedPluginIds, firstInstallPluginIds);

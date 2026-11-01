@@ -9,11 +9,9 @@ import {
   getAllAgentDefinitionContracts,
 } from '@happier-dev/agents';
 
-import {
-  createResolvedContributionRegistry,
-  getResolvedContributionRegistry,
-  resolveMergedContributionRegistry,
-} from './createResolvedContributionRegistry';
+import { createResolvedContributionRegistry } from './createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from './builtIn/snapshot';
+import { resolveMergedContributionRegistry } from './createResolvedContributionRegistry';
 import {
   PluginContributesV2Schema,
   createPluginContributionIdentity,

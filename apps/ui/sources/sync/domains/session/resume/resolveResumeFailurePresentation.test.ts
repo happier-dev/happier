@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { resolveResumeFailurePresentation } from './resolveResumeFailurePresentation';
 
 describe('session resume failure presentation', () => {
+    it('offers the exact disabled plugin instead of repeating Resume, including configured Agents', () => {
+        expect(resolveResumeFailurePresentation({ errorCode: 'plugin_disabled', errorMessage: 'Private diagnostic' }, 'Resume failed', {
+            kind: 'agent', identity: { pluginId: 'happier.agent.pi', localId: 'pi' },
+        })).toMatchObject({ kind: 'plugin_disabled', pluginId: 'happier.agent.pi' });
+        expect(resolveResumeFailurePresentation({ errorCode: 'plugin_disabled' }, 'Resume failed', {
+            kind: 'backend', backendId: 'my-acp', configuredBackendId: 'my-acp', sourceKind: 'configured',
+        })).toMatchObject({ kind: 'plugin_disabled', pluginId: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.pluginId });
+    });
+
     it('offers explicit private-folder recovery instead of a modal failure', () => {
         expect(resolveResumeFailurePresentation({
             errorCode: 'SESSION_DIRECTORY_MISSING', errorMessage: 'Machine-private diagnostic path',

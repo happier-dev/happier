@@ -95,8 +95,12 @@ export const PluginLifecycleActionInputSchema = lazyZodSchema(() => z.strictObje
   pluginId: z.string().check(z.trim(), z.minLength(1)),
   machineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
 }));
-export const PluginDisableActionInputSchema = lazyZodSchema(() => z.strictObject({
+export const PluginEnableActionInputSchema = lazyZodSchema(() => z.strictObject({
   ...PluginLifecycleActionInputSchema.shape,
+  scope: z.optional(z.enum(['account', 'machine'])),
+}));
+export const PluginDisableActionInputSchema = lazyZodSchema(() => z.strictObject({
+  ...PluginEnableActionInputSchema.shape,
   managedResourceDispositions: z.optional(z.array(ManagedResourceDispositionV1Schema)),
 }));
 export const PluginUpdatePolicyActionInputSchema = lazyZodSchema(() => z.strictObject({
@@ -138,7 +142,7 @@ export const PluginDevLoopActionInputSchemas = {
   'plugins.scaffold': PluginScaffoldActionInputSchema,
   'plugins.install': PluginInstallActionInputSchema,
   'plugins.uninstall': PluginUninstallActionInputSchema,
-  'plugins.enable': PluginLifecycleActionInputSchema,
+  'plugins.enable': PluginEnableActionInputSchema,
   'plugins.disable': PluginDisableActionInputSchema,
   'plugins.rollback': PluginLifecycleActionInputSchema,
   'plugins.trust.forget': PluginLifecycleActionInputSchema,
@@ -250,8 +254,8 @@ export const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopA
   'plugins.scaffold': 'Create a local plugin scaffold from the first-party template.',
   'plugins.install': 'Request approval to install and trust an exact marketplace or local plugin; the daemon retains custody of the install effect.',
   'plugins.uninstall': 'Remove a plugin installed from a local folder on a machine.',
-  'plugins.enable': 'Enable an installed and trusted plugin through its machine lifecycle owner.',
-  'plugins.disable': 'Disable an installed plugin, preserving the daemon’s retained-resource review.',
+  'plugins.enable': 'Enable a plugin for the Account or this Machine. Machine scope is the default.',
+  'plugins.disable': 'Disable a plugin for the Account or this Machine, preserving retained data and resource review. Machine scope is the default.',
   'plugins.rollback': 'Restore the previous installed plugin version through its machine lifecycle owner.',
   'plugins.trust.forget': 'Remove the machine’s retained trust for an installed plugin.',
   'plugins.update_policy.set': 'Change whether an installed plugin admits explicit updates.',
@@ -317,7 +321,13 @@ export function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1)
   const inputSchema = PluginDevLoopActionInputSchemas[actionId];
 
   return {
-    id: actionId, approval: isRead
+    id: actionId, executionPlacement: 'machine',
+    ...(actionId === 'plugins.enable' || actionId === 'plugins.disable' ? {
+      executionPlacementForInput: (input: unknown) => (actionId === 'plugins.disable'
+        ? PluginDisableActionInputSchema.parse(input) : PluginEnableActionInputSchema.parse(input)).scope === 'account'
+        ? 'account' as const : 'machine' as const,
+    } : {}),
+    approval: isRead
       ? { result: 'required' }
       : { result: 'optional', flow: 'deferred' },
     title: PLUGIN_DEV_LOOP_ACTION_TITLES[actionId],

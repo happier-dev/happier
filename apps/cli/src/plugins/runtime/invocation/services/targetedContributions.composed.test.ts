@@ -40,7 +40,7 @@ import type {
     AdmittedTargetedContributionSnapshot,
     ResolvedContributionRegistry,
 } from '@/plugins/projection/registry/types';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createPluginReloadController } from '../../reload/controller';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';

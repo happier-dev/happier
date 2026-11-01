@@ -74,7 +74,7 @@ import type { ManagedServiceNativeInstanceV1 } from '@happier-dev/plugin-sdk/man
 import { createDaemonSpawnToolResolutionContext } from '@/daemon/spawnHooks';
 import { readSupervisedPluginProcessIdForHost } from '@/plugins/runtime/exec/processSupervisor';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { activatePluginRuntimeRegistry } from '@/plugins/runtime/lifecycle/manager';
 import { resolveProjectNativeAdapter } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';

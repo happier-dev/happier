@@ -7589,6 +7589,7 @@ export const zhHans: TranslationStructure = {
         provider_endpoint_unavailable: "提供商端点不可用。请检查 Gateway 及其与机器的连接，然后重试会话。",
         plugin_mcp_preparation_unavailable: "插件 MCP 准备不可用。请检查目标机器，然后重试会话。",
         agent_runtime_daemon_service_generation_not_current: "运行器的智能体代次已不是最新。请在目标机器上重试会话。",
+        plugin_disabled: "此智能体插件已禁用。在“插件”中重新启用它以恢复此会话。",
         native_agent_privileged_effect_authority_unavailable: "运行器的 daemon 授权不可用。请检查目标机器，然后重试会话。",
         native_agent_privileged_effect_outcome_unknown: "无法确认运行器 daemon 的准备情况。重试前请检查会话和目标机器。",
         daemon_draining: "目标机器正在暂时暂停新任务。准备就绪后，请重试会话。",

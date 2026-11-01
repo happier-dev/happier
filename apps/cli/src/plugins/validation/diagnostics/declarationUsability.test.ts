@@ -8,6 +8,7 @@ import {
 const TARGETED_CONTRIBUTION_DIAGNOSTIC_REPRESENTATIVES = [
     'target_absent',
     'descriptor_semantic_invalid',
+    'plugin_contribution_skipped',
 ] as const;
 
 describe('plugin diagnostic declaration usability', () => {

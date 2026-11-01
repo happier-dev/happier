@@ -25,9 +25,11 @@ import {
 } from '@/plugins/manifest/daemonEntry';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
-import type { BundledPluginPublicationFailure } from '@/plugins/validation/diagnostics/types';
+import type { BundledPluginAdmissionFailure } from '@/plugins/projection/registry/builtIn/locators';
+import type { ResolvedPluginEnablement } from '@/plugins/projection/registry/types';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import { projectPluginCatalogEntryIntrospection } from '@/plugins/projection/introspection/catalogEntry';
+import { projectPluginCatalogEntrySnapshot } from '@/plugins/projection/introspection/catalogSnapshot';
 import type { PluginContributionIntrospectionProjectionV1 } from '@happier-dev/protocol';
 
 export type PluginCatalogEntry = Readonly<{
@@ -48,7 +50,7 @@ export type PluginCatalogEntry = Readonly<{
   manifest: CanonicalPluginManifest | null;
   contributionIntrospection: PluginContributionIntrospectionProjectionV1;
   diagnostics: readonly PluginCompatibilityDiagnostic[];
-}>;
+} & Partial<Omit<ResolvedPluginEnablement, 'enabled'>>>;
 
 export type InstallPluginFromLocatorResult =
   | Readonly<{
@@ -168,13 +170,14 @@ function buildCatalogEntry(params: Readonly<{
   manifest: CanonicalPluginManifest | null;
   manifestPath: string;
   diagnostics: readonly PluginCompatibilityDiagnostic[];
+  enablement?: ResolvedPluginEnablement;
 }>): PluginCatalogEntry {
   const readText = (value: string | Readonly<{ fallback: string }> | undefined): string | undefined => (
     typeof value === 'string' ? value : value?.fallback
   );
   const title = readText(params.manifest?.displayName) ?? params.pluginId;
   const version = params.manifest?.version ?? params.record.install.manifestVersion;
-  return {
+  const entry: PluginCatalogEntry = {
     pluginId: params.pluginId,
     desiredGeneration: params.desiredGeneration,
     appliedGeneration: null,
@@ -184,6 +187,7 @@ function buildCatalogEntry(params: Readonly<{
     description: readText(params.manifest?.description) ?? null,
     version,
     enabled: params.record.state.enabled,
+    ...params.enablement,
     source: params.record.source,
     install: params.record.install,
     compatibility: params.record.compatibility,
@@ -205,13 +209,18 @@ function buildCatalogEntry(params: Readonly<{
     }),
     diagnostics: params.diagnostics,
   };
+  return entry.enabled ? entry : {
+    ...entry,
+    contributionIntrospection: projectPluginCatalogEntrySnapshot(entry).contributions,
+  };
 }
 
 export function projectBundledPluginCatalogEntries(params: Readonly<{
   loadedPlugins: readonly LoadedPlugin[];
-  pluginFailures?: readonly BundledPluginPublicationFailure[];
+  pluginFailures?: readonly BundledPluginAdmissionFailure[];
   desiredGenerationByPluginId?: Readonly<Record<string, string>>;
   excludedPluginIds?: ReadonlySet<string>;
+  pluginEnablementById?: Readonly<Record<string, ResolvedPluginEnablement>>;
 }>): readonly PluginCatalogEntry[] {
   const entries = params.loadedPlugins.flatMap((plugin) => {
     if (params.excludedPluginIds?.has(plugin.pluginId)) return [];
@@ -236,7 +245,8 @@ export function projectBundledPluginCatalogEntries(params: Readonly<{
       record,
       manifest: plugin.manifest,
       manifestPath: plugin.manifestPath,
-      diagnostics: [],
+      diagnostics: plugin.admissionDiagnostics ?? [],
+      enablement: params.pluginEnablementById?.[plugin.pluginId],
     })];
   });
   for (const failure of params.pluginFailures ?? []) {
@@ -265,6 +275,9 @@ export function projectBundledPluginCatalogEntries(params: Readonly<{
       manifest: null,
       manifestPath,
       diagnostics: [failure.diagnostic],
+      enablement: params.pluginEnablementById?.[failure.pluginId]
+        ? { ...params.pluginEnablementById[failure.pluginId], enabled: false }
+        : undefined,
     }));
   }
   return Object.freeze(entries.sort((a, b) => a.pluginId.localeCompare(b.pluginId)));
@@ -359,11 +372,16 @@ async function projectInstalledPluginCatalog(
 
 export async function readInstalledPluginCatalogSnapshot(params?: Readonly<{
   happyHomeDir?: string;
-}>): Promise<Readonly<{ revision: number; entries: readonly PluginCatalogEntry[] }>> {
+}>): Promise<Readonly<{
+  revision: number;
+  bundledPluginEnabledById: Readonly<Record<string, boolean>>;
+  entries: readonly PluginCatalogEntry[];
+}>> {
   const stateStore = createPluginRegistryStateStore({ happyHomeDir: params?.happyHomeDir });
   const snapshot = await stateStore.readSnapshot();
   return Object.freeze({
     revision: snapshot.revision,
+    bundledPluginEnabledById: snapshot.bundledPluginEnabledById,
     entries: await projectInstalledPluginCatalog(
       snapshot.state,
       snapshot.pluginOccurrenceIds,

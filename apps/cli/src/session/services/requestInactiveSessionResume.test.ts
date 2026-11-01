@@ -317,6 +317,15 @@ describe('requestInactiveSessionResume', () => {
     expect(callMachineRpc.mock.calls[0]?.[0]?.request.approvedNewDirectoryCreation).not.toBe(true);
   });
 
+  it('preserves plugin_disabled from a launch refusal without polling readiness', async () => {
+    callMachineRpc.mockResolvedValue({ type: 'error', errorCode: 'SPAWN_FAILED',
+      errorMessage: 'Plugin disabled',
+      errorDetail: { kind: 'launch_error', code: 'plugin_disabled', message: 'Plugin disabled' } });
+    await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'disabled-agent',
+      rawSession: rawSession(), metadata, waitForReady: true })).resolves.toMatchObject({ ok: false, code: 'plugin_disabled' });
+    expect(callMachineRpc).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves the missing-directory recovery outcome', async () => {
     callMachineRpc.mockResolvedValue({ type: 'error', errorCode: 'SESSION_DIRECTORY_MISSING', errorMessage: 'Missing folder' });
     await expect(requestInactiveSessionResume({

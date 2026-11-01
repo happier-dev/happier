@@ -430,7 +430,10 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
       const store = createMutationStore();
       const existing = (await store.read()).plugins[stateRequest.pluginId];
       const allowsAlreadyAbsent = stateRequest.kind === 'uninstallAndDeleteData' && !existing;
-      if (!existing && !allowsAlreadyAbsent) throw new Error(`Unknown plugin id: ${stateRequest.pluginId}`);
+      // Bundled declarations have no installation record. The registry mutation
+      // owner validates their identity when applying their desired enablement.
+      const allowsDeclarationEnablement = stateRequest.kind === 'enable' || stateRequest.kind === 'disable';
+      if (!existing && !allowsAlreadyAbsent && !allowsDeclarationEnablement) throw new Error(`Unknown plugin id: ${stateRequest.pluginId}`);
       if (stateRequest.kind === 'setUpdatePolicy') {
         const rejection = resolvePluginUpdatePolicyChangeRejection(existing, stateRequest.policy);
         if (rejection) {

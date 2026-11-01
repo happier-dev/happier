@@ -8445,6 +8445,7 @@ const Domain_pluginSettingsPresentationTranslations = (() => {
 const english = Shared_pluginSettingsPresentationTranslations.english;
 
 const pluginSettingsPresentationTranslations = { 'zh-Hans': {
+        enablement: {"account": "在你的账户中", "machine": "在此机器上", "description": "两项均须启用，此插件才能在这里运行。关闭后会保留数据和连接。"},
         rowStatus: { enabled: '已启用', disabled: '已停用', incompatible: '不兼容', trustRemoved: '已撤销信任', needsAttention: '需要处理' },
         developmentPhase: { observing: '正在监视', preparingDependencies: '正在准备依赖项', compiling: '正在编译', validating: '正在验证', active: '活跃', retainedIncumbent: '上一版本仍在运行', unavailable: '不可用' },
         developmentDiagnostic: { manifestMissing: '此文件夹中没有插件清单。请添加 .happier-plugin/plugin.json，或选择插件所在的文件夹。', projectMissing: '此文件夹已不存在。请将其从开发中移除，或选择插件现在所在的位置。' },

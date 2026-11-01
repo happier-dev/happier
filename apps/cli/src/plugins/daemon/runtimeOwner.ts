@@ -24,7 +24,7 @@ import {
   resolveExecutablePluginRuntimeRegistry,
   type PluginRuntimeMachineAdmissionTransport,
 } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/snapshot';
 import {
   createPluginRegistryStateStore,
   type PluginRegistryAvailabilityInventory,
@@ -66,6 +66,8 @@ import type {
 import type { ExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
 import type { PluginDaemonDatabaseLimitsPolicy } from '@/plugins/runtime/context/daemonDatabase';
 import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime/context/accountPluginDataStorage';
+import { subscribePluginAccountAvailabilityChanges } from '@/plugins/runtime/context/pluginAccountSettingsChangeBroker';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
@@ -249,6 +251,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     : beforePublish;
   let stableEventsBroker: StablePluginEventsBroker | null = null;
   let developmentRoots: DaemonPluginDevelopmentRootsOwner | null = null;
+  let unsubscribeAccountAvailability: (() => void) | null = null;
   const resolveDevelopmentSourceAuthority: DaemonPluginDevelopmentRootsOwner['resolveDevelopmentSourceAuthority'] = (
     input,
   ) => developmentRoots?.resolveDevelopmentSourceAuthority(input) ?? null;
@@ -660,6 +663,8 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         : Object.freeze({ kind: 'projectTrustAccepted' as const, projectRoot: pending.projectRoot });
     },
     async shutdown() {
+      unsubscribeAccountAvailability?.();
+      unsubscribeAccountAvailability = null;
       await developmentRoots.stop();
       await baseChangeService.shutdown();
     },
@@ -865,7 +870,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
               ? { targetedContributions }
               : {}),
             ...(params.startupMode === 'pluginRecovery'
-              ? { contributes: getResolvedContributionRegistry() }
+              ? { contributes: getResolvedContributionRegistry({ pluginEnablementById: await readCurrentBundledPluginEnablement({
+                  happyHomeDir: params.happyHomeDir, accountStorageDependencies: params.accountStorageDependencies,
+                }) }) }
               : {}),
           });
           // Cold start has no serving incumbent to preserve, so isolate a rejected
@@ -982,7 +989,24 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       // without a registry commit; its runtime-only materializations follow
       // it. Identical bodies are deduplicated by the reporter.
       params.reloadController.subscribe(() => reportCurrentAvailability());
-      reportCurrentAvailability();
+      unsubscribeAccountAvailability = subscribePluginAccountAvailabilityChanges((accountScopeKey, pluginIds) => {
+        const currentScopeKey = params.accountStorageDependencies?.resolveAccountScopeKey
+          ? params.accountStorageDependencies.resolveAccountScopeKey()
+          : getActiveAccountSettingsSnapshot()?.scopeKey;
+        if (accountScopeKey !== currentScopeKey) return;
+        const contributes = params.reloadController.getState().activeRegistry?.contributes;
+        const changedPluginIds = pluginIds ?? [...new Set([
+          ...Object.keys(contributes?.pluginEnablementById ?? {}),
+          ...(contributes?.pluginDeclarations ?? []).map(declaration => declaration.pluginId),
+        ])];
+        const relevantPluginIds = changedPluginIds.filter(pluginId => contributes?.pluginEnablementById?.[pluginId]
+          || contributes?.pluginDeclarations?.some(declaration => declaration.pluginId === pluginId));
+        if (relevantPluginIds.length === 0) return;
+        void stateStore.refreshRuntime(relevantPluginIds).catch(error => {
+          logger.warn('[PLUGIN RUNTIME] Account availability refresh failed', error);
+        });
+      });
+      await reportCurrentAvailability();
       await developmentRoots.initialize();
     },
     reportCurrentAvailability,

@@ -360,8 +360,9 @@ function projectInstalledPluginRows(
     /** `sectionNamesSource`: the group header already says where these plugins come from. */
     const project = (entry: InstalledPluginEntry, group: InstalledPluginRow['group']): InstalledPluginRow => {
         const capabilities = projectInstalledPluginLifecycleCapabilities(entry);
-        const toggleAction = entry.enabled ? 'disable' as const : 'enable' as const;
-        const canToggle = entry.enabled ? capabilities.canDisable : capabilities.canEnable;
+        const machineEnabled = entry.machineEnabled ?? entry.enabled;
+        const toggleAction = machineEnabled ? 'disable' as const : 'enable' as const;
+        const canToggle = machineEnabled ? capabilities.canDisable : capabilities.canEnable;
         const busy = props.isPluginActionInFlight(entry.pluginId);
         const presentation = projectInstalledPluginPresentation(entry);
         const observedOnly = entry.accountInstallations !== undefined;
@@ -400,15 +401,15 @@ function projectInstalledPluginRows(
         ) : (
             <Switch
                 testID={`settings.plugins.marketplace.installed.${entry.pluginId}.action.${toggleAction}`}
-                value={entry.enabled}
+                value={machineEnabled}
                 disabled={offline || !canToggle || !props.canRunActions || busy}
                 onValueChange={() => props.onRunAction(toggleAction, entry.pluginId)}
-                accessibilityLabel={buildActionRowAccessibilityLabel([t('common.enabled'), entry.title])}
+                accessibilityLabel={buildActionRowAccessibilityLabel([
+                    entry.machineEnabled === undefined ? t('common.enabled') : t('settingsPlugins.enablement.machine'), entry.title,
+                ])}
             />
         );
-        // A plugin that ships with Happier and cannot be switched off says so quietly instead of
-        // showing a switch that does nothing.
-        const locked = !showReview && !canToggle && isPluginIncludedWithHappier({ installed: entry });
+        const includedWithHappier = isPluginIncludedWithHappier({ installed: entry });
         const kindShelf = group === 'included'
             ? resolvePluginKindShelf(props.projectionByPluginId?.[entry.pluginId]?.contributionKinds)?.key ?? null
             : null;
@@ -416,11 +417,10 @@ function projectInstalledPluginRows(
             entry,
             group,
             shelf: group === 'added' ? 'added' : kindShelf ?? 'included',
-            // An included plugin that cannot be switched off has no control to label: while it is healthy it
-            // says nothing, rather than "Enabled" on every card.
-            statusLabel: coverage ?? (locked && !observedOnly && entry.enabled && !needsDecision && !offline ? null : statusLabel),
+            // Healthy included plugins stay quiet; their switch conveys the Machine setting.
+            statusLabel: coverage ?? (includedWithHappier && !observedOnly && entry.enabled && !needsDecision && !offline ? null : statusLabel),
             statusTone,
-            control: locked || observedOnly ? null : control,
+            control: observedOnly ? null : control,
             byline: group === 'included' ? null : presentation.sourceLabel,
         };
     };

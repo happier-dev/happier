@@ -43,6 +43,7 @@ import {
 } from '../model/pluginMarketplaceModel';
 import { PluginAccountReleaseSelectionSection } from '../PluginAccountReleaseSelectionSection';
 import { PluginReadOnlySnapshotNotice } from '../PluginReadOnlySnapshotNotice';
+import { PluginEnablementSection } from './PluginEnablementSection';
 import { PluginUpdatePolicySection } from './PluginUpdatePolicySection';
 import { PluginRoutineOperationSettlementRow } from '../PluginMarketplaceSections';
 
@@ -74,8 +75,10 @@ function PluginDetailCurrentContent(props: Readonly<{
     const capabilities = installed ? projectInstalledPluginLifecycleCapabilities(installed) : null;
     const actionsDisabled = !state.canRefreshInstalledPlugins
         || (installed ? state.isPluginActionInFlight(installed.pluginId) : true);
-    const toggleAction = installed?.enabled ? 'disable' : 'enable';
-    const canToggle = installed?.enabled ? capabilities?.canDisable === true : capabilities?.canEnable === true;
+    const machineEnabled = installed?.machineEnabled ?? installed?.enabled;
+    const scopedEnablement = installed?.accountEnabled !== undefined && installed.machineEnabled !== undefined;
+    const toggleAction = machineEnabled ? 'disable' : 'enable';
+    const canToggle = machineEnabled ? capabilities?.canDisable === true : capabilities?.canEnable === true;
     const runAction = (action: InstalledPluginActionId) => {
         if (installed) state.runInstalledPluginAction(action, installed.pluginId);
     };
@@ -116,8 +119,8 @@ function PluginDetailCurrentContent(props: Readonly<{
                 projection={props.projection}
                 machineId={state.executionMachineId}
                 serverId={state.executionServerId}
-                enabled={installed ? {
-                    value: installed.enabled,
+                enabled={installed && !scopedEnablement ? {
+                    value: machineEnabled === true,
                     disabled: !canToggle || actionsDisabled,
                     testID: `settings.plugins.detail.${props.pluginId}.action.${toggleAction}`,
                     onChange: () => runAction(toggleAction),
@@ -135,6 +138,13 @@ function PluginDetailCurrentContent(props: Readonly<{
                 settlement={state.routineOperationSettlement}
                 scope="installed"
             />
+            {installed && scopedEnablement ? (
+                <PluginEnablementSection
+                    installed={installed}
+                    disabled={actionsDisabled}
+                    onChange={(action, scope) => state.runInstalledPluginAction(action, installed.pluginId, scope)}
+                />
+            ) : null}
             <PluginDetailGenericSettingsSection
                 pluginId={props.pluginId}
                 projection={props.projection}

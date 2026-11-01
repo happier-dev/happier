@@ -11,7 +11,7 @@ import { loadBundledPluginLocators } from '@/plugins/projection/registry/builtIn
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { resolveAccountPluginActivationSources } from '../../accountPluginActivationSource';
 import { createBundledActivationSourceResolver } from '../../bundledActivationSource';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';

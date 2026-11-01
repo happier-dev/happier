@@ -55,7 +55,7 @@ import { configuration } from '@/configuration';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { loadBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { buildPluginContributionRegistry } from '@/plugins/projection/registry/normalize/package';
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';

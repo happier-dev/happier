@@ -11,16 +11,36 @@ import { tmpdir } from 'node:os';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
-import { readCurrentAccountPluginExecutionSelection, resolveAccountPluginActivationSources } from './accountPluginActivationSource';
+import { readCurrentAccountPluginExecutionSelection, readCurrentAccountPluginEnablements, resolveAccountPluginActivationSources } from './accountPluginActivationSource';
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { createCommittedContributedActionInvoker } from './invocation/actions/createCommittedContributedActionDeps';
 import { createBundledActivationSourceResolver } from './bundledActivationSource';
 
 describe('captured Account execution selection transport', () => {
-    it.each(['release', 'disabled'] as const)('resolves explicit Account %s without touching optional bundled bytes', async mode => {
+    it('reads Account enablement in the shared census and keeps missing intent default-on', async () => {
+        const app = fastify();
+        const pluginIds = ['happier.language.markdown', 'happier.language.typescript'];
+        let reads = 0;
+        app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async () => {
+            reads += 1;
+            return { availabilityCursor: 1, pluginIds, failedPluginIds: [], intentReads: pluginIds.map((pluginId, index) => ({ pluginId,
+                response: { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: index === 0 ? {
+                    pluginId, desiredVersion: null, enabled: false, offlineUiHosting: 'disabled', writableCollections: [], revision: '1',
+                } : null, release: null, uiArtifacts: [], packageAssets: [] },
+            })) };
+        });
+        await app.ready();
+        const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-enablement.test' });
+        try {
+            expect(await readCurrentAccountPluginEnablements({ pluginIds, credentials: { token: 'account', encryption: null }, serverUrl: 'http://account-enablement.test' }))
+                .toEqual(new Map([[pluginIds[0], false], [pluginIds[1], true]]));
+            expect(reads).toBe(1);
+        } finally { restore(); await app.close(); }
+    });
+    it.each(['release', 'disabled', 'machineDisabled'] as const)('resolves explicit Account %s without touching optional bundled bytes', async mode => {
         const app = fastify();
         const home = await mkdtemp(join(tmpdir(), 'account-override-'));
         const pluginId = 'com.acme.overridden-bundle';
@@ -28,7 +48,7 @@ describe('captured Account execution selection transport', () => {
             contributes: { actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['cli'], dangerLevel: 'safe',
                 execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } } }] } }));
         const response = PluginAvailabilityIntentReadActionOutputV1Schema.parse({ availabilityCursor: 1,
-            hostingCapability: { enabled: false }, intent: { pluginId, desiredVersion: manifest.version, enabled: mode === 'release',
+            hostingCapability: { enabled: false }, intent: { pluginId, desiredVersion: manifest.version, enabled: mode !== 'disabled',
                 offlineUiHosting: 'disabled', writableCollections: [], revision: '1' },
             release: normalizePluginReleaseFactsV1({ ref: { pluginId, version: manifest.version }, normalizedManifest: manifest,
                 archiveDigestSha256: `sha256:${'a'.repeat(64)}`, collectionContracts: [], uiSlots: [],
@@ -46,6 +66,7 @@ describe('captured Account execution selection transport', () => {
             const source = await resolveAccountPluginActivationSources({
                 contributes: createResolvedContributionRegistry(projectLoadedPluginContributes({ provenance: 'first_party',
                     loadResult: { loadedPlugins: [declaration], diagnosticsByPluginId: {} } })),
+                machineEnabledById: { [pluginId]: mode !== 'machineDisabled' },
                 paths: resolvePluginStorePaths({ happyHomeDir: home }), credentials: { token: 'captured-account', encryption: null },
                 serverUrl: 'http://captured-home.test', isCurrent: () => true,
                 resolveBundledActivationSource: createBundledActivationSourceResolver({ bundledPackageNames: [packageName],

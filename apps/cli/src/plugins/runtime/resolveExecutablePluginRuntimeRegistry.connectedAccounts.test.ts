@@ -23,10 +23,8 @@ import type {
     HostCurrentSessionUiServices,
 } from '@/agent/runtime/state/currentSessionUiTypes';
 import type { StoredCredentials } from '@/persistence';
-import {
-    createResolvedContributionRegistry,
-    resolveMergedContributionRegistry,
-} from '../projection/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
+import { resolveMergedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
 import {
     resolveExecutablePluginRuntimeRegistry,
     type PluginRuntimeNetworkDependencies,

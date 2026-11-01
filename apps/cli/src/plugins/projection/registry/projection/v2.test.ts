@@ -22,7 +22,7 @@ import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { buildPluginProjectionFamiliesByIdV2 } from '@/plugins/projection/families';
 import { resolveBuiltInContributions } from '../resolveBuiltInContributions';
 import { createResolvedContributionRegistry } from '../createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '../resolvePluginContributions';
+import { projectLoadedPluginContributes } from '../fullProjection';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { projectManifestAgentContribution } from '../projectManifestAgentContribution';
 import { projectPluginCatalogEntryIntrospection } from '@/plugins/projection/introspection/catalogEntry';

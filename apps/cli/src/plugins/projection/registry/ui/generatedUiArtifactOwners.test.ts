@@ -20,7 +20,7 @@ import {
 } from './generatedUiArtifactOwners';
 import type { ResolvedContributionRegistry } from '../types';
 import { createResolvedContributionRegistry } from '../createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '../resolvePluginContributions';
+import { projectLoadedPluginContributes } from '../fullProjection';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 
 const digest = PluginUiArtifactDigestV1Schema.parse(`sha256:${'a'.repeat(64)}`);

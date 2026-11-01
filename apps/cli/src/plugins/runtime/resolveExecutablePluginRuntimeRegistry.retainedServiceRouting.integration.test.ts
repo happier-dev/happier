@@ -76,9 +76,7 @@ import {
 import {
     readCurrentCommittedPluginGenerations,
 } from '@/plugins/store/registry/generationStore';
-import {
-    resolveMergedContributionRegistry,
-} from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import {
     createManagedPluginSourceCustody,
 } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';

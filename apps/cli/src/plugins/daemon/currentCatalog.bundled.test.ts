@@ -26,6 +26,8 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { PLUGIN_MANIFEST_RELATIVE_PATH } from '@/plugins/store/paths';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
+import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
+import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { readCurrentDaemonPluginCatalogSnapshot } from './currentCatalog';
 
@@ -105,6 +107,25 @@ describe('current daemon bundled plugin catalog', () => {
         expect(snapshot.plugins.filter((entry) => entry.pluginId === 'happier.channels')).toEqual([
           expect.objectContaining({ title: 'Local Channels', source: expect.objectContaining({ kind: 'path' }) }),
         ]);
+        const store = createPluginRegistryStateStore({
+          happyHomeDir,
+          runtimeLifecycle: createDaemonPluginRegistryRuntimeLifecycle({ happyHomeDir, reloadController }),
+        });
+        const disabledChange = await store.setEnabledWithResult('happier.channels', false);
+        expect(disabledChange?.transaction).toMatchObject({ status: 'committed' });
+        expect(reloadController.getState().lastResult?.runningSessionDisposition).toBe('retainRunningSessions');
+        expect((await store.readSnapshot()).bundledPluginEnabledById['happier.channels']).toBe(false);
+        const disabled = await readCurrentDaemonPluginCatalogSnapshot({ reloadController, happyHomeDir });
+        expect(disabled.plugins.filter(entry => entry.pluginId === 'happier.channels')).toEqual([
+          expect.objectContaining({ source: expect.objectContaining({ kind: 'path' }),
+            accountEnabled: true, machineEnabled: false, enabled: false }),
+        ]);
+        expect(disabled.plugins.find(entry => entry.pluginId === 'happier.channels')?.appliedGeneration).toBeNull();
+        await store.setEnabledWithResult('happier.channels', true);
+        expect((await store.readSnapshot()).bundledPluginEnabledById['happier.channels']).toBe(true);
+        expect((await readCurrentDaemonPluginCatalogSnapshot({ reloadController, happyHomeDir }))
+          .plugins.find(entry => entry.pluginId === 'happier.channels'))
+          .toMatchObject({ accountEnabled: true, machineEnabled: true, enabled: true });
       } finally {
         await reloadController.shutdown();
       }

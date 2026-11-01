@@ -6,7 +6,7 @@ import {
 import { splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../../../../packages/plugins/codex/src/agent/providerBinding/adapter';
 import { CLAUDE_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../../../../packages/plugins/claude/src/agent/providerBinding/adapter';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import * as runtimeLease from '@/plugins/runtime/reload/runtimeLease';
 import { resolveProviderConnectionForMachine } from '@/providers/registry/resolve';

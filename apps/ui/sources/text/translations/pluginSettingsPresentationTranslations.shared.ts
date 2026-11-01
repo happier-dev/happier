@@ -1,6 +1,7 @@
 
 
 export const english = {
+    enablement: {"account": "In your Account", "machine": "On this machine", "description": "Both must be enabled for this plugin to run here. Turning it off keeps its data and connections."},
     rowStatus: {
         enabled: 'Enabled',
         disabled: 'Disabled',

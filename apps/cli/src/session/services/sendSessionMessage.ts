@@ -109,7 +109,7 @@ export type SendSessionMessageResult =
        * from `unsupported`, which claims this Session or daemon cannot do it at
        * all — see `InactiveSessionResumeResult`.
        */
-      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'session_inactive' | 'held_by_person' | 'authority_unavailable' | 'machine_target_not_current' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'encryption_material_unavailable' | 'timeout' | 'wait_failed' | 'provider_switch_unsupported' | 'admission_rejected' | 'cancelled' | 'machine_admission_transport_unavailable';
+      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'session_inactive' | 'held_by_person' | 'authority_unavailable' | 'machine_target_not_current' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'plugin_disabled' | 'encryption_material_unavailable' | 'timeout' | 'wait_failed' | 'provider_switch_unsupported' | 'admission_rejected' | 'cancelled' | 'machine_admission_transport_unavailable';
       candidates?: string[];
       message?: string;
       providerError?: ProviderErrorV1;

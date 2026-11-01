@@ -6437,6 +6437,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               provider_endpoint_unavailable: "提供者端點無法使用。請檢查 Gateway 及其與機器的連線，然後重試工作階段。",
               plugin_mcp_preparation_unavailable: "外掛程式 MCP 準備無法使用。請檢查目標機器，然後重試工作階段。",
               agent_runtime_daemon_service_generation_not_current: "執行器的代理程式世代已不是最新。請在目標機器上重試工作階段。",
+              plugin_disabled: "此代理程式外掛已停用。請在「外掛」中重新啟用，以繼續此工作階段。",
               native_agent_privileged_effect_authority_unavailable: "執行器的 daemon 授權無法使用。請檢查目標機器，然後重試工作階段。",
               native_agent_privileged_effect_outcome_unknown: "無法確認執行器 daemon 的準備情況。重試前請檢查工作階段和目標機器。",
               daemon_draining: "目標機器正在暫時暫停新工作。準備就緒後，請重試工作階段。",

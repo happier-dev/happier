@@ -26,7 +26,8 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { createMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
-import { projectLoadedPluginContributes, resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
 import { createProviderOperationLifetime } from '@/providers/operationLifetime';

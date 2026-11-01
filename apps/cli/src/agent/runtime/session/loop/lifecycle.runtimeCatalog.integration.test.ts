@@ -36,7 +36,7 @@ import { registerRunnerTerminationHandlers } from '@/agent/runtime/lifecycle/run
 import type { RuntimeTurnMessageHandler } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';

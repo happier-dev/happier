@@ -7,7 +7,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { createCliProviderConnectionsStore, createCliProviderConnectionsStoreForOperation } from '@/providers/settings/catalogStore';
 import type { refreshActiveProviderConnectionsCatalog } from '@/providers/settings/hydrate';
-import type { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { resolveMergedContributionRegistry } from '@/plugins/projection/registry/merged';
 import type { promoteSavedSecretWithProviderConnectionsCatalog } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';

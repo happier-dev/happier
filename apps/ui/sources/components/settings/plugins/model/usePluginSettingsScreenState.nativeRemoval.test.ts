@@ -49,7 +49,7 @@ async function renderRemovalOwner(
     options: Readonly<{ initiallyEnabled?: boolean; readbackEnabled?: boolean; development?: boolean;
         developmentRoot?: string; actionFailure?: boolean;
         beforeActionResponse?: (signal: AbortSignal | null | undefined) => Promise<void>;
-        actionError?: string }> = {},
+        actionError?: string; bundled?: boolean }> = {},
 ) {
     boundary.rpc.mockReset();
     boundary.confirm.mockReset().mockResolvedValue(true);
@@ -77,7 +77,8 @@ async function renderRemovalOwner(
     const sourceRootPath = options.developmentRoot ?? '/plugins/example.compute';
     const installed = {
         pluginId, title: 'Example compute', description: null, version: '1.0.0', enabled: options.initiallyEnabled ?? true,
-        source: { kind: 'localPath', locator: sourceRootPath, trustPolicy: 'trusted' },
+        source: { kind: options.bundled ? 'bundled' : 'localPath', locator: sourceRootPath, trustPolicy: 'trusted' },
+        ...(options.bundled ? { accountEnabled: false, machineEnabled: true, enabled: false } : {}),
         install: { mode: 'managed', manifestVersion: '2' },
         compatibility: { status: 'compatible', diagnostics: [] }, diagnostics: [],
     };
@@ -308,6 +309,18 @@ describe('development Settings through the real UI Action wiring', () => {
 const committed = { kind: 'committed', pluginId: 'example.compute', desiredGeneration: null, appliedGeneration: null, pendingSurfaces: [] };
 
 describe('local plugin removal at the actual settings hook and machine RPC boundary', () => {
+    it.each(['account', 'machine'] as const)('dispatches bundled %s enablement through its semantic Action', async scope => {
+        const { hook, requests, actionRequests } = await renderRemovalOwner('disable', [committed], { bundled: true });
+        const action = scope === 'account' ? 'enable' : 'disable';
+        await act(async () => { hook.getCurrent().runInstalledPluginAction(action, 'example.compute', scope); });
+        await vi.waitFor(() => expect(hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(false));
+        expect(actionRequests.map(request => ({ actionId: request.actionId, input: request.envelope.input }))).toEqual([
+            { actionId: `plugins.${action}`, input: { pluginId: 'example.compute', machineId: 'controller-1', scope } },
+        ]);
+        expect(requests).toEqual([]);
+        expect(boundary.confirm).not.toHaveBeenCalled();
+    });
+
     it('dispatches disable through the semantic Action with no default confirmation', async () => {
         const { hook, requests, actionRequests } = await renderRemovalOwner('disable', [committed]);
         await act(async () => { hook.getCurrent().runInstalledPluginAction('disable', 'example.compute'); });

@@ -65,6 +65,7 @@ export const TEAM_CREDENTIAL_FAILURE_PREVIEW = 'Shared Team credential refused t
  * may cross startup diagnostic and launch-result boundaries. */
 export const SESSION_PREPARATION_FAILURE_PREVIEWS = {
   ...Object.fromEntries(ProviderBrokerAdmissionFailureCodeV1Schema.options.map(code => [code, TEAM_CREDENTIAL_FAILURE_PREVIEW])) as Record<ProviderBrokerAdmissionFailureCodeV1, string>,
+  plugin_disabled: 'This Agent plugin is disabled. Re-enable it in Plugins to resume this Session.',
   plugin_mcp_preparation_unavailable: 'Plugin MCP preparation is unavailable. Check the target machine, then retry the session.',
   agent_runtime_daemon_service_generation_not_current: 'The runner agent generation is no longer current. Retry the session on the target machine.',
   native_agent_privileged_effect_authority_unavailable: 'Runner daemon authority is unavailable. Check the target machine, then retry the session.',

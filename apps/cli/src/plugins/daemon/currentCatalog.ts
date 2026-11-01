@@ -6,6 +6,8 @@ import {
   type PluginCatalogEntry,
 } from '@/plugins/projection/catalog/installed';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
+import { readCurrentBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/snapshot';
+import type { ResolvedPluginEnablement } from '@/plugins/projection/registry/types';
 import { joinInstalledCatalogRuntimeIntrospection } from '@/plugins/projection/introspection/catalogSnapshot';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {
@@ -22,6 +24,7 @@ let bundledCatalogEntries: readonly PluginCatalogEntry[] | undefined;
 
 function projectCurrentDaemonPluginCatalogEntries(
   installedEntries: readonly PluginCatalogEntry[],
+  pluginEnablementById: Readonly<Record<string, ResolvedPluginEnablement>>,
   currentRuntimes?: ResolvedExecutablePluginRuntimeRegistry['pluginFinalPolicyCurrentRuntimesById'],
 ): readonly PluginCatalogEntry[] {
   // Session runners import shared daemon services but do not read this catalog.
@@ -35,7 +38,9 @@ function projectCurrentDaemonPluginCatalogEntries(
   }
   const installedPluginIds = new Set(installedEntries.map((entry) => entry.pluginId));
   return Object.freeze([
-    ...installedEntries,
+    ...installedEntries.map(entry => pluginEnablementById[entry.pluginId]
+      ? { ...entry, ...pluginEnablementById[entry.pluginId] }
+      : entry),
     ...bundledCatalogEntries.filter((entry) => !installedPluginIds.has(entry.pluginId)).map((entry) => {
       const current = entry.manifest
         ? currentRuntimes?.get(entry.pluginId)
@@ -45,7 +50,12 @@ function projectCurrentDaemonPluginCatalogEntries(
           ? current.sourceCustody.immutableGenerationId
           : current.occurrenceId
         : null;
-      return desiredGeneration === entry.desiredGeneration ? entry : { ...entry, desiredGeneration };
+      return {
+        ...entry,
+        ...pluginEnablementById[entry.pluginId],
+        ...(!entry.manifest ? { enabled: false } : {}),
+        desiredGeneration,
+      };
     }),
   ].sort((a, b) => a.pluginId.localeCompare(b.pluginId)));
 }
@@ -94,8 +104,15 @@ export async function readCurrentDaemonPluginCatalogSnapshot(params: Readonly<{
     // acquires a matching lease, expose the durable catalog without runtime
     // diagnostics or tools.
     if (!lease || lease.durableRevision !== catalog.revision) {
+      const pluginEnablementById = await readCurrentBundledPluginEnablement({
+        happyHomeDir: params.happyHomeDir,
+        machineEnabledById: catalog.bundledPluginEnabledById,
+      });
       return {
-        plugins: projectCurrentDaemonPluginCatalogEntries(catalog.entries),
+        plugins: joinInstalledCatalogRuntimeIntrospection(
+          projectCurrentDaemonPluginCatalogEntries(catalog.entries, pluginEnablementById),
+          undefined,
+        ),
         tools: Object.freeze([]),
       };
     }
@@ -111,6 +128,10 @@ export async function readCurrentDaemonPluginCatalogSnapshot(params: Readonly<{
     };
     const currentEntries = projectCurrentDaemonPluginCatalogEntries(
       catalog.entries,
+      lease.registry.contributes.pluginEnablementById ?? await readCurrentBundledPluginEnablement({
+        happyHomeDir: params.happyHomeDir,
+        machineEnabledById: catalog.bundledPluginEnabledById,
+      }),
       runtimeSnapshot.pluginFinalPolicyCurrentRuntimesById,
     );
 
