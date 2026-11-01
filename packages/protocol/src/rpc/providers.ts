@@ -20,6 +20,8 @@ import {
 import { ProviderBrokerApplicationBindingV1Schema } from '../providers/brokerRouteGrantV1.js';
 import { ProviderCredentialTransportV1Schema } from '../providers/credentials/v1.js';
 import { ProviderEndpointUrlSyntaxSchema } from '../providers/endpointUrlSchema.js';
+import { ProviderPublicHeadersV1Schema } from '../providers/publicHeadersSchema.js';
+import { ProviderEndpointPolicyV1Shape } from '../providers/endpointPolicyV1.js';
 import { ProviderModelDescriptorV1Schema } from '../models/descriptor.js';
 import {
   ProviderConnectionSummaryHealthV1Schema,
@@ -348,11 +350,17 @@ export type DaemonProviderContributionAuthoringPreviewV1 = z.infer<typeof Daemon
 export const DaemonProviderConnectionEndpointViewV1Schema = lazyZodSchema(() => z.strictObject({
   endpointTemplateId: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
   protocol: ProviderWireProtocolSchema,
-  baseUrl: ProviderRpcDisplayEndpointUrlV1Schema,
+  baseUrl: z.nullable(ProviderRpcDisplayEndpointUrlV1Schema),
   effectiveSource: z.enum(['template', 'accountOverride', 'machineOverride']),
   defaultBaseUrl: z._default(z.nullable(ProviderRpcDisplayEndpointUrlV1Schema), null),
   accountOverrideBaseUrl: z._default(z.nullable(ProviderRpcDisplayEndpointUrlV1Schema), null),
   machineOverrideBaseUrl: z._default(z.nullable(ProviderRpcDisplayEndpointUrlV1Schema), null),
+  publicHeaders: z._default(ProviderPublicHeadersV1Schema, {}),
+  defaultPublicHeaders: z._default(ProviderPublicHeadersV1Schema, {}),
+  accountOverridePublicHeaders: z._default(z.nullable(ProviderPublicHeadersV1Schema), null),
+  machineOverridePublicHeaders: z._default(z.nullable(ProviderPublicHeadersV1Schema), null),
+  publicHeaderSources: z._default(z.record(z.string(), z.enum(['template', 'accountOverride', 'machineOverride'])), {}),
+  ...ProviderEndpointPolicyV1Shape,
 }));
 
 const DaemonProviderAgentCompatibilitySummaryBaseV1Schema = lazyZodSchema(() => z.object({
@@ -448,6 +456,7 @@ export const DaemonProviderConnectionViewV1Schema = lazyZodSchema(() => z.strict
     accountBound: z.boolean(),
     boundMachineIds: z.array(ProviderMachineIdSchema),
     keyUrl: z.optional(ProviderHttpsUrlSchema),
+    authorityDescription: z.optional(PluginLocalizedStringV2Schema),
   })),
   /**
    * Exact, content-free witness accepted by Team credential resource creation.

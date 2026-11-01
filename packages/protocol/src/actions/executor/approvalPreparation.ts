@@ -238,7 +238,7 @@ export async function prepareApprovalRequest(params: Readonly<{
     if (!view) return { ok: false, errorCode: 'provider_connection_not_found', error: 'provider_connection_not_found' };
     try {
       const review = prepareProviderEndpointPolicyReviewFromViewV1(view, input);
-      const actionArgs = { ...input, policyReviewFingerprint: review.fingerprint };
+      const actionArgs = input;
       return { actionArgs, preview: { actionId: params.actionId, actionArgs,
         summary: summarizeProviderEndpointPolicyReviewV1(review), providerEndpointPolicyReview: review } };
     } catch (error) {

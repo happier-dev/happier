@@ -19,6 +19,8 @@ import { ProviderOriginRelativePathSchema } from '../originRelativePathSchema.js
 import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
 import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
 import { ProviderPublicHeadersV1Schema } from '../publicHeadersSchema.js';
+import { ProviderEndpointPolicyV1Shape } from '../endpointPolicyV1.js';
+export { ProviderEndpointAddressConstraintV1Schema, ProviderModelIdPatternV1Schema, ProviderPublicHeaderHintsV1Schema, providerEndpointPolicySecurityFactsV1 } from '../endpointPolicyV1.js';
 import { ProviderModelIdSchema } from '../ids.js';
 import { ProviderAgentTargetKeySchema } from '../ids.js';
 import { EnvironmentVariableSchema } from '../../profiles/environmentVariables.js';
@@ -96,10 +98,11 @@ export const ProviderEndpointTemplateV1Schema = lazyZodSchema(() => z.strictObje
   baseUrl: z.optional(ProviderEndpointUrlSyntaxSchema),
   localUrlCandidates: z.optional(z.array(ProviderEndpointUrlSyntaxSchema).check(z.minLength(1), z.maxLength(16))),
   publicHeaders: z.optional(ProviderPublicHeadersV1Schema),
+  ...ProviderEndpointPolicyV1Shape,
   capabilities: ProviderCompatibilityCapabilitiesV1Schema,
 }).check(z.superRefine((value, ctx) => {
-  if (Boolean(value.baseUrl) === Boolean(value.localUrlCandidates)) {
-    ctx.addIssue({ code: 'custom', message: 'Exactly one of baseUrl or localUrlCandidates is required' });
+  if ([Boolean(value.baseUrl), Boolean(value.localUrlCandidates), value.requiresEndpointOverride === true].filter(Boolean).length !== 1) {
+    ctx.addIssue({ code: 'custom', message: 'Exactly one endpoint location is required' });
   }
 })));
 export type ProviderEndpointTemplateV1 = z.infer<typeof ProviderEndpointTemplateV1Schema>;

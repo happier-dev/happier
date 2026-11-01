@@ -1,6 +1,5 @@
-import { assessProviderEndpoint, normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
+import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
 import { createProviderAccountGrantFingerprintV1, createProviderConnectionSecurityFingerprintV1, createProviderEndpointSetFingerprintV1, createProviderMachineGrantFingerprintV1, PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
-import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from '@happier-dev/protocol/providers/ids';
 import { resolveProviderManagedRuntimeDeclarationV1, resolveManagedPurposeBindingIntentsV1 as resolveManagedPurposeBindingIntents } from '@happier-dev/protocol/providers/contributions';
@@ -8,6 +7,7 @@ import type { ProviderConnectionId, ProviderConnectionV1, ProviderEndpointTempla
 import type { ProviderConnectionSecurityFingerprintV1 } from '@happier-dev/protocol/providers';
 import { ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
 import { readProviderConnectionSourceFactsV1, type ProviderConnectionSourceFactsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
+import { resolveEffectiveProviderEndpointV1 } from '@happier-dev/protocol/providers/connections/v1';
 
 import type { ProviderSettingsReadResultV1 } from '@happier-dev/protocol';
 import { getProviderContribution } from './lookup';
@@ -31,12 +31,6 @@ class ProviderEndpointRealizationError extends Error {
   }
 }
 
-function readOverrideMap(
-  overrides: ProviderConnectionV1['endpointOverrides'],
-): ReadonlyMap<string, string> {
-  return new Map((overrides ?? []).map((override) => [override.endpointTemplateId, override.baseUrl]));
-}
-
 function validateOverrideIds(
   connection: ProviderConnectionV1,
   endpointTemplateIds: ReadonlySet<string>,
@@ -47,43 +41,6 @@ function validateOverrideIds(
     .every((override) => endpointTemplateIds.has(override.endpointTemplateId));
 }
 
-function defaultEndpointUrl(template: ProviderEndpointTemplateV1): Readonly<{
-  url: string;
-  source: 'contribution' | 'contribution_local_candidate';
-}> {
-  if (template.baseUrl) {
-    return {
-      url: template.baseUrl,
-      source: 'contribution',
-    };
-  }
-  const candidates = template.localUrlCandidates ?? [];
-  const candidate = candidates.length === 1 ? candidates[0] : null;
-  if (!candidate && candidates.length > 1) {
-    throw new ProviderEndpointRealizationError(
-      'local_candidate_required',
-      'A local provider endpoint candidate must be selected for this machine',
-    );
-  }
-  if (!candidate) throw new TypeError('Provider endpoint template has no usable URL');
-  return { url: candidate, source: 'contribution_local_candidate' };
-}
-
-function selectedLocalCandidateUrl(
-  template: ProviderEndpointTemplateV1,
-  selectedCandidate: string | undefined,
-): Readonly<{ url: string; source: 'contribution' | 'contribution_local_candidate' }> {
-  if (selectedCandidate === undefined) return defaultEndpointUrl(template);
-  const normalizedCandidate = normalizeProviderEndpointUrlSyntax(selectedCandidate).normalizedUrl;
-  if (!template.localUrlCandidates?.includes(normalizedCandidate)) {
-    throw new ProviderEndpointRealizationError(
-      'unknown_local_candidate',
-      'Selected local provider endpoint is not declared by the contribution',
-    );
-  }
-  return { url: normalizedCandidate, source: 'contribution_local_candidate' };
-}
-
 function resolveEndpoints(input: Readonly<{
   connection: ProviderConnectionV1;
   machineId: string;
@@ -92,21 +49,14 @@ function resolveEndpoints(input: Readonly<{
   dnsEvidenceByEndpointUrl: ResolveProviderConnectionForMachineInput['dnsEvidenceByEndpointUrl'];
   localCandidateUrlsByEndpointTemplateId: ReadonlyMap<string, string> | undefined;
 }>): readonly ResolvedProviderConnectionEndpoint[] {
-  const accountOverrides = readOverrideMap(input.connection.endpointOverrides);
-  const machineOverridesRaw = readOwnRecordValue(input.connection.endpointOverridesByMachineId, input.machineId) ?? [];
-  const machineOverrides = readOverrideMap(machineOverridesRaw);
-  return input.endpointTemplates.map((template) => {
-    const machineOverride = machineOverrides.get(template.id);
-    const accountOverride = accountOverrides.get(template.id);
-    const fallback = machineOverride === undefined && accountOverride === undefined
-      ? selectedLocalCandidateUrl(
-        template,
-        input.localCandidateUrlsByEndpointTemplateId?.get(template.id),
-      )
-      : null;
-    const rawUrl = machineOverride ?? accountOverride ?? fallback?.url;
-    if (!rawUrl) throw new TypeError('Provider endpoint template has no usable URL');
-    const normalizedUrl = normalizeProviderEndpointUrlSyntax(rawUrl).normalizedUrl;
+  return input.endpointTemplates.flatMap((template) => {
+    const effective = resolveEffectiveProviderEndpointV1({ connection: input.connection, template, machineId: input.machineId,
+      selectedLocalCandidateUrl: input.localCandidateUrlsByEndpointTemplateId?.get(template.id) });
+    if (!effective.ready || !effective.baseUrl) {
+      if (effective.reason === 'local_candidate_required') throw new ProviderEndpointRealizationError('local_candidate_required', 'A local provider endpoint must be selected');
+      return [];
+    }
+    const normalizedUrl = effective.baseUrl;
     const resolvedAddresses = input.dnsEvidenceByEndpointUrl.get(normalizedUrl);
     const assessed = assessProviderEndpoint(normalizedUrl, {
       ...(resolvedAddresses ? { resolvedAddresses } : {}),
@@ -114,25 +64,25 @@ function resolveEndpoints(input: Readonly<{
       // decided separately below; setting this flag never authorizes provider use.
       privateNetworkConfirmed: true,
     });
-    const source = machineOverride
+    const source = effective.effectiveSource === 'machineOverride'
       ? 'machine_override'
-      : accountOverride
+      : effective.effectiveSource === 'accountOverride'
         ? 'account_override'
         : input.custom
           ? 'custom'
-          : fallback?.source ?? 'contribution';
-    return {
+          : template.localUrlCandidates ? 'contribution_local_candidate' : 'contribution';
+    return [{
       endpointTemplateId: template.id,
       protocol: template.protocol,
-      publicHeaders: template.publicHeaders ?? {},
+      publicHeaders: effective.publicHeaders,
       source,
-      machineOverrideApplied: machineOverride !== undefined,
+      machineOverrideApplied: effective.machineOverrideBaseUrl !== null || effective.machineOverridePublicHeaders !== null,
       normalizedUrl: assessed.normalizedUrl,
       locality: assessed.locality,
       endpointScope: assessed.scope,
       resolvedAddresses: assessed.resolvedAddresses,
       nonPublicAddresses: assessed.nonPublicAddresses,
-    };
+    }];
   });
 }
 

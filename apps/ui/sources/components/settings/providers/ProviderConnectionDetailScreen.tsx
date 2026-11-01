@@ -1039,7 +1039,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         : null;
     // A request to an external endpoint leaves the session's computer for the provider's host.
     const endpointHosts = connection.deployment.kind === 'external'
-        ? [...new Set(connection.endpoints.map((endpoint) => endpointHost(endpoint.baseUrl)))]
+        ? [...new Set(connection.endpoints.flatMap((endpoint) => endpoint.baseUrl ? [endpointHost(endpoint.baseUrl)] : []))]
         : [];
 
     const onThisComputerRows = machineId ? (
@@ -1590,7 +1590,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                 const granted = machineViewState?.status === 'success'
                                     && machineView?.grants.machineState === 'valid';
                                 const machineEndpoint = machineView?.endpoints
-                                    .map((endpoint) => endpoint.baseUrl)
+                                    .flatMap((endpoint) => endpoint.baseUrl ? [endpoint.baseUrl] : [])
                                     .join(' · ');
                                 const machineError = machineViewState?.status === 'error' ? machineViewState.error : null;
                                 const machineErrorPresentation = presentProviderError(machineError);

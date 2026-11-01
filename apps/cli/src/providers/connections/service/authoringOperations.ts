@@ -1,4 +1,5 @@
 import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
+import { patchProviderEndpointOverrideV1, resolveEffectiveProviderEndpointV1 } from '@happier-dev/protocol/providers/connections/v1';
 import { ProviderSettingsLimitError, ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
 import { compareProviderCanonicalStringsV1 } from '@happier-dev/protocol/providers/canonicalOrderV1';
 import { createProviderDiscoveryCandidateIdV1 } from '@happier-dev/protocol/providers/detection/v1';
@@ -612,7 +613,8 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
 
   async function setEndpointOverride(input: Readonly<{
     action: 'setEndpointOverride'; machineId: string; connectionId: string; expectedRevision: number;
-    scope: 'account' | 'machine'; endpointTemplateId: string; baseUrl: string | null;
+    scope: 'account' | 'machine'; endpointTemplateId: string; baseUrl?: string | null;
+    publicHeaders?: Readonly<Record<string, string>> | null;
   }>): Promise<ProviderConnectionServiceResult<ProviderConnectionView>> {
     if (!deps.featureGate.isEnabled('providers')) return { status: 'error', error: featureError(input.connectionId) };
     const machineError = assertMachine(input.machineId, input.connectionId);
@@ -635,20 +637,17 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
         conflict = true;
         return providerSettings;
       }
-      const endpointIds = new Set(current.source.kind === 'custom'
-        ? current.source.template.endpointTemplates.map((endpoint) => endpoint.id)
+      const templates = current.source.kind === 'custom'
+        ? current.source.template.endpointTemplates
         : getProviderContribution(snapshot.registry, current.source.contributionKey)
-            ?.definition.endpointTemplates.map((endpoint) => endpoint.id) ?? []);
-      if (!endpointIds.has(input.endpointTemplateId)) {
+            ?.definition.endpointTemplates ?? [];
+      const template = templates.find(endpoint => endpoint.id === input.endpointTemplateId);
+      if (!template) {
         throw new ProviderConnectionValidationError('Provider endpoint override references an undeclared endpoint');
       }
-      const upsert = (values: readonly Readonly<{ endpointTemplateId: string; baseUrl: string }>[] | undefined) => {
-        const next = (values ?? []).filter((entry) => entry.endpointTemplateId !== input.endpointTemplateId);
-        if (input.baseUrl !== null) next.push({ endpointTemplateId: input.endpointTemplateId, baseUrl: input.baseUrl });
-        return next.sort((a, b) => compareProviderCanonicalStringsV1(a.endpointTemplateId, b.endpointTemplateId));
-      };
       const endpointOverridesByMachineId = { ...(current.endpointOverridesByMachineId ?? {}) };
-      const next = upsert(endpointOverridesByMachineId[input.machineId]);
+      const next = patchProviderEndpointOverrideV1(endpointOverridesByMachineId[input.machineId], input);
+      if (JSON.stringify(next) === JSON.stringify(endpointOverridesByMachineId[input.machineId] ?? [])) return providerSettings;
       if (next.length === 0) delete endpointOverridesByMachineId[input.machineId];
       else endpointOverridesByMachineId[input.machineId] = next;
       const candidate = ProviderConnectionV1Schema.parse({
@@ -658,6 +657,7 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
         revision: current.revision + 1,
         updatedAt: deps.now(),
       });
+      resolveEffectiveProviderEndpointV1({ connection: candidate, template, machineId: input.machineId });
       return ProviderSettingsV1Schema.parse({
         ...settings,
         connections: settings.connections.map((entry) => entry.id === input.connectionId ? candidate : entry),

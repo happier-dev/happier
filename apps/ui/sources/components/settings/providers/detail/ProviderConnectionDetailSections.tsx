@@ -142,7 +142,7 @@ export function ProviderEndpointOverridesSection(props: Readonly<{
                         fieldTestID={`provider-connection-endpoint.${endpoint.endpointTemplateId}.account`}
                         title={label}
                         accessibilityLabel={`${label}, ${t('settingsProviders.detail.endpointDefault')}`}
-                        value={accountBaseUrl ?? endpoint.baseUrl}
+                        value={accountBaseUrl ?? ''}
                         onCommit={(baseUrl) => props.onSetOverride({
                             endpointTemplateId: endpoint.endpointTemplateId,
                             currentUrl: baseUrl,
@@ -158,7 +158,7 @@ export function ProviderEndpointOverridesSection(props: Readonly<{
                         subtitle={t('settingsProviders.detail.resetDefaultEndpoint')}
                         onPress={() => props.onSetOverride({
                             endpointTemplateId: endpoint.endpointTemplateId,
-                            currentUrl: accountBaseUrl ?? endpoint.baseUrl,
+                            currentUrl: accountBaseUrl ?? '',
                             scope: 'account',
                             reset: true,
                         })}
@@ -171,7 +171,7 @@ export function ProviderEndpointOverridesSection(props: Readonly<{
                     title={t('settingsProviders.detail.endpointMachine')}
                     accessibilityLabel={`${label}, ${t('settingsProviders.detail.endpointMachine')}`}
                     subtitle={machineBaseUrl === null ? t('settingsProviders.detail.endpointMachineDescription') : undefined}
-                    value={machineBaseUrl ?? accountBaseUrl ?? endpoint.baseUrl}
+                    value={machineBaseUrl ?? accountBaseUrl ?? endpoint.baseUrl ?? ''}
                     onCommit={(baseUrl) => props.onSetOverride({
                         endpointTemplateId: endpoint.endpointTemplateId,
                         currentUrl: baseUrl,
@@ -186,7 +186,7 @@ export function ProviderEndpointOverridesSection(props: Readonly<{
                         subtitle={t('settingsProviders.detail.resetMachineEndpoint')}
                         onPress={() => props.onSetOverride({
                             endpointTemplateId: endpoint.endpointTemplateId,
-                            currentUrl: machineBaseUrl ?? endpoint.baseUrl,
+                            currentUrl: machineBaseUrl ?? endpoint.baseUrl ?? '',
                             scope: 'machine',
                             reset: true,
                         })}

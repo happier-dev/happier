@@ -155,6 +155,14 @@ export function getProviderExperimentalConfirmationSourceKeyV1(source: Pick<
   return JSON.stringify([source.connectionId, source.catalogSourceKey ?? getProviderExperimentalConfirmationCatalogSourceKeyV1(source)]);
 }
 
+/** Exact personal confirmation identity. */
+export function getProviderExperimentalConfirmationKeyV1(confirmation: Omit<
+  z.infer<typeof ProviderExperimentalBindingConfirmationV1Schema>, 'v' | 'confirmedAt'
+>): string {
+  return JSON.stringify([getProviderExperimentalConfirmationSourceKeyV1(confirmation),
+    confirmation.agentTargetKey, confirmation.modelId, confirmation.compatibilityFingerprint]);
+}
+
 export function getProviderExperimentalConfirmationCatalogSourceKeyV1(source: Pick<
   z.infer<typeof ProviderExperimentalBindingConfirmationV1Schema>, 'connectionId' | 'connectedAccountTarget'
 >): string {
@@ -299,7 +307,7 @@ export function refineProviderSettingsV1(value: z.infer<typeof ProviderSettingsV
     } else if (confirmation.connectedAccountTarget && connectionIds.has(confirmation.connectionId)) {
       ctx.addIssue({ code: 'custom', path: ['experimentalBindingConfirmations', index, 'connectionId'], message: 'Source confirmation cannot reference a saved connection' });
     }
-    const key = `${getProviderExperimentalConfirmationSourceKeyV1(confirmation)}\0${confirmation.agentTargetKey}\0${confirmation.modelId ?? ''}\0${confirmation.compatibilityFingerprint}`;
+    const key = getProviderExperimentalConfirmationKeyV1(confirmation);
     if (confirmations.has(key)) ctx.addIssue({ code: 'custom', path: ['experimentalBindingConfirmations', index], message: 'Duplicate experimental confirmation' });
     confirmations.add(key);
   });
