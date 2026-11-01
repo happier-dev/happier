@@ -181,31 +181,37 @@ function areMachinesEqual(left: Machine | undefined, right: Machine | undefined)
         && left.daemonState === right.daemonState;
 }
 
-function areMachineArraysEqual(left: readonly Machine[], right: readonly Machine[]): boolean {
+function areMachineArraysSameEntries(left: readonly Machine[], right: readonly Machine[]): boolean {
     if (left === right) return true;
     if (left.length !== right.length) return false;
     for (let index = 0; index < left.length; index += 1) {
-        if (!areMachinesEqual(left[index], right[index])) return false;
+        if (left[index] !== right[index]) return false;
     }
     return true;
 }
 
-function areMachineDisplayRecordsEqual(
-    left: Record<string, MachineDisplayRenderable>,
-    right: Record<string, MachineDisplayRenderable>,
-): boolean {
-    const leftCount = countOwnEntries(left);
-    const rightCount = countOwnEntries(right);
-    if (leftCount !== rightCount) return false;
-    for (const machineId in left) {
-        if (
-            Object.prototype.hasOwnProperty.call(left, machineId)
-            && !areMachineDisplaysEqual(left[machineId], right[machineId])
-        ) {
-            return false;
+/**
+ * Returns `previous` when every entry is equal, otherwise a record that keeps the previous object
+ * for each equal entry. A refresh that moves one machine must not re-key the others' consumers.
+ */
+function reuseEqualEntries<T>(
+    previous: Record<string, T> | undefined,
+    next: Record<string, T>,
+    isEqual: (left: T | undefined, right: T | undefined) => boolean,
+): Record<string, T> {
+    if (!previous) return next;
+    let changed = countOwnEntries(previous) !== countOwnEntries(next);
+    const reconciled: Record<string, T> = {};
+    for (const id in next) {
+        if (!Object.prototype.hasOwnProperty.call(next, id)) continue;
+        if (Object.prototype.hasOwnProperty.call(previous, id) && isEqual(previous[id], next[id])) {
+            reconciled[id] = previous[id];
+        } else {
+            reconciled[id] = next[id];
+            changed = true;
         }
     }
-    return true;
+    return changed ? reconciled : previous;
 }
 
 function resolveProjectMachineGroupSubtitle(
@@ -242,21 +248,20 @@ function mergeMachineListById(
     incoming: Machine[],
     options: Readonly<{ replace: boolean }>,
 ): Machine[] {
-    if (options.replace) {
-        const next = incoming.slice();
-        return current && areMachineArraysEqual(current, next) ? current : next;
+    const currentById = new Map<string, Machine>();
+    if (Array.isArray(current)) {
+        for (const machine of current) currentById.set(machine.id, machine);
     }
     const mergedById = new Map<string, Machine>();
-    if (Array.isArray(current)) {
-        for (const machine of current) {
-            mergedById.set(machine.id, machine);
-        }
+    if (!options.replace) {
+        for (const [id, machine] of currentById) mergedById.set(id, machine);
     }
     for (const machine of incoming) {
-        mergedById.set(machine.id, machine);
+        const existing = currentById.get(machine.id);
+        mergedById.set(machine.id, existing && areMachinesEqual(existing, machine) ? existing : machine);
     }
     const next = Array.from(mergedById.values());
-    return current && areMachineArraysEqual(current, next) ? current : next;
+    return current && areMachineArraysSameEntries(current, next) ? current : next;
 }
 
 function normalizeMachineServerId(serverId: string | null | undefined): string {
@@ -387,12 +392,8 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         nextMachines[machine.id] = machine;
                         nextMachineDisplays[machine.id] = buildMachineDisplayRenderableFromMachine(machine);
                     });
-                    const machinesAreUnchanged = countOwnEntries(state.machines) === normalizedMachines.length
-                        && normalizedMachines.every((machine) => areMachinesEqual(state.machines[machine.id], machine));
-                    mergedMachines = machinesAreUnchanged ? state.machines : nextMachines;
-                    mergedMachineDisplays = areMachineDisplayRecordsEqual(state.machineDisplayById ?? {}, nextMachineDisplays)
-                        ? state.machineDisplayById
-                        : nextMachineDisplays;
+                    mergedMachines = reuseEqualEntries(state.machines, nextMachines, areMachinesEqual);
+                    mergedMachineDisplays = reuseEqualEntries(state.machineDisplayById, nextMachineDisplays, areMachineDisplaysEqual);
                 } else {
                     mergedMachines = state.machines;
                     mergedMachineDisplays = state.machineDisplayById;
@@ -512,14 +513,18 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     return state;
                 }
 
-                const nextMachineDisplays = Object.fromEntries(machines.map((machine) => [
-                    machine.id,
-                    preserveNewestMachinePresence(machine, [
-                        state.machineDisplayById[machine.id],
-                        state.machines[machine.id],
-                    ]),
-                ]));
-                if (areMachineDisplayRecordsEqual(state.machineDisplayById ?? {}, nextMachineDisplays)) {
+                const nextMachineDisplays = reuseEqualEntries(
+                    state.machineDisplayById ?? {},
+                    Object.fromEntries(machines.map((machine) => [
+                        machine.id,
+                        preserveNewestMachinePresence(machine, [
+                            state.machineDisplayById[machine.id],
+                            state.machines[machine.id],
+                        ]),
+                    ])),
+                    areMachineDisplaysEqual,
+                );
+                if (nextMachineDisplays === state.machineDisplayById) {
                     return state;
                 }
 

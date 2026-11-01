@@ -1064,4 +1064,88 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
         const activeServerCache = get().machineListByServerId.server_a ?? [];
         expect(activeServerCache.map((machine: any) => machine.id)).toEqual(['m-active']);
     });
+    it('keeps every unchanged machine entry identity when a full refresh changes one machine', async () => {
+        mockMachineDomainBoundaries();
+
+        const { createMachinesDomain } = await import('./machines');
+        const base = {
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            revokedAt: null,
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const metadataA = { displayName: 'A' };
+        const metadataB = { displayName: 'B' };
+        const { get, domain } = createHarness(createMachinesDomain, {
+            sessions: {},
+            settings: { groupInactiveSessionsByProject: false },
+            sessionListRenderables: {},
+            sessionListViewData: [],
+            sessionListViewDataByServerId: {},
+            machines: {},
+            machineDisplayById: {},
+            machineListByServerId: {},
+            machineListStatusByServerId: {},
+            profile: { id: 'account_a' },
+        });
+
+        domain.applyMachines([
+            { ...base, id: 'a', metadata: metadataA },
+            { ...base, id: 'b', metadata: metadataB },
+        ] as any, true, { sourceServerId: 'server_a' });
+        const before = get();
+
+        // A presence tick on `a` arrives in a full refresh; `b` is rebuilt as an equal, fresh object.
+        domain.applyMachines([
+            { ...base, id: 'a', metadata: metadataA, updatedAt: 2, activeAt: 2 },
+            { ...base, id: 'b', metadata: metadataB },
+        ] as any, true, { sourceServerId: 'server_a' });
+        const after = get();
+
+        expect(after.machines.a).not.toBe(before.machines.a);
+        expect(after.machines.b).toBe(before.machines.b);
+        expect(after.machineDisplayById.b).toBe(before.machineDisplayById.b);
+        expect(after.machineListByServerId.server_a.find((machine: any) => machine.id === 'b'))
+            .toBe(before.machineListByServerId.server_a.find((machine: any) => machine.id === 'b'));
+    });
+
+    it('keeps unchanged display entries when the display snapshot changes one machine', async () => {
+        mockMachineDomainBoundaries();
+
+        const { createMachinesDomain } = await import('./machines');
+        const display = (id: string, activeAt: number) => ({
+            id,
+            updatedAt: activeAt,
+            active: true,
+            activeAt,
+            revokedAt: null,
+            metadataVersion: 1,
+            metadata: { displayName: id },
+        });
+        const { get, domain } = createHarness(createMachinesDomain, {
+            sessions: {},
+            settings: { groupInactiveSessionsByProject: false },
+            sessionListRenderables: {},
+            sessionListViewData: [],
+            sessionListViewDataByServerId: {},
+            machines: {},
+            machineDisplayById: {},
+            machineListByServerId: {},
+            machineListStatusByServerId: {},
+            profile: { id: 'account_a' },
+        });
+
+        domain.replaceMachineDisplays([display('a', 1), display('b', 1)] as any, { sourceServerId: 'server_a' });
+        const before = get().machineDisplayById;
+        domain.replaceMachineDisplays([display('a', 2), display('b', 1)] as any, { sourceServerId: 'server_a' });
+        const after = get().machineDisplayById;
+
+        expect(after.a).not.toBe(before.a);
+        expect(after.b).toBe(before.b);
+    });
 });
