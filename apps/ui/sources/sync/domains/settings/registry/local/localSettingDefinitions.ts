@@ -14,6 +14,7 @@ import {
     ThemeProfilesLocalStateSchema,
 } from '@/theme/profiles/themeProfilePersistence';
 import { SessionListFocusedFolderV1Schema } from '@/sync/domains/session/folders';
+import { AccountPetDesktopOverlayVisibilityModeSchema } from '../account/accountPetSettingDefinitions';
 import {
     DEFAULT_LOADING_INDICATOR_PAUSE_ID,
     DEFAULT_LOADING_INDICATOR_SPEED_ID,
@@ -79,9 +80,7 @@ const PetSelectedOverrideSchema = z.discriminatedUnion('kind', [
 ]);
 export const DesktopPetOverlayVisibilityModeOverrideSchema = z.enum([
     'inherit',
-    'attentionOrActive',
-    'alwaysWhenEnabled',
-    'attentionOnly',
+    ...AccountPetDesktopOverlayVisibilityModeSchema.options,
 ]);
 export const DesktopPetOverlayAnchorSchema = z.enum(['bottomRight', 'bottomLeft', 'topRight', 'topLeft']);
 const DesktopPetOverlayOffsetSchema = z.object({
