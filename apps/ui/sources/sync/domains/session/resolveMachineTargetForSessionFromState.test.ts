@@ -19,6 +19,41 @@ function activeMachine(id: string, host: string) {
 }
 
 describe('resolveMachineTargetForSessionFromState', () => {
+    it('uses the exact Home owner view when the compact row has no private machine target', () => {
+        const session = createSessionFixture({ id: 's1', serverId: 'home-a', active: true,
+            metadataLayoutVersion: 1, metadata: { path: '', host: '' },
+            ownerMetadataView: { machineId: 'owner-machine', path: '/owner/repo', host: 'owner.local' },
+        });
+        const machine = createMachineFixture({ id: 'owner-machine', active: true });
+        const state = { sessions: { s1: session }, machines: {},
+            machineListByServerId: { 'home-a': [machine] },
+            sessionListRowsByServerId: { 'home-a': { s1: buildSessionListRenderableFromSession({
+                ...session, ownerMetadataView: null,
+            }) } },
+        };
+        const target = { serverId: 'home-a', sessionId: 's1' };
+        expect(resolveMachineTargetForSessionFromState(state, target)).toEqual({
+            machineId: 'owner-machine', basePath: '/owner/repo',
+        });
+        expect(resolveMachineControlTargetForSessionFromState(state, target)).toEqual({
+            machineId: 'owner-machine', basePath: '/owner/repo', confidence: 'reachable',
+        });
+    });
+
+    it('does not use a shared-only compact row as an exact Home private control target', () => {
+        const session = createSessionFixture({ id: 's1', serverId: 'home-a', active: true,
+            metadataLayoutVersion: 1, accessLevel: 'view',
+            metadata: { path: '/shared/repo', host: 'shared.local', machineId: 'shared-machine' },
+            ownerMetadataView: null,
+        });
+        const row = { ...buildSessionListRenderableFromSession(session),
+            metadata: { path: '/shared/repo', host: 'shared.local', machineId: 'shared-machine' } };
+        const machine = createMachineFixture({ id: 'shared-machine', active: true });
+        const state = { sessions: {}, machines: {}, machineListByServerId: { 'home-a': [machine] },
+            sessionListRowsByServerId: { 'home-a': { s1: row } } };
+        expect(resolveMachineControlTargetForSessionFromState(state, { serverId: 'home-a', sessionId: 's1' })).toBeNull();
+    });
+
     it('distinguishes target hydration from a settled ambiguous Home target', () => {
         const target = { serverId: 'home-a', sessionId: 's1' };
         const session = createSessionFixture({ id: 's1', serverId: 'home-a', active: false,

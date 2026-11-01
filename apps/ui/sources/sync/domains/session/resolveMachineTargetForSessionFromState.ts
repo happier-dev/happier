@@ -14,6 +14,7 @@ import {
 } from '@/sync/domains/machines/identity/resolveSessionMachineTargets';
 import { normalizeKnownProjectMachineId } from '@/sync/runtime/orchestration/projectManager';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionListRenderableOwnerMetadataView } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -266,15 +267,28 @@ function readExactSessionTargetInputs(
     target: SessionAddress,
 ) {
     const machines = readSessionMachines(state, target.serverId);
+    const directSession = state.sessions?.[target.sessionId];
+    if (directSession && areServerProfileIdentifiersEquivalent(directSession.serverId, target.serverId)) {
+        const metadata = toSessionTargetMetadataLike(readSessionOwnerMetadataView(directSession));
+        return metadata
+            ? [readSessionTargetInputForMetadata(state, target.sessionId, metadata, {
+                serverId: target.serverId,
+                sessionActive: directSession.active === true,
+                allowProjectLookup: false,
+                machines,
+            })]
+            : [];
+    }
     const scopedRow = readSessionListRowForServerId(
         state.sessionListRowsByServerId,
         target.serverId,
         target.sessionId,
     );
     if (scopedRow) {
-        const metadata = toSessionTargetMetadataLike(scopedRow.metadata);
+        const metadata = toSessionTargetMetadataLike(readSessionListRenderableOwnerMetadataView(scopedRow));
         return metadata
             ? [readSessionTargetInputForMetadata(state, target.sessionId, metadata, {
+                serverId: target.serverId,
                 sessionActive: scopedRow.active === true,
                 // Control targets use scoped Session facts, not display attribution.
                 allowProjectLookup: false,
@@ -282,25 +296,7 @@ function readExactSessionTargetInputs(
             })]
             : [];
     }
-
-    const directSession = state.sessions?.[target.sessionId];
-    if (
-        !directSession
-        || !areServerProfileIdentifiersEquivalent(directSession.serverId, target.serverId)
-    ) return [];
-    const metadataValue = readSessionOwnerMetadataView({
-        metadataLayoutVersion: directSession.metadataLayoutVersion,
-        metadata: directSession.metadata as Metadata | null,
-        ownerMetadataView: directSession.ownerMetadataView,
-    });
-    const metadata = toSessionTargetMetadataLike(metadataValue);
-    return metadata
-        ? [readSessionTargetInputForMetadata(state, target.sessionId, metadata, {
-            sessionActive: directSession.active === true,
-            allowProjectLookup: false,
-            machines,
-        })]
-        : [];
+    return [];
 }
 
 function readSessionTargetInputs(
