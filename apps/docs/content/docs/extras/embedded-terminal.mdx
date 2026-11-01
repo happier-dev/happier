@@ -198,6 +198,18 @@ Provider login flows are documented in [Provider authentication](/agents/provide
 
 ## Troubleshooting
 
+### Input pauses after a disconnect
+
+In the development build, the open terminal view retains typed or pasted input until
+the machine acknowledges it. Input confirmed as unsent resumes after reconnecting to
+the same terminal.
+
+If delivery is uncertain or the terminal process has changed, input pauses with
+**Copy** and **Discard** actions. Copy the retained text, inspect what reached the
+terminal, then discard the held input before continuing. Paste only the missing text
+to avoid repeating a command. Retained input does not survive closing the view or
+refreshing the app.
+
 ### I enabled the feature but the terminal still does not open
 
 Check:
