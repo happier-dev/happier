@@ -270,8 +270,6 @@ function classifySessionAccountEncryptionMigrationInventory(
                 metadataLayoutVersion: row.metadataLayoutVersion,
                 accountMode: params.mode,
                 ownerMetadata: row.ownerMetadata,
-                allowRetainedDevelopmentCiphertext:
-                    params.envelopeSide === "source",
             }),
     }));
     if (
@@ -332,9 +330,6 @@ function classifySessionAccountEncryptionMigrationInventory(
                 stored: row.ownerMetadata,
                 envelope: envelopeResult.data,
                 accountMode: params.mode,
-                allowRetainedEncrypted:
-                    params.envelopeSide === "source"
-                    && params.mode === "e2ee",
             })
         ) {
             return { status: "migration_incomplete" };
@@ -348,7 +343,7 @@ function doesStoredSessionOwnerMetadataMatchEnvelope(
         stored: string | null;
         envelope: SessionOwnerMetadataEnvelopeV1;
         accountMode: "plain" | "e2ee";
-        allowRetainedEncrypted: boolean;
+
     }>,
 ): boolean {
     const storedEnvelope =
@@ -357,8 +352,6 @@ function doesStoredSessionOwnerMetadataMatchEnvelope(
                 SESSION_METADATA_LAYOUT_VERSION_V1,
             accountMode: params.accountMode,
             ownerMetadata: params.stored,
-            allowRetainedDevelopmentCiphertext:
-                params.allowRetainedEncrypted,
         });
     return storedEnvelope !== null
         && isDeepStrictEqual(storedEnvelope, params.envelope);
@@ -5320,7 +5313,6 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
             accountMode:
                 accountCurrentness.currentness.encryptionMode,
             ownerMetadata: current.ownerMetadata,
-            allowRetainedDevelopmentCiphertext: true,
         });
     if (!validateSessionOwnerMetadataEnvelopeForAccountModeV1({
         accountMode:
@@ -5364,9 +5356,6 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
                     envelope: params.expectedOwnerMetadata,
                     accountMode:
                         accountCurrentness.currentness.encryptionMode,
-                    allowRetainedEncrypted:
-                        accountCurrentness.currentness.encryptionMode
-                        === "e2ee",
                 })
                 || current.agentStateVersion
                     !== params.agentState.expectedVersion

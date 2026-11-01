@@ -1,21 +1,14 @@
-import { parseSessionOwnerMetadataEnvelopeV1, SESSION_METADATA_LAYOUT_VERSION_V1, SessionOwnerMetadataEnvelopeV1Schema, type SessionOwnerMetadataEnvelopeV1, validateSessionOwnerMetadataEnvelopeForAccountModeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { parseSessionOwnerMetadataEnvelopeV1, SESSION_METADATA_LAYOUT_VERSION_V1, type SessionOwnerMetadataEnvelopeV1, validateSessionOwnerMetadataEnvelopeForAccountModeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 export type SessionOwnerMetadataAccountMode = "plain" | "e2ee";
 
 /**
  * Parses the persisted layout-1 owner envelope at the Server Session boundary.
- *
- * The bare owner-ciphertext branch is limited to the retained development shape that
- * predates explicit envelopes: layout 1 plus an E2EE Account. It never decrypts
- * or content-sniffs the ciphertext, and every current writer emits the explicit
- * envelope. Remove this branch after the complete retained-development database
- * inventory reports zero bare layout-1 owner values.
  */
 export function parsePersistedSessionOwnerMetadataEnvelopeV1(params: Readonly<{
     metadataLayoutVersion: number;
     accountMode: SessionOwnerMetadataAccountMode;
     ownerMetadata: string | null;
-    allowRetainedDevelopmentCiphertext: boolean;
 }>): SessionOwnerMetadataEnvelopeV1 | null {
     if (
         params.metadataLayoutVersion
@@ -35,17 +28,5 @@ export function parsePersistedSessionOwnerMetadataEnvelopeV1(params: Readonly<{
             ? explicit
             : null;
     }
-    if (
-        !params.allowRetainedDevelopmentCiphertext
-        || params.accountMode !== "e2ee"
-    ) {
-        return null;
-    }
-    const retainedCiphertext =
-        SessionOwnerMetadataEnvelopeV1Schema.safeParse({
-            t: "encrypted", c: params.ownerMetadata,
-        });
-    return retainedCiphertext.success
-        ? retainedCiphertext.data
-        : null;
+    return null;
 }

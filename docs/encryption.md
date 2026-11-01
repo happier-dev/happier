@@ -1944,6 +1944,10 @@ server persistence layer.
   `{ t:'encrypted', c:<account-scoped ciphertext> }` for E2EE ownership. The plain
   branch requires no Account key; the encrypted branch requires real compatible
   material.
+- In 0.3 development, persisted layout-1 reads require that explicit envelope.
+  Bare ciphertext is not promoted to owner metadata. The canonical Account
+  ciphertext kind owner distinguishes private Session drafts from Session owner
+  metadata; a draft ciphertext stored in an owner column remains invalid there.
 - In 0.3 development, a layout-1 metadata-only mutation retains the exact stored
   Agent-state bytes, and the server leaves `agentStateVersion` unchanged when
   those bytes did not change. Both expected tuple versions remain CAS checks.

@@ -87,7 +87,6 @@ async function resolveExistingLayout1SessionInTx(
         metadataLayoutVersion: existing.metadataLayoutVersion ?? 0,
         accountMode: accountEncryptionMode,
         ownerMetadata: existing.ownerMetadata,
-        allowRetainedDevelopmentCiphertext: true,
     });
     if (
         (existing.metadataLayoutVersion ?? 0) === SESSION_METADATA_LAYOUT_VERSION_V1

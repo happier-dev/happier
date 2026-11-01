@@ -200,7 +200,6 @@ export async function validateExistingSessionAutomationTargetTx(params: {
             metadataLayoutVersion: session.metadataLayoutVersion,
             accountMode,
             ownerMetadata: session.ownerMetadata,
-            allowRetainedDevelopmentCiphertext: false,
         });
         if (
             !ownerEnvelope

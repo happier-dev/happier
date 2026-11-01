@@ -14,6 +14,9 @@ import {
 } from "./sessionOwnerMetadataPersistence";
 import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
 
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { getAccountScopedBlobKindByte, readAccountScopedCiphertextKindByte } from '@happier-dev/protocol/crypto/accountScopedCipherEnvelope';
+
 const OWNER_CIPHERTEXT =
     "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==";
 const OWNER_ENVELOPE = {
@@ -157,8 +160,8 @@ describe("projectSessionMetadataForRecipient", () => {
         });
     });
 
-    it("normalizes the retained canonical ciphertext only for its E2EE Account owner", () => {
-        expect(projectSessionMetadataForRecipient({
+    it("refuses bare ciphertext instead of manufacturing an owner envelope", () => {
+        expect(() => projectSessionMetadataForRecipient({
             session: {
                 ...base,
                 ownerMetadata: OWNER_CIPHERTEXT,
@@ -168,21 +171,19 @@ describe("projectSessionMetadataForRecipient", () => {
                 accountId: "owner",
                 accountMode: "e2ee",
             },
-        })).toMatchObject({ ownerMetadata: OWNER_ENVELOPE });
+        })).toThrow(SessionMetadataPrivacyUpgradeRequiredError);
     });
 
-    it("admits the retained development ciphertext only at the explicit layout-1 E2EE repair boundary", () => {
+    it("requires an explicit envelope at the persisted layout-1 boundary", () => {
         expect(parsePersistedSessionOwnerMetadataEnvelopeV1({
             metadataLayoutVersion: 1,
             accountMode: "e2ee",
             ownerMetadata: OWNER_CIPHERTEXT,
-            allowRetainedDevelopmentCiphertext: true,
-        })).toEqual(OWNER_ENVELOPE);
+        })).toBeNull();
         expect(parsePersistedSessionOwnerMetadataEnvelopeV1({
             metadataLayoutVersion: 1,
             accountMode: "e2ee",
             ownerMetadata: STORED_OWNER_ENVELOPE,
-            allowRetainedDevelopmentCiphertext: false,
         })).toEqual(OWNER_ENVELOPE);
 
         for (const input of [
@@ -190,29 +191,45 @@ describe("projectSessionMetadataForRecipient", () => {
                 metadataLayoutVersion: 1,
                 accountMode: "e2ee" as const,
                 ownerMetadata: OWNER_CIPHERTEXT,
-                allowRetainedDevelopmentCiphertext: false,
             },
             {
                 metadataLayoutVersion: 1,
                 accountMode: "plain" as const,
                 ownerMetadata: OWNER_CIPHERTEXT,
-                allowRetainedDevelopmentCiphertext: true,
             },
             {
                 metadataLayoutVersion: 2,
                 accountMode: "e2ee" as const,
                 ownerMetadata: OWNER_CIPHERTEXT,
-                allowRetainedDevelopmentCiphertext: true,
             },
             {
                 metadataLayoutVersion: 1,
                 accountMode: "e2ee" as const,
                 ownerMetadata: "not-owner-metadata",
-                allowRetainedDevelopmentCiphertext: true,
             },
         ]) {
             expect(parsePersistedSessionOwnerMetadataEnvelopeV1(input))
                 .toBeNull();
+        }
+    });
+
+    it("classifies retained private-draft ciphertext through its canonical kind and refuses owner disclosure", () => {
+        const ciphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_session_draft_private_payload',
+            material: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+            payload: { text: 'draft' },
+            randomBytes: length => new Uint8Array(length).fill(3),
+        });
+        expect(readAccountScopedCiphertextKindByte(ciphertext, 'canonical'))
+            .toBe(getAccountScopedBlobKindByte('account_session_draft_private_payload'));
+        for (const ownerMetadata of [ciphertext, JSON.stringify({ t: 'encrypted', c: ciphertext })]) {
+            expect(parsePersistedSessionOwnerMetadataEnvelopeV1({
+                metadataLayoutVersion: 1, accountMode: 'e2ee', ownerMetadata,
+            })).toBeNull();
+            expect(() => projectSessionMetadataForRecipient({
+                session: { ...base, ownerMetadata },
+                recipient: { type: 'owner', accountId: 'owner', accountMode: 'e2ee' },
+            })).toThrow(SessionMetadataPrivacyUpgradeRequiredError);
         }
     });
 

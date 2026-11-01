@@ -70,7 +70,7 @@ export function assertSessionOwnerMetadataCurrentness(params: Readonly<{
         ? null : StoredSessionOwnerMetadataEnvelopeV1Schema.safeParse(params.ownerMetadata);
     const envelope = typeof params.ownerMetadata === "string"
         ? params.isOwner
-            ? parsePersistedSessionOwnerMetadataEnvelopeV1({ ...params, ownerMetadata: params.ownerMetadata, allowRetainedDevelopmentCiphertext: true })
+            ? parsePersistedSessionOwnerMetadataEnvelopeV1({ ...params, ownerMetadata: params.ownerMetadata })
             : parseSessionOwnerMetadataEnvelopeV1(params.ownerMetadata)
         : parsed?.success ? parsed.data : null;
     if (envelope === null || !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
