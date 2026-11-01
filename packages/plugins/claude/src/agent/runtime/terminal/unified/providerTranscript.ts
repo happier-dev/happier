@@ -752,7 +752,6 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
       }
 
       const previousBinding = binding;
-      await releaseSourceFollow(previousBinding);
       const previousHandle = followHandle;
       followHandle = null;
       if (previousHandle) {
@@ -761,6 +760,9 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
           drainTimeoutMs: CLAUDE_UNIFIED_TRANSCRIPT_FINAL_DRAIN_TIMEOUT_MS,
         }, previousBinding);
       }
+      // Stop raw delivery before releasing its ordered source: a buffered row
+      // otherwise reacquires the retired source while SessionStart is rekeying.
+      await releaseSourceFollow(previousBinding);
       if (disposed || binding !== previousBinding) return { status: 'ignored' };
       clearNativeQueuedCommandEvidence(previousBinding.queuedCommandEvidence);
       previousBinding.observedSourceIds.clear();
@@ -852,7 +854,6 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
   async function dispose(options?: Readonly<{ drainTimeoutMs?: number }>): Promise<void> {
     if (disposed) return;
     const handle = followHandle;
-    if (binding) await releaseSourceFollow(binding);
     followHandle = null;
     if (handle) {
       await closeFollowHandle(handle, {
@@ -860,6 +861,7 @@ export function createClaudeUnifiedProviderTranscriptPublisher(
         drainTimeoutMs: normalizeFinalDrainTimeoutMs(options?.drainTimeoutMs),
       });
     }
+    if (binding) await releaseSourceFollow(binding);
     disposed = true;
     if (binding) {
       clearNativeQueuedCommandEvidence(binding.queuedCommandEvidence);

@@ -143,15 +143,8 @@ export function mapClaudeHookEventToTerminalLifecycleObservation(
         };
     }
 
-    if (event.eventName === 'SessionEnd') {
-        return {
-            type: 'process_exited',
-            agentId: event.agentId,
-            exitCode: null,
-            signal: null,
-        };
-    }
-
+    // SessionEnd is a native hook, not an OS process-terminal observation.
+    // The terminal host supplies process exit status through subscribeExit.
     return null;
 }
 
