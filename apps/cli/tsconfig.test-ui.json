@@ -26,7 +26,6 @@
     "src/capabilities/snapshots/cliSnapshot.inventory.test.ts",
     "src/daemon/browser/actions/sandbox.actions.test.ts",
     "src/daemon/computer/driver/nativeInputRecovery.test.ts",
-    "src/daemon/computer/source.relay.test.tsx",
     "src/daemon/externalActions/executeExternalAction.filesystemApprovals.test.ts",
     "src/daemon/local/services/launch/feed.test.ts",
     "src/daemon/local/services/launch/projectDeclarations.test.ts",
