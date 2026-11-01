@@ -181,6 +181,7 @@ export type PluginUiPaneHeaderHost = Readonly<{
  * navigation roots, or modal/portal infrastructure.
  */
 export type PluginUiPresentationHost = Readonly<{
+  renderCheckboxMark?(input: Readonly<{ state: 'checked' | 'unchecked' | 'mixed'; size: 'regular' | 'compact' }>): ReactNode;
   /** Device-local collection widths, already scoped to this plugin by the host. */
   panelSizing?: Readonly<{
     useWidth(resizeKey: string): Readonly<{

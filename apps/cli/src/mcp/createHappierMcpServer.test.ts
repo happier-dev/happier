@@ -695,6 +695,39 @@ describe('createHappierMcpServer real host admission', () => {
     } finally { await daemon.close(); }
   });
 
+  it('searches and serializes managed Browser Actions over native MCP', async () => {
+    const sessionId = 'c666666666666666666666671';
+    const daemon = await installAccountCatalogDaemonTransport({ sessionId, readMetadata: () => createTestMetadata() });
+    const runtime = createHappierMcpServer(hostClient(sessionId));
+    try {
+      await withMcpClient(runtime, async client => {
+        const read = async (name: string, input: Record<string, unknown>): Promise<unknown> => {
+          const reply = CallToolResultSchema.parse(await client.callTool({ name, arguments: input }));
+          const content = reply.content.find(item => item.type === 'text');
+          if (content?.type !== 'text') throw new Error('Missing Browser discovery payload');
+          expect(reply.isError, content.text).not.toBe(true);
+          return JSON.parse(content.text);
+        };
+        const search = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.search'].parse(
+          await read('action_spec_search', { query: 'browser', limit: 100 }),
+        );
+        for (const operation of ['snapshot', 'semanticSnapshot', 'click', 'type', 'scroll']) {
+          const id = `browser.automation.${operation}`;
+          expect(search.actionSpecs.map(spec => spec.id)).toContain(id);
+          const definition = await readCompleteActionSpecV1({ actionId: id, read: async input =>
+            PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse(await read('action_spec_get', input)),
+          });
+          const validate = new Ajv({ strict: false, validateFormats: false }).compile(definition.inputSchema);
+          const input = { v: 1, browserSessionId: sessionId, viewId: 'main', automationRequestId: 'qa-action',
+            actionKind: operation, navigationGeneration: 0, requestedBy: 'agent',
+            requesterRef: { kind: 'session', id: sessionId }, timeoutMs: 10_000 };
+          expect(validate(input), JSON.stringify(validate.errors)).toBe(true);
+          expect(validate({ ...input, actionKind: 'unsupported-browser-operation' })).toBe(false);
+        }
+      });
+    } finally { await daemon.close(); }
+  });
+
   it('discovers the callable Workflow validator named by start guidance over native MCP', async () => {
     const sessionId = 'c666666666666666666666668';
     const daemon = await installAccountCatalogDaemonTransport({ sessionId, readMetadata: () => createTestMetadata() });

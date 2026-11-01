@@ -330,9 +330,8 @@ describe('author package boundary', () => {
     expect(prepack.indexOf('prepare:api-governance')).toBeLessThan(prepack.indexOf('check:api-governance:prepared'));
     expect(packageJson.scripts?.pretypecheck).toBeUndefined();
     expect(packageJson.scripts?.prebuild).toBeUndefined();
-    expect(packageJson.scripts?.['typecheck:local']).toBe(
-      'yarn --cwd ../plugin-sdk -s check:public-toolchain && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json',
-    );
+    // Current-source preparation and emitted-declaration preparation are exercised
+    // by scripts/workspaces/runTypeScriptCli.test.mjs at the compiler owner.
     expect(packageJson.scripts?.test).toBe('../../apps/stack/bin/hstack-exec --script=test:local');
     expect(packageJson.scripts?.['test:local']).toContain('test:external-authoring');
   });
@@ -387,6 +386,25 @@ describe('author package boundary', () => {
       expect(existsSync(sourceSpec), `${specifier} has no author-owned source spec`).toBe(true);
       expect(readFileSync(entrypoint, 'utf8').trim()).toBe("export * from './index.public.js';");
     }
+  });
+
+  it('publishes the canonical ANSI tokenizer without a framework dependency', async () => {
+    const packageRoot = resolve(new URL('.', import.meta.url).pathname, '..');
+    const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as {
+      exports: Record<string, { 'happier-source': string }>;
+    };
+    const entry = join(packageRoot, manifest.exports['./ansi']['happier-source']);
+    const program = ts.createProgram([entry], {
+      noLib: true, types: [], module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
+    });
+    // Follow the complete closure, allowing barrel extraction without admitting
+    // React, Native, Node or another external dependency to this pure entry.
+    expect(program.getSourceFiles().filter(file => relative(packageRoot, file.fileName).split(/[\\/]/u)[0] !== 'src')
+      .map(file => file.fileName)).toEqual([]);
+    const ansi = await import('@happier-dev/plugin-ui/ansi');
+    const canonical = await import('./presentation/content/ansiTokens.js');
+    expect(ansi.tokenizeAnsiText).toBe(canonical.tokenizeAnsiText);
+    expect(ansi.tokenizeAnsiText('\u001b[31mred\u001b[0m').plainText).toBe('red');
   });
 
   it('derives renderable-image diagnostics from the browser-safe UI contract', () => {

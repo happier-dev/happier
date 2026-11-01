@@ -36,7 +36,7 @@ describe('public plugin collection filter adapter through the RNW public entry',
         const match = compileExternalReleaseStageFilter(selection);
         expect(externalReleaseReviews.filter(row => match(row) === 'match').map(row => row.id)).toEqual(['release']);
         const retired = compileExternalReleaseStageFilter(selection, false);
-        expect(externalReleaseReviews.map(retired)).toEqual(['unavailable', 'unavailable', 'unavailable']);
+        expect(externalReleaseReviews.map(row => retired(row))).toEqual(['unavailable', 'unavailable', 'unavailable']);
         expect(match(admitExternalReleaseStage(undefined))).toBe('unavailable');
         expect(match(admitExternalReleaseStage(null))).toBe('miss');
         expect(match(admitExternalReleaseStage('ready'))).toBe('match');

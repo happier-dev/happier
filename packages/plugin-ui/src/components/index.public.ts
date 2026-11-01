@@ -1616,3 +1616,4 @@ export {
   type HappierCollectionRowDensity,
   type HappierCollectionRowTextMetrics,
 } from '../presentation/collection/CollectionRowContent.js';
+export { Checkbox, type CheckboxProps, type CheckboxSize } from './Checkbox.js';
