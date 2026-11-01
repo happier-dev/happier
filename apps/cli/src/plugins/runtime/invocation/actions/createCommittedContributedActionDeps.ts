@@ -71,7 +71,7 @@ function projectExternalActionContext(
   // into that context and therefore requires the complete bound tuple below.
   if (!authorization) return null;
   if (
-    context.authority !== 'account_automation'
+    (context.authority !== 'account_automation' && context.authority !== 'present_user')
     || !authorization
     || ('grant' in authorization.binding && !credential)
     || !target
@@ -83,7 +83,7 @@ function projectExternalActionContext(
     return null;
   }
   return Object.freeze({
-    authority: 'account_automation',
+    authority: context.authority,
     serverId,
     serverIdentityId,
     actionRequestId,

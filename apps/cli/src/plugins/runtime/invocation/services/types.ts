@@ -58,7 +58,7 @@ export type AgentInvocationTurnAdmissionWitness = Readonly<{
  * Action calls.
  */
 export type PluginExternalActionContext = Readonly<{
-    authority: 'account_automation';
+    authority: 'account_automation' | 'present_user';
     serverId: string;
     serverIdentityId: string;
     actionRequestId: string;
