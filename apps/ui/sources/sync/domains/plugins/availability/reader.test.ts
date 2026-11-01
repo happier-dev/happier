@@ -400,9 +400,11 @@ describe('Plugin Account Availability reader', () => {
         const manifest = PluginPortableReleaseManifestV1Schema.parse({
             ...intentRead().release!.normalizedManifest,
             contributes: { actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui', 'cli'],
+                sessionTarget: { field: 'sessionId', cardinality: 'one' },
                 placementBindings: [], dangerLevel: 'safe', execution: {
                     target: 'account', account: { artifactId: artifactGraph.artifactId, exportName: 'activate' },
-                }, inputSchema: { type: 'object', additionalProperties: false }, resultSchema: { type: 'object' } }],
+                }, inputSchema: { type: 'object', properties: { sessionId: { type: 'string', minLength: 1 } },
+                    required: ['sessionId'], additionalProperties: false }, resultSchema: { type: 'object' } }],
                 ui: { renderers: [{ id: 'account-page-renderer', kind: 'reactNative', artifact: artifactGraph.artifactId,
                     requiredHostMethods: ['executeAction'] }], views: [{ id: 'account-page', container: 'appPage',
                     title: 'Account page', target: { kind: 'app' }, renderer: 'account-page-renderer' }] } },
@@ -422,6 +424,7 @@ describe('Plugin Account Availability reader', () => {
         if (selected.kind !== 'available') throw new Error('Missing selected Account declaration');
         expect(action?.accountActionDeclaration).toBe(selected.manifest.contributes.actions![0]);
         expect(action).toMatchObject({ pluginId: manifest.id, id: 'read', execution: manifest.contributes.actions![0]!.execution,
+            sessionTarget: { field: 'sessionId', cardinality: 'one' },
             accountActionDeclaration: selected.manifest.contributes.actions![0], hostAccountOrigin: { ...scope, sourceCustody: { kind: 'account_release' } },
             authorization: { generation: { appliedGeneration: null } } });
         const custodyId = action?.occurrenceId;
@@ -478,7 +481,7 @@ describe('Plugin Account Availability reader', () => {
         if (!changedAction) throw new Error('Missing replaced Account Action');
         const changedDeclaration = changedAction.accountActionDeclaration;
         expect(changedDeclaration).not.toBe(action.accountActionDeclaration);
-        expect(changedDeclaration?.inputSchema).toEqual({ type: 'object', additionalProperties: false });
+        expect(changedDeclaration?.inputSchema).toEqual(manifest.contributes.actions![0]!.inputSchema);
         expect(readPluginUiAccountExecutableOrigin(changedAction)?.sourceCustody).toMatchObject({ version: '2.0.0' });
         store.replace({ scope, snapshot: snapshot({ intentReads: [{ pluginId: manifest.id,
             response: { ...changed, intent: { ...changed.intent!, enabled: false } } }], materializations: [], snapshots: [] }) });

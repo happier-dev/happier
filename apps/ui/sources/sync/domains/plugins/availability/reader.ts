@@ -1741,6 +1741,7 @@ function deriveAccountUiProjection(input: Readonly<{
                 ...(action.description ? { description: action.description } : {}),
                 ...(action.icon ? { icon: action.icon } : {}),
                 scopes: action.scopes, surfaces: action.surfaces, execution,
+                ...(action.sessionTarget ? { sessionTarget: action.sessionTarget } : {}),
                 placementBindings: action.placementBindings, dangerLevel: action.dangerLevel,
                 ...(action.confirmation ? { confirmation: action.confirmation } : {}),
                 ...(action.confirmationWhen ? { confirmationWhen: action.confirmationWhen } : {}),
