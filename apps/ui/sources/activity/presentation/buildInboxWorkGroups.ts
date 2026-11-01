@@ -280,5 +280,12 @@ function sortByRank(items: InboxWorkItem[]): readonly InboxWorkItem[] {
         const sorted = [...group].sort((a, b) => comparePendingRequestsByAge(a.request, b.request) || a.item.key.localeCompare(b.item.key));
         group.forEach(({ index }, position) => { ranked[index] = sorted[position]!.item; });
     }
+    // Approval age orders approval slots only; workflow and session priorities keep their places.
+    const approvals = ranked.filter(item => item.kind === 'approval')
+        .sort((a, b) => b.artifact.createdAt - a.artifact.createdAt || a.key.localeCompare(b.key));
+    let approvalIndex = 0;
+    ranked.forEach((item, index) => {
+        if (item.kind === 'approval') ranked[index] = approvals[approvalIndex++]!;
+    });
     return ranked;
 }

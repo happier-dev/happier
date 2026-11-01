@@ -7,6 +7,12 @@ import { describeMachineLockedReason, getMachineDisplayName, getMachineSentenceN
 const m = (id: string, displayName?: string, host?: string) => ({ id, metadata: { displayName, host } });
 
 describe('getMachineDisplayName', () => {
+    it('uses the managed name ahead of a generated host while preserving explicit renames and unreadable states', () => {
+        expect(getMachineDisplayName({ ...m('guest', undefined, 'lima-generated'), managedName: 'Build guest' })).toBe('Build guest');
+        expect(getMachineDisplayName({ ...m('guest', 'Renamed guest', 'lima-generated'), managedName: 'Build guest' })).toBe('Renamed guest');
+        expect(getMachineDisplayName({ ...m('guest', undefined, 'lima-generated'), availability: { kind: 'locked' }, managedName: 'Build guest' }))
+            .toBe(t('machine.lockedMachine'));
+    });
     it('names a machine by its display name, else its host', () => {
         expect(getMachineDisplayName(m('a-1', 'Studio', 'studio.local'))).toBe('Studio');
         expect(getMachineDisplayName(m('b-2', undefined, 'devbox'))).toBe('devbox');

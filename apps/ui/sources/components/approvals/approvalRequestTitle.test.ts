@@ -1,3 +1,4 @@
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { describe, expect, it } from 'vitest';
 
 import { resolveApprovalRequestTitle } from './approvalRequestTitle';
@@ -34,3 +35,10 @@ describe('resolveApprovalRequestTitle', () => {
         }
     });
 });
+
+    it('recognizes a stored generated installation title with punctuation instead of repeating its Action', () => {
+        const spec = getActionSpec('machines.managed.bootstrap.respond');
+        const result = resolveApprovalRequestTitle({ actionId: spec.id, storedTitle: `${spec.title}.` });
+        expect(result.title).toBe(spec.title);
+        expect(result.actionTitle).toBeNull();
+    });

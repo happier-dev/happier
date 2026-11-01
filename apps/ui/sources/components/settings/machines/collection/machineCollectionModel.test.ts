@@ -49,6 +49,18 @@ function group(serverId: string, machines: Machine[], overrides: Partial<ActiveS
 afterEach(() => clearMachineRequestReachabilityForTest());
 
 describe('machine collection rail partition', () => {
+    it('keeps enrolled creations in Created by Happier with their live presence and own name', () => {
+        const nowMs = Date.now();
+        captureMachinePresenceObservation({ serverId: 'a', accountId: 'collection-account' })(['joined']);
+        const collection = buildMachineCollection({ groups: [group('a', [machine('joined', {
+            displayName: 'Build box', host: 'lima-generated-host', active: true, activeAt: nowMs,
+        })])], groupedByHome: false, nowMs,
+            managedByServerId: { a: [managed('created', { enrolledMachineId: 'joined' })] } });
+        const created = collection.sections.find(section => section.title === t('machines.destinations.created'));
+        expect(created?.rows).toEqual([expect.objectContaining({ title: 'Build box', online: true, host: null })]);
+        expect(collection.count).toBe(1);
+        expect(machineCollectionHref(created!.rows[0]!)).toBe('/settings/machines/joined?serverId=a');
+    });
     it('keeps withdrawn unknown machines out of the offline fold and restores only observed machines', () => {
         const nowMs = Date.now();
         const scope = { serverId: 'a', accountId: 'collection-account' };
@@ -157,9 +169,9 @@ describe('buildMachineCollection', () => {
     });
     it('says the list is still settling while a machine has not yet read its name, instead of naming it "Loading…"', () => {
         const ready = buildMachineCollection({ groups: [group('a', [machine('mine')])], groupedByHome: false });
-        expect(ready.namesPending).toBe(false);
+        expect(ready.firstAnswerPending).toBe(false);
         const hydrating = buildMachineCollection({ groups: [group('a', [machine('mine'), machine('new', { metadata: null, availability: undefined })])], groupedByHome: false });
-        expect(hydrating.namesPending).toBe(true);
+        expect(hydrating.firstAnswerPending).toBe(true);
     });
     it('titles the machines Happier created, beside your own machines', () => {
         const collection = buildMachineCollection({ groups: [group('a', [machine('mine')])], groupedByHome: false,

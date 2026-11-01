@@ -92,8 +92,8 @@ export type MachineCollection = Readonly<{
     count: number;
     /** The machines the header counts: yours, shared and created ones; never recipes or retired creations. */
     machineCount: number;
-    /** A listed machine has not read its name yet: the list is still arriving, not a row named "Loading…". */
-    namesPending: boolean;
+    /** Managed membership or a listed Machine name has not answered yet. */
+    firstAnswerPending: boolean;
     sections: readonly MachineCollectionSection[];
     presetSections: readonly MachinePresetCollectionSection[];
 }>;
@@ -123,28 +123,38 @@ export function buildMachineCollection(input: Readonly<{
     query?: string;
     nowMs?: number;
     managedByServerId?: Readonly<Record<string, readonly ManagedMachineV1[]>>;
+    /** The managed inventory has not answered with the membership needed to partition enrolled rows. */
+    managedFirstAnswerPending?: boolean;
     presetsByServerId?: Readonly<Record<string, readonly ManagedMachinePresetV1[]>>;
     teamNamesByServerId?: Readonly<Record<string, Readonly<Record<string, string>>>>;
     /** Managed creations whose installer is waiting on the user's consent, as `managedMachineConsentKey`. */
     awaitingConsent?: ReadonlySet<string>;
 }>): MachineCollection {
+    // An enrolled roster cannot partition Your machines and Created by Happier until membership answers.
+    if (input.managedFirstAnswerPending) {
+        return { count: 0, machineCount: 0, firstAnswerPending: true, sections: [], presetSections: [] };
+    }
     const query = input.query?.trim().toLocaleLowerCase() ?? '';
     const nowMs = input.nowMs ?? Date.now();
     let count = 0;
     let machineCount = 0;
-    const namesPending = input.groups.some(group => group.machines.some(isMachineDisplayHydrating));
+    const firstAnswerPending = input.groups.some(group => group.machines.some(isMachineDisplayHydrating));
     const sections = input.groups.flatMap((group): MachineCollectionSection[] => {
-        const names = resolveMachineDisplayNameParts(group.machines);
         const enrolledIds = new Set(group.machines.map(machine => machine.id));
         const managedByMachineId = new Map((input.managedByServerId?.[group.serverId] ?? [])
             .flatMap(machine => machine.archivedAt === undefined && machine.enrolledMachineId ? [[machine.enrolledMachineId, machine] as const] : []));
+        const names = resolveMachineDisplayNameParts(group.machines.map(machine => ({ ...machine,
+            managedName: managedByMachineId.get(machine.id)?.launch.name })));
         const managedMachines = (input.managedByServerId?.[group.serverId] ?? [])
             .filter(machine => machine.archivedAt !== undefined || !machine.enrolledMachineId || !enrolledIds.has(machine.enrolledMachineId));
         // Your machines, then the ones Happier created for you, then each Home member's shared machines (lab `R`);
         // retired created machines close the list.
-        const ownership = buildMachineOwnershipGroups(group.machines).filter(ownershipGroup => managedMachines.length === 0 || ownershipGroup.machines.length > 0);
+        const joinedCreations = group.machines.filter(machine => managedByMachineId.has(machine.id));
+        const ownership = buildMachineOwnershipGroups(group.machines.filter(machine => !managedByMachineId.has(machine.id)))
+            .filter(ownershipGroup => managedMachines.length === 0 && joinedCreations.length === 0 || ownershipGroup.machines.length > 0);
         const created = (key: 'managed' | 'managedArchived') => managedMachines.some(machine =>
-            (machine.archivedAt !== undefined) === (key === 'managedArchived')) ? [{ key, custodian: null, machines: [] }] : [];
+            (machine.archivedAt !== undefined) === (key === 'managedArchived')) || key === 'managed' && joinedCreations.length > 0
+            ? [{ key, custodian: null, machines: key === 'managed' ? joinedCreations : [] }] : [];
         const ownershipGroups = [
             ...ownership.filter(ownershipGroup => !ownershipGroup.key.startsWith('shared:')),
             ...created('managed'),
@@ -164,7 +174,7 @@ export function buildMachineCollection(input: Readonly<{
                     serverId: group.serverId,
                     title: titleParts.hint ? `${titleParts.name} · ${titleParts.hint}` : titleParts.name,
                     titleParts,
-                    host: host && host !== name ? host : null,
+                    host: !managedByMachineId.has(machine.id) && host && host !== name ? host : null,
                     platformLabel: formatOSPlatform(machine.metadata?.platform),
                     online: presence.online,
                     status: presence.status,
@@ -230,7 +240,7 @@ export function buildMachineCollection(input: Readonly<{
         return { key: JSON.stringify([group.serverId, 'presets']), serverId: group.serverId,
             title: input.groupedByHome ? group.serverName : null, status: group.status, rows };
     });
-    return { count, machineCount, namesPending, sections, presetSections };
+    return { count, machineCount, firstAnswerPending, sections, presetSections };
 }
 
 /**

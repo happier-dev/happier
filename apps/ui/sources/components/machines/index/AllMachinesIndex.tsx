@@ -119,6 +119,7 @@ function AllMachinesIndexBody() {
         groups: viewModel.visibleMachineGroups,
         groupedByHome: viewModel.showMachinesGroupedByServer,
         managedByServerId: viewModel.managedByServerId,
+        managedFirstAnswerPending: viewModel.managedFirstAnswerPending,
     });
     // The same groups the list column draws (one list model): Your machines, Created by Happier, Shared
     // with you, each Home. Retired created machines stay in the column's archive, not in the fleet.
@@ -157,7 +158,7 @@ function AllMachinesIndexBody() {
     }))), [factsByMachine, sections, thisComputerMachineId]), readKey);
     // The first answer is held whole behind the Collection's loading contract: rows, headline and count land once,
     // together, and a later re-read keeps what is already shown (same first load as the list column).
-    const answerPending = (viewModel.isLoadingMachines && answeredItems.length === 0) || collection.namesPending || viewModel.managedFirstAnswerPending;
+    const answerPending = (viewModel.isLoadingMachines && answeredItems.length === 0) || collection.firstAnswerPending;
     const [answered, setAnswered] = React.useState(false);
     if (!answerPending && !answered) setAnswered(true);
     const holding = answerPending && !answered;

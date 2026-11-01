@@ -27,7 +27,8 @@ export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalS
         const spec = getActionSpec(actionId.data);
         if (readWidgetApprovalPresentationV1(preview)) return presentActionApproval({ actionId: actionId.data,
             actionArgs: request?.actionArgs, preview }).summary;
-        const summary = spec.approvalPresentation && spec.inputSchema.safeParse(request?.actionArgs).success
+        const summary = spec.approvalPresentation && (spec.inputSchema.safeParse(request?.actionArgs).success
+            || spec.approvalPresentation.inputSchema?.safeParse(request?.actionArgs).success)
             ? spec.approvalPresentation?.summary(request?.actionArgs) : null;
         return presentActionApproval({ actionId: actionId.data, actionArgs: request?.actionArgs,
             authoredSummary: summary || storedSummary }).summary;

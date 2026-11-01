@@ -288,3 +288,12 @@ describe('the shared Action approval presentation owner', () => {
             .toBe('My own explanation');
     });
 });
+
+    it('leaves the installation question to its review facts without repeating the title in a summary', () => {
+        const spec = getActionSpec('machines.managed.bootstrap.respond');
+        const actionArgs = spec.inputSchema.parse({ serverId: 'profile', homeId: 'home', managedId: 'managed',
+            operationId: 'operation', taskId: 'task', purpose: 'approve', approved: true,
+            prompt: { kind: 'ssh.trustHost', message: 'Trust this machine?', host: 'guest.example',
+                keyType: 'ssh-ed25519', fingerprint: 'SHA256:guest', existingFingerprint: null } });
+        expect(presentActionApproval({ actionId: spec.id, actionArgs }).summary).toBeNull();
+    });

@@ -112,7 +112,7 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
                         // previous recovery rows visibly stale until the second ordinary read settles.
                         const active = result.machines;
                         if (active.some(machine => machine.homeId !== homeId)) throw new Error('managed_response_invalid');
-                        publish({ ...entry, machines:
+                        publish({ ...entry, asOf: Date.now(), machines:
                             [...new Map([...active, ...entry.machines.filter(machine => machine.archivedAt !== undefined)]
                                 .map(machine => [machine.id, machine])).values()] });
                         const archived = await read({ homeId, archived: true });
@@ -274,8 +274,17 @@ export function useManagedMachineInventory(serverIds: readonly string[], managed
         )]),
     ), [machinesByServerId]);
 
-    const loading = ids.some(serverId => getServerProfileById(serverId)?.serverIdentityId
-        && ((!accountScopes.has(serverId) || accountScopes.get(serverId)?.resolution.kind === 'resolving')
-            || (bindings.has(serverId) && (!currentEntries[serverId] || currentEntries[serverId]?.status === 'loading'))));
-    return { entries: currentEntries, machinesByServerId, machinesByEnrolledMachineIdByServerId, refresh: refreshAll, bindings, accountScopes, loading };
+    let loading = false;
+    let firstAnswerPending = false;
+    for (const serverId of ids) {
+        const pending = getServerProfileById(serverId)?.serverIdentityId
+            && ((!accountScopes.has(serverId) || accountScopes.get(serverId)?.resolution.kind === 'resolving')
+                || (bindings.has(serverId) && (!currentEntries[serverId] || currentEntries[serverId]?.status === 'loading')));
+        if (!pending) continue;
+        loading = true;
+        // Active membership admits the collection even while archive recovery is
+        // pending. Refreshes keep that receipt; terminal failures settle the wait.
+        if (currentEntries[serverId]?.asOf === undefined) firstAnswerPending = true;
+    }
+    return { entries: currentEntries, machinesByServerId, machinesByEnrolledMachineIdByServerId, refresh: refreshAll, bindings, accountScopes, loading, firstAnswerPending };
 }

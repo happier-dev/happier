@@ -219,3 +219,22 @@ describe('buildInboxWorkGroups (ORC R-10)', () => {
         expect(resolveInboxWorkRoot('lead', resolveSession)).toBe('lead');
     });
 });
+
+it('orders Inbox approvals newest first without mutating the admitted collection', () => {
+    const openApprovals = [300, 100, 200].map(createdAt => {
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: createdAt, updatedAtMs: createdAt,
+            createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId: 'account.name.set',
+            actionArgs: { name: 'Captain' }, summary: 'Approval',
+            executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+                serverId: 'home-a', actionId: 'account.name.set', requestId: `ask-${createdAt}` } });
+        return { id: `ask-${createdAt}`, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request),
+            title: request.summary, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt, updatedAt: createdAt,
+            isDecrypted: true } satisfies DecryptedArtifact;
+    });
+    const groups = buildInboxWorkGroups({ ...EMPTY, sessionEntries: [], workflowRuns: [], openApprovals,
+        resolveSession, resolveOriginRunId: readOrigin });
+    expect(groups.flatMap(group => group.items.map(item => item.key))).toEqual([
+        'approval:ask-300', 'approval:ask-200', 'approval:ask-100',
+    ]);
+    expect(openApprovals[0]!.id).toBe('ask-300');
+});

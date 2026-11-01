@@ -118,7 +118,7 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
         if (input.online) facts.push({ key: 'uptime', testID: 'machine-detail-uptime', text: describeMachineUptime(input.hostFacts.bootedAt, input.nowMs ?? Date.now()) });
     }
     const host = machine.metadata?.host;
-    if (host && machine.metadata?.displayName && host !== machine.metadata.displayName) facts.push({ key: 'host', text: host });
+    if (input.managedMeta === undefined && host && machine.metadata?.displayName && host !== machine.metadata.displayName) facts.push({ key: 'host', text: host });
     if (input.encryptionMode) {
         facts.push(input.encryptionMode === 'e2ee'
             ? { key: 'encryption', icon: 'lock', text: t('settingsAccount.endToEndEncrypted'), testID: 'machine-detail-encryption' }
@@ -179,7 +179,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     // who manages the machine is offered one, only while it is online and its home folder is known (its details are
     // decrypted on this device); the sheet opens in that folder.
     const machineId = machine?.id;
-    const machineName = target.machineName;
+    const machineName = props.managedIdentity && machine ? getMachineDisplayName({ ...machine, managedName: props.managedIdentity.name }) : target.machineName;
     const handleOpenTerminal = React.useCallback(() => {
         if (machineId) showMachineTerminalSheet({ serverId: target.serverId, machineId, machineName });
     }, [machineId, machineName, target.serverId]);

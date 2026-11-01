@@ -94,6 +94,7 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
         groups: model.visibleMachineGroups,
         groupedByHome: model.showMachinesGroupedByServer,
         managedByServerId: model.managedByServerId,
+        managedFirstAnswerPending: model.managedFirstAnswerPending,
     });
     // What each machine publishes (plan 20): the sentence title, Needs you first, then everything else.
     const attention = React.useMemo(() => collectMachineAttention(model.visibleMachineGroups), [collection, model.reachabilityRevision, model.visibleMachineGroups]);
@@ -157,7 +158,7 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
     }, [auth.refreshFromActiveServer, router]);
 
     const signedOutGroups = model.visibleMachineGroups.filter(group => group.status === 'signedOut');
-    const loading = model.isLoadingMachines && machineCount === 0;
+    const loading = (model.isLoadingMachines && machineCount === 0) || collection.firstAnswerPending;
     const empty = !loading && machineCount === 0 && signedOutGroups.length === 0;
     const addPool = addOptions.find(option => option.id === 'pool') ?? null;
     const iconColor = theme.colors.text.secondary;

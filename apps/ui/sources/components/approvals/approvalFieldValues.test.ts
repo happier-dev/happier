@@ -1,3 +1,4 @@
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { describe, expect, it } from 'vitest';
 
 import { describeApprovalActionFields, projectApprovalStructuredAnswers } from './approvalFieldValues';
@@ -308,4 +309,15 @@ describe('describeApprovalActionFields', () => {
         expect(JSON.stringify(reissuePresentation)).not.toContain('another-private-retry-key');
         expect(JSON.stringify(reissuePresentation)).not.toContain('joinUrl');
     });
+});
+
+it('does not repeat a retained installation title through its historical preview summary', () => {
+    const spec = getActionSpec('machines.managed.bootstrap.respond');
+    const actionArgs = spec.approvalPresentation?.projectInput?.(spec.inputSchema.parse({
+        serverId: 'profile', homeId: 'home', managedId: 'managed', operationId: 'operation', taskId: 'task',
+        purpose: 'approve', approved: true, prompt: { kind: 'ssh.trustHost', message: 'Trust this machine?',
+            host: 'guest.example', keyType: 'ssh-ed25519', fingerprint: 'SHA256:guest', existingFingerprint: null },
+    }));
+    expect(readApprovalPreviewSummary({ summary: 'Answer the installation question for this machine.' },
+        { actionId: spec.id, actionArgs })).toBeNull();
 });

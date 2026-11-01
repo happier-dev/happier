@@ -802,6 +802,7 @@ export function ManagedEnrolledMachineSectionsView(props: Readonly<{ enrolled: M
 }
 
 export type ManagedMachineHeaderIdentity = Readonly<{
+    name: string;
     mark: React.ReactNode;
     description: string | null;
     meta: readonly PageHeaderMetaFact[];
@@ -819,15 +820,13 @@ function formatUptime(ms: number): string {
 
 /**
  * A created machine's header facts (lab `m-detail`: "Running 3 h" · "Hetzner server 58213904"), from
- * real facts only: power from the provider's own observation, how long it has been running only when
- * the caller knows when it came up, and the provider's id only where its declaration names the field
- * in the resource value. Anything unknown is left out rather than guessed.
+ * real facts only: power from the provider's own observation and how long it has been running only
+ * when the caller knows when it came up. Native resource identities stay in Details, so a generated
+ * guest hostname never competes with the machine's own name.
  */
 export function managedMachineHeaderMeta(input: Readonly<{
     machine: Readonly<{ observation?: ManagedMachineV1['observation']; resource?: Readonly<{ value: unknown }> }>;
     provider: string | null; kindTitle: string | null;
-    /** The declared path of the provider's own id in the resource value. */
-    resourceIdPath?: string;
     /** When the machine's Happier came up (its connected daemon's start), for a running machine's uptime. */
     runningSince?: number;
     now: number;
@@ -842,16 +841,14 @@ export function managedMachineHeaderMeta(input: Readonly<{
     }
     if (input.provider) {
         const kind = input.kindTitle ? t('managedMachines.detail.kindFact', { provider: input.provider, kind: input.kindTitle }) : input.provider;
-        const value = input.resourceIdPath ? readInputPath(input.machine.resource?.value, input.resourceIdPath) : undefined;
-        const nativeId = typeof value === 'number' || (typeof value === 'string' && value.length > 0) ? String(value) : null;
-        meta.push({ key: 'managed-kind', text: nativeId ? t('managedMachines.detail.kindFactWithId', { fact: kind, id: nativeId }) : kind });
+        meta.push({ key: 'managed-kind', text: kind });
     }
     return meta;
 }
 
 /**
  * Who a created machine is, for its page header (lab `m-detail`): the provider's mark, where it came
- * from ("Made from the Build box preset."), and its observed power, uptime, kind and native id beside the
+ * from ("Made from the Build box preset."), and its observed power, uptime and kind beside the
  * ordinary facts. Identity comes from the installed provisioner declaration, so the header asks no
  * machine anything.
  */
@@ -863,8 +860,8 @@ export function useManagedMachineHeaderIdentity(machine: ManagedMachineV1 | unde
     const provider = presentation.title;
     const presetName = machine.reviewedFacts?.preset?.name;
     const meta = managedMachineHeaderMeta({ machine, provider, kindTitle: presentation.kindTitle,
-        resourceIdPath: presentation.resourceIdPath ?? undefined, runningSince: live?.runningSince, now: Date.now() });
-    return { mark: presentation.mark,
+        runningSince: live?.runningSince, now: Date.now() });
+    return { name: machine.launch.name, mark: presentation.mark,
         description: presetName ? t('managedMachines.detail.madeFromPreset', { preset: presetName })
             : provider ? t('managedMachines.detail.createdOn', { provider }) : null,
         meta };

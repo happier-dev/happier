@@ -174,7 +174,7 @@ async function setMachines(
       serverIdentityId: group.serverId, accountId: group.status === 'signedOut' ? null : 'account-a', active: index === 0 });
     homeProfiles.set(group.serverId, profileId);
     const error = overrides.managedInventory?.entries[group.serverId];
-    home.answer(profileId, '/v1/machines/managed/actions/list', error
+    home.answer(profileId, 'POST /v1/machines/managed/actions/list', error
       ? { status: 500, body: { code: error.errorCode } }
       : { body: { machines: (overrides.managedByServerId?.[group.serverId] ?? []).map(row => ({ ...row, homeId: group.serverId })) } });
     home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
@@ -678,7 +678,7 @@ describe('All machines (the Settings door index)', () => {
   it('holds the whole first answer behind the collection loading, then publishes rows, headline and count together, and keeps them through a re-read', async () => {
     const profileId = homeProfiles.get('srv_a')!;
     const managedFirstReply = createDeferred<void>();
-    home.answer(profileId, '/v1/machines/managed/actions/list', { body: { machines: [] }, respondAfter: managedFirstReply.promise });
+    home.answer(profileId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] }, respondAfter: managedFirstReply.promise });
     const rowId = 'machines.index.row.machine:srv_a:machine-a1';
     const has = (tree: Awaited<ReturnType<typeof renderPage>>, testID: string) => tree.findAll(node => node.props?.testID === testID).length > 0;
     const screen = await renderScreen(React.createElement(MachinesSettingsView));
@@ -693,7 +693,7 @@ describe('All machines (the Settings door index)', () => {
     expect(has(screen.tree, 'machines.index.count')).toBe(true);
     // A later read keeps the answer already shown.
     const rereply = createDeferred<void>();
-    home.answer(profileId, '/v1/machines/managed/actions/list', { body: { machines: [] }, respondAfter: rereply.promise });
+    home.answer(profileId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] }, respondAfter: rereply.promise });
     const requests = home.requests.filter(request => request.path === '/v1/machines/managed/actions/list').length;
     const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
     await act(async () => publishHomeAccountChange('srv_a'));
@@ -789,6 +789,8 @@ describe('the machine list column in the rail door', () => {
     const { MachinesColumn } =
       await import('@/components/machines/collection/MachinesColumn');
     const tree = (await renderScreen(React.createElement(MachinesColumn))).tree;
+    await waitForHomeGovernance(() => expect(tree.findAll(node =>
+      node.props.testID === 'settings.machines.row.srv_a.machine-a1').length).toBeGreaterThan(0));
     const navigatedTo = () =>
       [...routerPushSpy.mock.calls, ...routerReplaceSpy.mock.calls].map(
         (call) => call[0],
@@ -826,6 +828,8 @@ describe('the machine list column in the rail door', () => {
     const { MachinesColumn } =
       await import('@/components/machines/collection/MachinesColumn');
     const tree = (await renderScreen(React.createElement(MachinesColumn))).tree;
+    await waitForHomeGovernance(() => expect(tree.findAll(node =>
+      node.props.testID === 'settings.machines.row.srv_a.machine-a1').length).toBeGreaterThan(0));
     const order = [
       'settings.machines.rail.all',
       'settings.machines.defaults',
@@ -865,7 +869,7 @@ describe('the machine list column in the rail door', () => {
     const visible = (testID: string) =>
       tree.findAll((node) => node.props?.testID === testID).length > 0;
 
-    expect(visible('settings.machines.row.srv_a.machine-a1')).toBe(true);
+    await waitForHomeGovernance(() => expect(visible('settings.machines.row.srv_a.machine-a1')).toBe(true));
     const fold = tree.findAll(
       (node) =>
         typeof node.props?.testID === 'string' &&

@@ -21,6 +21,8 @@ export type MachineAbsence = 'removed' | 'replaced' | 'temporary' | 'unlisted';
 type MachineNameInput = Readonly<{
     id?: string | null;
     metadata?: MachineNameMetadata;
+    /** The admitted managed resource's human name, before the generated guest host. */
+    managedName?: string | null;
     availability?: MachineNameAvailability;
     absence?: MachineAbsence | null;
 }>;
@@ -71,7 +73,8 @@ export function describeMachineLockedReason(machine: MachineNameInput | null | u
 /** The name a person gave the machine, else its host; `null` when it has neither or is locked. */
 export function readMachineName(machine: MachineNameInput | null | undefined): string | null {
     if (machine && (machine.absence || isMachineLocked(machine))) return null;
-    return readPublishedMachineName(machine?.metadata);
+    return readPublishedMachineName(machine?.managedName ? { ...machine.metadata,
+        displayName: machine.metadata?.displayName?.trim() || machine.managedName } : machine?.metadata);
 }
 
 /** What a machine whose details cannot be read is called on screen. */

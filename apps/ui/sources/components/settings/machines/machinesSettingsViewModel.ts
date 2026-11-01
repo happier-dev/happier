@@ -73,10 +73,7 @@ export function useMachinesSettingsViewModel(): MachinesSettingsViewModel {
         return allMachines.length === 0 && (status === 'loading' || managedInventory.loading);
     }, [activeServerSnapshot.serverId, allMachines.length, machineListStatusByServerId, managedInventory.loading]);
 
-    // The created machines have not answered once yet (a re-read keeps its last answer): a list that drew its
-    // groups now would add "Created by Happier" and change its counts when they land.
-    const managedFirstAnswerPending = managedInventory.loading
-        && Object.values(managedInventory.entries).every(entry => entry?.asOf === undefined);
+    const managedFirstAnswerPending = managedInventory.firstAnswerPending;
 
     const machineRows = React.useMemo(() => {
         return activeSelectionMachineGroups.visibleMachineGroups.flatMap((group) =>
