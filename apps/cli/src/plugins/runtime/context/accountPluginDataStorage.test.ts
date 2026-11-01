@@ -37,6 +37,7 @@ import type { StoredCredentials } from '@/persistence';
 import {
     createAccountPluginDataStorageHost,
     type AccountPluginDataHttpClient,
+    type AccountPluginDataStorageHostDependencies,
     type PluginAccountCollectionWatchInvalidation,
 } from './accountPluginDataStorage';
 import { publishPluginAccountAvailabilityChanges, publishPluginAccountCollectionWatchInvalidation, retirePluginAccountCollectionWatchScope } from './pluginAccountSettingsChangeBroker';
@@ -1307,6 +1308,7 @@ describe('Account plugin Data storage host', () => {
         });
 
         function claimingHost(params: Readonly<{
+            writerClaims?: AccountPluginDataStorageHostDependencies['writerClaims'];
             contracts?: readonly NormalizedPluginAccountCollectionContractV1[];
             resolveReleaseLessDeclaration?: (pluginId: string) => ParsedPluginManifestV2 | null;
             resolveReleaseLessCollectionMigrations?: () => Promise<import('@happier-dev/plugin-sdk').PluginAccountCollectionMigrationRuntimeProjection>;
@@ -1314,6 +1316,7 @@ describe('Account plugin Data storage host', () => {
             post: AccountPluginDataHttpClient['post'];
         }>) {
             const host = createAccountPluginDataStorageHost({
+                ...(params.writerClaims ? { writerClaims: params.writerClaims } : {}),
                 contracts: params.contracts ?? [admitted],
                 readCredentials: async () => plainCredentials,
                 isCurrentAccount: () => true,
@@ -1400,6 +1403,9 @@ describe('Account plugin Data storage host', () => {
                 })]);
                 expect(records).toContainEqual(['[external-action-stage]', expect.objectContaining({
                     stage: 'collection.writer_claim.start', claimAttemptId: claimId, claimAbsent: true,
+                    pluginId: PLUGIN_ID, claimOccurrenceId: '1', claimProducerPid: process.pid,
+                    claimProducerKind: 'cli',
+                    collectionPreparationTriggerKind: 'collection-operation',
                 })]);
                 expect(records).toContainEqual(['[external-action-stage]', expect.objectContaining({
                     rootRequestId: requestId, stage: 'collection.http.get.end', httpStatus: 200,
@@ -1573,6 +1579,50 @@ describe('Account plugin Data storage host', () => {
             await expect(bind().collection(collectionDefinition).get('task-1')).rejects.toMatchObject({
                 code: failure === '503-with-read-refusal' ? 'collection_unavailable' : 'plugin_account_storage_unavailable',
             });
+        });
+
+        it('sends no extra claims for unchanged host re-activations and exactly one for a changed declaration', async () => {
+            const writerClaims: NonNullable<AccountPluginDataStorageHostDependencies['writerClaims']> = new Map();
+            let manifest = declaredManifest;
+            let claims = 0;
+            const reactivate = async (occurrenceId: string, declaration = manifest) => {
+                const bind = claimingHost({ writerClaims,
+                    resolveReleaseLessDeclaration: () => declaration,
+                    scopeKey: () => 'reactivation-account',
+                    post: async url => {
+                        if (url === CLAIM_URL) { claims += 1; return { status: 200, data: {} }; }
+                        return { status: 200, data: { row: null, absenceEpoch: 0 } };
+                    },
+                });
+                await expect(bind(occurrenceId).collection(collectionDefinition).get('task-1')).resolves.toBeNull();
+            };
+            await reactivate('first');
+            expect(claims).toBe(1);
+            for (let index = 0; index < 20; index += 1) {
+                manifest = PluginManifestV2Schema.parse(declaredManifest);
+                await reactivate(`unchanged-${index}`);
+            }
+            expect(claims).toBe(1);
+            await Promise.all(Array.from({ length: 10 }, (_, index) => reactivate(
+                `concurrent-${index}`, PluginManifestV2Schema.parse(declaredManifest),
+            )));
+            expect(claims).toBe(1);
+            manifest = PluginManifestV2Schema.parse({ ...declaredManifest, version: '1.5.0',
+                contributes: { ...declaredManifest.contributes, accountCollections: [{ ...contribution, schemaVersion: 2 }] },
+            });
+            await reactivate('changed');
+            expect(claims).toBe(2);
+            await reactivate('changed-again');
+            expect(claims).toBe(2);
+            // Independent hosts still perform their own first admission.
+            const independent = claimingHost({ resolveReleaseLessDeclaration: () => manifest,
+                scopeKey: () => 'reactivation-account', post: async url => {
+                    if (url === CLAIM_URL) { claims += 1; return { status: 200, data: {} }; }
+                    return { status: 200, data: { row: null, absenceEpoch: 0 } };
+                },
+            });
+            await expect(independent().collection(collectionDefinition).get('task-1')).resolves.toBeNull();
+            expect(claims).toBe(3);
         });
 
         it('reclaims a refused declaration only when its declaration, occurrence or Account changes', async () => {

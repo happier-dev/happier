@@ -848,10 +848,13 @@ already-admitted facts prepare that snapshot without another schema admission.
 First-publication conflicts compare the prepared facts structurally; no
 per-object admission cache or cached signing string determines agreement.
 
-A successful Collection writer claim is retained for its manifest and invoking
-occurrence/Account lifetime. An unrelated change-stream reset is not a new
-writer declaration. Every read/write still passes server authorization; refused
-claims can retry on availability hints, and transient failures remain retryable.
+A successful Collection writer claim is retained for its declaration and live
+Account across a daemon's registry replacements and plugin re-activations. Equal
+rebuilt manifests reuse that admission; a changed declaration or independent host
+claims anew. An unrelated change-stream reset is not a new writer declaration.
+Refusals retain their occurrence/Account recovery inputs and can retry on
+availability hints; transient failures remain retryable. Every read/write still
+passes server authorization. This is unreleased 0.3 development behavior.
 
 `definePlugin(...).activateAccount` exports the same `activate(api)` ABI, limited
 to the declared Account Action ids for that artifact/export. Its context exposes

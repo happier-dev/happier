@@ -52,6 +52,7 @@ import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedService
 import { readObservedAccountEncryptionCurrentness, waitForObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { readStoredCredentials, type Credentials, type StoredCredentials } from '@/persistence';
+import { configuration } from '@/configuration';
 import {
     getActiveAccountSettingsSnapshot,
     getActiveAccountSettingsSnapshotLifetimeToken,
@@ -60,7 +61,9 @@ import { requireAccountSettingsEncryptionCredentials } from '@/settings/accountS
 import { resolveAccountSettingsHttpBaseUrl } from '@/settings/accountSettings/resolveAccountSettingsHttpBaseUrl';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
-import { runTracedExternalActionInnerStage, traceExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
+import { serializeCanonicalPluginManifest } from '@/plugins/manifest/serialize';
+import type { AccountPluginWriterClaims } from './accountWriterClaims';
+import { runTracedExternalActionInnerStage, traceExternalActionInnerStage, type ExternalActionInnerDiagnostic } from '@/daemon/externalActions/externalActionPhase';
 
 import type { StablePluginAccountStorageHost } from './storage';
 import {
@@ -90,6 +93,8 @@ export type AccountPluginDataHttpClient = Readonly<{
  * registry; callers can only replace the authenticated Account/system port.
  */
 export type AccountPluginDataStorageHostDependencies = Readonly<{
+    /** The daemon retains the existing claim results across registry/host replacement. */
+    writerClaims?: AccountPluginWriterClaims;
     readCredentials?: () => Promise<StoredCredentials | null>;
     isCurrentAccount?: (credentials: StoredCredentials) => boolean | Promise<boolean>;
     resolveAccountScopeKey?: () => string | null;
@@ -117,8 +122,8 @@ export type AccountPluginDataStorageHostDependencies = Readonly<{
      * and that declares Account-scoped contributions. Only such a plugin
      * claims a release-less Account intent with it; a managed portable
      * install is selected by the present user through its release.
-     * The admitted occurrence owns a stable manifest reference; replacing it
-     * denotes a new declaration, independently of code-byte identity.
+     * Equal declarations rebuilt by reload keep their successful claim;
+     * a changed declaration is admitted independently of code-byte identity.
      */
     resolveReleaseLessDeclaration?: (pluginId: string) => CanonicalPluginManifest | null;
     /** The exact declaring module, loaded by the existing activation/source owner. */
@@ -636,16 +641,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
     const resolveServerFeaturesSnapshot = params.resolveServerFeaturesSnapshot;
     const subscribeChanges = params.subscribeChanges ?? subscribePluginAccountCollectionWatchInvalidation;
     const resolveReleaseLessDeclaration = params.resolveReleaseLessDeclaration ?? (() => null);
-    type WriterClaim = Readonly<{
-        manifest: CanonicalPluginManifest;
-        encodedClaim: string | null;
-        occurrenceId: string | undefined;
-        accountLifetimeToken: number;
-        availabilityChangeKey: string;
-        diagnosticClaimAttemptId?: string;
-        result: Promise<PluginError | null>;
-    }>;
-    const writerClaimsByScope = new Map<string, WriterClaim>();
+    const writerClaimsByScope: AccountPluginWriterClaims = params.writerClaims ?? new Map();
 
     const readKnownCollectionLimits = (): PluginDataCollectionsCapabilities | undefined => {
         try {
@@ -830,6 +826,8 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
         const ensureWriterClaim = async (
             credentials: StoredCredentials,
             operationSignal?: AbortSignal,
+            prepareCollections = true,
+            triggerKind: NonNullable<ExternalActionInnerDiagnostic['collectionPreparationTriggerKind']> = 'collection-operation',
         ): Promise<void> => {
             const manifest = resolveReleaseLessDeclaration(lifecycle.pluginId);
             const scopeKey = currentAccountScopeKey();
@@ -837,6 +835,24 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             const key = `${scopeKey}\u0000${lifecycle.pluginId}`;
             const availabilityChangeKey = readPluginAccountAvailabilityChangeKey(scopeKey, lifecycle.pluginId);
             let claim = writerClaimsByScope.get(key);
+            // Reload replaces storage hosts and may reparse an unchanged manifest.
+            // Successful admission belongs to the declaration and live Account,
+            // not the executable occurrence. Refusals keep their recovery inputs.
+            while (claim && claim.accountLifetimeToken === lifecycle.accountLifetimeToken
+                && (claim.manifest !== manifest || claim.occurrenceId !== lifecycle.occurrenceId)
+                && (claim.manifest === manifest
+                    || serializeCanonicalPluginManifest(claim.manifest) === serializeCanonicalPluginManifest(manifest))) {
+                const retained = claim;
+                const refusal = await retained.result;
+                await assertBoundCurrent(lifecycle, operationSignal);
+                claim = writerClaimsByScope.get(key);
+                if (claim !== retained) continue;
+                if (refusal === null) {
+                    claim = { ...retained, manifest, occurrenceId: lifecycle.occurrenceId };
+                    writerClaimsByScope.set(key, claim);
+                }
+                break;
+            }
             let availabilityRefused = false;
             while (claim && claim.manifest === manifest
                 && claim.occurrenceId === lifecycle.occurrenceId
@@ -856,12 +872,17 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 || claim.occurrenceId !== lifecycle.occurrenceId
                 || claim.accountLifetimeToken !== lifecycle.accountLifetimeToken
                 || availabilityRefused) {
-                const encodedClaim = claim?.manifest === manifest ? claim.encodedClaim : serializeRequestBody({ manifest });
+                const encodedClaim = serializeRequestBody({ manifest });
                 // A background publication can start the promise another Action later awaits.
                 // This diagnostic-only id joins those records without exposing claim inputs.
                 const diagnosticClaimAttemptId = process.env.HAPPIER_WEB_LATENCY_TRACE === '1' ? randomUUID() : undefined;
                 traceExternalActionInnerStage('collection.writer_claim.start', {
                     ...(diagnosticClaimAttemptId ? { claimAttemptId: diagnosticClaimAttemptId } : {}),
+                    pluginId: lifecycle.pluginId,
+                    claimOccurrenceId: lifecycle.occurrenceId,
+                    claimProducerPid: process.pid,
+                    claimProducerKind: configuration.isDaemonProcess ? 'daemon' : 'cli',
+                    collectionPreparationTriggerKind: triggerKind,
                     claimAbsent: claim === undefined,
                     declarationChanged: claim !== undefined && claim.manifest !== manifest,
                     occurrenceChanged: claim !== undefined && claim.occurrenceId !== lifecycle.occurrenceId,
@@ -929,7 +950,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     if (writerClaimsByScope.get(key)?.result === result) writerClaimsByScope.delete(key);
                     return null;
                 });
-                claim = { manifest, encodedClaim, occurrenceId: lifecycle.occurrenceId,
+                claim = { manifest, occurrenceId: lifecycle.occurrenceId, preparesCollections: prepareCollections,
                     accountLifetimeToken: lifecycle.accountLifetimeToken, availabilityChangeKey, result,
                     ...(diagnosticClaimAttemptId ? { diagnosticClaimAttemptId } : {}) };
                 writerClaimsByScope.set(key, claim);
@@ -993,7 +1014,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 accountLifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
             };
             const context = createBoundRequestContext(lifecycle);
-            await context.ensureWriterClaim(await context.currentCredentials());
+            await context.ensureWriterClaim(await context.currentCredentials(), undefined, true, 'declaration-publication');
         },
         async retireCollectionMigrationCandidate(input): Promise<void> {
             let binding: PluginCollectionCandidatePreparationBindingV1;

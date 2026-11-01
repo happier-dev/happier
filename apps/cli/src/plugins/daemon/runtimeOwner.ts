@@ -204,6 +204,12 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   /** Authenticated server boundary used by registry generation retirement. */
   generationCustodyRetirement?: PluginGenerationCustodyRetirementRemoteDependencies;
 }>): DaemonPluginRuntimeOwner {
+  // A registry reload changes executable occurrences, not this host's prior
+  // Account declaration admissions. All replacement Data hosts use this map.
+  const accountStorageDependencies: AccountPluginDataStorageHostDependencies = {
+    ...params.accountStorageDependencies,
+    writerClaims: params.accountStorageDependencies?.writerClaims ?? new Map(),
+  };
   // The controller owns this stable target-local observer across cold startup
   // and prepared registry replacement. Runtime construction only consumes it.
   const targetedContributions =
@@ -299,9 +305,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     ...(params.resolveSessionResourceAccess
       ? { resolveSessionResourceAccess: params.resolveSessionResourceAccess }
       : {}),
-    ...(params.accountStorageDependencies
-      ? { accountStorageDependencies: params.accountStorageDependencies }
-      : {}),
+    accountStorageDependencies,
     ...(params.resolveServerFeaturesSnapshot
       ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot }
       : {}),
@@ -790,9 +794,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
             ...(params.resolveSessionResourceAccess
               ? { resolveSessionResourceAccess: params.resolveSessionResourceAccess }
               : {}),
-            ...(params.accountStorageDependencies
-              ? { accountStorageDependencies: params.accountStorageDependencies }
-              : {}),
+            accountStorageDependencies,
             ...(params.resolveServerFeaturesSnapshot
               ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot }
               : {}),

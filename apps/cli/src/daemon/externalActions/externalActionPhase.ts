@@ -11,6 +11,11 @@ const innerStageContext = new AsyncLocalStorage<Readonly<{ actionId: string; roo
 export type ExternalActionInnerDiagnostic = Readonly<{
   invocationId?: string;
   claimAttemptId?: string;
+  pluginId?: string;
+  claimOccurrenceId?: string;
+  claimProducerPid?: number;
+  claimProducerKind?: 'daemon' | 'cli';
+  collectionPreparationTriggerKind?: 'declaration-publication' | 'collection-operation' | 'explicit-candidate';
   claimAbsent?: boolean;
   declarationChanged?: boolean;
   occurrenceChanged?: boolean;

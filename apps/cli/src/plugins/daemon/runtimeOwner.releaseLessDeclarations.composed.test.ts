@@ -106,7 +106,12 @@ describe('daemon release-less declaration publication', () => {
             ]));
             await vi.waitFor(() => expect(events, JSON.stringify(diagnostics.mock.calls)).toContain('materializations'));
             if (accountPluginEnabled) {
-                await vi.waitFor(() => expect(claims).toEqual([{ manifest }]));
+                // The serving declaration includes admission's schema projection;
+                // the author module can differ from the bundled locator snapshot.
+                const publishedManifest = runtime.readReleaseLessMaterializations?.()
+                    .find(entry => entry.pluginId === manifest.id)?.declaredManifest;
+                expect(publishedManifest).toBeDefined();
+                await vi.waitFor(() => expect(claims).toEqual([{ manifest: publishedManifest }]));
                 expect(events.indexOf('lima-claim')).toBeGreaterThan(events.indexOf('materializations'));
             } else expect(claims).toEqual([]);
             expect(controller.getState().activeRegistry?.activatedPluginIds.has(manifest.id)).toBe(false);
@@ -132,6 +137,11 @@ describe('daemon release-less declaration publication', () => {
             expect(controller.getState().activeRegistry?.contributes.pluginEnablementById?.[manifest.id])
                 .toEqual({ accountEnabled: accountPluginEnabled, machineEnabled: true, enabled: accountPluginEnabled });
             expect(controller.getState().activeRegistry?.contributes.pluginDeclarations?.some(plugin => plugin.pluginId === manifest.id)).toBe(accountPluginEnabled);
+            await controller.getState().activeRegistry?.claimReleaseLessDeclarations();
+            // Disable/re-enable rebuilds the real registry and storage host. The
+            // unchanged declaration keeps this daemon's successful admission.
+            expect(claims).toHaveLength(1);
+            expect(claims[0]).toMatchObject({ manifest: { id: manifest.id, version: manifest.version } });
             retirePluginAccountCollectionWatchScope('another-account');
             retirePluginAccountCollectionWatchScope(resolveAccountSettingsScopeKey(credentials));
         } finally {
