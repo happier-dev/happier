@@ -18,6 +18,13 @@ const SCANNER_SOURCES: readonly PresentationSource[] = (['idle', 'requesting', '
 const TERMINAL_FAILURE_PHASES = new Set(['expired', 'invalid_request', 'update_required', 'partial_commit']);
 
 describe('resolveHomeEnrollmentPresentation', () => {
+    it('keeps invalid and expired links distinct from an unavailable sign-in method', () => {
+        const invalid = resolveHomeEnrollmentPresentation({ kind: 'scanner', phase: 'idle', result: 'invalid_request' });
+        const expired = resolveHomeEnrollmentPresentation({ kind: 'scanner', phase: 'idle', result: 'expired' });
+        expect(invalid).toMatchObject({ phase: 'invalid_request', primaryTranslationKey: 'terminal.invalidConnectionLinkDescription', activity: false });
+        expect(expired).toMatchObject({ phase: 'expired', primaryTranslationKey: 'connect.pairingQrExpired', activity: false });
+    });
+
     it('projects every surface phase onto the one semantic phase model', () => {
         const projected = [...DISPLAY_SOURCES, ...SCANNER_SOURCES].map((source) => [
             source, resolveHomeEnrollmentPresentation(source).phase,

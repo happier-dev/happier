@@ -36,7 +36,8 @@ export type HomeEnrollmentPresentationModel = Readonly<{
         | 'connect.unsupportedEnrollmentResponseBody'
         | 'connect.updateRequiredBody'
         | 'connect.wrongHomeBody'
-        | 'errors.operationFailed';
+        | 'errors.operationFailed'
+        | 'terminal.invalidConnectionLinkDescription';
     contextualFacts: 'none' | 'target' | 'target_and_expiry' | 'target_and_requester';
     recoveryAction: 'none' | 'automatic_retry' | 'retry' | 'create_new_qr';
     liveRegion: 'none' | 'polite' | 'assertive';
@@ -108,7 +109,7 @@ const TERMINAL_SCANNER_PRESENTATIONS: Readonly<Record<
     },
     invalid_request: {
         phase: 'invalid_request',
-        primaryTranslationKey: 'connect.scanComputerQrUnavailableBody',
+        primaryTranslationKey: 'terminal.invalidConnectionLinkDescription',
         contextualFacts: 'target',
         recoveryAction: 'retry',
         liveRegion: 'assertive',
