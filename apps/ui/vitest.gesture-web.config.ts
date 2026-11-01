@@ -18,6 +18,7 @@ const config = mergeConfig(base, {
     },
     test: {
         environment: 'jsdom',
+        setupFiles: [resolve('./sources/dev/testkit/runtime/gestureWebSetup.ts')],
         server: { deps: { inline: [/react-native-gesture-handler/, /react-native-web/] } },
     },
 });

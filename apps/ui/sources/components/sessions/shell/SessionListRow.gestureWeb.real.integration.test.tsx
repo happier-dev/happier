@@ -30,7 +30,6 @@ import { presentPaneDropAdmission } from '@/components/appShell/splitCanvas/pres
 import { t } from '@/text';
 import { useSessionListRowMoveActionHandlers } from './useSessionListRowMoveActionHandlers';
 
-vi.mock('react-native', async () => await vi.importActual('react-native-web'));
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     const { StyleSheet } = await vi.importActual<typeof import('react-native')>('react-native-web');
