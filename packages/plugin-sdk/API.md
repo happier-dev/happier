@@ -858,6 +858,8 @@
 | `./agents/runtime` | `AgentSessionCatalogResult` | type | daemon |
 | `./agents/runtime` | `AgentSessionCompactRequest` | type | daemon |
 | `./agents/runtime` | `AgentSessionCompactResult` | type | daemon |
+| `./agents/runtime` | `AgentSessionCompactionCapability` | type | daemon |
+| `./agents/runtime` | `AgentSessionCompactionIdleCapability` | type | daemon |
 | `./agents/runtime` | `AgentSessionConfigurationResult` | type | daemon |
 | `./agents/runtime` | `AgentSessionConfigurationSnapshot` | type | daemon |
 | `./agents/runtime` | `AgentSessionConfigurationUpdate` | type | daemon |
@@ -1032,9 +1034,11 @@
 | `./agents/runtime` | `HandoffSurfaceV1` | type | daemon |
 | `./agents/runtime` | `ListCheckpointsRequestV1` | type | daemon |
 | `./agents/runtime` | `McpToolIdentityV1` | type | daemon |
+| `./agents/runtime` | `PROMPT_CACHE_DURATIONS` | value | daemon |
 | `./agents/runtime` | `PluginAgentAcpMcpInputPolicyV2` | type | daemon |
 | `./agents/runtime` | `PluginAgentAcpNativeSessionMcpConfigV2` | type | daemon |
 | `./agents/runtime` | `PluginAgentAcpSkillsSessionDeliveryV2` | type | daemon |
+| `./agents/runtime` | `PluginAgentSessionCompactionCapabilityV2` | type | daemon |
 | `./agents/runtime` | `ProviderBindingCanonicalJsonValue` | type | any |
 | `./agents/runtime` | `ProviderBoundModelRef` | type | daemon |
 | `./agents/runtime` | `ProviderTranscriptDispatchRequestV1` | type | daemon |
@@ -1122,6 +1126,7 @@
 | `./agents/runtime` | `parseSessionPermissionToolIdentifier` | value | daemon |
 | `./agents/runtime` | `readAgentStartupFailureCode` | value | daemon |
 | `./agents/runtime` | `resolveAcpToolPermissionPolicy` | value | daemon |
+| `./agents/runtime` | `resolvePromptCacheLastUseAtMs` | value | any |
 | `./agents/runtime` | `resolveRecoverableTurnFailureRetryDecision` | value | daemon |
 | `./agents/runtime` | `resolveRecoverableTurnFailureSecondFailure` | value | daemon |
 | `./agents/runtime` | `resolveTerminalPromptWriteTimeoutMs` | value | daemon |

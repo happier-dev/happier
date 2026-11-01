@@ -446,7 +446,53 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "inFlightSteerSupported": true,
       "terminalPromptInjectionSupported": true
     },
+    "runtimeKinds": {
+      "byKind": {
+        "agentSdk": {
+          "kind": "agentSdk",
+          "overrides": {
+            "sessionCapabilities": {
+              "compaction": {
+                "events": true,
+                "idle": {
+                  "defaultEnabled": true,
+                  "defaultMinContextTokens": 200000,
+                  "mode": "host"
+                },
+                "manual": true
+              }
+            }
+          }
+        },
+        "unifiedTerminal": {
+          "kind": "unifiedTerminal",
+          "overrides": {
+            "sessionCapabilities": {
+              "compaction": {
+                "events": true,
+                "idle": {
+                  "defaultEnabled": true,
+                  "defaultMinContextTokens": 200000,
+                  "mode": "native",
+                  "nativeHonorsMinimum": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "defaultKind": "agentSdk"
+    },
     "sessionCapabilities": {
+      "compaction": {
+        "events": true,
+        "idle": {
+          "defaultEnabled": true,
+          "defaultMinContextTokens": 200000,
+          "mode": "native",
+          "nativeHonorsMinimum": true
+        }
+      },
       "sessionFork": {
         "conversation": "unsupported",
         "fromMessage": "unsupported"
@@ -1383,6 +1429,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "overrides": {
             "localControl": null,
             "sessionCapabilities": {
+              "compaction": null,
               "sessionFork": {
                 "conversation": "unsupported"
               },
@@ -1410,6 +1457,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
               "vendorResume": "unsupported"
             },
             "sessionCapabilities": {
+              "compaction": null,
               "sessionFork": {
                 "conversation": "unsupported"
               },
@@ -1427,6 +1475,15 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "defaultKind": "appServer"
     },
     "sessionCapabilities": {
+      "compaction": {
+        "events": true,
+        "idle": {
+          "defaultEnabled": false,
+          "defaultMinContextTokens": 180000,
+          "mode": "host"
+        },
+        "manual": true
+      },
       "sessionFork": {
         "conversation": "supported",
         "fromMessage": "unsupported"
@@ -3473,6 +3530,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "overrides": {
             "localControl": null,
             "sessionCapabilities": {
+              "compaction": null,
               "usageLimitRecovery": {
                 "checkNow": "unsupported"
               }
@@ -3489,6 +3547,15 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "defaultKind": "server"
     },
     "sessionCapabilities": {
+      "compaction": {
+        "events": true,
+        "idle": {
+          "defaultEnabled": false,
+          "defaultMinContextTokens": 100000,
+          "mode": "host"
+        },
+        "manual": true
+      },
       "sessionFork": {
         "conversation": "supported",
         "fromMessage": "unsupported"
@@ -3730,6 +3797,15 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "terminalPromptInjectionSupported": false
     },
     "sessionCapabilities": {
+      "compaction": {
+        "events": true,
+        "idle": {
+          "defaultEnabled": false,
+          "defaultMinContextTokens": 100000,
+          "mode": "host"
+        },
+        "manual": true
+      },
       "sessionFork": {
         "conversation": "unsupported",
         "fromMessage": "unsupported"
