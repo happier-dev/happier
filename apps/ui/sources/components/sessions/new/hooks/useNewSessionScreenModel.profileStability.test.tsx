@@ -7,6 +7,7 @@ import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionO
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 
 // The hook does not render Markdown; this patched native package is an external rendering boundary.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
@@ -45,15 +46,15 @@ describe('remembered launch profile through real New Session state', () => {
             expect(storage.getState().isDataReady).toBe(true);
             expect(storage.getState().settingsScope).toEqual(scope);
         });
-        const machine = createMachineFixture({ id: 'studio', active: true, activeAt: Date.now() });
+        const machine = createMachineFixture({ id: 'studio', active: true, activeAt: Date.now(), storageMode: 'plain' });
         storage.setState({ profileScope: scope, settingsScope: scope,
-            settings: { ...settingsDefaults, useProfiles: true, useEnhancedSessionWizard: false },
-            machines: { studio: machine }, machineListByServerId: { [savedHome.id]: [machine] },
-            machineListStatusByServerId: { [savedHome.id]: 'idle' } });
+            settings: { ...settingsDefaults, useProfiles: true, useEnhancedSessionWizard: false } });
+        storage.getState().applyMachines([machine], false, { sourceServerId: savedHome.id });
+        observeMachinePresenceForTest(scope, ['studio']);
         storage.getState().applyAuthoringMemory({ lastUsedProfile: 'deleted-profile' });
         // A cold Home can reuse this current projection without demanding any new Machine work.
         const projection = await renderHook(() => useDaemonMergedProjectionInputs({ machineId: 'studio', serverId: savedHome.id }));
-        await act(async () => { await vi.waitFor(() => expect(projection.getCurrent().phase).toBe('ready')); });
+        await act(async () => { await vi.waitFor(() => expect(projection.getCurrent().phase, projection.getCurrent().failureReason).toBe('ready')); });
         const host = { params: { machineId: 'studio', backendTargetKey: explicitTargetKey }, targetServerId: savedHome.id,
             setParams: () => {}, openDraft: () => {}, onHandedOff: () => {}, demanded: false };
         const wrapper = surface === 'cold-home' ? ({ children }: React.PropsWithChildren) =>
@@ -87,6 +88,14 @@ describe('remembered launch profile through real New Session state', () => {
         });
         expect(storage.getState().settings.sessionThinkingDisplayMode).not.toBe(previousThinkingDisplay);
         expect(renders - settledRenders).toBe(0);
+        await act(async () => {
+            storage.getState().applySettingsLocal({ newSessionWizardColumnsEnabled: true });
+        });
+        expect(renders - settledRenders).toBe(0);
+        await act(async () => {
+            storage.getState().applySettingsLocal({ newSessionWizardSectionPresentationV1: { machines: 'dropdown' } });
+        });
+        expect(renders - settledRenders).toBe(0);
         for (const backendId of ['codex', 'claude', 'codex']) {
             await act(async () => storage.getState().applySettingsLocal({
                 lastUsedBackendTarget: { kind: 'backend', backendId },
@@ -99,7 +108,22 @@ describe('remembered launch profile through real New Session state', () => {
             storage.getState().applySettingsLocal({ useEnhancedSessionWizard: true });
         });
         expect(model.getCurrent().variant).toBe(surface === 'route' ? 'wizard' : 'simple');
-        expect(renders).toBeGreaterThan(settledRenders);
+        if (surface === 'cold-home') expect(renders - settledRenders).toBe(0);
+        if (surface === 'route') {
+            expect(renders).toBeGreaterThan(settledRenders);
+            const wizard = model.getCurrent();
+            expect(wizard.variant === 'wizard' && wizard.wizardProps.useColumnLayout).toBe(true);
+            expect(wizard.variant === 'wizard' && wizard.wizardProps.sectionPresentation?.machines).toBe('dropdown');
+            const beforeLayoutChange = renders;
+            await act(async () => storage.getState().applySettingsLocal({
+                newSessionWizardColumnsEnabled: false,
+                newSessionWizardSectionPresentationV1: { machines: 'list' },
+            }));
+            const updated = model.getCurrent();
+            expect(updated.variant === 'wizard' && updated.wizardProps.useColumnLayout).toBe(false);
+            expect(updated.variant === 'wizard' && updated.wizardProps.sectionPresentation?.machines).toBe('list');
+            expect(renders).toBeGreaterThan(beforeLayoutChange);
+        }
         await model.unmount();
         await projection.unmount();
     });

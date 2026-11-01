@@ -739,11 +739,16 @@ export function useNewSessionScreenModel(input?: Readonly<{
     // Control A (false): Simpler AgentInput-driven layout
     // Variant B (true): Enhanced profile-first wizard with sections
     // The wizard is a full page; an embedding host (Home) always shows the composer.
-    const useEnhancedSessionWizardSetting = useSetting('useEnhancedSessionWizard');
-    const useEnhancedSessionWizard = embeddedInHost ? false : useEnhancedSessionWizardSetting;
+    const useEnhancedSessionWizard = useSettingsSelector(React.useCallback(settings => (
+        !embeddedInHost && settings.useEnhancedSessionWizard
+    ), [embeddedInHost]));
     const newSessionPresentationModeV1 = useSetting('newSessionPresentationModeV1');
-    const newSessionWizardSectionPresentationV1 = useSetting('newSessionWizardSectionPresentationV1');
-    const newSessionWizardColumnsEnabled = useSetting('newSessionWizardColumnsEnabled');
+    const newSessionWizardSectionPresentationV1 = useSettingsSelector(React.useCallback(settings => (
+        useEnhancedSessionWizard ? settings.newSessionWizardSectionPresentationV1 : undefined
+    ), [useEnhancedSessionWizard]));
+    const newSessionWizardColumnsEnabled = useSettingsSelector(React.useCallback(settings => (
+        useEnhancedSessionWizard && settings.newSessionWizardColumnsEnabled
+    ), [useEnhancedSessionWizard]));
     const shouldBottomAnchor = resolveNewSessionShouldBottomAnchor({
         mode: newSessionPresentationModeV1,
         platformOs: Platform.OS,

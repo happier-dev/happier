@@ -226,22 +226,26 @@ function buildFilterController(
     } as unknown as SessionListViewFilterController;
 }
 
+const { useSessionListViewStateFromPaneState } = await import('./useSessionListViewState');
+
 async function renderMainListViewState(
     state: SessionListQueryHomeState,
     filterController = buildFilterController(),
     serverId = HOME,
 ) {
-    const { useSessionListViewStateFromPaneState } = await import('./useSessionListViewState');
     const observed: {
+        renders: number;
         nodeIds: readonly string[];
         searchScopeLabel?: string;
         filterControl?: React.ReactNode;
         onSearchEverything?: (query: string) => void;
     } = {
+        renders: 0,
         nodeIds: [],
     };
 
     function Probe() {
+        observed.renders += 1;
         const viewState = useSessionListViewStateFromPaneState(
             'all',
             buildPaneState(state, serverId),
@@ -296,6 +300,20 @@ describe('main-list contextual search structural membership', () => {
         storage.getState().clearSessionListRowsForServerScope(HOME);
         storage.getState().clearSessionListRowsForServerScope(TEAM_HOME);
         standardCleanup();
+    });
+
+    it('does not render for unrelated Profile changes and still follows Account identity', async () => {
+        const initialProfile = storage.getState().profile;
+        const { observed } = await renderMainListViewState(homeState(APPLIED_QUERY_KEY, ['in-view']));
+        try {
+            const before = observed.renders;
+            await act(async () => storage.setState({ profile: { ...initialProfile, firstName: 'Updated' } }));
+            expect(observed.renders - before).toBe(0);
+            await act(async () => storage.setState({ profile: { ...initialProfile, id: 'other-account' } }));
+            expect(observed.renders).toBeGreaterThan(before);
+        } finally {
+            await act(async () => storage.setState({ profile: initialProfile }));
+        }
     });
 
     it('keeps the filter control mounted when no selected Home serves filtered listing or Source', async () => {

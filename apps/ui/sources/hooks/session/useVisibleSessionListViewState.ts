@@ -13,6 +13,7 @@ import {
     useSessionListRowsByServerId,
     useSessionOrganizationProjections,
     useSetting,
+    useSettingsSelector,
     useActiveServerAccountScope,
 } from '@/sync/domains/state/storage';
 import { computeVisibleSessionListIndex } from '@/sync/domains/session/listing/computeVisibleSessionListIndex';
@@ -582,8 +583,9 @@ export function useVisibleSessionListViewState(
         if (!workflowRunsEnabled || !runServerId) return [];
         return workflowWindow.rows.flatMap((row) => row.summary ? [{ serverId: runServerId, summary: row.summary }] : []);
     }, [runServerId, workflowRunsEnabled, workflowWindow.rows]);
-    const accountHideInactiveSessions = useSetting('hideInactiveSessions');
-    const hideInactiveSessions = options.botsRoster === true ? false : accountHideInactiveSessions === true;
+    const hideInactiveSessions = useSettingsSelector(React.useCallback(settings => (
+        options.botsRoster === true ? false : settings.hideInactiveSessions === true
+    ), [options.botsRoster]));
     // Every Home whose membership was applied by the strict query already answered
     // `includeInactive` server-side, so an inactive row it returned is one the
     // server's attention predicate deliberately admitted. Homes still served by the

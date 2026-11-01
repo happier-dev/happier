@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsV2GetResponseSchema, CurrentCursorResponseSchema } from '@happier-dev/protocol';
 import { SessionListQueryV1Schema, type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
@@ -108,10 +109,27 @@ describe('ordinary list presentation for the opened Bots roster', () => {
         expect(renderedSessionIds(ordinary.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'ordinary']);
 
         const rosterOptions = { botsRoster: true as const };
-        const roster = await renderHook(() => useVisibleSessionListPaneState('all', rosterOptions));
+        let renders = 0;
+        const roster = await renderHook(() => {
+            renders += 1;
+            return useVisibleSessionListPaneState('all', rosterOptions);
+        });
         expect(renderedSessionIds(roster.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'inactive-bot']);
         expect(storage.getState().settings.hideInactiveSessions).toBe(true);
         expect(renderedSessionIds(ordinary.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'ordinary']);
+        const settledRenders = renders;
+        await act(async () => storage.getState().applySettingsLocal({ hideInactiveSessions: false }));
+        expect(renders - settledRenders).toBe(0);
+        expect(renderedSessionIds(ordinary.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'inactive-bot', 'ordinary']);
+        const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
+        await act(async () => {
+            storage.getState().applyServerScopedSessionListRows(serverId, [
+                createSessionListRenderableSessionFixture({ id: 'new-bot', active: true,
+                    metadata: { path: '/project', bot: { kind: 'bot' } } }),
+            ], { source: 'ordinary', mode: 'append' });
+        });
+        expect(renderedSessionIds(roster.getCurrent().visibleSessionListIndex)).toContain('new-bot');
+        expect(renders).toBeGreaterThan(settledRenders);
     });
 
     it('keeps the ordinary query cursor and truthful incomplete metadata coverage without publishing roster membership', async () => {

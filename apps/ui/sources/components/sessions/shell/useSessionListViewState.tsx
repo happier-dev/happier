@@ -583,7 +583,7 @@ export function useSessionListViewStateFromPaneState(
         replayEnabled: sessionReplayEnabled === true,
         executionRunsEnabled: executionRunsEnabled === true,
     }), [executionRunsEnabled, sessionForkReplaySettings, sessionReplayEnabled]);
-    const profile = useProfile();
+    const currentUserId = useProfile(profile => typeof profile?.id === 'string' ? profile.id : null);
     const draftScope = useActiveServerAccountScope();
     const navigateToSession = useNavigateToSession();
     const { openMoveSheet } = useSessionListMoveSheet();
@@ -594,7 +594,6 @@ export function useSessionListViewStateFromPaneState(
         uiFontScale,
         windowWidth,
     });
-    const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
     // The exact Homes this surface can present rows for. Resolved through the one
     // organization owner both here and in the index hook, so a legacy/ordinary corpus
     // cannot show a Home's rows while their organization state is never read.
