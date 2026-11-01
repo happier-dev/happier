@@ -122,7 +122,7 @@ export const APPROVAL_REQUEST_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'approval.request.create', executionPlacement: 'account', approvalPolicy: { control: true }, approval: {result: 'none'},
+    id: 'approval.request.create', executionPlacement: 'account', originalExecution: { accountRoot: 'allowed' }, approvalPolicy: { control: true }, approval: {result: 'none'},
     title: 'Create approval request',
     description: 'Create an approval request for another action to run.',
     safety: 'danger',
