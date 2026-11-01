@@ -68,6 +68,7 @@ import {
   type ConnectedServiceUsageSourceRecordRef,
 } from '../accountGroups/switching/buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
 import {
+  selectConnectedServiceAuthGroupCandidate,
   resolveConnectedServiceAuthGroupPriorityPrimaryProfileId,
   resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence,
   type ConnectedServiceAuthGroupMemberRuntimeState,
@@ -237,6 +238,7 @@ export type ConnectedServiceGroupQuotaProbeResult = Readonly<{
   requestedProfileCount: number;
   completedProfileCount: number;
   completedProfileIds: ReadonlyArray<string>;
+  deferredProfiles?: ReadonlyArray<Readonly<{ profileId: string; retryAtMs: number }>>;
   reason?: 'deadline_exceeded' | 'probe_unavailable';
   retryAtMs?: number;
 }>;
@@ -301,6 +303,7 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly quotaPersistenceMinFreshnessRefreshMs: number;
   private quotaFingerprintHmacKey: Uint8Array;
   private readonly authGroupSwitchCoordinator: AuthGroupSwitchCoordinator | null;
+  private readonly resolveRequiredModelIdsForGroup: ((input: Readonly<{ serviceId: ConnectedServiceId; groupId: string }>) => ReadonlyArray<string>) | null;
   private readonly consumeCommittedAuthGroupGeneration: ConsumeCommittedAuthGroupGeneration | null;
   private readonly softSwitchPolicyGuard: ConnectedServiceQuotaSoftSwitchPolicyGuard | null;
   private readonly sameAccountFanoutStrategyResolver: ConnectedServiceSameAccountFanoutStrategyResolver | null;
@@ -378,6 +381,7 @@ export class ConnectedServiceQuotasCoordinator {
     quotaPersistenceMinFreshnessRefreshMs?: number;
     quotaPersistenceMaxConsecutiveFailures?: number;
     authGroupSwitchCoordinator?: AuthGroupSwitchCoordinator | null;
+    resolveRequiredModelIdsForGroup?: (input: Readonly<{ serviceId: ConnectedServiceId; groupId: string }>) => ReadonlyArray<string>;
     consumeCommittedAuthGroupGeneration?: ConsumeCommittedAuthGroupGeneration | null;
     softSwitchPolicyGuard?: ConnectedServiceQuotaSoftSwitchPolicyGuard | null;
     sameAccountFanoutStrategyResolver?: ConnectedServiceSameAccountFanoutStrategyResolver | null;
@@ -439,6 +443,7 @@ export class ConnectedServiceQuotasCoordinator {
         : 5_000;
     this.sleepMs = params.sleepMs ?? defaultSleepMs;
     this.authGroupSwitchCoordinator = params.authGroupSwitchCoordinator ?? null;
+    this.resolveRequiredModelIdsForGroup = params.resolveRequiredModelIdsForGroup ?? null;
     this.consumeCommittedAuthGroupGeneration = params.consumeCommittedAuthGroupGeneration ?? null;
     this.softSwitchPolicyGuard = params.softSwitchPolicyGuard ?? null;
     this.sameAccountFanoutStrategyResolver = params.sameAccountFanoutStrategyResolver ?? null;
@@ -1598,6 +1603,25 @@ export class ConnectedServiceQuotasCoordinator {
         },
       };
     }
+    const selection = selectConnectedServiceAuthGroupCandidate({
+      ...switchState,
+      nowMs: now,
+      quotaFreshnessMs: this.quotaLifecycleFreshnessMs,
+      switchReason: 'soft_threshold',
+      requiredModelIds: this.resolveRequiredModelIdsForGroup?.(input),
+    });
+    if (!selection.selected) {
+      const retryAtMs = selection.excluded.reduce<number | null>((earliest, exclusion) => {
+        const retryAtMs = exclusion.retryAtMs;
+        return typeof retryAtMs === 'number' && retryAtMs > now
+          ? Math.min(earliest ?? retryAtMs, retryAtMs) : earliest;
+      }, null);
+      return {
+        status: 'no_eligible_target',
+        retryAfterMs: retryAtMs === null ? null : retryAtMs - now,
+        decisionTrace: selection.decisionTrace,
+      };
+    }
     if (sourceEvidence.status === 'above_threshold') {
       const primaryProfileId = switchState.policy.strategy === 'priority'
         && switchState.policy.autoRestorePrimaryWhenReset
@@ -1614,8 +1638,7 @@ export class ConnectedServiceQuotasCoordinator {
           sourceThresholdPercent: sourceEvidence.thresholdPercent,
           sourceProjected: false,
           decisionTrace: {
-            activeProfileId,
-            reason: 'primary_restore_evaluation',
+            ...selection.decisionTrace,
           },
         };
       }
@@ -1634,10 +1657,9 @@ export class ConnectedServiceQuotasCoordinator {
       sourceRemainingPercent: sourceEvidence.remainingPercent,
       sourceThresholdPercent: sourceEvidence.thresholdPercent,
       sourceProjected: sourceEvidence.projected === true,
-      decisionTrace: {
-        activeProfileId,
-        reason: 'source_at_or_below_threshold',
-      },
+      selectedProfileId: selection.selected.profileId,
+      selectedRemainingPercent: selection.selected.leastLimitedScore,
+      decisionTrace: selection.decisionTrace,
     };
   }
 
@@ -2989,7 +3011,7 @@ export class ConnectedServiceQuotasCoordinator {
       .map((profileId) => String(profileId ?? '').trim())
       .filter((profileId) => profileId.length > 0)));
     const completedProfileIdSet = new Set<string>();
-    let unavailable = false;
+    const deferredProfiles = new Map<string, number>();
     let retryAtMs: number | undefined;
     const deadlineAtMs = typeof input.deadlineAtMs === 'number' && Number.isFinite(input.deadlineAtMs)
       ? Math.max(0, Math.trunc(input.deadlineAtMs))
@@ -3014,6 +3036,9 @@ export class ConnectedServiceQuotasCoordinator {
       requestedProfileCount: profileIds.length,
       completedProfileCount: completedProfileIdSet.size,
       completedProfileIds: profileIds.filter((profileId) => completedProfileIdSet.has(profileId)),
+      ...(deferredProfiles.size > 0 ? {
+        deferredProfiles: Array.from(deferredProfiles, ([profileId, retryAtMs]) => ({ profileId, retryAtMs })),
+      } : {}),
       ...(reason ? { reason } : {}),
       ...(status === 'incomplete' && retryAtMs !== undefined ? { retryAtMs } : {}),
     });
@@ -3037,9 +3062,18 @@ export class ConnectedServiceQuotasCoordinator {
         return outcome;
       }
 
-      const accountMode = deadlineAtMs !== null
-        ? await this.api.getAccountEncryptionModeUncached?.({ signal: deadlineController.signal }) ?? 'unknown'
-        : await resolveConnectedServiceAccountMode(this.api);
+      let accountMode: ConnectedServiceAccountMode;
+      try {
+        accountMode = deadlineAtMs !== null
+          ? await this.api.getAccountEncryptionModeUncached?.({ signal: deadlineController.signal }) ?? 'unknown'
+          : await resolveConnectedServiceAccountMode(this.api);
+      } catch {
+        outcome = result('incomplete', deadlineExceeded() ? 'deadline_exceeded' : 'probe_unavailable');
+        logger.warn('[ConnectedServiceQuotas] Group quota probe account-mode read failed', {
+          serviceId, groupId, reason: outcome.reason,
+        });
+        return outcome;
+      }
       if (deadlineExceeded()) {
         outcome = result('incomplete', 'deadline_exceeded');
         return outcome;
@@ -3067,7 +3101,7 @@ export class ConnectedServiceQuotasCoordinator {
         const deferUntilBackoff = (): boolean => {
           const nextAllowedAt = this.failureStateByBindingKey.get(bindingKey)?.nextAllowedAt;
           if (nextAllowedAt === undefined || this.now() >= nextAllowedAt) return false;
-          unavailable = true;
+          deferredProfiles.set(profileId, nextAllowedAt);
           retryAtMs = Math.min(retryAtMs ?? nextAllowedAt, nextAllowedAt);
           return true;
         };
@@ -3216,8 +3250,8 @@ export class ConnectedServiceQuotasCoordinator {
         profileIds.length,
       );
       await Promise.all(Array.from({ length: workerCount }, () => worker()));
-      if (deadlineExceeded() || completedProfileIdSet.size !== profileIds.length) {
-        outcome = result('incomplete', deadlineExceeded() || !unavailable ? 'deadline_exceeded' : 'probe_unavailable');
+      if (deadlineExceeded() || completedProfileIdSet.size + deferredProfiles.size !== profileIds.length) {
+        outcome = result('incomplete', 'deadline_exceeded');
         return outcome;
       }
       outcome = result('complete');

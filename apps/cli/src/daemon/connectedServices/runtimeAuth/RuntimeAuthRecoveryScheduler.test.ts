@@ -84,6 +84,46 @@ async function settleRecoveryGeneration(input: Parameters<NonNullable<Parameters
 
 describe('RuntimeAuthRecoveryScheduler', () => {
   it.each([
+    { reason: 'deadline_exceeded', retryAtMs: undefined, expectedRetryAtMs: 33_000 },
+    { reason: 'probe_unavailable', retryAtMs: 90_000, expectedRetryAtMs: 90_000 },
+  ] as const)('retains classified probe incompleteness as a durable wait ($reason)', async ({ reason, retryAtMs, expectedRetryAtMs }) => {
+    let nowMs = 1_000;
+    const failure = classificationFor({ resetsAtMs: 604_800_000 });
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => nowMs, quotaFreshnessMs: 60_000,
+      loadState: async () => ({ serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'primary',
+        generation: 1, runtimeStateRevision: 0,
+        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+        members: ['primary', 'backup'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+        memberStatesByProfileId: new Map(),
+      }),
+      // Provider/server probe boundary has not produced a complete group observation.
+      probeQuotaSnapshotsForGroup: async ({ profileIds }) => ({ status: 'incomplete', reason,
+        requestedProfileCount: profileIds.length, completedProfileCount: 0, completedProfileIds: [],
+        ...(retryAtMs === undefined ? {} : { retryAtMs }),
+      }),
+      commitSwitch: async () => { throw new Error('Incomplete evidence must not commit'); },
+      applyGeneration: async () => { throw new Error('Incomplete evidence must not apply'); },
+    });
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => nowMs,
+      recover: async () => ({ status: 'switch_attempted', result: await coordinator.switchAfterClassifiedFailure({
+        serviceId: 'openai-codex', groupId: 'team', sessionId: 'probe-wait',
+        observedProfileId: 'primary', reason: 'usage_limit', resetsAtMs: failure.resetsAtMs,
+      }) }),
+    });
+    try {
+      await scheduler.enqueueHandlerFailure({ sessionId: 'probe-wait', classification: failure, switchesThisTurn: 0,
+        error: Object.assign(new Error('network unavailable'), { code: 'ECONNRESET' }) });
+      nowMs = 3_000;
+      const recoveryKey = buildRuntimeAuthRecoveryKey({ sessionId: 'probe-wait', ...failure });
+      await scheduler.wakeByKey({ recoveryKey, reason: 'manual' });
+      expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({
+        status: 'waiting', lastError: 'quota_proof_unavailable', nextRetryAtMs: expectedRetryAtMs,
+      });
+    } finally { scheduler.dispose(); }
+  });
+
+  it.each([
     { remainingPercent: 60, incomplete: false },
     { remainingPercent: 0, incomplete: false },
     { remainingPercent: 60, incomplete: true },

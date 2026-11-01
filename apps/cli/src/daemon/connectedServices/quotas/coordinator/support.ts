@@ -53,8 +53,6 @@ import {
   type ConnectedServiceUsageSourceRecordRef,
 } from '../../accountGroups/switching/buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
 import {
-  hasConnectedServiceAuthGroupCandidateEvidenceForSwitchReason,
-  isConnectedServiceAuthGroupSoftSwitchCandidateMeaningfullyBetter,
   resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence,
   selectConnectedServiceAuthGroupCandidate,
   type ConnectedServiceAuthGroupMemberRuntimeState,

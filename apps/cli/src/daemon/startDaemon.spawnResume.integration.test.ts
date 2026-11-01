@@ -29,7 +29,7 @@ import {
 import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { readPendingFirstInputFromEnv } from './spawn/pendingFirstInput';
 import type { ConnectedServicesMaterializationDiagnostic } from './connectedServices/materialize/providerMaterializerTypes';
-import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import { ConnectedServiceSpawnAuthGroupAuthorityError } from './connectedServices/resolveConnectedServiceAuthForSpawn';
 import { accountSettingsParse, isConnectedServiceUxDiagnosticSpawnErrorDetail } from '@happier-dev/protocol';
 import { UsageLimitRecoveryScheduler } from './connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
 import { RuntimeAuthRecoveryScheduler } from './connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
@@ -3644,7 +3644,9 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     let shutdownRequested = false;
     try {
       resolveConnectedServiceAuthForSpawnMock.mockRejectedValueOnce(
-        new ConnectedServiceAuthGroupQuotaProbeIncompleteError('deadline_exceeded'),
+        new ConnectedServiceSpawnAuthGroupAuthorityError({
+          kind: 'quota_proof_unavailable', serviceId: 'openai-codex', groupId: 'happier',
+        }),
       );
       const { startDaemon } = await import('./startDaemon');
       run = startDaemon();

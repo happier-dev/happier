@@ -475,6 +475,17 @@ by the response projection.
 
 ### Account-pool quota-limit selection (development)
 
+The development daemon's soft-switch target gate and live-session model exclusions
+use existing V1 member runtime state and group operations; they add no wire or
+persisted fields. For automatic active-member disable, the daemon commits the
+selector's replacement with the existing active-profile operation before disabling
+the former active member. Released server source at
+`22ac8263cfdbcdb845441b9044ff18199cf7652e` supports both operations. If no usable
+replacement exists, the runtime-state exclusion remains while physical disable
+waits. The server's priority fallback remains unchanged for manual disable,
+member/profile deletion, initial membership, and older daemons. This preserves
+their existing behavior without adding server-owned quota or model selection.
+
 `quotaLimitSelection` is optional in the V1 pool policy and absence means all
 provider-reported allowances. Updated clients author it only when the server
 advertises `connectedServices.poolQuotaLimitSelection`; `selected` always

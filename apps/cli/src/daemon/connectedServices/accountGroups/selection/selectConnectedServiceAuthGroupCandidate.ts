@@ -120,12 +120,15 @@ type ConnectedServiceAuthGroupCandidateExclusion = Readonly<{
     profileId: string;
     reason:
       | 'current_active'
+      | 'quota_probe_deferred'
       | 'disabled'
       | 'cooldown'
       | 'quota_exhausted'
       | 'capacity_limited'
       | 'auth_invalid'
       | 'credential_unavailable'
+      | 'quota_evidence_unavailable'
+      | 'soft_threshold_not_met'
       | 'plan_unavailable'
       | 'validation_blocked'
       | 'policy_wait_until_reset';
@@ -659,6 +662,9 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
   allowCurrentProfileRetry?: boolean;
   unavailableProfileIds?: ReadonlySet<string>;
   providerLimitId?: string | null;
+  requiredModelIds?: ReadonlyArray<string>;
+  quotaProbeDeferredUntilMsByProfileId?: ReadonlyMap<string, number>;
+  switchReason?: string;
 }>): ConnectedServiceAuthGroupCandidateSelection {
   if (params.policy.strategy === 'manual') {
     return {
@@ -695,7 +701,7 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
       nowMs: params.nowMs,
     });
     const quotaEvidence = buildCandidateQuotaEvidenceTrace(quotaSnapshot);
-    if (!member.enabled) {
+    if (!member.enabled || effectiveState?.autoDisabledReason === 'model_not_entitled') {
       excluded.push({ profileId: member.profileId, reason: 'disabled' });
       decisionTraceCandidates.push({
         profileId: member.profileId,
@@ -703,6 +709,13 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
         exclusionReason: 'disabled',
         quotaEvidence,
       });
+      continue;
+    }
+    const probeRetryAtMs = params.quotaProbeDeferredUntilMsByProfileId?.get(member.profileId);
+    if (probeRetryAtMs !== undefined && probeRetryAtMs > params.nowMs) {
+      excluded.push({ profileId: member.profileId, reason: 'quota_probe_deferred', retryAtMs: probeRetryAtMs });
+      decisionTraceCandidates.push({ profileId: member.profileId, decision: 'excluded',
+        exclusionReason: 'quota_probe_deferred', retryAtMs: probeRetryAtMs, quotaEvidence });
       continue;
     }
     if (!credentialHealthAllowsSelection(effectiveState?.credentialHealthStatus)) {
@@ -735,10 +748,11 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
       });
       continue;
     }
-    const providerLimitId = params.providerLimitId?.trim();
-    const modelUnavailableUntilMs = providerLimitId
-      ? numberOrNull(effectiveState?.modelUnavailableUntilMsByModelId?.[providerLimitId])
-      : null;
+    const requiredModelIds = [...(params.requiredModelIds ?? []), params.providerLimitId ?? ''];
+    const modelUnavailableUntilMs = requiredModelIds.reduce<number | null>((latest, modelId) => {
+      const untilMs = numberOrNull(effectiveState?.modelUnavailableUntilMsByModelId?.[modelId.trim()]);
+      return untilMs !== null && untilMs > params.nowMs ? Math.max(latest ?? untilMs, untilMs) : latest;
+    }, null);
     if (modelUnavailableUntilMs !== null && modelUnavailableUntilMs > params.nowMs) {
       excluded.push({ profileId: member.profileId, reason: 'plan_unavailable', retryAtMs: modelUnavailableUntilMs });
       decisionTraceCandidates.push({
@@ -844,18 +858,33 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
       continue;
     }
 
-    decisionTraceCandidates.push({
-      profileId: member.profileId,
-      decision: 'eligible',
-      quotaEvidence,
-    });
-    candidates.push({
+    const candidate: ConnectedServiceAuthGroupCandidate = {
       ...member,
       leastLimitedScore: resolveLeastLimitedScore(quotaSnapshot),
       ...(params.policy.strategy === 'expiry_first' ? {
         preferenceDeadlineMs: resolvePreferenceDeadline(quotaSnapshot, state?.subscription, params.nowMs),
       } : {}),
+    };
+    if (params.switchReason === 'soft_threshold' && member.profileId !== params.activeProfileId) {
+      const exclusionReason = !hasConnectedServiceAuthGroupCandidateEvidenceForSwitchReason({
+        reason: params.switchReason, profileId: member.profileId, nowMs: params.nowMs,
+        quotaFreshnessMs: params.quotaFreshnessMs, memberStatesByProfileId: params.memberStatesByProfileId,
+      }) ? 'quota_evidence_unavailable' as const
+        : !isConnectedServiceAuthGroupSoftSwitchCandidateMeaningfullyBetter({
+          activeProfileId: params.activeProfileId, candidate, policy: params.policy,
+        }) ? 'soft_threshold_not_met' as const : null;
+      if (exclusionReason) {
+        excluded.push({ profileId: member.profileId, reason: exclusionReason });
+        decisionTraceCandidates.push({ profileId: member.profileId, decision: 'excluded', exclusionReason, quotaEvidence });
+        continue;
+      }
+    }
+    decisionTraceCandidates.push({
+      profileId: member.profileId,
+      decision: 'eligible',
+      quotaEvidence,
     });
+    candidates.push(candidate);
   }
 
   if (params.policy.strategy === 'expiry_first') {

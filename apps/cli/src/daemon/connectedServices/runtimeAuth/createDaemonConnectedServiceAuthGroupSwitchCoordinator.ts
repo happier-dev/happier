@@ -187,6 +187,7 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
   accountUsageStore?: AccountUsageStoreForAuthGroupSwitchState | null;
   leases?: InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry;
   quotaFreshnessMs: number;
+  resolveRequiredModelIdsForGroup?: (input: Readonly<{ serviceId: ConnectedServiceId; groupId: string }>) => ReadonlyArray<string>;
   consumeAvailableRecoveryCreditForProfile?: (input: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
@@ -305,6 +306,7 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
           : buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState({ group });
       const state: ConnectedServiceAuthGroupSwitchState = {
         ...unresolvedState,
+        requiredModelIds: params.resolveRequiredModelIdsForGroup?.({ serviceId, groupId: input.groupId }) ?? [],
         credentialRevision: params.resolveCredentialRevision?.(
           serviceId,
           unresolvedState.activeProfileId,
@@ -334,7 +336,7 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
     },
     commitSwitch: async (input) => {
       const serviceId = ConnectedServiceIdSchema.parse(input.serviceId);
-      const group = await params.api.updateConnectedServiceAuthGroupActiveProfile({
+      let group = await params.api.updateConnectedServiceAuthGroupActiveProfile({
         serviceId,
         groupId: input.groupId,
         activeProfileId: input.toProfileId,
@@ -342,6 +344,19 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
         overrideRuntimeCooldown: true,
         switchReason: input.reason,
       });
+      // Disable only after the canonical selector has moved the active account. Disabling the
+      // active member first invokes the released server's priority-only invariant fallback and
+      // can briefly publish an exhausted account to every session in the pool.
+      if (params.api.updateConnectedServiceAuthGroupMember) {
+        for (const member of group.members) {
+          if (!member.enabled || member.profileId === group.activeProfileId
+            || member.state.autoDisabledReason !== 'model_not_entitled') continue;
+          group = await params.api.updateConnectedServiceAuthGroupMember({
+            serviceId, groupId: input.groupId, profileId: member.profileId, enabled: false,
+            expectedGeneration: group.generation,
+          });
+        }
+      }
       await params.onCommittedSwitch?.({
         serviceId,
         groupId: input.groupId,
@@ -528,6 +543,7 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
           if (
             nextMemberState.autoDisabledReason === 'model_not_entitled'
             && params.api.updateConnectedServiceAuthGroupMember
+            && observedProfileId !== input.loaded.activeProfileId
           ) {
             await params.api.updateConnectedServiceAuthGroupMember({
               serviceId,

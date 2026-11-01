@@ -1,4 +1,5 @@
 import type { ConnectedServiceAuthGroupV1, ConnectedServiceCredentialHealthStatusV1 } from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupMemberStateV1Schema } from '@happier-dev/protocol';
 
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import {
@@ -46,6 +47,7 @@ export function mergePersistedMemberRuntimeState(
 ): ConnectedServiceAuthGroupMemberRuntimeState {
   const record = readRecord(persistedState);
   if (!record) return runtimeState ?? {};
+  const parsed = ConnectedServiceAuthGroupMemberStateV1Schema.safeParse(record);
   const persistedLastFailureKind = readString(record.lastFailureKind);
   const persistedProviderResetsAtMs = readNonNegativeNumber(record.providerResetsAtMs);
   const runtimeProviderResetsAtMs = readNonNegativeNumber(runtimeState?.providerResetsAtMs);
@@ -75,6 +77,11 @@ export function mergePersistedMemberRuntimeState(
     capacityLimitedUntilMs: readNonNegativeNumber(record.capacityLimitedUntilMs),
     authInvalidUntilMs: readNonNegativeNumber(record.authInvalidUntilMs),
     planUnavailableUntilMs: readNonNegativeNumber(record.planUnavailableUntilMs),
+    ...(parsed.success && parsed.data.modelUnavailableUntilMsByModelId
+      ? { modelUnavailableUntilMsByModelId: parsed.data.modelUnavailableUntilMsByModelId } : {}),
+    ...(parsed.success && parsed.data.autoDisabledReason
+      ? { autoDisabledReason: parsed.data.autoDisabledReason } : {}),
+    lastFailureCode: readString(record.lastFailureCode),
     validationBlockedUntilMs: readNonNegativeNumber(record.validationBlockedUntilMs),
     providerResetsAtMs,
     lastFailureKind: persistedLastFailureKind,

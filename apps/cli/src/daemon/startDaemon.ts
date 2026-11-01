@@ -275,6 +275,7 @@ import {
   type DaemonServerWorkScheduler,
 } from './serverWork';
 import {
+  ConnectedServiceSpawnAuthGroupAuthorityError,
   ConnectedServiceSpawnMaterializationError,
   ConnectedServiceSpawnResumeUnreachableError,
   resolveConnectedServiceAuthForSpawn,
@@ -290,7 +291,6 @@ import { buildConnectedServiceUxDiagnostic } from './connectedServices/diagnosti
 import { shouldResolveConnectedServiceAuthForSpawn } from './connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import { prepareConnectedServiceAuthGroupCandidateForSwitch } from './connectedServices/refresh/prepareConnectedServiceAuthGroupCandidateForSwitch';
-import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { createConnectedServiceGroupMutationCurrentnessValidator } from './connectedServices/credentials/createConnectedServiceGroupMutationCurrentnessValidator';
 import { createConnectedServicesAuthUpdatedRestartHandler } from './connectedServices/refresh/createConnectedServicesAuthUpdatedRestartHandler';
 import {
@@ -340,6 +340,7 @@ import { activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydrati
 import { createProviderAccountUsagePersistenceScheduler } from './connectedServices/accountUsage/persistence';
 import { createProviderAccountUsageStore } from './connectedServices/accountUsage/store';
 import { createDaemonConnectedServiceAuthGroupSwitchCoordinator } from './connectedServices/runtimeAuth/createDaemonConnectedServiceAuthGroupSwitchCoordinator';
+import { resolveConnectedServiceAuthGroupRequiredModelIds } from './connectedServices/runtimeAuth/resolveConnectedServiceAuthGroupRequiredModelIds';
 import {
   authorizeConnectedServiceRuntimeAuthFailureSource,
   handleConnectedServiceRuntimeAuthFailureForSession,
@@ -3620,6 +3621,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     const connectedServiceSpawnQuotaProbeDeadlineAtMs = Date.now()
                       + DEFAULT_CONNECTED_SERVICE_QUOTA_FETCH_TIMEOUT_MS;
                     const preTurnSwitchCoordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator({
+                      resolveRequiredModelIdsForGroup: (input) => resolveConnectedServiceAuthGroupRequiredModelIds({
+                        ...input, targets: connectedServiceRuntimeRegistry.listTargets(), sessions: getCurrentChildren(),
+                      }),
                       api,
                       consumeAvailableRecoveryCreditForProfile: async (input) => connectedServiceQuotasCoordinator
                         ? await connectedServiceQuotasCoordinator.consumeAvailableRecoveryCreditForProfile(input)
@@ -3747,10 +3751,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       });
                       return buildSpawnResumeUnreachableErrorResult(error);
                     }
-                    if (error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError) {
+                    if (error instanceof ConnectedServiceSpawnAuthGroupAuthorityError && error.kind === 'quota_proof_unavailable') {
                       logger.warn('[DAEMON RUN] Connected-service quota evidence refresh did not complete before spawn; failing closed', {
                         agentId: catalogAgentId,
-                        reason: error.reason ?? 'unknown',
+                        reason: error.kind,
                       });
                       return {
                         type: 'error',
@@ -6110,6 +6114,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               }),
           });
           const switchCoordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator({
+            resolveRequiredModelIdsForGroup: (input) => resolveConnectedServiceAuthGroupRequiredModelIds({
+              ...input, targets: connectedServiceRuntimeRegistry.listTargets(), sessions: getCurrentChildren(),
+            }),
             api,
             consumeAvailableRecoveryCreditForProfile: async (input) => connectedServiceQuotasCoordinator
               ? await connectedServiceQuotasCoordinator.consumeAvailableRecoveryCreditForProfile(input)
@@ -7637,6 +7644,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         switchReason: ConnectedServiceSessionAuthSwitchReason;
         executionAuthority: ConnectedServiceExecutionAuthorityV1;
       }>) => createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator({
+        resolveRequiredModelIdsForGroup: (input) => resolveConnectedServiceAuthGroupRequiredModelIds({
+          ...input, targets: connectedServiceRuntimeRegistry.listTargets(), sessions: getCurrentChildren(),
+        }),
         api,
         prepareCandidateForSwitch: prepareAuthGroupCandidateForSwitch,
         runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots,
@@ -7763,6 +7773,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 })
               ).hydration,
               createCoordinator: () => new ConnectedServiceQuotasCoordinator({
+              resolveRequiredModelIdsForGroup: (input) => resolveConnectedServiceAuthGroupRequiredModelIds({
+                ...input, targets: connectedServiceRuntimeRegistry.listTargets(), sessions: getCurrentChildren(),
+              }),
               api,
               credentials,
               runtimeRegistry: connectedServiceRuntimeRegistry,
@@ -7977,26 +7990,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     executionAuthority: 'runtime_recovery',
                   });
                   const runProactiveSwitch = async () => {
-                    // O3: switch-attempt trace at the proactive-quota decision point (the
-                    // cmpn4hhdi seam). Captures trigger, ids, generation, hot-apply-vs-restart
-                    // (mode), and the structured result status; deferral state + reachability
-                    // result are emitted by the deferral-queue and restart-diagnostic events
-                    // respectively when a restart-resume is chosen.
-                    const result = await switchCoordinator.switchBeforeTurn(input);
-                    logger.infoFile('[DAEMON RUN] Connected-service proactive quota switch attempt', {
-                      trigger: 'automatic_group_switch',
-                      decision: 'proactive_quota_switch_before_turn',
-                      sessionId,
-                      serviceId: input.serviceId,
-                      groupId: input.groupId,
-                      reason: input.reason,
-                      resultStatus: result.status,
-                      generation: 'generation' in result ? result.generation : null,
-                      mode: 'mode' in result ? result.mode ?? null : null,
-                      errorCode: 'errorCode' in result ? result.errorCode : null,
-                      routedThroughFsm: true,
-                    });
-                    return result;
+                    return await switchCoordinator.switchBeforeTurn(input);
                   };
                   const proactiveSwitchResult = input.deferUntilTurnBoundary === true
                     ? await requestConnectedServiceSwitchBeforeTurnWithDeferral({

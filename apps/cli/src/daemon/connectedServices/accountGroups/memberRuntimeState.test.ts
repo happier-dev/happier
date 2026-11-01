@@ -275,6 +275,16 @@ describe('persistMemberRuntimeStateWithPositiveEvidence', () => {
 });
 
 describe('reconcileMemberRuntimeStateWithPositiveEvidence', () => {
+  it('retains model exclusions when a successful turn carries no model entitlement proof', () => {
+    expect(reconcileMemberRuntimeStateWithPositiveEvidence({
+      state: { lastObservedAtMs: 1_000, lastFailureCode: 'model_not_entitled',
+        modelUnavailableUntilMsByModelId: { unsupported: 86_401_000 }, autoDisabledReason: 'model_not_entitled' },
+      evidence: { kind: 'successful_turn', observedAtMs: 2_000 },
+      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, nowMs: 2_000,
+    })).toMatchObject({
+      modelUnavailableUntilMsByModelId: { unsupported: 86_401_000 }, autoDisabledReason: 'model_not_entitled',
+    });
+  });
   const allBlockers = {
     authInvalidUntilMs: 10_000,
     capacityLimitedUntilMs: 10_000,

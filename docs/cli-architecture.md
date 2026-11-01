@@ -1859,6 +1859,16 @@ Sharing includes credential revision and provider-visible account context. The
 post-reset refresh deliberately starts a new observation so it cannot reuse a
 quota read begun before the provider consumed the recovery credit.
 
+In development source, group probes report provider-backoff deferrals per member
+with their retry boundaries. These are completed admission decisions rather than
+an incomplete group observation: the selector excludes deferred members while
+using other members' evidence. A genuine incomplete probe, including deadline
+expiry, returns `quota_proof_unavailable` from the switch owner for every trigger.
+Interrupted turns retain durable recovery at the existing unknown-quota backoff
+or a later provider boundary. New spawns retain their existing retryable launch
+rejection for hard-limit uncertainty; predictive soft switching keeps the current
+selection. Consumers no longer catch a separate quota-probe exception.
+
 Initial intake and scheduler replay use the same durable recovery identity for
 Pending deduplication, even after the first continuation is consumed and the
 daemon is replaced. The selected target and durable interrupted recovery determine
@@ -1910,6 +1920,27 @@ reason and corresponding predictive or reactive policy. Claude applies a newer
 credential revision in the proven shared group home even when the selected
 member is unchanged; other continuity checks and restart restrictions remain in
 their existing owners.
+
+In development source, the canonical pool selector requires every alternative
+for a `soft_threshold` switch to have fresh, usable quota above the configured
+soft threshold. The quota intake precheck uses that same selector; a daemon
+restart cannot make stale or exhausted targets eligible. Failure-driven
+`usage_limit` and `same_provider_account_exhausted` selection retains its existing
+unknown-quota allowance, and pre-turn probes can establish fresh evidence.
+Selection also checks learned model exclusions against the requested and applied
+models of the group's live sessions. Generic turn success has no model identity
+and therefore cannot erase a model-specific rejection. This is learned evidence,
+not a plan-to-model entitlement catalogue.
+
+Automatic model-entitlement disable first records the failed member's existing
+runtime state, selects and commits a replacement, and then disables the former
+active member. The classifier's `plan` reason respects the pool's existing
+`switchOn.authExpired` setting. Without a usable replacement, runtime state
+excludes the failed member while its membership remains enabled, avoiding the server's priority-only
+active-member fallback. The switch completion owner writes default-on file
+records containing profile IDs, generation, reason and compact candidate evidence.
+Recipient application of an externally committed generation uses the same log
+owner and records an unknown source generation as `null`.
 
 Application follows the committed service, pool, profile and selection generation.
 It re-reads that profile's current credential instead of requiring the token

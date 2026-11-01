@@ -163,7 +163,18 @@ export function reconcileMemberRuntimeStateWithPositiveEvidence(params: Readonly
     return clearAuthenticationFailure(state);
   }
   const cleared = clearConnectedServiceAuthGroupMemberRuntimeBlockers(state);
-  return cleared === state ? state : cleared;
+  if (cleared === state) return state;
+  // A successful turn has no model identity here. It cannot refute a rejection learned for
+  // another model in the pool; those exclusions expire or are cleared by an explicit member edit.
+  const next = {
+    ...cleared,
+    ...(state.modelUnavailableUntilMsByModelId === undefined ? {} : {
+      modelUnavailableUntilMsByModelId: state.modelUnavailableUntilMsByModelId,
+    }),
+    ...(state.autoDisabledReason === undefined ? {} : { autoDisabledReason: state.autoDisabledReason }),
+    ...(state.lastFailureCode === 'model_not_entitled' ? { lastFailureCode: state.lastFailureCode } : {}),
+  };
+  return resolveClearedBlockerKinds(state, next).length > 0 ? next : state;
 }
 
 /**

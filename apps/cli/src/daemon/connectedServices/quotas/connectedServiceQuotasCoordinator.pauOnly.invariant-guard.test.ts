@@ -164,7 +164,7 @@ describe('ConnectedServiceQuotasCoordinator PAU-only invariant guard', () => {
     });
   });
 
-  it('allows soft-switch eligibility only after source-backed provider-account-usage exists', async () => {
+  it('requires usable target evidence as well as source-backed provider-account-usage', async () => {
     const now = 1_000_000;
     const accountUsageStore = createProviderAccountUsageStore();
     accountUsageStore.recordSnapshot(buildProviderAccountUsageSnapshot({
@@ -209,17 +209,7 @@ describe('ConnectedServiceQuotasCoordinator PAU-only invariant guard', () => {
     await expect(resolveGroupSwitchTargetEligibility({
       serviceId: 'openai-codex',
       groupId: 'team',
-    })).resolves.toEqual({
-      status: 'eligible',
-      sourceProfileId: 'active',
-      sourceRemainingPercent: 0,
-      sourceThresholdPercent: 15,
-      sourceProjected: false,
-      decisionTrace: {
-        activeProfileId: 'active',
-        reason: 'source_at_or_below_threshold',
-      },
-    });
+    })).resolves.toMatchObject({ status: 'no_eligible_target' });
   });
 
   it('lets the canonical selector evaluate primary restoration while the active backup is above threshold', async () => {
@@ -291,7 +281,7 @@ describe('ConnectedServiceQuotasCoordinator PAU-only invariant guard', () => {
     await expect(resolveGroupSwitchTargetEligibility({
       serviceId: 'openai-codex',
       groupId: 'team',
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       status: 'eligible',
       sourceProfileId: 'backup',
       sourceRemainingPercent: 80,
@@ -299,7 +289,8 @@ describe('ConnectedServiceQuotasCoordinator PAU-only invariant guard', () => {
       sourceProjected: false,
       decisionTrace: {
         activeProfileId: 'backup',
-        reason: 'primary_restore_evaluation',
+        reason: 'selected',
+        candidates: expect.arrayContaining([expect.objectContaining({ profileId: 'primary', decision: 'selected' })]),
       },
     });
   });

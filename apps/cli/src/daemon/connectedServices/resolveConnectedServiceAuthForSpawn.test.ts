@@ -21,7 +21,6 @@ import type { Credentials } from '@/persistence';
 import type { ApiClient } from '@/api/api';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from './accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { createDaemonConnectedServiceAuthGroupSwitchCoordinator } from './runtimeAuth/createDaemonConnectedServiceAuthGroupSwitchCoordinator';
-import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { CLAUDE_SUBSCRIPTION_OAUTH_SCOPE } from './descriptors/connectedAccountDescriptors';
 import {
   ConnectedServiceSpawnCredentialRefreshError,
@@ -3773,7 +3772,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
 
     const switchBeforeTurn = vi.fn(async (_input?: unknown) => {
       if (mode === 'probe_incomplete') {
-        throw new ConnectedServiceAuthGroupQuotaProbeIncompleteError('deadline_exceeded');
+        return { status: 'quota_proof_unavailable' as const, activeProfileId: 'primary', generation: 7 };
       }
       return mode === 'authoritative_null' ? {
           status: 'superseded_after_apply' as const,
@@ -3970,7 +3969,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
 
     expect(accountUsageStore.resolveBySource).toHaveBeenCalled();
     if (mode === 'probe_incomplete') {
-      expect(coordinatorResult).toBeNull();
+      expect(coordinatorResult).toMatchObject({ status: 'quota_proof_unavailable' });
     } else {
       expect(coordinatorResult).toMatchObject({
         status: mode === 'authoritative_null'
