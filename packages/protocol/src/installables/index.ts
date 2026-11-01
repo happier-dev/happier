@@ -8,6 +8,7 @@ import { AZ_BINARY_NAME, AZ_CLI_SETUP_URL, AZ_DEP_ID, AZ_INSTALLABLE_DESCRIPTOR,
 import { GH_BINARY_NAME, GH_DEP_ID, GH_DIST_TAG, GH_GITHUB_REPO, GH_INSTALLABLE_DESCRIPTOR, GH_INSTALLABLE_KEY, GH_RUNTIME_INSTALLABLE_POLICY } from './definitions/gh.js';
 import { toInstallableCatalogEntry } from './descriptor.js';
 import { COMPUTER_CUA_DRIVER_INSTALLABLE_DESCRIPTOR } from './definitions/computerCuaDriver.js';
+import { COMPUTER_AGENT_DESKTOP_INSTALLABLE_DESCRIPTOR } from './definitions/computerAgentDesktop.js';
 import {
   resolveInstallablesRegistry,
   type InstallableRegistryContribution,
@@ -78,8 +79,13 @@ export {
 export { LOCAL_EMBEDDINGS_INSTALLABLE_DESCRIPTOR, LOCAL_VOICE_RUNTIME_INSTALLABLE_DESCRIPTOR, DIFFTASTIC_INSTALLABLE_DESCRIPTOR } from './definitions/optionalRuntimes.js';
 export { resolveGitHubCliReleaseAsset, type GitHubCliReleaseAsset, type GitHubCliReleaseRuntime } from './definitions/gh.js';
 export { COMPUTER_CUA_DRIVER_INSTALLABLE_DESCRIPTOR, COMPUTER_CUA_DRIVER_INSTALLABLE_KEY, COMPUTER_CUA_DRIVER_DEP_ID, COMPUTER_CUA_DRIVER_VERSION } from './definitions/computerCuaDriver.js';
+export { COMPUTER_AGENT_DESKTOP_INSTALLABLE_DESCRIPTOR, COMPUTER_AGENT_DESKTOP_INSTALLABLE_KEY, COMPUTER_AGENT_DESKTOP_DEP_ID, COMPUTER_AGENT_DESKTOP_VERSION } from './definitions/computerAgentDesktop.js';
 
 export const BUILT_IN_INSTALLABLE_CONTRIBUTIONS = Object.freeze([
+  {
+    owner: { provenance: 'built_in', ownerId: 'happier.core' },
+    descriptor: COMPUTER_AGENT_DESKTOP_INSTALLABLE_DESCRIPTOR,
+  },
   {
     owner: { provenance: 'built_in', ownerId: 'happier.core' },
     descriptor: COMPUTER_CUA_DRIVER_INSTALLABLE_DESCRIPTOR,

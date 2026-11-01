@@ -7,6 +7,7 @@ import { getGitHubReleaseBinaryRuntimeInstallableAdapter } from './sourceAdapter
 import { getManagedPypiWheelAssetRuntimeInstallableAdapter } from './sourceAdapters/pypiWheelAsset';
 import { getPinnedArchiveRuntimeInstallableAdapter } from './sourceAdapters/pinnedArchive';
 import { COMPUTER_CUA_DRIVER_INSTALLABLE_KEY, getComputerCuaDriverArchiveDownloadInstallableAdapter, getComputerCuaDriverRuntimeInstallableAdapter } from './sourceAdapters/computerCuaDriver';
+import { COMPUTER_AGENT_DESKTOP_INSTALLABLE_KEY, getComputerAgentDesktopArchiveDownloadInstallableAdapter, getComputerAgentDesktopRuntimeInstallableAdapter } from './sourceAdapters/computerAgentDesktop';
 import {
   ARCHIVE_DOWNLOAD_INSTALLABLE_SOURCE_KIND,
   BROWSER_CHROMIUM_INSTALLABLE_KEY,
@@ -128,6 +129,7 @@ export async function getRuntimeInstallableAdapterForDescriptor(
 
   if (descriptor.source.kind === 'pinned_archive') {
     if (key === COMPUTER_CUA_DRIVER_INSTALLABLE_KEY) return getComputerCuaDriverRuntimeInstallableAdapter(descriptor);
+    if (key === COMPUTER_AGENT_DESKTOP_INSTALLABLE_KEY) return getComputerAgentDesktopRuntimeInstallableAdapter(descriptor);
     const adapter = getPinnedArchiveRuntimeInstallableAdapter(descriptor, host);
     if (adapter) {
       return adapter;
@@ -151,6 +153,9 @@ export function getArchiveDownloadInstallableAdapter(
   }
   if (key === COMPUTER_CUA_DRIVER_INSTALLABLE_KEY) {
     return getComputerCuaDriverArchiveDownloadInstallableAdapter();
+  }
+  if (key === COMPUTER_AGENT_DESKTOP_INSTALLABLE_KEY) {
+    return getComputerAgentDesktopArchiveDownloadInstallableAdapter();
   }
   return null;
 }
