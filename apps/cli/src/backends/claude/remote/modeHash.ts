@@ -95,7 +95,7 @@ export function hashClaudeEnhancedModeForLaunch(mode: EnhancedMode): string {
     });
 
     // Spawn-only config for Claude: effort is a query-start option in the Agent SDK and has no dynamic setter.
-    // We normalize effort to the effective value the provider would actually apply (treating "high" as default).
+    // Explicit effort remains distinct from inheriting native saved settings, including catalog defaults.
     const supportedLevels = resolveModeEffortLevelsForModel(mode, mode.model);
     const resolvedEffort = resolveClaudeEffortForModel({
         modelId: mode.model,

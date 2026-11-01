@@ -6,7 +6,7 @@ import type {
 
 import type { InFlightConfigApplyOutcome } from '@/agent/runtime/permission/bindPermissionModeQueue';
 import {
-  resolveClaudeEffectiveEffortForModel,
+  resolveClaudeEffortForModel,
   resolveClaudeUltracodeForModel,
   resolveModeEffortLevelsForModel,
 } from '@/backends/claude/utils/claudeEffort';
@@ -172,7 +172,7 @@ export function mapEnhancedModeToDesiredRuntimeConfig(mode: EnhancedMode): Claud
   } = {};
   const model = normalizeNonEmptyString(mode.model);
   if (model !== undefined) desired.model = model;
-  const reasoningEffort = resolveClaudeEffectiveEffortForModel({
+  const reasoningEffort = resolveClaudeEffortForModel({
     modelId: mode.model,
     effort: mode.reasoningEffort,
     supportedLevels: resolveModeEffortLevelsForModel(mode, mode.model),
@@ -217,14 +217,19 @@ function computeDesiredDelta(
     ultracode?: boolean;
   } = {};
   if ((desired.model !== baseline.model || pending.model !== undefined) && desired.model !== undefined) delta.model = desired.model;
-  if ((desired.reasoningEffort !== baseline.reasoningEffort || pending.reasoningEffort !== undefined || pending.model !== undefined)
-    && desired.reasoningEffort !== undefined) {
-    delta.reasoningEffort = desired.reasoningEffort;
-  }
-  if ((desired.ultracode !== baseline.ultracode || pending.ultracode !== undefined || pending.model !== undefined)
+  if ((desired.ultracode !== baseline.ultracode || delta.model !== undefined || pending.ultracode !== undefined || pending.model !== undefined)
     && desired.ultracode !== undefined) {
     delta.ultracode = desired.ultracode;
   }
+  // Model changes can reset effort. Turning ultracode off also selects an effort level, so carry
+  // the current selection even when it has not changed instead of falling back to native history.
+  if ((desired.reasoningEffort !== baseline.reasoningEffort || delta.model !== undefined
+    || delta.ultracode === false || pending.reasoningEffort !== undefined || pending.model !== undefined)
+    && desired.reasoningEffort !== undefined) {
+    delta.reasoningEffort = desired.reasoningEffort;
+  }
+  // Selecting a regular effort replaces ultracode; restore it in the same ordered control batch.
+  if (delta.reasoningEffort !== undefined && desired.ultracode === true) delta.ultracode = true;
   const modeChanged =
     desired.permissionMode !== baseline.permissionMode
     || !sameAgentModeId(desired.agentModeId, baseline.agentModeId)
@@ -477,6 +482,10 @@ export function createClaudeUnifiedRuntimeControlBridge(
   let committed: ClaudeDesiredRuntimeConfig = params.startupMode
     ? mapEnhancedModeToDesiredRuntimeConfig(params.startupMode)
     : {};
+  // A launch flag is a claim until native evidence confirms it. In particular, resumes can retain
+  // a saved effort that differs from the selected catalog default. The controller verifies this
+  // first apply and skips typing when statusline/prompt metadata already confirms the selection.
+  committed = { ...committed, reasoningEffort: undefined };
   // F5 (qa/QA-B.md, live session cmqakh8mb): a NON-DEFAULT launch-claimed permission/plan mode is a
   // CLAIM, not a fact — `--permission-mode auto` is silently ignored by claude when `auto` is
   // model/account-gated, so blindly committing the claim made every later request for that mode a

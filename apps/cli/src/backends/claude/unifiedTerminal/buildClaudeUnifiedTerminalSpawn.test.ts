@@ -111,8 +111,9 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
   });
 
   it.each([
+    { model: 'claude-opus-5-5', current: 'medium', currentUpdatedAt: 30, supportsEffort: true, cliEffort: undefined, expected: 'medium' },
     { model: 'claude-sonnet-5', current: undefined, currentUpdatedAt: 0, supportsEffort: true, cliEffort: undefined, expected: 'low' },
-    { model: 'claude-sonnet-5', current: 'high', currentUpdatedAt: 30, supportsEffort: true, cliEffort: undefined, expected: undefined },
+    { model: 'claude-sonnet-5', current: 'high', currentUpdatedAt: 30, supportsEffort: true, cliEffort: undefined, expected: 'high' },
     { model: 'claude-sonnet-5', current: undefined, currentUpdatedAt: 0, supportsEffort: true, cliEffort: 'medium', expected: 'medium' },
     { model: 'claude-haiku-4-5', current: undefined, currentUpdatedAt: 0, supportsEffort: true, cliEffort: undefined, expected: undefined },
     { model: 'claude-sonnet-5', current: undefined, currentUpdatedAt: 0, supportsEffort: false, cliEffort: undefined, expected: undefined },

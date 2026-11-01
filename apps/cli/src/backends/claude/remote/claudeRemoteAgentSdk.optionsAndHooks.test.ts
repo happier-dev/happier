@@ -1297,7 +1297,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(updatedTranscript).toContain('"tool_use_id":"toolu_1"');
     });
 
-    it('omits effort when the mode specifies reasoningEffort=high (provider default)', async () => {
+    it('forwards explicit effort even when it equals the catalog default', async () => {
         let capturedOptions: any = null;
 
         const createQuery = vi.fn((_params: any) => {
@@ -1342,7 +1342,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
 
         expect(capturedOptions).toBeTruthy();
         expect(capturedOptions.model).toBe('claude-opus-4-6');
-        expect('effort' in capturedOptions ? capturedOptions.effort : undefined).toBeUndefined();
+        expect(capturedOptions.effort).toBe('high');
     });
 
     it('uses the resolved JavaScript runtime path instead of a raw node default', async () => {

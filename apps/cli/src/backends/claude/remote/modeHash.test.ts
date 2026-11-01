@@ -296,7 +296,7 @@ describe('hashClaudeEnhancedModeForQueue', () => {
         expect(next).not.toBe(base);
     });
 
-    it('does not change when reasoning effort is set to high (provider default; Agent SDK enabled)', () => {
+    it('distinguishes explicit default effort from inheriting native saved effort', () => {
         const base = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: true,
             claudeRemoteSettingSourcesV2: ['project'],
@@ -310,7 +310,7 @@ describe('hashClaudeEnhancedModeForQueue', () => {
             reasoningEffort: 'high',
         }));
 
-        expect(next).toBe(base);
+        expect(next).not.toBe(base);
     });
 
     it('changes when claudeRemoteDisableTodos changes (Agent SDK disabled)', () => {

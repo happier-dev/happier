@@ -366,6 +366,11 @@ observation without renewing catalog freshness or treating a pending metadata re
 When no effort has been observed, the existing catalog default remains a control fallback rather
 than a verified runtime observation. Override retirement uses the same alias-aware model support
 policy as launch, so a missing bare-alias catalog row cannot erase a supported request.
+In development source, explicit Claude effort selections remain explicit in native launch flags,
+Agent SDK options, and launch hashes even when they equal the catalog default: resumed sessions
+and native user settings may have a different effort. The unified terminal verifies startup effort
+through its existing runtime controller before committing that selection. Model changes and
+ultracode-off controls carry the selected effort so native history cannot substitute another level.
 Effort tiers are resolved once when the session mode is built and travel on the mode, so spawn-time
 resolution and launch-option hashing see the same value and hashing stays pure.
 
