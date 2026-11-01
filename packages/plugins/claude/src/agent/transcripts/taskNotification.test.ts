@@ -7,12 +7,20 @@ import {
   claudeHandbackQueuedAttachment,
   claudeHandbackUserRow,
 } from './peerMessage.testkit.js';
-import { createClaudeTaskNotificationToolResultProjector } from './taskNotification.js';
+import { createClaudeTaskNotificationToolResultProjector, parseClaudeTaskNotification, readClaudeTaskLifecycleEnvelope } from './taskNotification.js';
 import { extractToolResultBlocksFromSdkMessage } from '../runtime/remote/sdk/streamEvents.js';
 
 const reportResult = { type: 'tool_result', tool_use_id: 'toolu_a1', content: [{ type: 'text', text: CLAUDE_HANDBACK_REPORT }], is_error: false };
 
 describe('Claude task notification projector (subagent hand-backs)', () => {
+  it('attributes a post-clear notification to its native JSONL conversation rather than the retained SDK id', () => {
+    const row = { type: 'user', sessionId: 'native-after-clear', session_id: 'sdk-before-clear',
+      origin: { kind: 'task-notification' },
+      message: { content: '<task-notification><task-id>child</task-id><status>completed</status></task-notification>' } };
+    expect(parseClaudeTaskNotification(row)).toMatchObject({ sourceSessionId: 'native-after-clear', taskId: 'child' });
+    expect(readClaudeTaskLifecycleEnvelope(row)).toMatchObject({ sourceSessionId: 'native-after-clear', taskId: 'child' });
+  });
+
   it.each([
     ['user row', claudeHandbackUserRow({ withReportText: false })],
     ['queued attachment', claudeHandbackQueuedAttachment()],

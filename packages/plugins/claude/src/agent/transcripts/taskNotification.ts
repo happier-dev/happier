@@ -2,7 +2,7 @@ import { RawJSONLinesSchema, type RawJSONLines } from './rawJsonLines.js';
 import { isGenericSubagentToolName } from '@happier-dev/plugin-sdk/sessions/subagents';
 
 import { isClaudeAsyncAgentLaunchToolResult, normalizeClaudeActivityStatusSignal, type ClaudeActivityStatusSignal } from '../activityStatus.js';
-import { readClaudeProviderIdentityValue } from '../../protocol/providerIdentity.js';
+import { readClaudeTranscriptProviderSessionId } from '../../protocol/providerIdentity.js';
 import { readClaudeNativePeerMessage, withClaudeNativeToolResultMetadata } from './nativeSemanticProjection.js';
 
 export type ClaudeTaskNotification = Readonly<{
@@ -63,9 +63,7 @@ export function parseClaudeTaskNotification(value: unknown): ClaudeTaskNotificat
   const text = readEnvelopeText(row);
   if (!text || !/^\s*<task-notification\b/i.test(text)) return null;
 
-  const sourceSessionId = readClaudeProviderIdentityValue(row.session_id)
-    ?? readClaudeProviderIdentityValue(row.sessionId)
-    ?? undefined;
+  const sourceSessionId = readClaudeTranscriptProviderSessionId(row) ?? undefined;
   const uuid = readString(row.uuid) ?? undefined;
   return {
     taskId: readXmlTag(text, 'task-id'),
@@ -98,7 +96,7 @@ export function readClaudeTaskLifecycleEnvelope(value: unknown): ClaudeTaskLifec
   if (!row || row.type === 'queue-operation') return null;
   const attachment = row.type === 'attachment' ? readRecord(row.attachment) : null;
   const origin = readRecord(row.origin) ?? (attachment?.type === 'queued_command' ? readRecord(attachment.origin) : null);
-  const sourceSessionId = readClaudeProviderIdentityValue(row.session_id) ?? readClaudeProviderIdentityValue(row.sessionId) ?? undefined;
+  const sourceSessionId = readClaudeTranscriptProviderSessionId(row) ?? undefined;
   const uuid = readString(row.uuid) ?? undefined;
   const identity = {
     ...(sourceSessionId ? { sourceSessionId } : {}),

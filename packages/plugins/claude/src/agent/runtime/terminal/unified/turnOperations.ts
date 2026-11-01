@@ -31,7 +31,7 @@ import {
   parseSpecialCommand,
 } from '@happier-dev/plugin-sdk/sessions';
 import { isRuntimeConfigUpdateOutcomeApplied } from '@happier-dev/plugin-sdk/agents/runtime';
-import { readClaudeProviderIdentityValue } from '../../../../protocol/providerIdentity.js';
+import { readClaudeProviderIdentityValue, readClaudeTranscriptProviderSessionId } from '../../../../protocol/providerIdentity.js';
 import type { ClaudeUnifiedTerminalWorkspaceTrustPolicy } from '../../../../agentSettings/definition.js';
 import { createClaudeRuntimeActivityPublisher } from '../../shared/runtimeActivityPublisher.js';
 import { resolveClaudeUnifiedTerminalResponseLocations } from '@happier-dev/plugin-sdk/first-party/claude';
@@ -679,8 +679,7 @@ function readTaskNotificationTranscriptIdentity(row: unknown): Readonly<{
 }> | null {
   if (!isRecord(row) || row.type !== 'user' || row.isSidechain === true) return null;
   if (readClaudeTaskLifecycleEnvelope(row)?.subtype !== 'task_notification') return null;
-  const sessionId = readClaudeProviderIdentityValue(row.session_id)
-    ?? readClaudeProviderIdentityValue(row.sessionId);
+  const sessionId = readClaudeTranscriptProviderSessionId(row);
   const uuid = readNonEmptyString(row.uuid);
   if (!sessionId || !uuid) return null;
   return {
@@ -696,8 +695,7 @@ function isMatchingTaskNotificationAssistantReaction(
 ): boolean {
   if (!isRecord(row) || row.type !== 'assistant') return false;
   if (row.isSidechain === true || row.isReplay === true || row.is_replay === true) return false;
-  const sessionId = readClaudeProviderIdentityValue(row.session_id)
-    ?? readClaudeProviderIdentityValue(row.sessionId);
+  const sessionId = readClaudeTranscriptProviderSessionId(row);
   const parentUuid = readNonEmptyString(row.parentUuid) ?? readNonEmptyString(row.parent_uuid);
   return sessionId === pending.sessionId && parentUuid === pending.transcriptUuid;
 }
@@ -950,7 +948,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
         publishUsageObservation(buildClaudeAssistantUsageObservation({
           nativeRecordId: row.uuid,
           inferenceId: readClaudeProviderIdentityValue(row.message.id),
-          nativeSessionId: readClaudeProviderIdentityValue(row.session_id) ?? readClaudeProviderIdentityValue(row.sessionId),
+          nativeSessionId: readClaudeTranscriptProviderSessionId(row),
           turnId: !observation.historicalReplay && row.isSidechain !== true && !row.parent_tool_use_id
             ? state.activeTurnId : null,
           modelId: readClaudeAssistantModelId(row),

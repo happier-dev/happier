@@ -5,6 +5,7 @@ import type { AgentExternalSessionsReadAccountingRequest } from '@happier-dev/pl
 import { resolveClaudeConfigDir, type ClaudeExternalSessionSource } from '../surfaces/sessions/external/source.js';
 import { buildClaudeAssistantUsageObservation } from './buildAssistantObservation.js';
 import { buildClaudeSdkResultUsageObservation, isClaudeSdkUsageResult } from './buildSdkResultObservation.js';
+import { readClaudeTranscriptProviderSessionId } from '../../protocol/providerIdentity.js';
 
 export function readClaudeNativeAccounting(request: AgentExternalSessionsReadAccountingRequest, source: ClaudeExternalSessionSource, env: NodeJS.ProcessEnv) {
   const root = join(resolveClaudeConfigDir({ source, env }), 'projects');
@@ -12,7 +13,7 @@ export function readClaudeNativeAccounting(request: AgentExternalSessionsReadAcc
     ...(request.cursor ? { cursor: request.cursor } : {}),
     projectRecord(record, state) {
       if (!isRecord(record)) return { state, observations: [], incomplete: true };
-      const nativeSessionId = readString(record.sessionId) ?? readString(record.session_id) ?? state.sessionId;
+      const nativeSessionId = readClaudeTranscriptProviderSessionId(record) ?? state.sessionId;
       const cwd = readString(record.cwd) ?? (nativeSessionId === state.sessionId ? state.cwd : undefined);
       const nextState = nativeSessionId ? { sessionId: nativeSessionId, ...(cwd ? { cwd } : {}) } : state;
       const message = isRecord(record.message) ? record.message : null;

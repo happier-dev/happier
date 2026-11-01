@@ -1,5 +1,5 @@
 import { readTranscriptPeerSenderV1 } from '@happier-dev/protocol/sessions/messages/transcriptPeerSenderV1';
-import { readClaudeProviderIdentityValue } from '../../protocol/providerIdentity.js';
+import { readClaudeProviderIdentityValue, readClaudeTranscriptProviderSessionId } from '../../protocol/providerIdentity.js';
 import { readSessionHookSidechainAgentId } from '../hooks/sidechain.js';
 import {
   CLAUDE_NON_TRANSCRIPT_RECORD_TYPES,
@@ -595,8 +595,7 @@ export function readClaudeCompactBoundaryEventId(params: Readonly<{
 }>): string | null {
   const providerSessionId = readClaudeProviderIdentityValue(params.payload.providerSessionId)
     ?? readClaudeProviderIdentityValue(params.payload.provider_session_id)
-    ?? readClaudeProviderIdentityValue(params.nestedPayload.session_id)
-    ?? readClaudeProviderIdentityValue(params.nestedPayload.sessionId)
+    ?? readClaudeTranscriptProviderSessionId(params.nestedPayload)
     ?? readClaudeProviderIdentityValue(params.payload.sessionId)
     ?? params.fallbackSessionId;
   const nativeBoundaryId = readString(params.nestedPayload.uuid)

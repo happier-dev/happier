@@ -1,5 +1,5 @@
 import { readClaudeTaskLifecycleEnvelope } from '../../../transcripts/taskNotification.js';
-import { readClaudeProviderIdentityValue } from '../../../../protocol/providerIdentity.js';
+import { readClaudeProviderIdentityValue, readClaudeTranscriptProviderSessionId } from '../../../../protocol/providerIdentity.js';
 import { normalizeClaudeAgentSdkProviderTaskId } from './providerTaskStatus.js';
 import type { SDKHookResponseMessage } from '../../../sdk/types.js';
 
@@ -221,7 +221,7 @@ function readStrictClaudeProviderTaskActivity(
   const hookActivity = readHookTaskActivity(row, contextualSessionId);
   if (hookActivity) return hookActivity;
   if (row.type !== 'system') return null;
-  const sessionId = readClaudeProviderIdentityValue(row.session_id)
+  const sessionId = readClaudeTranscriptProviderSessionId(row)
     ?? readClaudeProviderIdentityValue(contextualSessionId);
   const taskId = normalizeClaudeAgentSdkProviderTaskId(row.task_id);
   if (!sessionId || !taskId) return null;

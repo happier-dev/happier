@@ -26,3 +26,8 @@ export function hasClaudeProviderIdentityValue(value: unknown): value is string 
 export function readClaudeProviderIdentityValue(value: unknown): string | null {
   return hasClaudeProviderIdentityValue(value) ? value : null;
 }
+
+/** Native JSONL owns its conversation id; an embedded SDK id can survive /clear. */
+export function readClaudeTranscriptProviderSessionId(row: Readonly<Record<string, unknown>>): string | null {
+  return readClaudeProviderIdentityValue(row.sessionId) ?? readClaudeProviderIdentityValue(row.session_id);
+}
