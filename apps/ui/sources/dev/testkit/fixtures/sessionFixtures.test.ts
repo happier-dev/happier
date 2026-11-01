@@ -31,11 +31,15 @@ it('preserves Session runtime facts without disclosing recipient owner metadata'
     const session = createSessionFixture({
         metadata: { ...createSessionFixture().metadata!, profileId: 'work' },
         agentState: { controlledByUser: true }, pendingCount: 2, pendingVersion: 3,
+        seq: 4, archivedAt: 123, lastViewedSessionSeq: 4, unreadSince: null,
     });
     const owner = createPlainSessionByIdResponseFixture(session).session;
     expect(owner.agentState).toBe(JSON.stringify(session.agentState));
     expect(owner.pendingCount).toBe(2);
     expect(owner.pendingVersion).toBe(3);
+    expect(owner.archivedAt).toBe(123);
+    expect(owner.lastViewedSessionSeq).toBe(4);
+    expect(owner.unreadSince).toBeNull();
     expect(owner.ownerMetadata?.t).toBe('plain');
 
     const recipient = createPlainSessionByIdResponseFixture(createSessionFixture({

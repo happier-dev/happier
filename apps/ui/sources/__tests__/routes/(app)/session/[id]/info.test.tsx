@@ -51,6 +51,7 @@ import type { PluginMachineExecutionOriginV1, PluginSourceCustodyV1 } from '@hap
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { waitForNetworkResponseForTests } from '@/dev/testkit/mocks/runtimeFetch';
 import { tryParseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 vi.mock('@/sync/domains/state/browserRecordStorage', async () => {
     const { createBrowserRecordStorageModuleMock } = await import('@/dev/testkit/mocks/browserRecordStorage');
@@ -66,6 +67,7 @@ let mockProfile = { ...profileDefaults, id: 'viewer-account' };
 let isDataReady = true;
 let routeHydrationState: SessionRouteHydrationState = { kind: 'available', sessionId: 'session-1' };
 let sessionIsConnected = true;
+let machinePresenceObserved = true;
 let localDevModeEnabled = false;
 const machineListByServerIdState = vi.hoisted(() => ({
     current: {} as Record<string, any[]>,
@@ -452,6 +454,7 @@ describe('/session/[id]/info', () => {
         isDataReady = true;
         routeHydrationState = { kind: 'available', sessionId: 'session-1' };
         sessionIsConnected = true;
+        machinePresenceObserved = true;
         localDevModeEnabled = false;
         routerPushSpy.mockReset();
         routerBackSpy.mockReset();
@@ -770,6 +773,17 @@ describe('/session/[id]/info', () => {
         });
         await applyInfoSessionFixture(options?.publishMachineCensus);
         const screen = await renderScreen(<SessionInfoScreen />, { wrapper: SessionInfoTestProviders, createNodeMock: browserHostNode });
+        if (!machinePresenceObserved) {
+            const serverId = mockSession?.serverId ?? mockServerId ?? resolvedServerId;
+            // Settle the active Home's HTTP ingress before withdrawing it; a fresh
+            // census is a legitimate new presence observation after withdrawal.
+            await sync.refreshMachines();
+            const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+            const { withdrawMachinePresenceForScope } = await import('@/sync/domains/machines/reachability/machineReachability');
+            await act(async () => withdrawMachinePresenceForScope({
+                serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'viewer-account',
+            }));
+        }
         if (routeHydrationState.kind === 'missing' || (!mockSession && routeHydrationState.kind === 'available')) {
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('errors.sessionDeleted'));
         }
@@ -1048,7 +1062,7 @@ describe('/session/[id]/info', () => {
             inlineMount: { role: 'sessionInfoSection', presentation: 'content' },
             sessionId: 'session-1',
             machineId: 'machine-1',
-            serverId: 'server-1',
+            serverId: sessionInfoProjectionHomeIdentity,
             projectionInteractionEnabled: true,
         }));
         await vi.waitFor(() => expect(machineRpcWithServerScopeSpy.mock.calls.some(([input]) =>
@@ -1458,6 +1472,7 @@ describe('/session/[id]/info', () => {
         mockSession = {
             ...mockSession,
             updatedAt: 2,
+            metadataVersion: mockSession.metadataVersion + 1,
             metadata: {
                 ...mockSession.metadata,
                 name: 'refreshed-value',
@@ -1517,6 +1532,7 @@ describe('/session/[id]/info', () => {
 
     it('fails closed and hides the handoff quick action when direct peer truth is runtime-unknown and server-routed fallback would make the UI untruthful', async () => {
         sessionHandoffFeatureEnabled = true;
+        machinePresenceObserved = false;
         serverFeaturesSnapshot = {
             status: 'ready',
             features: {
@@ -1564,6 +1580,7 @@ describe('/session/[id]/info', () => {
 
     it('fails closed and hides the handoff quick action when the selected server only exposes direct-peer handoff transport', async () => {
         sessionHandoffFeatureEnabled = true;
+        machinePresenceObserved = false;
         serverFeaturesSnapshot = {
             status: 'ready',
             features: {
@@ -1708,6 +1725,7 @@ describe('/session/[id]/info', () => {
         const screen = await renderInfoScreen();
 
         await screen.pressByTestIdAsync('session-info-session-pin');
+        await settleSessionAction('ui.session.pin');
         expect(requestsFor('/v2/session-organization/pins/session-1')).toEqual([expect.objectContaining({
             serverUrl: 'https://server-b.example', method: 'PUT',
             body: expect.objectContaining({ pinned: true }),
@@ -1718,9 +1736,9 @@ describe('/session/[id]/info', () => {
             await new Promise((resolve) => setTimeout(resolve, 0));
         });
         await screen.pressByTestIdAsync('session-tags-menu-item:fixture-tag-1');
-        expect(requestsFor('/v2/session-organization/tag-assignments/session-1')).toEqual([expect.objectContaining({
+        await waitForHeaderMenuOutcome(() => expect(requestsFor('/v2/session-organization/tag-assignments/session-1')).toEqual([expect.objectContaining({
             serverUrl: 'https://server-b.example', method: 'PUT', body: { tagIds: [] },
-        })]);
+        })]));
     });
 
     it('surfaces the existing info-screen error when organization mutation scope is unavailable', async () => {
@@ -1819,7 +1837,7 @@ describe('/session/[id]/info', () => {
                     ];
                     expect(folder?.display).toMatchObject({ t: 'plain', v: { workspace: {
                         t: 'workspaceScope', serverId: addressedHomeId,
-                        machineId: session?.metadata?.machineId, rootPath: session?.metadata?.path,
+                        machineId: session ? readSessionOwnerMetadataView(session)?.machineId : undefined, rootPath: session?.metadata?.path,
                     } } });
                 });
                 expect(network.httpRequests).toContainEqual(expect.objectContaining({
@@ -1902,6 +1920,7 @@ describe('/session/[id]/info', () => {
 
     it('reacts when machine-rpc direct-peer viability becomes available for the reachable machine target after metadata goes stale', async () => {
         sessionHandoffFeatureEnabled = true;
+        machinePresenceObserved = false;
         resolvedServerId = 'server_reactive_info';
         machineTargetFixture = {
             machineId: 'machine_rebound',
@@ -2147,7 +2166,7 @@ describe('/session/[id]/info', () => {
 
         pressTestInstance(runOnItem);
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/machines/machine-target?serverId=server-1');
+        expect(routerPushSpy).toHaveBeenCalledWith(`/machines/machine-target?serverId=${sessionInfoProjectionHomeIdentity}`);
     });
 
     it('opens a new session seeded from the current session configuration', async () => {

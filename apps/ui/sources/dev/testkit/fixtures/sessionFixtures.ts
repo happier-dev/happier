@@ -158,7 +158,8 @@ export function createPlainSessionByIdResponseFixture(session: Session): V2Sessi
     }
     const record = createPlainSessionCurrentProjectionRecordFixture({
         id: session.id, seq: session.seq, createdAt: session.createdAt, updatedAt: session.updatedAt,
-        active: session.active, activeAt: session.activeAt, metadata: readSessionOwnerMetadataView(session),
+        active: session.active, activeAt: session.activeAt, archivedAt: session.archivedAt,
+        metadata: readSessionOwnerMetadataView(session),
         metadataVersion: session.metadataVersion, agentStateVersion: session.agentStateVersion,
         manager: session.manager ?? undefined, managedSessions: session.managedSessions ?? undefined,
         responsibleAccountId: session.responsibleAccountId ?? null,
@@ -173,6 +174,8 @@ export function createPlainSessionByIdResponseFixture(session: Session): V2Sessi
         latestTurnStatus: session.latestTurnStatus,
         latestTurnStatusObservedAt: session.latestTurnStatusObservedAt,
         lastRuntimeIssue: session.lastRuntimeIssue,
+        lastViewedSessionSeq: session.lastViewedSessionSeq,
+        unreadSince: session.unreadSince,
         ...(access ? {
             effectiveAccess: { v: 1, level: access.level,
                 capabilities: access.capabilities, sources: access.sources ?? [] },
