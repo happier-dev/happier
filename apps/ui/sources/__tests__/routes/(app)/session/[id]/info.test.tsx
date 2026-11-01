@@ -2830,6 +2830,43 @@ describe('/session/[id]/info', () => {
         expect(screen.findByTestId('sessionInfo.deleteSession')).toBeNull();
     });
 
+    it.each([
+        { reason: 'active', active: true, connected: false, retired: true, canDelete: true, stopFirst: true },
+        { reason: 'disconnected', active: false, connected: false, retired: true, canDelete: true, stopFirst: false },
+        { reason: 'recoverable', active: false, connected: false, retired: false, canDelete: true, stopFirst: true },
+        { reason: 'without deletion rights', active: false, connected: false, retired: true, canDelete: false, stopFirst: false },
+    ])('uses the owning delete flow for a session that is $reason', async ({ active, connected, retired, canDelete, stopFirst }) => {
+        sessionIsConnected = connected;
+        modalConfirmSpy.mockResolvedValueOnce(false);
+        mockSession = createSessionFixture({
+            active,
+            access: createSessionAccessFixture('owner', { deleteSession: canDelete }),
+            metadataLayoutVersion: 1,
+            ownerMetadataView: {
+                path: '/repo',
+                host: 'tester.local',
+                terminal: { mode: 'plain', controlServiceabilityV1: { v: 1, state: retired ? 'unknown' : 'recoverable_unservable', observedAt: 1, retired } },
+            },
+        });
+
+        const screen = await renderInfoScreen();
+        expect(screen.findByTestId('session-info-delete')).toBeNull();
+        if (!canDelete) {
+            expect(screen.findByTestId('sessionInfo.deleteSession')).toBeNull();
+            return;
+        }
+        expect(screen.findByTestId('sessionInfo.deleteSession')).not.toBeNull();
+        await screen.pressByTestIdAsync('sessionInfo.deleteSession');
+        await waitForHeaderMenuOutcome(() => expect(modalConfirmSpy).toHaveBeenCalledWith(
+            'sessionInfo.deleteSession',
+            stopFirst ? 'sessionInfo.stopAndDeleteSessionWarning' : 'sessionInfo.deleteSessionWarning',
+            expect.objectContaining({ destructive: true, confirmText: stopFirst ? 'sessionInfo.stopAndDeleteSession' : 'sessionInfo.deleteSession' }),
+        ));
+        expect(requestsFor('/v1/sessions/session-1').filter(request => request.method === 'DELETE')).toEqual([]);
+        expect(network.requests.filter(request => request.method === RPC_METHODS.STOP_SESSION)).toEqual([]);
+        expect(safeRouterBackSpy).not.toHaveBeenCalled();
+    });
+
     it.each(['view', 'edit'] as const)('hides rename quick action for %s shared sessions', async (accessLevel) => {
         mockServerId = 'server-b';
         mockSession = {

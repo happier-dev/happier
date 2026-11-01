@@ -5924,7 +5924,27 @@ retry without normal Action admission.
 
 Session Actions include `session.delete` (the existing durable Session deletion;
 the daemon owns managed-folder cleanup), `session.section.set` and `session.tags.set`
-(the existing Session-organization assignment routes). In current 0.3 development,
+(the existing Session-organization assignment routes).
+
+In 0.3 development, the canonical `session.delete` executor owns the bounded
+Stop and Delete operation. It uses the existing Home DELETE first: inactive
+Sessions delete without contacting their computer. Only the Home's typed
+`session_active` refusal invokes the exact reviewed `session.stop` child; a
+confirmed Stop permits one Delete retry. An incomplete Stop, failed Stop hold,
+refusal, deferred review or cancellation prevents that retry. Stop Require is
+included in the Delete review, and Agent requests retain their ordinary Action
+policy. The host-local child declaration supplies the existing reviewed-child
+issuer; it adds no caller operand, discovery field or second approval owner.
+A person's confirmed Delete also confirms that declared Stop child, so the
+operation does not ask again unless an explicit Require policy needs review.
+Session Info and list menus use the same Delete operation; their Stop and Delete
+wording does not decide whether a Stop runs. Inactive deletion, including an
+offline computer, keeps the direct Home path.
+Direct Home DELETE retains its inactive guard and typed absent/active/conflict
+responses. Delete adds no separate liveness read.
+
+
+In current 0.3 development,
 ordinary `session.open` navigates without starting a process. Explicit `intent: 'resume'`
 resumes through the same Action admission and exact-Home Session reader; durable
 approval retains that intent rather than settling it as navigation. It also accepts

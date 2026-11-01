@@ -103,6 +103,10 @@ export function createSessionActionTarget(params: Readonly<{
             && session.access?.capabilities.renameSession === true,
         toolCallsOverride: viewPreferences?.showToolCalls ?? null,
         canResume,
+        canStopAndDelete: serverId !== null
+            && session.access?.capabilities.deleteSession === true
+            && canStop
+            && (isActive || (params.isConnected ?? isActive) || hasRecoverableTerminalHost),
         canDelete:
             session.access?.capabilities.deleteSession === true
             && !isActive

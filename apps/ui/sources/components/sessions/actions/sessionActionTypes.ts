@@ -89,6 +89,7 @@ export type SessionActionTarget = Readonly<{
     toolCallsOverride?: boolean | null;
     canResume: boolean;
     canDelete: boolean;
+    canStopAndDelete: boolean;
     followEnabled?: boolean;
     readStateAction: SessionReadStateAction;
     attentionStandingAction: SessionAttentionStandingAction;
