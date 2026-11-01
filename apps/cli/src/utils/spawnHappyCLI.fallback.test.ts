@@ -218,7 +218,7 @@ describe('spawnHappyCLI fallback invocation', () => {
     expect(inv.argv).toEqual(
       expect.arrayContaining([
         '--import',
-        expect.stringMatching(/node_modules[\\/]tsx[\\/]dist[\\/]esm[\\/]index\.mjs$/),
+        expect.stringMatching(/packages[\\/]cli-common[\\/]registerSourceRuntime\.mjs$/),
         expect.stringMatching(/src[\\/]index\.ts$/),
         'daemon',
         'start-sync',
@@ -242,7 +242,7 @@ describe('spawnHappyCLI fallback invocation', () => {
     expect(inv.runtime).toBe('node');
     expect(inv.argv.slice(-5)).toEqual([
       '--import',
-      expect.stringMatching(/node_modules[\\/]tsx[\\/]dist[\\/]esm[\\/]index\.mjs$/),
+      expect.stringMatching(/packages[\\/]cli-common[\\/]registerSourceRuntime\.mjs$/),
       expect.stringMatching(/src[\\/]index\.ts$/),
       'daemon',
       'start-sync',
@@ -267,7 +267,7 @@ describe('spawnHappyCLI fallback invocation', () => {
     expect(inv.argv).toEqual(
       expect.arrayContaining([
         '--import',
-        expect.stringMatching(/node_modules[\\/]tsx[\\/]dist[\\/]esm[\\/]index\.mjs$/),
+        expect.stringMatching(/packages[\\/]cli-common[\\/]registerSourceRuntime\.mjs$/),
         expect.stringMatching(/src[\\/]index\.ts$/),
         'daemon',
         'start-sync',
@@ -305,7 +305,7 @@ describe('spawnHappyCLI fallback invocation', () => {
     expect(inv.argv).toEqual(
       expect.arrayContaining([
         '--import',
-        expect.stringMatching(/node_modules[\\/]tsx[\\/]dist[\\/]esm[\\/]index\.mjs$/),
+        expect.stringMatching(/packages[\\/]cli-common[\\/]registerSourceRuntime\.mjs$/),
         expect.stringMatching(/src[\\/]index\.ts$/),
         'daemon',
         'start-sync',
@@ -1483,6 +1483,9 @@ describe('spawnHappyCLI fallback invocation', () => {
         expect(inv.argv).toEqual([
           '--import',
           inheritedTsxSpecifier,
+          '--conditions=happier-source',
+          '--import',
+          expect.stringMatching(/packages[\\/]cli-common[\\/]registerSourceRuntime\.mjs$/),
           '--no-warnings',
           '--no-deprecation',
           sourceEntrypoint,

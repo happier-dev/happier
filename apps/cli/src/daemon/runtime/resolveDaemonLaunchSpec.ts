@@ -8,9 +8,10 @@ import { resolvePackagedRuntimeEntrypoint } from '@/packagedRuntime/resolvePacka
 import { ensureJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable';
 import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
 import {
+  buildCurrentProcessSourceInvocation,
   buildHappyCliSubprocessLaunchSpec,
+  resolveCliSourceRuntimeFlags,
   resolveCliTsxTsconfigPath,
-  resolveTsxImportHookSpecifier,
 } from '@/utils/spawnHappyCLI';
 
 export type DaemonLaunchSpec = Readonly<{
@@ -126,13 +127,9 @@ function resolveDaemonTsxSourceLaunchSpec(
   const sourceEntrypoint = resolveSourceEntrypoint();
   if (!existsSync(sourceEntrypoint)) return null;
 
-  const tsxHookSpecifier = resolveTsxImportHookSpecifier();
-  if (!tsxHookSpecifier) {
-    throw new Error('Daemon launch requires tsx for source fallback, but tsx could not be resolved');
-  }
   return {
     filePath: runtimeExecutable,
-    args: ['--no-warnings', '--no-deprecation', '--import', tsxHookSpecifier, sourceEntrypoint, ...cliArgs],
+    args: ['--no-warnings', '--no-deprecation', ...resolveCliSourceRuntimeFlags(), sourceEntrypoint, ...cliArgs],
     env: {
       TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath(),
     },
@@ -297,6 +294,15 @@ export async function resolveDaemonLaunchSpec(
   });
   if (!runtimeExecutable) {
     throw new Error('Daemon launch requires a JavaScript runtime, but none could be resolved');
+  }
+
+  const currentProcessSourceInvocation = buildCurrentProcessSourceInvocation([...cliArgs], env);
+  if (currentProcessSourceInvocation) {
+    return {
+      filePath: runtimeExecutable,
+      args: currentProcessSourceInvocation.argv,
+      env: currentProcessSourceInvocation.env,
+    };
   }
 
   if (shouldPreferDaemonTsxSourceEntrypoint(env)) {

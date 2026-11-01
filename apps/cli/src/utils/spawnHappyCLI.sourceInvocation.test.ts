@@ -47,6 +47,43 @@ function runSourceChild(params: Readonly<{
 }
 
 describe('spawnHappyCLI current-source subprocess invocation', () => {
+  it('resolves first-party source instead of an installed compiled copy without source exports', async () => {
+    await withTempDir('happier source dependency resolution ', async (root) => {
+      const sourceEntrypoint = join(root, 'src', 'index.ts');
+      const installedProtocol = join(root, 'node_modules', '@happier-dev', 'protocol');
+      mkdirSync(join(root, 'src'), { recursive: true });
+      mkdirSync(join(installedProtocol, 'dist'), { recursive: true });
+      writeFileSync(join(root, 'tsconfig.runtime.json'), JSON.stringify({
+        compilerOptions: { module: 'esnext', target: 'es2022' },
+      }));
+      // Published bundled copies deliberately omit happier-source. The source
+      // launcher must use the existing workspace resolver, not their dist.
+      writeFileSync(join(installedProtocol, 'package.json'), JSON.stringify({
+        name: '@happier-dev/protocol', type: 'module',
+        exports: { './env/parseBooleanEnv': { default: './dist/parseBooleanEnv.js' } },
+      }));
+      writeFileSync(join(installedProtocol, 'dist', 'parseBooleanEnv.js'),
+        'throw new Error("stale_protocol_dist_loaded");');
+      writeFileSync(sourceEntrypoint,
+        'import { parseOptionalBooleanEnv } from "@happier-dev/protocol/env/parseBooleanEnv"; process.stdout.write(String(parseOptionalBooleanEnv("1")));');
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: undefined,
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: undefined,
+      });
+      process.argv[1] = sourceEntrypoint;
+      process.execArgv = ['--import', resolveTsxImportHookPath()!];
+
+      const launchSpec = buildHappyCliSubprocessLaunchSpec([]);
+      const result = runSourceChild({
+        filePath: launchSpec.filePath, args: launchSpec.args,
+        cwd: root, env: launchSpec.env,
+      });
+
+      expect(result).toEqual({ code: 0, stdout: 'true', stderr: '', error: null });
+    });
+  });
+
   it('normalizes split and equals-form relative module flags without changing URL or bare specifiers', async () => {
     await withTempDir('happier source child flags ', async (root) => {
       const sourceEntrypoint = join(root, 'src', 'index.ts');

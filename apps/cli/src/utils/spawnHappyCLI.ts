@@ -140,14 +140,6 @@ export function toNodeImportSpecifier(importPath: string, platform: NodeJS.Platf
   return importPath;
 }
 
-export function resolveTsxImportHookSpecifier(platform: NodeJS.Platform = process.platform): string | null {
-  const hookPath = resolveTsxImportHookPath();
-  if (!hookPath) {
-    return null;
-  }
-  return toNodeImportSpecifier(hookPath, platform);
-}
-
 function resolveSubprocessEntrypoint(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT;
   if (typeof override === 'string' && override.trim().length > 0) {
@@ -1016,6 +1008,14 @@ function buildCurrentStackDistSubprocessInvocation(
   };
 }
 
+export function resolveCliSourceRuntimeFlags(): string[] {
+  // Source children share the source-tool workspace resolver. Published
+  // bundled copies omit happier-source and must not capture source imports.
+  return ['--conditions=happier-source', '--import', toNodeImportSpecifier(
+    join(projectPath(), '..', '..', 'packages', 'cli-common', 'registerSourceRuntime.mjs'),
+  )];
+}
+
 function readInheritedNodeSourceRuntimeFlags(): string[] {
   const normalizeModuleSpecifier = (value: string): string => {
     if (isAbsolute(value)) {
@@ -1050,31 +1050,24 @@ function readInheritedNodeSourceRuntimeFlags(): string[] {
   return inherited;
 }
 
-function buildCurrentProcessSourceInvocation(args: string[]): HappyCliSubprocessInvocation | null {
-  if (typeof process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT === 'string' && process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT.trim().length > 0) {
+export function buildCurrentProcessSourceInvocation(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): HappyCliSubprocessInvocation | null {
+  if (typeof env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT === 'string' && env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT.trim().length > 0) {
     return null;
   }
 
   const sourceEntrypoint = resolveCurrentProcessSourceEntrypoint();
   if (!sourceEntrypoint) return null;
 
-  const inheritedRuntimeFlags = readInheritedNodeSourceRuntimeFlags();
   const sourceTsconfigPath = resolveTsconfigPathForSourceEntrypoint(sourceEntrypoint);
-  const runtimeFlags = inheritedRuntimeFlags.length > 0
-    ? inheritedRuntimeFlags
-    : (() => {
-      const tsxHook = resolveTsxImportHookPath();
-      if (!tsxHook) {
-        return null;
-      }
-      return ['--import', tsxHook];
-    })();
-  if (!runtimeFlags) return null;
 
   return {
     runtime: 'node',
     argv: [
-      ...runtimeFlags,
+      ...readInheritedNodeSourceRuntimeFlags(),
+      ...resolveCliSourceRuntimeFlags(),
       '--no-warnings',
       '--no-deprecation',
       sourceEntrypoint,
@@ -1089,15 +1082,9 @@ function buildCurrentProcessSourceInvocation(args: string[]): HappyCliSubprocess
 function buildDevTsxSubprocessInvocation(args: string[], entrypoint: string): HappyCliSubprocessInvocation | null {
   const tsxEntrypoint = resolveDevTsxFallbackEntrypoint(entrypoint);
   if (!existsSync(tsxEntrypoint)) return null;
-  const tsxHookSpecifier = resolveTsxImportHookSpecifier();
-  if (!tsxHookSpecifier) {
-    const errorMessage = `tsx is required for TSX fallback but could not be resolved from the cli package`;
-    logger.debug(`[SPAWN HAPPIER CLI] ${errorMessage}`);
-    throw new Error(errorMessage);
-  }
   return {
     runtime: 'node',
-    argv: ['--no-warnings', '--no-deprecation', '--import', tsxHookSpecifier, tsxEntrypoint, ...args],
+    argv: ['--no-warnings', '--no-deprecation', ...resolveCliSourceRuntimeFlags(), tsxEntrypoint, ...args],
     env: { TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath() },
   };
 }
@@ -1118,7 +1105,7 @@ export function buildHappyCliSubprocessInvocation(
   const runtime = getSubprocessRuntime(environment);
   const runtimeBacked = isRuntimeBackedHappyCliSubprocess(environment);
   if (runtime === 'node' && !runtimeBacked) {
-    const currentProcessSourceInvocation = buildCurrentProcessSourceInvocation(args);
+    const currentProcessSourceInvocation = buildCurrentProcessSourceInvocation(args, environment);
     if (currentProcessSourceInvocation) return currentProcessSourceInvocation;
   }
 

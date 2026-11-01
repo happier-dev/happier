@@ -21,7 +21,8 @@ vi.mock('@/projectPath', () => ({
   projectPath: () => '/repo',
 }));
 
-vi.mock('@/utils/spawnHappyCLI', () => ({
+vi.mock('@/utils/spawnHappyCLI', async importOriginal => ({
+  ...await importOriginal<typeof import('@/utils/spawnHappyCLI')>(),
   resolveTsxImportHookPath: vi.fn(() => '/repo/node_modules/tsx/dist/esm/index.mjs'),
   resolveCliTsxTsconfigPath: vi.fn(() => '/repo/tsconfig.json'),
 }));
@@ -67,8 +68,9 @@ describe('resolveNodeBackedMcpServerCommand', () => {
       args: [
         '--no-warnings',
         '--no-deprecation',
+        '--conditions=happier-source',
         '--import',
-        '/repo/node_modules/tsx/dist/esm/index.mjs',
+        expect.stringMatching(/registerSourceRuntime\.mjs$/),
         '/repo/src/mcp/launchers/stdioMcpServerLauncher.ts',
       ],
       env: {
@@ -154,8 +156,9 @@ describe('resolveNodeBackedMcpServerCommand', () => {
       args: [
         '--no-warnings',
         '--no-deprecation',
+        '--conditions=happier-source',
         '--import',
-        '/repo/node_modules/tsx/dist/esm/index.mjs',
+        expect.stringMatching(/registerSourceRuntime\.mjs$/),
         '/repo/src/mcp/bridges/remoteMcpStdioBridge.ts',
       ],
       env: {

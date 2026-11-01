@@ -5,7 +5,7 @@ import { projectPath } from '@/projectPath';
 import { requireJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/requireJavaScriptRuntimeExecutable';
 import { resolvePackagedRuntimeEntrypoint } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { isBun } from '@/utils/runtime';
-import { resolveCliTsxTsconfigPath, resolveTsxImportHookPath } from '@/utils/spawnHappyCLI';
+import { resolveCliSourceRuntimeFlags, resolveCliTsxTsconfigPath, resolveTsxImportHookPath } from '@/utils/spawnHappyCLI';
 
 export type ResolvedNodeBackedMcpServerCommand = Readonly<{
   command: string;
@@ -31,7 +31,7 @@ export async function resolveNodeBackedMcpServerCommand(params: Readonly<{
   if (shouldPreferSourceEntrypoint && existsSync(sourceEntrypoint) && typeof tsxHookPath === 'string' && tsxHookPath.length > 0) {
     return {
       command,
-      args: ['--no-warnings', '--no-deprecation', '--import', tsxHookPath, sourceEntrypoint, ...(params.args ?? [])],
+      args: ['--no-warnings', '--no-deprecation', ...resolveCliSourceRuntimeFlags(), sourceEntrypoint, ...(params.args ?? [])],
       env: {
         TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath(),
       },
@@ -48,7 +48,7 @@ export async function resolveNodeBackedMcpServerCommand(params: Readonly<{
   if (existsSync(sourceEntrypoint) && typeof tsxHookPath === 'string' && tsxHookPath.length > 0) {
     return {
       command,
-      args: ['--no-warnings', '--no-deprecation', '--import', tsxHookPath, sourceEntrypoint, ...(params.args ?? [])],
+      args: ['--no-warnings', '--no-deprecation', ...resolveCliSourceRuntimeFlags(), sourceEntrypoint, ...(params.args ?? [])],
       env: {
         TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath(),
       },

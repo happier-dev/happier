@@ -13,13 +13,9 @@ import { publishPinnedRunnerSnapshotFixture } from '@/testkit/process/spawnHappy
 const {
   ensureJavaScriptRuntimeExecutableMock,
   resolvePackagedRuntimeEntrypointMock,
-  resolveTsxImportHookSpecifierMock,
-  resolveCliTsxTsconfigPathMock,
 } = vi.hoisted(() => ({
   ensureJavaScriptRuntimeExecutableMock: vi.fn<typeof import('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable').ensureJavaScriptRuntimeExecutable>(async () => '/usr/bin/node'),
   resolvePackagedRuntimeEntrypointMock: vi.fn(() => '/opt/happier/package-dist/index.mjs'),
-  resolveTsxImportHookSpecifierMock: vi.fn(() => '/opt/happier/node_modules/tsx/dist/esm/index.mjs'),
-  resolveCliTsxTsconfigPathMock: vi.fn(() => '/opt/happier/apps/cli/tsconfig.json'),
 }));
 
 vi.mock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable', () => ({
@@ -29,15 +25,6 @@ vi.mock('@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable', () => ({
 vi.mock('@/packagedRuntime/resolvePackagedRuntimeEntrypoint', () => ({
   resolvePackagedRuntimeEntrypoint: resolvePackagedRuntimeEntrypointMock,
 }));
-
-vi.mock('@/utils/spawnHappyCLI', async () => {
-  const actual = await vi.importActual<typeof import('@/utils/spawnHappyCLI')>('@/utils/spawnHappyCLI');
-  return {
-    ...actual,
-    resolveTsxImportHookSpecifier: resolveTsxImportHookSpecifierMock,
-    resolveCliTsxTsconfigPath: resolveCliTsxTsconfigPathMock,
-  };
-});
 
 function writeAdmittedDaemonStartupClosure(root: string, marker = 'admitted'): Readonly<{
   entrypoint: string;
@@ -326,8 +313,9 @@ describe('resolveDaemonLaunchSpec', () => {
       expect(result.args).toEqual([
         '--no-warnings',
         '--no-deprecation',
+        '--conditions=happier-source',
         '--import',
-        '/opt/happier/node_modules/tsx/dist/esm/index.mjs',
+        expect.stringMatching(/registerSourceRuntime\.mjs$/),
         expect.stringMatching(/src[\\/]index\.ts$/),
         'daemon',
         'start-sync',
@@ -433,14 +421,15 @@ describe('resolveDaemonLaunchSpec', () => {
       args: [
         '--no-warnings',
         '--no-deprecation',
+        '--conditions=happier-source',
         '--import',
-        '/opt/happier/node_modules/tsx/dist/esm/index.mjs',
+        expect.stringMatching(/registerSourceRuntime\.mjs$/),
         expect.stringMatching(/src[\\/]index\.ts$/),
         'daemon',
         'start-sync',
       ],
       env: {
-        TSX_TSCONFIG_PATH: '/opt/happier/apps/cli/tsconfig.json',
+        TSX_TSCONFIG_PATH: expect.stringMatching(/tsconfig\.runtime\.json$/),
       },
     });
   });
@@ -670,14 +659,15 @@ describe('resolveDaemonLaunchSpec', () => {
         args: [
           '--no-warnings',
           '--no-deprecation',
+          '--conditions=happier-source',
           '--import',
-          '/opt/happier/node_modules/tsx/dist/esm/index.mjs',
+          expect.stringMatching(/registerSourceRuntime\.mjs$/),
           expect.stringMatching(/src[\\/]index\.ts$/),
           'daemon',
           'start-sync',
         ],
         env: {
-          TSX_TSCONFIG_PATH: '/opt/happier/apps/cli/tsconfig.json',
+          TSX_TSCONFIG_PATH: expect.stringMatching(/tsconfig\.runtime\.json$/),
         },
       });
     } finally {
@@ -706,14 +696,15 @@ describe('resolveDaemonLaunchSpec', () => {
     expect(result.args).toEqual([
       '--no-warnings',
       '--no-deprecation',
+      '--conditions=happier-source',
       '--import',
-      '/opt/happier/node_modules/tsx/dist/esm/index.mjs',
+      expect.stringMatching(/registerSourceRuntime\.mjs$/),
       expect.stringMatching(/src[\\/]index\.ts$/),
       'daemon',
       'start-sync',
     ]);
     expect(result.env).toEqual({
-      TSX_TSCONFIG_PATH: '/opt/happier/apps/cli/tsconfig.json',
+      TSX_TSCONFIG_PATH: expect.stringMatching(/tsconfig\.runtime\.json$/),
     });
   });
 

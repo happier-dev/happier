@@ -48,7 +48,7 @@ describe('buildHappyCliSubprocessInvocation (missing entrypoint)', () => {
     const invocation = mod.buildHappyCliSubprocessInvocation(['--version']);
     expect(invocation.argv).toContain('--import');
     expect(invocation.argv).toEqual(
-      expect.arrayContaining([expect.stringMatching(/node_modules\/tsx\/dist\/esm\/index\.mjs$/)]),
+      expect.arrayContaining([expect.stringMatching(/packages[\\/]cli-common[\\/]registerSourceRuntime\.mjs$/)]),
     );
     expect(invocation.argv.join(' ')).toContain('src/index.ts');
     expect(invocation.env?.TSX_TSCONFIG_PATH).toEqual(expect.stringMatching(/[\\/]apps[\\/]cli[\\/]tsconfig\.runtime\.json$/));
@@ -75,7 +75,7 @@ describe('buildHappyCliSubprocessInvocation (missing entrypoint)', () => {
     const invocation = mod.buildHappyCliSubprocessInvocation(['--version']);
     expect(invocation.argv).toContain('--import');
     expect(invocation.argv).toEqual(
-      expect.arrayContaining([expect.stringMatching(/node_modules\/tsx\/dist\/esm\/index\.mjs$/)]),
+      expect.arrayContaining([expect.stringMatching(/packages[\\/]cli-common[\\/]registerSourceRuntime\.mjs$/)]),
     );
     expect(invocation.argv.join(' ')).toContain('src/index.ts');
     expect(invocation.env?.TSX_TSCONFIG_PATH).toEqual(expect.stringMatching(/[\\/]apps[\\/]cli[\\/]tsconfig\.runtime\.json$/));
