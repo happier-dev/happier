@@ -78,7 +78,9 @@ export function normalizeActionExecutorThrownError(error: unknown): Readonly<{ e
     if (failure.success) return failure.data;
   }
   // Closed native bootstrap reasons remain useful without a vendor error body.
-  if (errorRecord.code === 'native_resource_unavailable' || errorRecord.code === 'native_action_failed') {
+  if (errorRecord.code === 'native_resource_unavailable' || errorRecord.code === 'native_action_failed'
+    || errorRecord.code === 'native_ssh_host_key_unavailable' || errorRecord.code === 'host_key_evidence_mismatch'
+    || errorRecord.code === 'invalid_trusted_host_key' || errorRecord.code === 'trusted_host_key_mismatch') {
     return { errorCode: errorRecord.code, error: errorRecord.code };
   }
   const sessionListUnavailable = SessionListUnavailableQueryV1Schema.safeParse(rawDetails);
