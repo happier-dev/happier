@@ -88,8 +88,7 @@ describe('commitMessageGenerator', () => {
             retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
             intentInput: { scope: { kind: 'paths', include: ['file ', ' '] } },
         }), expect.objectContaining({ serverId: 'home_a', targetMachineId: 'machine_a', exactMachineId: 'machine_a' }));
-        expect(executionRunGet).toHaveBeenCalledWith(null, { runId: 'run_1', includeStructured: true },
-            expect.objectContaining({ serverId: 'home_a', targetMachineId: 'machine_a' }));
+        expect(executionRunGet).not.toHaveBeenCalled();
         expect(executionRunWait).toHaveBeenCalledWith(null, expect.objectContaining({ runId: 'run_1' }),
             expect.objectContaining({ serverId: 'home_a', targetMachineId: 'machine_a' }));
         actionExecuteMock.mockReset();
@@ -120,8 +119,7 @@ describe('commitMessageGenerator', () => {
                 ok: true,
                 status: 'succeeded',
                 result: successfulTerminalResult().result,
-            }))
-            .mockResolvedValueOnce(successfulTerminalResult());
+            }));
 
         const res = await generate();
 
@@ -139,7 +137,6 @@ describe('commitMessageGenerator', () => {
                 intent: 'scm_commit_message',
                 backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
                 waitForCompletion: true,
-                waitTimeoutSeconds: 12,
                 permissionMode: 'no_tools',
                 retentionPolicy: 'ephemeral',
                 runClass: 'bounded',
@@ -158,16 +155,8 @@ describe('commitMessageGenerator', () => {
 
         const startInput = actionExecuteMock.mock.calls[0]?.[1];
         expect(startInput?.intentInput?.patches).toBeUndefined();
-        expect(actionExecuteMock).toHaveBeenNthCalledWith(
-            2,
-            'execution.run.get',
-            { sessionId: 'sess_1', runId: 'run_1', includeStructured: true },
-            {
-                actionCaller: { kind: 'host' },
-                defaultSessionId: 'sess_1',
-                surface: 'ui',
-            },
-        );
+        expect(actionExecuteMock.mock.calls.map(([id]) => id)).toEqual(['execution.run.start']);
+        expect(startInput).not.toHaveProperty('waitTimeoutSeconds');
     });
 
     it.each([
@@ -231,12 +220,4 @@ describe('commitMessageGenerator', () => {
         expect(actionExecuteMock).toHaveBeenCalledTimes(1);
     });
 
-    it('rejects contradictory terminal observation instead of applying a suggestion', async () => {
-        actionExecuteMock.mockResolvedValueOnce(startResult({ ok: true, status: 'succeeded', result: successfulTerminalResult().result }))
-            .mockResolvedValueOnce({ ok: true, result: {
-                ...successfulTerminalResult().result,
-                run: { ...successfulTerminalResult().result.run, status: 'failed' },
-            } });
-        expect(await generate()).toMatchObject({ ok: false, runId: 'run_1', outcome: 'unknown' });
-    });
 });

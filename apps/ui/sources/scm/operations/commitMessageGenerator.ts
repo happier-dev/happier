@@ -1,12 +1,11 @@
 import { EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/runs/startRequest';
-import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, type ExecutionRunStatus } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, type ExecutionRunGetResponse, type ExecutionRunStatus } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
-const COMMIT_MESSAGE_WAIT_TIMEOUT_SECONDS = 12;
 const executeAction = createFrontDoorActionExecute();
 
 export type ScmCommitMessageGeneratorResult =
@@ -92,7 +91,6 @@ export async function generateScmCommitMessage(params: Readonly<{
                 scope: { kind: 'paths', include },
             },
             waitForCompletion: true,
-            waitTimeoutSeconds: COMMIT_MESSAGE_WAIT_TIMEOUT_SECONDS,
         },
         context,
     );
@@ -115,7 +113,7 @@ export async function generateScmCommitMessage(params: Readonly<{
         return { ok: false, error: 'Commit message generation failed', runId: started.data.runId, outcome: 'unknown' };
     }
 
-    return readScmCommitMessageSuggestion({ host: params.host, runId: started.data.runId, expectedStatus: wait.status });
+    return readCommitMessageResult(wait.result, started.data.runId);
 }
 
 /** Observes the accepted Run on its original target; never starts a replacement. */
@@ -142,18 +140,22 @@ export async function readScmCommitMessageSuggestion(params: Readonly<{
     ) {
         return { ok: false, error: 'Commit message generation failed', runId: params.runId, outcome: 'unknown' };
     }
-    if (terminal.data.run.status === 'running') return waitObservationFailure('timeout', params.runId);
-    if (terminal.data.run.status !== 'succeeded') {
-        const runError = terminal.data.run.error;
+    return readCommitMessageResult(terminal.data, params.runId);
+}
+
+function readCommitMessageResult(terminal: ExecutionRunGetResponse, runId: string): ScmCommitMessageGeneratorResult {
+    if (terminal.run.status === 'running') return waitObservationFailure('timeout', runId);
+    if (terminal.run.status !== 'succeeded') {
+        const runError = terminal.run.error;
         return {
             ok: false,
             error: runError?.message ?? 'Commit message generation failed',
             ...(runError?.code ? { errorCode: runError.code } : {}),
-            runId: params.runId,
+            runId,
         };
     }
 
-    const result = readObject(terminal.data.latestToolResult) ?? readObject(terminal.data.structuredMeta?.payload);
+    const result = readObject(terminal.latestToolResult) ?? readObject(terminal.structuredMeta?.payload);
     const message = result?.message;
     const normalized = typeof message === 'string' ? message.trim() : '';
     return normalized
