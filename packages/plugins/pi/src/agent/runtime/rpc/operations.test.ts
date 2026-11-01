@@ -1666,7 +1666,12 @@ describe('createPiRuntimeOperations', () => {
     ]));
   });
 
-  it.each([false, true])('publishes settled Pi usage with a conservative clock (tool: %s)', async (hasTool) => {
+  it.each([
+    { hasTool: false, delayedAck: false },
+    { hasTool: true, delayedAck: false },
+    { hasTool: false, delayedAck: true },
+    { hasTool: true, delayedAck: true },
+  ])('publishes the ingress clock without extra stats reads (tool: $hasTool, delayed ACK: $delayedAck)', async ({ hasTool, delayedAck }) => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(100);
     const capture: Capture = {
       specs: [],
@@ -1681,8 +1686,11 @@ describe('createPiRuntimeOperations', () => {
 
     const prompt = sendPrompt(runtime, 'hello');
     await waitForWrittenCount(capture, 1);
-    await ackLastCommand(capture);
-    await expect(prompt).resolves.toEqual({ status: 'admitted' });
+    if (!delayedAck) {
+      await ackLastCommand(capture);
+      await expect(prompt).resolves.toEqual({ status: 'admitted' });
+    }
+    clock.mockReturnValue(150);
     await emit(capture, { type: 'message_start', message: { role: 'assistant', content: [] } });
     if (hasTool) {
       clock.mockReturnValue(200);
@@ -1691,7 +1699,19 @@ describe('createPiRuntimeOperations', () => {
       await emit(capture, { type: 'message_start', message: { role: 'assistant', content: [] } });
     }
     clock.mockReturnValue(1000);
+    await emit(capture, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'done' },
+      message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+    });
     await emit(capture, { type: 'agent_end', willRetry: false });
+    if (delayedAck) {
+      expect(events.some((event) => event.kind === 'usage-observed')).toBe(false);
+      expect(capture.sessionStatsRequestCount ?? 0).toBe(0);
+      clock.mockReturnValue(2000);
+      await ackLastCommand(capture);
+      await expect(prompt).resolves.toEqual({ status: 'admitted' });
+    }
     await vi.waitFor(() => expect(events.some((event) => event.kind === 'usage-observed')).toBe(true));
 
     expect(parseEvents(events)).toContainEqual(expect.objectContaining({
@@ -1705,6 +1725,7 @@ describe('createPiRuntimeOperations', () => {
     }));
 
     expect(capture.sessionStatsRequestCount).toBe(1);
+    expect(events.some((event) => event.kind === 'turn-complete')).toBe(true);
 
     await runtime.dispose();
   });

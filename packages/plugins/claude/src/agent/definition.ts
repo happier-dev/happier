@@ -24,6 +24,7 @@ function defineAgentWithPublicModelConfig<TDefinition extends Readonly<Record<st
 const CLAUDE_AGENT_ID = 'claude';
 const CLAUDE_NATIVE_COMPACTION_CAPABILITY = {
   events: true,
+  manual: true,
   idle: { mode: 'native', defaultEnabled: true, defaultMinContextTokens: 200000, nativeHonorsMinimum: true },
 } as const;
 const CLAUDE_SDK_COMPACTION_CAPABILITY = {

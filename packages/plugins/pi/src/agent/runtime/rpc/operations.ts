@@ -215,8 +215,12 @@ type PendingCompletion = Readonly<{
 
 type PendingPromptAdmission = {
   turnId: string;
+  turnStartedAtMs: number;
   onAccepted: () => void;
-  bufferedRecords: AgentSessionPreAdmissionBuffer<Readonly<Record<string, unknown>>>;
+  bufferedRecords: AgentSessionPreAdmissionBuffer<Readonly<{
+    record: Readonly<Record<string, unknown>>;
+    observedAtMs: number;
+  }>>;
   bufferFailure: Exclude<AgentSessionPreAdmissionBufferResult, { status: 'accepted' }> | null;
   /**
    * Cancellation reason once an abort for this exact admission has been
@@ -521,6 +525,7 @@ function createRuntimeOperations(params: Readonly<{
     agentTurnId: string | null = null,
     turnId: string = randomUUID(),
     startedBy: 'host' | 'provider' = 'provider',
+    startedAtMs: number = Date.now(),
   ): ActiveTurnState {
     runtimeEventProjector.resetTurn();
     const turn = Object.freeze({
@@ -530,7 +535,7 @@ function createRuntimeOperations(params: Readonly<{
     activeTurn = turn;
     activeTurnStartObserved = false;
     activeTurnAssistantMessageObserved = false;
-    turnStartedAtMs = undefined;
+    turnStartedAtMs = startedAtMs;
     lastNonModelItemCompletedAtMs = undefined;
     activeTurnProviderFailure = null;
     retryingTurnProviderFailure = null;
@@ -567,8 +572,9 @@ function createRuntimeOperations(params: Readonly<{
     agentTurnId: string | null = null,
     turnId?: string,
     startedBy: 'host' | 'provider' = 'provider',
+    startedAtMs?: number,
   ): ActiveTurnState {
-    if (!activeTurn) return beginTurn(agentTurnId, turnId, startedBy);
+    if (!activeTurn) return beginTurn(agentTurnId, turnId, startedBy, startedAtMs);
     if (agentTurnId && activeTurn.agentTurnId !== agentTurnId) {
       activeTurn = Object.freeze({
         turnId: activeTurn.turnId,
@@ -680,11 +686,11 @@ function createRuntimeOperations(params: Readonly<{
     completion?.resolve();
   }
 
-  function handleRuntimeRecordNow(record: Readonly<Record<string, unknown>>): void {
+  function handleRuntimeRecordNow(record: Readonly<Record<string, unknown>>, observedAtMs: number): void {
     const type = readPiRuntimeRecordType(record);
     const agentTurnId = readPiProviderTurnId(record);
     if (type === 'turn_start' || type === 'agent_start') {
-      readOrBeginTurn(agentTurnId);
+      readOrBeginTurn(agentTurnId, undefined, 'provider', observedAtMs);
       activeTurnStartObserved = true;
       return;
     }
@@ -692,10 +698,10 @@ function createRuntimeOperations(params: Readonly<{
     const providerFailureDiagnostic = readPiProviderFailureDiagnostic(record);
     if (turn && type === 'message_start' && record.message && typeof record.message === 'object'
       && 'role' in record.message && record.message.role === 'assistant') {
-      turnStartedAtMs ??= Date.now();
+      turnStartedAtMs ??= observedAtMs;
     }
     if (turn && type === 'tool_execution_end') {
-      lastNonModelItemCompletedAtMs = Date.now();
+      lastNonModelItemCompletedAtMs = observedAtMs;
     }
     const providerFailure = providerFailureDiagnostic
       ? {
@@ -875,6 +881,7 @@ function createRuntimeOperations(params: Readonly<{
       }
       const admission: PendingPromptAdmission = {
         turnId,
+        turnStartedAtMs: Date.now(),
         onAccepted,
         bufferedRecords: createAgentSessionPreAdmissionBuffer(),
         bufferFailure: null,
@@ -884,7 +891,7 @@ function createRuntimeOperations(params: Readonly<{
       const providerNativeCommand = params.resolveProviderNativeCommand(prompt);
       const accept = () => {
         admission.onAccepted();
-        readOrBeginTurn(null, admission.turnId, 'host');
+        readOrBeginTurn(null, admission.turnId, 'host', admission.turnStartedAtMs);
         // The provider did accept the prompt, so the input stays admitted; the
         // turn it begins terminalizes cancelled instead of resurrecting an
         // already aborted admission.
@@ -894,7 +901,7 @@ function createRuntimeOperations(params: Readonly<{
       };
       const replayBufferedRecords = () => {
         const records = admission.bufferedRecords.drain();
-        for (const record of records) handleRuntimeRecordNow(record);
+        for (const { record, observedAtMs } of records) handleRuntimeRecordNow(record, observedAtMs);
       };
       try {
         // Pi queues this response behind an in-progress context compaction. In that state
@@ -956,7 +963,7 @@ function createRuntimeOperations(params: Readonly<{
           // Pi stream events do not echo the prompt request ID, so replay them for output/lifecycle
           // visibility without treating unrelated activity as acceptance evidence for this prompt.
           const records = admission.bufferedRecords.drain();
-          for (const record of records) handleRuntimeRecordNow(record);
+          for (const { record, observedAtMs } of records) handleRuntimeRecordNow(record, observedAtMs);
         } finally {
           replayingPromptAckFailureRecords = false;
           admission.bufferedRecords.dispose();
@@ -1081,15 +1088,18 @@ function createRuntimeOperations(params: Readonly<{
       await params.rpc.dispose();
     },
     handleRuntimeRecord(record) {
+      // Capture arrival before prompt admission can defer lifecycle/tool
+      // processing behind its acknowledgement; replay is not a request clock.
+      const observedAtMs = Date.now();
       const recordType = readPiRuntimeRecordType(record);
       if (recordType === 'compaction_start') piCompactionInProgress = true;
       if (recordType === 'compaction_end') piCompactionInProgress = false;
       const admission = pendingPromptAdmission;
       if (!admission) {
-        handleRuntimeRecordNow(record);
+        handleRuntimeRecordNow(record, observedAtMs);
         return;
       }
-      const result = admission.bufferedRecords.admit(record);
+      const result = admission.bufferedRecords.admit({ record, observedAtMs });
       if (result.status !== 'accepted' && admission.bufferFailure === null) {
         admission.bufferFailure = result;
         admission.bufferedRecords.dispose();

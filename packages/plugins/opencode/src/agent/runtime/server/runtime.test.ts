@@ -421,7 +421,7 @@ describe('createOpenCodeServerRuntime', () => {
         type: 'message.updated', properties: { info: {
           id, role: 'assistant', sessionID: 'ses-1', parentID, modelID: 'sonnet',
           time: { created, ...(completed === undefined ? {} : { completed }) },
-          tokens: { input: 100, output: 1, reasoning: 0, cache: { read: 50, write: 0 } },
+          tokens: { input: 100, output: 10, reasoning: 4, cache: { read: 50, write: 5 } },
         } },
       });
       await operations.handleProviderEvent(assistant('clock-answer-1', user.info.id, 100));
@@ -437,8 +437,12 @@ describe('createOpenCodeServerRuntime', () => {
       await operations.handleProviderEvent(assistant('clock-final', user.info.id, hasTool ? 300 : 100, 400));
       const observations = events.filter(event => event.kind === 'usage-observed');
       expect(observations.find(event => event.accounting?.inferenceId === 'old-answer')).not.toHaveProperty('promptCache');
+      expect(observations.find(event => event.accounting?.inferenceId === 'old-answer')).not.toHaveProperty('context');
       expect(observations.find(event => event.accounting?.inferenceId === 'clock-final')).toMatchObject({
         promptCache: { lastUseAtMs: hasTool ? 200 : 100 },
+        // Native V1 output already includes reasoning; use the latest assistant,
+        // including its cache buckets, rather than a cumulative paid ledger.
+        context: { usedTokens: 165, windowTokens: null, source: 'provider_live' },
       });
       expect(observations.find(event => event.accounting?.inferenceId === 'clock-final')?.promptCache).not.toHaveProperty('ttlMs');
       expect(historyRead).not.toHaveBeenCalled();

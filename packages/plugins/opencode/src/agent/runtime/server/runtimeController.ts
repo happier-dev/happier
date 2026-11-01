@@ -419,9 +419,24 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     const fingerprint = JSON.stringify([modelId, usage, promptCache]);
     if (paidUsageFingerprints.get(key) === fingerprint) return;
     paidUsageFingerprints.set(key, fingerprint);
-    publishRuntimeEvent({ kind: 'usage-observed', ...projectOpenCodeRuntimeScope(params.scope), emittedAtMs: Date.now(),
+    const observedAtMs = Date.now();
+    publishRuntimeEvent({ kind: 'usage-observed', ...projectOpenCodeRuntimeScope(params.scope), emittedAtMs: observedAtMs,
       observationId: key, source: 'opencode-native-accounting', scope: 'turn_delta', ...(modelId ? { modelId } : {}),
       ...(promptCache ? { promptCache } : {}),
+      // Native compaction sizes the latest assistant aggregate, not the paid
+      // Session ledger. The normalizer already resolves dialect overlap.
+      ...(ownsLiveInference ? { context: {
+        v: 1,
+        modelId: modelId ?? null,
+        usedTokens: usage.tokens.total,
+        windowTokens: null,
+        totalProcessedTokens: null,
+        baselineTokens: null,
+        isAutoCompactEnabled: null,
+        categories: null,
+        observedAtMs,
+        source: 'provider_live',
+      } } : {}),
       accounting: { nativeSessionId, inferenceId, inputIncludesCache: usage.inputIncludesCache, outputIncludesReasoning: usage.outputIncludesReasoning,
         historyComplete: false },
       tokens: usage.tokens, ...(usage.cost ? { cost: usage.cost } : {}) });

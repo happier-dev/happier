@@ -17,6 +17,7 @@ describe('Claude selected-mode compaction capability', () => {
     }, context);
     expect(selected.compaction).toEqual({
       events: true,
+      manual: true,
       idle: { mode: 'native', defaultEnabled: true, defaultMinContextTokens: 200000, nativeHonorsMinimum: true },
     });
     const sdk = await select({
