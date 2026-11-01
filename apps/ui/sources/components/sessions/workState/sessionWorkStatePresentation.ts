@@ -1,4 +1,9 @@
-import { SessionWorkStateStatusReasonV1Schema } from '@happier-dev/protocol';
+import {
+    SessionWorkStateItemKindV1Schema,
+    SessionWorkStateItemOriginV1Schema,
+    SessionWorkStateStatusReasonV1Schema,
+    SessionWorkStateStatusV1Schema,
+} from '@happier-dev/protocol';
 
 import type {
     SessionWorkStateGoalCapabilities,
@@ -10,17 +15,9 @@ import type {
     SessionWorkStateStatusReason,
 } from './sessionWorkStateTypes';
 
-const VALID_KINDS: ReadonlySet<string> = new Set(['goal', 'task', 'todo']);
-const VALID_ORIGINS: ReadonlySet<string> = new Set(['vendor', 'happier', 'derived']);
-const VALID_STATUSES: ReadonlySet<string> = new Set([
-    'pending',
-    'active',
-    'paused',
-    'blocked',
-    'complete',
-    'cancelled',
-    'unknown',
-]);
+const VALID_KINDS: ReadonlySet<string> = new Set(SessionWorkStateItemKindV1Schema.options);
+const VALID_ORIGINS: ReadonlySet<string> = new Set(SessionWorkStateItemOriginV1Schema.options);
+const VALID_STATUSES: ReadonlySet<string> = new Set(SessionWorkStateStatusV1Schema.options);
 
 type WorkStateBadgeTranslationKey =
     | 'session.workState.badge.goal'

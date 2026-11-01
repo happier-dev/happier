@@ -4,6 +4,10 @@ import type {
     ImportedLocalPetPackageV1,
 } from '@happier-dev/protocol';
 
+import {
+    DesktopPetOverlayVisibilityModeOverrideSchema,
+    PetEnabledOverrideSchema,
+} from '@/sync/domains/settings/registry/local/localSettingDefinitions';
 import type { LocalPetSourceMetadata } from '@/sync/domains/pets/localPetSourceMetadata';
 
 import type {
@@ -14,13 +18,10 @@ import type {
     PetEnabledOverride,
 } from './types';
 
-const PET_ENABLED_OVERRIDE_IDS = new Set(['inherit', 'enabled', 'disabled']);
-const DESKTOP_PET_OVERLAY_VISIBILITY_MODE_OVERRIDE_IDS = new Set([
-    'inherit',
-    'attentionOrActive',
-    'alwaysWhenEnabled',
-    'attentionOnly',
-]);
+const PET_ENABLED_OVERRIDE_IDS: ReadonlySet<string> = new Set(PetEnabledOverrideSchema.options);
+const DESKTOP_PET_OVERLAY_VISIBILITY_MODE_OVERRIDE_IDS: ReadonlySet<string> = new Set(
+    DesktopPetOverlayVisibilityModeOverrideSchema.options,
+);
 
 export const USE_ON_THIS_DEVICE_ACTION_ID = 'use-on-this-device';
 export const IMPORT_TO_ACCOUNT_ACTION_ID = 'import-to-account';

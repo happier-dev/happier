@@ -1,9 +1,14 @@
-import type { SessionWorkStateStatusReasonV1 } from '@happier-dev/protocol';
+import type {
+    SessionWorkStateItemKindV1,
+    SessionWorkStateItemOriginV1,
+    SessionWorkStateStatusReasonV1,
+    SessionWorkStateStatusV1,
+} from '@happier-dev/protocol';
 
-export type SessionWorkStateStatus = 'pending' | 'active' | 'paused' | 'blocked' | 'complete' | 'cancelled' | 'unknown';
+export type SessionWorkStateStatus = SessionWorkStateStatusV1;
 export type SessionWorkStateStatusReason = SessionWorkStateStatusReasonV1;
-export type SessionWorkStateKind = 'goal' | 'task' | 'todo';
-export type SessionWorkStateOrigin = 'vendor' | 'happier' | 'derived';
+export type SessionWorkStateKind = SessionWorkStateItemKindV1;
+export type SessionWorkStateOrigin = SessionWorkStateItemOriginV1;
 
 /**
  * Provider-derived capability flags for a `kind:'goal'` item. When the provider source publishes

@@ -1,6 +1,14 @@
+import type { z } from 'zod';
+
+import {
+    DesktopPetOverlayAnchorSchema,
+    DesktopPetOverlayVisibilityModeOverrideSchema,
+} from '@/sync/domains/settings/registry/local/localSettingDefinitions';
+import { AccountPetDesktopOverlayVisibilityModeSchema } from '@/sync/domains/settings/registry/account/accountPetSettingDefinitions';
+
 export type DesktopPetOverlayFeatureState = 'enabled' | 'disabled' | 'unknown';
-export type DesktopPetOverlayVisibilityMode = 'attentionOrActive' | 'alwaysWhenEnabled' | 'attentionOnly';
-export type DesktopPetOverlayAnchor = 'bottomRight' | 'bottomLeft' | 'topRight' | 'topLeft';
+export type DesktopPetOverlayVisibilityMode = z.infer<typeof AccountPetDesktopOverlayVisibilityModeSchema>;
+export type DesktopPetOverlayAnchor = z.infer<typeof DesktopPetOverlayAnchorSchema>;
 
 export type DesktopPetOverlayPolicyInput = Readonly<{
     companionFeatureState: DesktopPetOverlayFeatureState;
@@ -16,9 +24,9 @@ export type DesktopPetOverlayPolicy = Readonly<{
     anchor: DesktopPetOverlayAnchor;
 }>;
 
-const VISIBILITY_MODES = ['attentionOrActive', 'alwaysWhenEnabled', 'attentionOnly'] as const;
-const VISIBILITY_MODE_OVERRIDES = ['inherit', ...VISIBILITY_MODES] as const;
-const ANCHORS = ['bottomRight', 'bottomLeft', 'topRight', 'topLeft'] as const;
+const VISIBILITY_MODES = AccountPetDesktopOverlayVisibilityModeSchema.options;
+const VISIBILITY_MODE_OVERRIDES = DesktopPetOverlayVisibilityModeOverrideSchema.options;
+const ANCHORS = DesktopPetOverlayAnchorSchema.options;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> {
     return value !== null && typeof value === 'object' && !Array.isArray(value)

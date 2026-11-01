@@ -3,14 +3,16 @@ import type {
     ImportedLocalPetPackageV1,
 } from '@happier-dev/protocol';
 
+import type { z } from 'zod';
+
+import type {
+    DesktopPetOverlayVisibilityModeOverrideSchema,
+    PetEnabledOverrideSchema,
+} from '@/sync/domains/settings/registry/local/localSettingDefinitions';
 import type { SelectedPetPackageSource } from '@/components/pets/source/resolveSelectedPetPackage';
 
-export type PetEnabledOverride = 'inherit' | 'enabled' | 'disabled';
-export type DesktopPetOverlayVisibilityModeOverride =
-    | 'inherit'
-    | 'attentionOrActive'
-    | 'alwaysWhenEnabled'
-    | 'attentionOnly';
+export type PetEnabledOverride = z.infer<typeof PetEnabledOverrideSchema>;
+export type DesktopPetOverlayVisibilityModeOverride = z.infer<typeof DesktopPetOverlayVisibilityModeOverrideSchema>;
 
 export type ManagedLocalPet = (ImportedLocalPetPackageV1 | DiscoveredPetPackageV1) & {
     kind: 'happierManagedLocal';
