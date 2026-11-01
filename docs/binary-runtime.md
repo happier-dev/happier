@@ -132,6 +132,10 @@ the predicate code, elapsed ownership waiting and available budget separately.
 Standalone service commands
 keep their existing startup checkpoints and platform defaults. The controller
 and guest CLI must both be updated for this propagation.
+In current development source, macOS install/start/restart select kickstart-only
+only when the native launchd activity reader confirms that the service-owned
+daemon's job is loaded. A surviving process marker alone cannot skip bootstrap.
+This correction requires an updated guest CLI payload and retains GUI placement.
 The consent prompt ends at the earlier recipe deadline or Home request expiry,
 with `auth_enrollment_timeout` or `auth_request_expired` and a request to Retry
 setup; late consent cannot authorize the expired request. Finite `auth wait`

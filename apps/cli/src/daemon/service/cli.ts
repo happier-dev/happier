@@ -99,6 +99,7 @@ import {
   isRunningServiceDaemonStale,
   resolveDaemonServiceLifecycleAction,
 } from './resolveDaemonServiceLifecycleAction';
+import { resolveDarwinServiceStartMode } from './darwinStartMode';
 import { resolveDaemonServiceIrohRelayConfig } from './resolveDaemonServiceIrohRelayConfig';
 import { resolveDaemonServiceHomeCarrierPolicy } from './resolveDaemonServiceHomeCarrierPolicy';
 
@@ -1641,10 +1642,13 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
       }),
       managedBy: requestedManagedBy ?? readInstalledDaemonServiceManagedBy({ platform: installRuntime.platform, path: paths.installedPath }),
     });
-    const shouldKickstartCurrentDarwinInstall = installRuntime.platform === 'darwin'
-      && ownership.kind !== 'none'
-      && ownership.owner.serviceManaged === true
-      && ownership.owner.state.serviceLabel === paths.label;
+    const shouldKickstartCurrentDarwinInstall = resolveDarwinServiceStartMode({
+      platform: installRuntime.platform,
+      uid: installRuntime.uid,
+      label: paths.label,
+      ownership,
+      deadlineMs: ownershipDeadlineMs,
+    }) === 'kickstart';
     const shouldStopWindowsOwner = shouldStopCurrentWindowsServiceOwnerBeforeLifecycleAction({
       platform: installRuntime.platform,
       ownership,
@@ -2008,10 +2012,13 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
       })
       : null;
 
-    const shouldKickstartCurrentDarwinService = runtime.platform === 'darwin'
-      && ownership.kind !== 'none'
-      && ownership.owner.serviceManaged === true
-      && ownership.owner.state.serviceLabel === paths.label;
+    const shouldKickstartCurrentDarwinService = action !== 'stop' && resolveDarwinServiceStartMode({
+      platform: runtime.platform,
+      uid: runtime.uid,
+      label: paths.label,
+      ownership,
+      deadlineMs: ownershipDeadlineMs,
+    }) === 'kickstart';
 
     // Auto-refresh drifted plist: an installed plist written by an older CLI
     // may not reflect current defaults (e.g. missing the `--takeover` arg).

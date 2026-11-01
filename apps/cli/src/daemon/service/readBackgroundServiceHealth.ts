@@ -70,10 +70,11 @@ export function readBackgroundServiceActivity(params: Readonly<{
   uid: number | null;
   label: string;
   mode?: DaemonServiceMode | null;
+  deadlineMs?: number;
 }>): BackgroundServiceActivity {
   if (params.platform === 'darwin') {
     if (params.uid == null) return 'unknown';
-    const output = tryReadLaunchctl(params.uid, params.label);
+    const output = tryReadLaunchctl(params.uid, params.label, params.deadlineMs);
     return output === null ? 'unknown' : output ? 'active' : 'inactive';
   }
   if (params.platform === 'linux') {
@@ -268,12 +269,18 @@ function systemdScopeArgs(mode: DaemonServiceMode): readonly string[] {
   return mode === 'system' ? [] : ['--user'];
 }
 
-function tryReadLaunchctl(uid: number, label: string): string | null {
+function healthQueryTimeoutMs(defaultTimeoutMs: number, deadlineMs?: number): number {
+  return deadlineMs === undefined ? defaultTimeoutMs : Math.min(defaultTimeoutMs, deadlineMs - Date.now());
+}
+
+function tryReadLaunchctl(uid: number, label: string, deadlineMs?: number): string | null {
+  const timeout = healthQueryTimeoutMs(2_000, deadlineMs);
+  if (timeout <= 0) return null;
   try {
     const args = ['print', `gui/${uid}/${label}`];
     const result = spawnBackgroundSync('launchctl', args, {
       encoding: 'utf-8',
-      timeout: 2_000,
+      timeout,
       env: buildServiceCommandEnv({ cmd: 'launchctl', args, env: process.env }),
     });
     if (result.error || result.status === null) return null;
