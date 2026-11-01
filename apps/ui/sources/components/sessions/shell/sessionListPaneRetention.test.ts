@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
     readRetainedSessionListPaneState,
     readActiveRetainedSessionListReferenceCorpus,
-    readSessionListPaneRetentionEntryCountForTests,
     releaseRetainedSessionListPaneState,
     resetSessionListPaneRetentionForTests,
     retainSessionListPaneState,
@@ -52,7 +51,6 @@ describe('session list pane retention identity', () => {
 
         expect(readRetainedSessionListPaneState(first)?.paneState.summary.sessionCount).toBe(1);
         expect(readRetainedSessionListPaneState(second)?.paneState.summary.sessionCount).toBe(2);
-        expect(readSessionListPaneRetentionEntryCountForTests()).toBe(2);
     });
 
     it('releases exactly one removed navigation entry without clearing its neighbor', () => {
@@ -65,6 +63,5 @@ describe('session list pane retention identity', () => {
 
         expect(readRetainedSessionListPaneState(removed)).toBeNull();
         expect(readRetainedSessionListPaneState(retained)).not.toBeNull();
-        expect(readSessionListPaneRetentionEntryCountForTests()).toBe(1);
     });
 });

@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import {
-    readSessionListScrollRetentionEntryCountForTests,
     releaseSessionListScrollRetention,
     resetSessionListScrollRetentionForTests,
     useSessionListScrollRetention,
@@ -64,21 +63,43 @@ describe('useSessionListScrollRetention', () => {
 
 
     it('releases only the removed route retention entry', async () => {
+        const firstScrollToOffset = vi.fn();
+        const secondScrollToOffset = vi.fn();
         const first = await renderHook(() => useSessionListScrollRetention({
             retentionKey: 'route-a',
-            scrollToOffset: vi.fn(),
+            scrollToOffset: firstScrollToOffset,
         }));
         const second = await renderHook(() => useSessionListScrollRetention({
             retentionKey: 'route-b',
-            scrollToOffset: vi.fn(),
+            scrollToOffset: secondScrollToOffset,
         }));
 
-        expect(readSessionListScrollRetentionEntryCountForTests()).toBe(2);
-        expect(releaseSessionListScrollRetention('route-a')).toBe(true);
-        expect(readSessionListScrollRetentionEntryCountForTests()).toBe(1);
-
+        await act(async () => {
+            first.getCurrent().handleLayout(layoutEvent(416));
+            first.getCurrent().handleScroll(scrollEvent(140, 416));
+            second.getCurrent().handleLayout(layoutEvent(416));
+            second.getCurrent().handleScroll(scrollEvent(280, 416));
+        });
         await first.unmount();
         await second.unmount();
+
+        expect(releaseSessionListScrollRetention('route-a')).toBe(true);
+        const removed = await renderHook(() => useSessionListScrollRetention({
+            retentionKey: 'route-a',
+            scrollToOffset: firstScrollToOffset,
+        }));
+        const retained = await renderHook(() => useSessionListScrollRetention({
+            retentionKey: 'route-b',
+            scrollToOffset: secondScrollToOffset,
+        }));
+        await act(async () => {
+            removed.getCurrent().handleLayout(layoutEvent(416));
+            retained.getCurrent().handleLayout(layoutEvent(416));
+        });
+        expect(firstScrollToOffset).not.toHaveBeenCalled();
+        expect(secondScrollToOffset).toHaveBeenCalledWith({ offset: 280, animated: false });
+        await removed.unmount();
+        await retained.unmount();
     });
     it('restores the last visible scroll offset when a zero-height retained list becomes visible again', async () => {
         const scrollToOffset = vi.fn();

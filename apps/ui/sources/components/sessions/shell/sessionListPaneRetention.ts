@@ -203,10 +203,6 @@ export function releaseRetainedSessionListPaneState(identity: SessionListPaneRet
     return released;
 }
 
-export function readSessionListPaneRetentionEntryCountForTests(): number {
-    return retainedPaneStateByKey.size;
-}
-
 export function resetSessionListPaneRetentionForTests(): void {
     retainedPaneStateByKey.clear();
     publishRetentionChange();

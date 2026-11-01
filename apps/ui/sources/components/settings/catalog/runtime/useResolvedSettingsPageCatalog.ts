@@ -220,7 +220,3 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog {
         search,
     };
 }
-
-export const __testables = {
-    flattenSettingsPageCatalog,
-};

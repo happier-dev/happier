@@ -198,7 +198,3 @@ export const SettingsCatalogPageChildren = React.memo(function SettingsCatalogPa
         </ItemGroup>
     );
 });
-
-export const __testables = {
-    resolveSettingsCatalogOverviewGroup,
-};

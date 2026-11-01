@@ -161,7 +161,3 @@ export function resolveVoicePresentedProviderId(
     }
     return resolveVoiceProviderIdForSurface(settings, registry);
 }
-
-export function resetVoiceProviderResolverRegistryForTests(): void {
-    defaultRegistry = null;
-}

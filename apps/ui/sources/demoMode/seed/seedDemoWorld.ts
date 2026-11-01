@@ -274,7 +274,3 @@ export async function clearDemoWorld(options: ClearDemoWorldOptions = {}): Promi
     }
     return { residueFindings };
 }
-
-export function resetDemoWorldSeedStateForTests(): void {
-    activeDemoSnapshot = null;
-}

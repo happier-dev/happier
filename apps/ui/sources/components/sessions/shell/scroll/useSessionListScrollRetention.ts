@@ -90,10 +90,6 @@ export function releaseSessionListScrollRetention(retentionKey: string): boolean
     return retainedScrollByKey.delete(retentionKey);
 }
 
-export function readSessionListScrollRetentionEntryCountForTests(): number {
-    return retainedScrollByKey.size;
-}
-
 export function resetSessionListScrollRetentionForTests(): void {
     retainedScrollByKey.clear();
 }

@@ -478,7 +478,3 @@ export function mergeAdmittedPluginSettingsPages(params: Readonly<{
         }) as SettingsPageNode]),
     })));
 }
-
-export const __testables = {
-    pluginSettingsPageRoute,
-};

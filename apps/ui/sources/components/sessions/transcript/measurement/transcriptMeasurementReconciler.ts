@@ -473,7 +473,3 @@ export function getDefaultTranscriptMeasurementReconciler(
     }
     return defaultReconcilerInstance;
 }
-
-export function __resetDefaultTranscriptMeasurementReconcilerForTests(): void {
-    defaultReconcilerInstance = null;
-}
