@@ -274,6 +274,18 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     /** Internal recursion guard for the canonical per-plugin component composer. */
     activationComponentMode?: boolean;
 }>): Promise<ActivatedPluginRuntimeRegistry> {
+    // Retained components already own activation for this exact occurrence.
+    // A repeated validation/admission scope must not invoke the module again;
+    // a replacement occurrence still needs its own activation.
+    const retainedOccurrencePluginIds = new Set<string>();
+    for (const registry of params.retainedRegistries ?? []) {
+        for (const pluginId of registry.activatedPluginIds) {
+            const occurrenceId = params.occurrenceIdsByPluginId?.get(pluginId);
+            if (occurrenceId && registry.readPluginOccurrenceId(pluginId) === occurrenceId) {
+                retainedOccurrencePluginIds.add(pluginId);
+            }
+        }
+    }
     if (params.adoptActivationComponent && !params.activationComponentMode) {
         const requestedPluginIds = params.pluginIds === undefined
             ? [
@@ -285,6 +297,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             : params.pluginIds;
         const componentRegistries: ActivatedPluginRuntimeRegistry[] = [];
         for (const pluginId of [...new Set(requestedPluginIds)].sort()) {
+            if (retainedOccurrencePluginIds.has(pluginId)) continue;
             const registry = await activatePluginRuntimeRegistry({
                 ...params,
                 pluginIds: Object.freeze([pluginId]),
@@ -342,6 +355,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     const isActivationCurrent = params.isActivationCurrent ?? (() => true);
 
     for (const target of activationTargets) {
+        if (retainedOccurrencePluginIds.has(target.pluginId)) continue;
         if (allowedPluginIds && !allowedPluginIds.has(target.pluginId)) {
             continue;
         }

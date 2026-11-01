@@ -2402,6 +2402,20 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 reason: 'invalid_payload',
             });
         }
+        const declaredRequest = request.data;
+        const refuse = (failure: Extract<ReturnType<typeof DaemonPluginUiResourceReadResponseSchema.parse>, { ok: false }>, generation?: number) => {
+            // Identity only: never include Resource bytes, contextual input or error text.
+            logger.infoFile('[PLUGIN RESOURCE] Read refused', {
+                ...(context?.transportRequestId ? { requestId: context.transportRequestId } : {}),
+                callerPluginId: declaredRequest.callerPluginId,
+                resourcePluginId: declaredRequest.resource.pluginId,
+                resourceId: declaredRequest.resource.localId,
+                expectedCallerOccurrenceId: declaredRequest.expectedCallerOccurrenceId,
+                ...(generation === undefined ? {} : { generation }),
+                code: failure.code, reason: failure.reason,
+            });
+            return DaemonPluginUiResourceReadResponseSchema.parse(failure);
+        };
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
             if (!isExpectedPluginOccurrenceCurrent(
@@ -2409,28 +2423,28 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 request.data.callerPluginId,
                 request.data.expectedCallerOccurrenceId,
             )) {
-                return DaemonPluginUiResourceReadResponseSchema.parse({
+                return refuse({
                     ok: false,
                     code: 'plugin_occurrence_stale',
                     reason: 'stale_occurrence',
-                });
+                }, lease.registry.generation);
             }
             if (!lease.registry.readUiResource) {
-                return DaemonPluginUiResourceReadResponseSchema.parse({
+                return refuse({
                     ok: false,
                     code: 'plugin_resource_service_unavailable',
                     reason: 'unavailable',
-                });
+                }, lease.registry.generation);
             }
             // Caller-scoped by construction: the resource service is bound to the
             // host-stamped calling plugin, so a reference naming another plugin
             // is simply not declared for that bind.
             if (request.data.resource.pluginId !== request.data.callerPluginId) {
-                return DaemonPluginUiResourceReadResponseSchema.parse({
+                return refuse({
                     ok: false,
                     code: 'plugin_resource_not_found',
                     reason: 'not_found',
-                });
+                }, lease.registry.generation);
             }
             const value = await lease.registry.readUiResource({
                 expectedCallerOccurrenceId: request.data.expectedCallerOccurrenceId,
@@ -2444,11 +2458,11 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 request.data.callerPluginId,
                 request.data.expectedCallerOccurrenceId,
             )) {
-                return DaemonPluginUiResourceReadResponseSchema.parse({
+                return refuse({
                     ok: false,
                     code: 'plugin_occurrence_stale',
                     reason: 'stale_occurrence',
-                });
+                }, lease.registry.generation);
             }
             return DaemonPluginUiResourceReadResponseSchema.parse({
                 ok: true,
@@ -2469,7 +2483,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                         || code === 'plugin_resource_limit_invalid'
                         ? 'invalid_payload'
                         : 'unavailable';
-            return DaemonPluginUiResourceReadResponseSchema.parse({ ok: false, code, reason });
+            return refuse({ ok: false, code, reason }, lease.registry.generation);
         } finally {
             await lease.release();
         }

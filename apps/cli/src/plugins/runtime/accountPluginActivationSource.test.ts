@@ -318,7 +318,7 @@ describe('Account activation source assembly', () => {
                 happyHomeDir: home, sessionId: 'cli-global', mode: 'plain', ctx: null,
                 serverId: 'account-corrupt-source', serverHttpBaseUrl: 'http://account-corrupt-source.test' });
             expect(await cli.execute('action.invoke', { action: { pluginId, localId: 'echo' }, input: { key: 'cold' } }, { surface: 'cli' }))
-                .toMatchObject({ ok: false, errorCode: 'plugin_action_handler_missing' });
+                .toMatchObject({ ok: false, errorCode: 'plugin_daemon_module_load_failed' });
             expect(artifactReads).toBeGreaterThan(0);
             expect(daemon).not.toHaveBeenCalled();
             const runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: home,

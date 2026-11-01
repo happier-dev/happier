@@ -1696,6 +1696,37 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     await rm(happyHomeDir, { recursive: true, force: true });
   });
 
+  it('reuses an active occurrence across repeated unchanged admission refreshes', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-admission-refresh-reuse-'));
+    const reloadController = createPluginReloadController({ happyHomeDir });
+    const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({ happyHomeDir, reloadController });
+    const store = createPluginRegistryStateStore({ happyHomeDir, runtimeLifecycle });
+    const fixture = await createExecutableInstallFixture(happyHomeDir, 'acme.admission-refresh');
+    try {
+      await store.initialize();
+      await expect(installFixtureCandidate(store, fixture.input)).resolves.toMatchObject({ status: 'committed' });
+      const occurrenceId = reloadController.readCurrentPluginOccurrenceId?.(fixture.input.pluginId);
+      expect(occurrenceId).toBeTruthy();
+      const incumbent = await reloadController.acquireRuntimeRegistry();
+      try {
+        await store.refreshRuntime([fixture.input.pluginId]);
+        await store.refreshRuntime([fixture.input.pluginId]);
+        const current = await reloadController.acquireRuntimeRegistry();
+        try {
+          expect(reloadController.readCurrentPluginOccurrenceId?.(fixture.input.pluginId)).toBe(occurrenceId);
+          await expect(invokeIdentity(current.registry, fixture.input.pluginId)).resolves.toMatchObject({ status: 'executed' });
+          await expect(invokeIdentity(incumbent.registry, fixture.input.pluginId)).resolves.toMatchObject({ status: 'executed' });
+          const lines = (await readFile(fixture.counterPath, 'utf8')).trim().split('\n');
+          expect(lines.filter(line => line === 'activate')).toHaveLength(1);
+          expect(lines.filter(line => line === 'cleanup')).toHaveLength(0);
+        } finally { await current.release(); }
+      } finally { await incumbent.release(); }
+    } finally {
+      await reloadController.shutdown();
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps unchanged plugin activation and services live across sequential install and peer disable', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-sequential-install-'));
     const reloadController = createPluginReloadController({ happyHomeDir });

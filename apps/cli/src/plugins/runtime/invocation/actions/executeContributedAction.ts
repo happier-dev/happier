@@ -363,13 +363,17 @@ async function activateOwningPluginForAction(params: Readonly<{
   if (!pluginId) {
     return null;
   }
-  const activationResults = await params.registry.activateContributionsOnDemand([{
+  await params.registry.activateContributionsOnDemand([{
     pluginId,
     family: 'actions',
     localId: params.action.definition.id,
   }]);
-  const diagnostics = activationResults.find((result) => result.pluginId === pluginId)?.diagnostics ?? [];
-  const activationFailure = diagnostics.find((diagnostic) => diagnostic.code === 'plugin_activation_failed');
+  const activationFailure = params.registry.targetActivationFacts?.find((fact) => (
+    fact.pluginId === pluginId && fact.status === 'unavailable'
+    && fact.required.some((registration) => (
+      registration.family === 'actions' && registration.localId === params.action.definition.id
+    ))
+  ))?.diagnostics[0];
   if (!activationFailure) {
     return null;
   }
