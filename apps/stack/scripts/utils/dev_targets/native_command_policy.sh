@@ -442,7 +442,7 @@ native_command_policy_finish() {
   if { [ "$policy_kind" = 'source-test' ]; } && { [ "$policy_component" = 'apps/cli' ]; } && { [ "$policy_workerTool" = 'vitest' ]; } && { [ "$policy_config" = 'vitest.config.ts' ]; } && { [ "$policy_generatorCheck" = '0' ]; } && { [ "$policy_testFileSelected" = '0' ]; }; then
     policy_heavyClass='compilation'
   fi
-  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'apps/ui' ]; } && { [ "$policy_config" = 'vitest.integration.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
+  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'apps/ui' ]; } && { [ "$policy_config" = 'vitest.integration.config.ts' ] || [ "$policy_config" = 'vitest.gesture-web.config.ts' ] || [ "$policy_config" = 'vitest.legend-native.config.ts' ] || [ "$policy_config" = 'vitest.legend-fabric.config.ts' ] || [ "$policy_config" = 'vitest.perf-newchat-baseline.config.ts' ] || [ "$policy_config" = 'vitest.r9-tail.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
     policy_kind='source-test'
   fi
   if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'apps/server' ]; } && { [ "$policy_config" = 'vitest.config.ts' ] || [ "$policy_config" = 'vitest.dbcontract.config.ts' ] || [ "$policy_config" = 'vitest.externalSessionMaterialize.integration.config.ts' ] || [ "$policy_config" = 'vitest.integration.config.ts' ] || [ "$policy_config" = 'vitest.ui.integration.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then

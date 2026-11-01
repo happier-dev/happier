@@ -291,6 +291,61 @@ test('plugin source-resolving Vitest uses source preparation in both dispatchers
   }
 });
 
+test('verified UI Vitest configs skip emitted preparation in both dispatchers', async t => {
+  const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const cwd = join(root, 'apps/ui');
+  const fixture = await createTempFixture(t, { prefix: 'ui-source-config-policy-' });
+  const artifact = fixture.path('policy.sh');
+  await writeFile(artifact, renderNativeCommandPolicy());
+  const { prepareRemoteValidationWorkspace } = await import('./remote_validation_preparation.mjs');
+  const configs = [
+    'vitest.gesture-web.config.ts', 'vitest.integration.config.ts',
+    'vitest.legend-native.config.ts', 'vitest.legend-fabric.config.ts',
+    'vitest.perf-newchat-baseline.config.ts', 'vitest.r9-tail.config.ts',
+  ];
+  for (const dispatcher of ['javascript', 'native']) {
+    if (dispatcher !== 'javascript' && process.platform === 'win32') continue;
+    for (const config of configs) {
+      await t.test(`${dispatcher}: ${config}`, async () => {
+        const payload = ['pnpm', '--dir', 'apps/ui', 'exec', 'vitest', 'run', '--config', config];
+        if (dispatcher === 'javascript') {
+          const policy = resolveRemoteCommandPolicy(payload, { cwd: root });
+          assert.equal(policy.kind, 'source-test');
+          const prepared = await prepareRemoteValidationWorkspace({
+            repoDir: fixture.root, componentRelativeDir: policy.component, validationKind: policy.kind,
+            requiredTools: policy.requiredTools,
+          });
+          assert.deepEqual(prepared.skipped, ['workspace-source-test']);
+        } else {
+          const args = ['vitest', 'run', `--config=./${config}`];
+          const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$3; shift 3; resolve_native_command_policy "$@"; printf "%s" "$policy_kind"',
+            'policy', artifact, root, cwd, ...args], { encoding: 'utf8' });
+          assert.equal(native.status, 0, native.stderr);
+          assert.equal(native.stdout, 'source-test');
+        }
+      });
+    }
+  }
+  // Partial resolvers and overrides must retain emitted preparation; a config
+  // name or inherited source resolver alone cannot establish this contract.
+  for (const args of [
+    ['--config=vitest.artifact-cache.config.ts'],
+    ['--config=vitest.unknown.config.ts'],
+    ['--config=../cli/vitest.gesture-web.config.ts'],
+    ['--config=vitest.gesture-web.config.ts', '--root=../cli'],
+    ['--config=vitest.gesture-web.config.ts', '--workspace=custom.workspace.ts'],
+    ['--config=vitest.gesture-web.config.ts', '--project=artifact'],
+  ]) {
+    const payload = ['vitest', 'run', ...args];
+    assert.equal(resolveRemoteCommandPolicy(payload, { cwd }).kind, 'runtime');
+    if (process.platform === 'win32') continue;
+    const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2/apps/ui; shift 2; resolve_native_command_policy "$@"; printf "%s" "$policy_kind"',
+      'policy', artifact, root, ...payload], { encoding: 'utf8' });
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, 'runtime');
+  }
+});
+
 test('server Vitest configs use source preparation without CLI publication custody in both dispatchers', async t => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url));
   const cwd = join(root, 'apps/server');

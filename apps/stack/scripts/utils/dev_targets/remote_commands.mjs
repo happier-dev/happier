@@ -29,6 +29,14 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
   // configs from the package so specialized lanes also skip dist publication.
   serverSourceTestConfigs: Object.freeze(readdirSync(new URL('../../../../../apps/server/', import.meta.url))
     .filter(name => /^vitest(?:\.[^.]+)*\.config\.ts$/u.test(name)).sort()),
+  // These retain the full UI base workspace-source resolver. Added aliases
+  // select installed third-party artifacts, never emitted workspace output.
+  // The artifact-cache lane has a partial resolver and keeps preparation.
+  uiSourceTestConfigs: Object.freeze([
+    'vitest.integration.config.ts', 'vitest.gesture-web.config.ts',
+    'vitest.legend-native.config.ts', 'vitest.legend-fabric.config.ts',
+    'vitest.perf-newchat-baseline.config.ts', 'vitest.r9-tail.config.ts',
+  ]),
   sourceTestScripts: Object.freeze(['vitest', 'vitest:local']),
 });
 const DEFAULT_COMMAND_POLICY = Object.freeze({
@@ -314,8 +322,8 @@ const FINAL_COMMAND_RULES = [
   { when: { kind: ['source-test'], component: ['apps/cli'], workerTool: ['vitest'],
     config: ['vitest.config.ts'], generatorCheck: ['0'], testFileSelected: ['0'] },
     set: { heavyClass: 'compilation' } },
-  // UI integration and all server lanes keep their workspace-source resolvers.
-  { when: { kind: ['runtime'], runnerKnown: ['1'], component: ['apps/ui'], config: ['vitest.integration.config.ts'], resolverOverride: ['0'] }, set: { kind: 'source-test' } },
+  // Verified UI and server lanes keep their workspace-source resolvers.
+  { when: { kind: ['runtime'], runnerKnown: ['1'], component: ['apps/ui'], config: REMOTE_COMMAND_CLASSIFICATION.uiSourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
   { when: { kind: ['runtime'], runnerKnown: ['1'], component: ['apps/server'], config: REMOTE_COMMAND_CLASSIFICATION.serverSourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
   { when: { heavyClass: HEAVYWEIGHT_COMPILE_CLASSES }, set: { localCompile: '1' } },
 ];
