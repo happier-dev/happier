@@ -156,6 +156,65 @@ test('promoted fiber probe rejects unchanged children with retained PerformedWor
   assert.equal(session.size, 0);
 });
 
+test('diagnostics attribute update roots and causes by name only, cut by bailed-out ancestors', async () => {
+  const storage = { getItem: () => null, setItem() {}, removeItem() {} };
+  const context = vm.createContext({ __HAPPIER_PERF_DIAGNOSTICS__: true, performance: { now: () => 1, timeOrigin: 0 },
+    PerformanceObserver: { supportedEntryTypes: [] }, URL, localStorage: storage, sessionStorage: storage });
+  vm.runInContext(await readFile(new URL('./browser-probe.js', import.meta.url), 'utf8'), context);
+  const secret = { token: 'SECRET-VALUE' };
+  // Builds a current/alternate pair so the render predicate sees an update with PerformedWork.
+  const pair = (fiber, previous = {}) => {
+    const now = { flags: 1, memoizedProps: {}, ...fiber }, before = { memoizedProps: now.memoizedProps, ...previous, tag: now.tag, type: now.type };
+    now.alternate = before; before.alternate = now;
+    return now;
+  };
+  const link = (parent, ...children) => { children.forEach((child, i) => { child.return = parent; if (children[i + 1]) child.sibling = children[i + 1]; }); parent.child = children[0]; return parent; };
+  function Screen() {}
+  function Bailed() {}
+  function PropsChild() {}
+  function StoreChild() {}
+  function ReducerChild() {}
+  function ContextChild() {}
+  const getSnapshot = () => store.get('https://u:p@example.com/x?k=1').items;
+  const hook = (queue, state, next) => ({ queue, memoizedState: state, next });
+  const store = new Map();
+  const propsChild = pair({ tag: 0, type: PropsChild, memoizedProps: { a: secret } }, { memoizedProps: { a: secret } });
+  const storeChild = pair({ tag: 0, type: StoreChild, memoizedState: hook({}, 1, hook({ getSnapshot }, secret, null)) },
+    { memoizedState: hook({}, 1, hook({ getSnapshot }, { token: 'old' }, null)) });
+  const reducerChild = pair({ tag: 0, type: ReducerChild, memoizedState: hook({}, 2, null) }, { memoizedState: hook({}, 1, null) });
+  const Ctx = { displayName: 'SettingsContext' };
+  const contextChild = pair({ tag: 0, type: ContextChild, dependencies: { firstContext: { context: Ctx, memoizedValue: { theme: secret, same: 1 }, next: null } } },
+    { dependencies: { firstContext: { context: Ctx, memoizedValue: { theme: { token: 'old' }, same: 1 }, next: null } } });
+  const renderedParent = pair({ tag: 0, type: Screen });
+  // Bailed-out ancestor: no PerformedWork, so its rendered child is its own update root.
+  const bailed = { tag: 0, type: Bailed, flags: 0, memoizedProps: {} }; bailed.alternate = { ...bailed };
+  const shielded = pair({ tag: 0, type: function Shielded() {} });
+  const mounted = { tag: 0, type: function Mounted() {}, flags: 1 };
+  link(renderedParent, propsChild);
+  link(bailed, shielded, mounted);
+  const top = link({ tag: 3 }, renderedParent, bailed, storeChild, reducerChild, contextChild);
+  for (const f of [renderedParent, bailed, storeChild, reducerChild, contextChild]) f.return = top;
+  context.__REACT_DEVTOOLS_GLOBAL_HOOK__.onCommitFiberRoot(1, { current: top });
+  const result = JSON.parse(JSON.stringify(context.__happierPerfProbe.collect()));
+  const { updateRoots, updateCauses, attributionErrors } = result.diagnostics;
+  assert.equal(attributionErrors, 0);
+  assert.equal(updateRoots.Screen, 1);
+  assert.equal(updateRoots['PropsChild < Screen'], undefined, 'a rendered ancestor owns the render');
+  assert.equal(updateRoots['Shielded < Bailed'], 1, 'a bailed-out ancestor cuts attribution');
+  assert.equal(Object.keys(updateRoots).some(key => key.startsWith('Mounted')), false, 'mounts are not update roots');
+  assert.equal(updateCauses['PropsChild :: props'], undefined);
+  assert.equal(updateCauses['StoreChild :: uSES(() => store.get(\'https://u:p@example.com/x?k=1\').items)'], undefined);
+  assert.deepEqual(Object.keys(updateCauses).filter(key => key.startsWith('StoreChild')), ['StoreChild :: uSES(() => store.get(\'https://example.com/x).items)']);
+  assert.equal(updateCauses['ReducerChild :: state#0'], 1);
+  assert.equal(updateCauses['ContextChild :: context:SettingsContext{theme}'], 1);
+  assert.equal(updateCauses['Shielded :: props'], undefined);
+  assert.equal(updateCauses['Screen :: unknown'], 1);
+  const text = JSON.stringify(result.diagnostics);
+  assert.equal(text.includes('SECRET-VALUE'), false);
+  assert.equal(text.includes('u:p@'), false, 'URLs in source excerpts go through the existing sanitizer');
+  assert.ok(Object.keys(updateCauses).every(key => key.length < 140));
+});
+
 test('network evidence strips query, fragment, userinfo and protocol-owned capability paths', () => {
   const projected = safeUrl('https://user:password@example.com/share/capability?key=secret#secret');
   assert.equal(projected, 'https://example.com/share/:token');

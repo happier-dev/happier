@@ -9,9 +9,61 @@
   const current = new WeakMap();
   const name = type => typeof type === 'function' ? type.displayName || type.name || 'Anonymous'
     : type && typeof type === 'object' ? type.displayName || name(type.render || type.type) : 'Anonymous';
+  // Render-cause attribution (diagnostics only). Names and short source excerpts only: never prop, state or context values.
+  const isComponent = fiber => tags.has(fiber.tag);
+  const genericWrapper = /^(Anonymous|View|Text|Pressable|ScrollView|AnimatedComponent.*|Context|Provider|Consumer|.*Legend.*)$/;
+  const componentPath = fiber => {
+    const names = [];
+    for (let p = fiber; p && names.length < 4; p = p.return) {
+      if (!isComponent(p)) continue;
+      const label = name(p.type);
+      if (!genericWrapper.test(label)) names.push(label);
+    }
+    return names.join(' < ');
+  };
+  const sourceExcerpt = fn => invoker(Function.prototype.toString.call(fn)).replace(/\s+/g, ' ').trim().slice(0, 90);
+  const changedHooks = fiber => {
+    const changed = [];
+    let now = fiber.memoizedState, before = fiber.alternate.memoizedState, index = 0;
+    while (now && before) {
+      // Only hooks with an update queue (state, reducer, external store) can schedule a render.
+      if (now.queue && now.memoizedState !== before.memoizedState) {
+        const getSnapshot = now.queue.getSnapshot;
+        changed.push(typeof getSnapshot === 'function' ? `uSES(${sourceExcerpt(getSnapshot)})` : `state#${index}`);
+      }
+      now = now.next; before = before.next; index++;
+    }
+    return changed;
+  };
+  const changedContexts = fiber => {
+    const before = [];
+    for (let d = fiber.alternate.dependencies?.firstContext; d; d = d.next) before.push(d);
+    const changed = [];
+    let index = 0;
+    for (let d = fiber.dependencies?.firstContext; d; d = d.next, index++) {
+      const prior = before[index];
+      if (prior && prior.context === d.context && prior.memoizedValue === d.memoizedValue) continue;
+      const value = d.memoizedValue, priorValue = prior?.memoizedValue;
+      const keys = value && typeof value === 'object' && priorValue && typeof priorValue === 'object'
+        ? Object.keys(value).filter(key => value[key] !== priorValue[key]).slice(0, 4).join('|') : '';
+      changed.push(`${d.context?.displayName || `ctx#${index}`}{${keys}}`);
+    }
+    return changed;
+  };
+  const renderCause = fiber => {
+    if (fiber.memoizedProps !== fiber.alternate.memoizedProps) return 'props';
+    if (fiber.tag !== 1) {
+      const hooks = changedHooks(fiber);
+      if (hooks.length) return hooks.slice(0, 2).join(' + ');
+    }
+    const contexts = changedContexts(fiber);
+    return contexts.length ? `context:${contexts.slice(0, 3).join(',')}` : 'unknown';
+  };
+  const bump = (table, key) => { table[key] = (table[key] ?? 0) + 1; };
   const empty = () => ({ commits: 0, renders: 0, components: Object.create(null), hookMs: 0, longTasks: [],
     ...(diagnostics ? { diagnostics: { supportedEntryTypes: [...supportedEntryTypes], loafs: [], reactMeasures: [],
       storeNotifications: [], storeNotificationsAvailable: false, socketEvents: [], socketEventsAvailable: false,
+      updateRoots: Object.create(null), updateCauses: Object.create(null), attributionErrors: 0,
       timeOrigin: performance.timeOrigin ?? null } } : {}) });
   let data = empty();
   let recording = true;
@@ -55,7 +107,7 @@
     commit?.apply(this, args);
     const started = performance.now();
     const root = args[1];
-    const stack = [root.current], names = new Set();
+    const stack = [root.current], names = new Set(), renderedNow = diagnostics ? new Set() : null;
     data.commits++;
     while (stack.length) {
       const fiber = stack.pop();
@@ -65,6 +117,16 @@
         row.renders++;
         data.renders++;
         names.add(component);
+        if (diagnostics) try {
+          renderedNow.add(fiber);
+          // Parents are visited first, so a bailed-out nearest component ancestor cuts attribution.
+          let parent = fiber.return;
+          while (parent && !isComponent(parent)) parent = parent.return;
+          if (fiber.alternate && !(parent && renderedNow.has(parent))) {
+            bump(data.diagnostics.updateRoots, componentPath(fiber));
+            bump(data.diagnostics.updateCauses, `${component} :: ${renderCause(fiber)}`);
+          }
+        } catch { data.diagnostics.attributionErrors++; }
       }
       current.set(fiber, true);
       if (fiber.alternate) current.set(fiber.alternate, false);

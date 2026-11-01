@@ -322,6 +322,19 @@ ordinary timing/counts capture does not enable these diagnostic observers.
 `compare` separates profiling-on/off and backend role sets, and never uses
 heavily instrumented runs for timing percentiles.
 
+`--profiling` also attributes React render causes in the browser probe, in the
+bundle's probe `diagnostics` next to the other diagnostic rows. `updateRoots`
+counts, per window, components that rendered (mounts excluded) under a nearest
+component ancestor that did not render in that commit, keyed by a short
+component path (nearest four named ancestors; generic wrappers skipped).
+`updateCauses` counts `Component :: cause` where the cause is `props`
+(changed props identity), the hooks whose update queue changed (`state#<index>`,
+or `uSES(<getSnapshot source excerpt>)` for external stores), or
+`context:<displayName>{changedKeys}`; `unknown` means none of those changed.
+Only names and a sanitized 90-character source excerpt are recorded, never prop,
+state or context values. The walk is counted in `hookMs`; a failed attribution
+increments `attributionErrors`.
+
 `trace.json.gz` contains sanitized trace events for `devtools.timeline`,
 `disabled-by-default-devtools.timeline`, `v8.execute`, `blink.user_timing` and
 `disabled-by-default-v8.cpu_profiler`. In-page start/end marks establish the
