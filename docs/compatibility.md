@@ -407,6 +407,21 @@ The probe can be removed only when daemons predating this method are no longer s
 Directory validation remains daemon-owned after successful negotiation, and a relative `cwd`
 continues to return `invalid_request` rather than being reclassified as compatibility fallback.
 
+### Account-pool option policy (development)
+
+Pool policy stays on the existing V3 groups endpoint. The released account-profile
+group reader (UI/server 0.2.15 at `88d45f33a5e5faf3235f621ee168a6f0ca58762d`,
+also pinned in `releasedV0215AccountProfile.ts`) is strict, so adding policy to
+that projection would reject the profile for those readers. This correction
+changes neither the profile payload nor the V3 group schema.
+
+Updated option consumers receive nullable `autoSwitch`: true and false describe
+known V3 policy; null means unknown. A failed or unavailable V3 read retains
+profile-projected choices without claiming automatic switching is disabled.
+The adoption suggestion requires known true. Feature-disabled group choices
+remain hidden. No persisted binding, server migration, or old-client write path
+changes.
+
 ### Priority-pool primary recovery (development)
 
 The group active-member mutation records its cause in the existing

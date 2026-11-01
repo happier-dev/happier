@@ -124,7 +124,6 @@ describe('connected-service session options', () => {
                             activeProfileId: 'profile_a',
                             memberProfileIds: ['profile_a', 'profile_b'],
                             generation: 7,
-                            policy: { autoSwitch: true },
                             state: { status: 'ready' },
                         },
                         {
@@ -148,7 +147,7 @@ describe('connected-service session options', () => {
                     memberProfileIds: ['profile_a', 'profile_b'],
                     generation: 7,
                     enabledMemberCount: 2,
-                    autoSwitch: true,
+                    autoSwitch: null,
                     status: 'ready',
                 },
                 {
@@ -156,7 +155,7 @@ describe('connected-service session options', () => {
                     label: 'empty',
                     activeProfileId: 'profile_empty',
                     enabledMemberCount: 0,
-                    autoSwitch: false,
+                    autoSwitch: null,
                     status: 'needs_members',
                 },
             ],

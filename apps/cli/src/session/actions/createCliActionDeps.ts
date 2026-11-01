@@ -1618,6 +1618,7 @@ export function createCliActionDeps(params: Readonly<{
       const accountProfile = await readActionAccountProfile();
       if (!accountProfile) return { items: [] };
       return listSpawnConnectedServiceItems({
+        token: params.credentials.token,
         accountSettings: await readActionAccountSettings(),
         accountProfile,
         ...(agentId ? { agentId } : {}),

@@ -2002,6 +2002,20 @@ its fingerprint matches the current issue. Older opaque attempt fingerprints
 remain readable, but cannot establish that association; the UI shows the current
 issue's supported recovery actions without attaching historical wait state.
 
+### Connected-service option policy (development)
+
+Session-spawn and execution-run connected-service discovery share
+`buildConnectedServiceAccountGroupOptionsByServiceId` in `@happier-dev/agents`.
+Policy consumers supply authoritative V3 groups through the existing group API.
+Options report `autoSwitch: true` or `false` only from that policy; a failed or
+unsupported read retains projected choices with `autoSwitch: null` (unknown).
+V3 membership includes only enabled members in the option projection.
+
+The default-auth row uses the existing V3 query lifecycle for its pool-adoption
+suggestion and requires known true policy. New-session binding resolution and
+session auth switching do not consume this policy and need no extra group read.
+The strict account-profile group projection remains unchanged.
+
 ### Model-capacity recovery (development)
 
 `TemporaryThrottleRecoveryScheduler` owns scheduling after a terminal capacity failure.

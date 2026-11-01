@@ -8,7 +8,10 @@ import {
   type AgentCore,
   type ConnectedServiceId,
 } from '@happier-dev/agents';
-import type { AccountProfileResponse, AccountSettings } from '@happier-dev/protocol';
+import type { AccountProfileResponse, AccountSettings, ConnectedServiceAuthGroupV1 } from '@happier-dev/protocol';
+
+import { listConnectedServiceAuthGroups } from '@/api/connectedServices/connectedServiceCredentialApi';
+import { logger } from '@/ui/logger';
 
 import { normalizeActionOptionLimit } from './actionOptionInputNormalization';
 
@@ -35,7 +38,8 @@ function resolveAgentCore(agentId: unknown): AgentCore {
   return AGENTS_CORE[resolved];
 }
 
-export function listSpawnConnectedServiceItems(params: Readonly<{
+export async function listSpawnConnectedServiceItems(params: Readonly<{
+  token: string;
   accountSettings: AccountSettings | Readonly<Record<string, unknown>>;
   accountProfile: AccountProfileResponse;
   agentId?: string | null;
@@ -43,7 +47,7 @@ export function listSpawnConnectedServiceItems(params: Readonly<{
   accountGroupsFeatureEnabled: boolean;
   includeUnavailable?: boolean;
   limit?: unknown;
-}>): Readonly<{ items: readonly SpawnConnectedServiceOptionItem[] }> {
+}>): Promise<Readonly<{ items: readonly SpawnConnectedServiceOptionItem[] }>> {
   const settingsRecord = params.accountSettings as Readonly<Record<string, unknown>>;
   const agentCore = resolveAgentCore(params.agentId);
   const supportedConnectedServiceIds = resolveAgentSupportedConnectedServiceIds({
@@ -56,10 +60,24 @@ export function listSpawnConnectedServiceItems(params: Readonly<{
     supportedConnectedServiceIds,
     labelsByKey: readStringRecord(settingsRecord.connectedServicesProfileLabelByKey),
   });
+  const accountGroupsByServiceId: Record<string, readonly ConnectedServiceAuthGroupV1[]> = {};
+  if (params.accountGroupsFeatureEnabled && agentCore.connectedServices?.sessionAuthSwitch) {
+    await Promise.all(supportedConnectedServiceIds.map(async (serviceId) => {
+      const projection = params.accountProfile.connectedServicesV2.find((entry) => entry.serviceId === serviceId);
+      if (!projection?.groups.length) return;
+      try {
+        accountGroupsByServiceId[serviceId] = await listConnectedServiceAuthGroups({ token: params.token, serviceId });
+      } catch {
+        // API diagnostics are debug-only in runner processes. Make this degraded read observable by default.
+        logger.warnFile('[connected-services] Pool policy unavailable; listing projected choices with unknown autoSwitch', { serviceId });
+      }
+    }));
+  }
   const accountGroupOptionsByServiceId = buildConnectedServiceAccountGroupOptionsByServiceId({
     accountGroupsFeatureEnabled: params.accountGroupsFeatureEnabled,
     accountProfileConnectedServicesV2: params.accountProfile.connectedServicesV2,
     supportedConnectedServiceIds,
+    accountGroupsByServiceId,
   });
   const defaultProfileByServiceId = readStringRecord(settingsRecord.connectedServicesDefaultProfileByServiceId);
 

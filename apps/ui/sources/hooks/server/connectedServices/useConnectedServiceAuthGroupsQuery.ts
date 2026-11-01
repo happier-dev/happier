@@ -62,7 +62,12 @@ export function useConnectedServiceAuthGroupsQuery(params: Readonly<{
 
     const fetchGroups = React.useCallback(async () => {
         if (!params.serviceId || !params.enabled || !credentials) return [];
-        return await listConnectedServiceAuthGroupsV3(credentials, { serviceId: params.serviceId });
+        try {
+            return await listConnectedServiceAuthGroupsV3(credentials, { serviceId: params.serviceId });
+        } catch (error) {
+            console.warn('[connectedServices] Failed to load authoritative account pools', { serviceId: params.serviceId });
+            throw error;
+        }
     }, [credentials, params.enabled, params.serviceId]);
 
     const refresh = React.useCallback(async () => {

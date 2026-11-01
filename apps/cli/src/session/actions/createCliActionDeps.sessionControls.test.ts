@@ -649,7 +649,7 @@ describe('createCliActionDeps session controls', () => {
             memberProfileIds: ['work'],
             generation: 3,
             enabledMemberCount: 1,
-            autoSwitch: false,
+            autoSwitch: null,
             status: 'ready',
           },
         ],

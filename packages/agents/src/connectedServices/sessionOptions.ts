@@ -5,6 +5,7 @@ import {
     type ConnectedServiceCredentialHealthStatusV1,
     type ConnectedServiceBindingSelectionV1,
     type ConnectedServiceBindingsV1,
+    type ConnectedServiceAuthGroupV1,
 } from '@happier-dev/protocol';
 
 import type { AgentCore, ConnectedServiceId, ConnectedServiceKind } from '../types.js';
@@ -65,7 +66,8 @@ export type ConnectedServicesAccountGroupOption = Readonly<{
     memberProfileIds?: ReadonlyArray<string>;
     generation?: number;
     enabledMemberCount: number;
-    autoSwitch: boolean;
+    /** Null means the authoritative V3 policy could not be established. */
+    autoSwitch: boolean | null;
     status: ConnectedServicesAccountGroupReadiness;
 }>;
 
@@ -218,10 +220,6 @@ function readString(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
-function readBoolean(value: unknown): boolean {
-    return value === true;
-}
-
 function readNumber(value: unknown): number {
     return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
@@ -259,11 +257,11 @@ function readGroupMemberProfileIds(rawGroup: Record<string, unknown>): ReadonlyA
     return Array.from(new Set(memberIds));
 }
 
-function readGroupAutoSwitch(rawGroup: Record<string, unknown>): boolean {
-    if (typeof rawGroup.autoSwitch === 'boolean') return rawGroup.autoSwitch;
+function readGroupAutoSwitch(rawGroup: Record<string, unknown>): boolean | null {
     const policy = rawGroup.policy;
-    if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return false;
-    return readBoolean((policy as { autoSwitch?: unknown }).autoSwitch);
+    if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return null;
+    const autoSwitch = (policy as { autoSwitch?: unknown }).autoSwitch;
+    return typeof autoSwitch === 'boolean' ? autoSwitch : null;
 }
 
 function readGroupStatus(rawGroup: Record<string, unknown>): Exclude<ConnectedServicesAccountGroupReadiness, 'needs_members'> {
@@ -283,6 +281,8 @@ export function buildConnectedServiceAccountGroupOptionsByServiceId(params: Read
     accountGroupsFeatureEnabled: boolean;
     accountProfileConnectedServicesV2: ReadonlyArray<ConnectedServiceSessionProjection>;
     supportedConnectedServiceIds: ReadonlyArray<ConnectedServiceId>;
+    /** Only consumers of policy need to load V3 groups. Missing entries retain the profile projection with unknown policy. */
+    accountGroupsByServiceId?: Readonly<Record<string, ReadonlyArray<ConnectedServiceAuthGroupV1> | undefined>>;
 }>): ConnectedServicesAccountGroupOptionsByServiceId {
     if (!params.accountGroupsFeatureEnabled) return {};
 
@@ -291,7 +291,8 @@ export function buildConnectedServiceAccountGroupOptionsByServiceId(params: Read
     for (const entry of params.accountProfileConnectedServicesV2 ?? []) {
         const serviceId = entry.serviceId;
         if (params.supportedConnectedServiceIds.length > 0 && !params.supportedConnectedServiceIds.includes(serviceId)) continue;
-        const rawGroups = Array.isArray(entry.groups) ? entry.groups : [];
+        const authoritativeGroups = params.accountGroupsByServiceId?.[serviceId];
+        const rawGroups = authoritativeGroups ?? (Array.isArray(entry.groups) ? entry.groups : []);
         const groups: ConnectedServicesAccountGroupOption[] = [];
         for (const rawGroup of rawGroups) {
             if (!rawGroup || typeof rawGroup !== 'object' || Array.isArray(rawGroup)) continue;
@@ -311,7 +312,7 @@ export function buildConnectedServiceAccountGroupOptionsByServiceId(params: Read
                 ...(memberProfileIds.length > 0 ? { memberProfileIds } : {}),
                 ...(generation === null ? {} : { generation }),
                 enabledMemberCount,
-                autoSwitch: readGroupAutoSwitch(group),
+                autoSwitch: authoritativeGroups ? readGroupAutoSwitch(group) : null,
                 status: enabledMemberCount <= 0
                     ? 'needs_members'
                     : readGroupStatus(group),

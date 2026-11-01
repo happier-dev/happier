@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
 import { AGENTS_CORE } from '@happier-dev/agents';
-import type { ConnectedServiceId, ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupV1Schema, type ConnectedServiceId, type ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,6 +20,13 @@ type CapturedDefaultAuthModalConfig = Readonly<{
 
 const modalShowMock = vi.fn((_config: CapturedDefaultAuthModalConfig) => 'default-auth-modal');
 const modalUpdateMock = vi.fn((_modalId: string, _props: Record<string, unknown>) => {});
+
+const groupHttp = vi.hoisted(() => ({ fetch: vi.fn(), credentials: { token: 'test-token', secret: 'test-secret' } }));
+vi.mock('@/sync/http/client', () => ({ serverFetch: groupHttp.fetch }));
+// Authentication is supplied as environment state; the real group query/API path runs.
+vi.mock('@/auth/context/AuthContext', () => ({
+    useAuth: () => ({ credentials: groupHttp.credentials }),
+}));
 
 installConnectedServicesCommonModuleMocks({
     modal: async () => {
@@ -135,6 +142,8 @@ describe('ConnectedServicesDefaultAuthRow', () => {
         modalShowMock.mockClear();
         modalUpdateMock.mockClear();
         narrowLayoutRef.value = false;
+        groupHttp.fetch.mockReset();
+        groupHttp.fetch.mockResolvedValue(new Response(JSON.stringify({ groups: [] }), { status: 200 }));
     });
 
     async function renderClaudeNativeRow() {
@@ -438,22 +447,33 @@ describe('ConnectedServicesDefaultAuthRow', () => {
         dismissedPoolAdoptionSuggestionKeys?: Record<string, boolean>;
         onDismissPoolAdoptionSuggestion?: (key: string) => void;
         setDefaultAuthSettings?: (next: ConnectedServicesDefaultAuthByAgentIdV1) => void;
-        autoSwitch?: boolean;
+        autoSwitch?: boolean | null;
         includeMember?: boolean;
     }> = {}) {
-        const autoSwitch = overrides.autoSwitch ?? true;
+        const autoSwitch = overrides.autoSwitch === undefined ? true : overrides.autoSwitch;
         const includeMember = overrides.includeMember ?? true;
+        groupHttp.fetch.mockImplementation(async () => new Response(JSON.stringify(autoSwitch === null
+            ? { error: 'not_found' }
+            : { groups: [ConnectedServiceAuthGroupV1Schema.parse({
+                v: 1, serviceId: 'openai-codex', groupId: 'primary', displayName: 'Primary pool',
+                activeProfileId: 'work', generation: 1, runtimeStateRevision: 1,
+                policy: { autoSwitch }, state: { status: 'ready' }, createdAt: 1, updatedAt: 1,
+                members: (includeMember ? ['work', 'backup'] : ['backup']).map((profileId) => ({
+                    v: 1, serviceId: 'openai-codex', groupId: 'primary', profileId,
+                    enabled: true, createdAt: 1, updatedAt: 1,
+                })),
+            })] }), { status: autoSwitch === null ? 404 : 200 }));
         return import('./ConnectedServicesDefaultAuthRow').then(({ ConnectedServicesDefaultAuthRow }) =>
             renderScreen(
                 <ConnectedServicesDefaultAuthRow
                     agentId="codex"
                     agentTitle="Codex"
-                    agentCore={{ connectedServices: { supportedServiceIds: ['openai-codex' as any] } }}
+                    agentCore={{ connectedServices: { supportedServiceIds: ['openai-codex'] } }}
                     connectedServicesEnabled={true}
                     accountGroupsEnabled={true}
                     accountProfileConnectedServicesV2={[
                         {
-                            serviceId: 'openai-codex' as any,
+                            serviceId: 'openai-codex',
                             profiles: [
                                 { profileId: 'work', status: 'connected', kind: 'oauth' },
                                 { profileId: 'backup', status: 'connected', kind: 'oauth' },
@@ -463,7 +483,6 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                                 displayName: 'Primary pool',
                                 activeProfileId: 'work',
                                 memberProfileIds: includeMember ? ['work', 'backup'] : ['backup'],
-                                autoSwitch,
                             }],
                         },
                     ]}
@@ -542,6 +561,19 @@ describe('ConnectedServicesDefaultAuthRow', () => {
     it('does not show the pool suggestion when the pool is not autoSwitch', async () => {
         const { tree } = await renderProfileDefaultInReadyPool({ autoSwitch: false });
         expect(hasPoolSuggestion(tree, 'codex', 'openai-codex')).toBe(false);
+    });
+
+    it('does not show the pool suggestion when policy is unknown', async () => {
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const setDefaultAuthSettings = vi.fn();
+        try {
+            const { tree } = await renderProfileDefaultInReadyPool({ autoSwitch: null, setDefaultAuthSettings });
+            expect(hasPoolSuggestion(tree, 'codex', 'openai-codex')).toBe(false);
+            expect(setDefaultAuthSettings).not.toHaveBeenCalled();
+            expect(warning).toHaveBeenCalledWith(expect.any(String), { serviceId: 'openai-codex' });
+        } finally {
+            warning.mockRestore();
+        }
     });
 
     it('does not show the pool suggestion when the default profile is not a member of the pool', async () => {
