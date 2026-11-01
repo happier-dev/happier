@@ -935,7 +935,7 @@ function createDiagnosticsByLineReader(
     projection = next;
     forPath = currentPath;
     const byLine = new Map<number, CodeLineDiagnosticRange[]>();
-    for (const item of selectCodeDiagnostics(next, currentPath).items) {
+    for (const item of selectCodeDiagnostics(next, currentPath, { currentOnly: true }).items) {
       const { start, end } = item.range;
       for (let line = start.line; line <= end.line; line++) {
         const list = byLine.get(line + 1) ?? [];
@@ -1000,6 +1000,7 @@ function FileCodeIntelligenceCardLayer(
     const diagnostics = selectCodeDiagnostics(
       controller.getDiagnosticsProjection(),
       props.filePath,
+      { currentOnly: true },
     ).items;
     const diagnostic = position
       ? (diagnostics.find(

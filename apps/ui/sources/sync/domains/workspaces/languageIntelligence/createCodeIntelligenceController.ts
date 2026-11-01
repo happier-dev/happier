@@ -263,7 +263,7 @@ export function createCodeIntelligenceController(input: CodeIntelligenceControll
         getDiagnosticsProjection: () => diagnostics,
         async problem(direction: 1 | -1, position?: CodeIntelligencePosition): Promise<boolean> {
             if (!available()) return false;
-            const items = [...selectCodeDiagnostics(diagnostics).items].sort((left, right) => (
+            const items = [...selectCodeDiagnostics(diagnostics, undefined, { currentOnly: true }).items].sort((left, right) => (
                 left.path < right.path ? -1 : left.path > right.path ? 1
                     : left.range.start.line - right.range.start.line || left.range.start.character - right.range.start.character
             ));
