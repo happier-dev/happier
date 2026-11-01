@@ -11,6 +11,38 @@ import {
 } from './legacy/legacyUsageTransport';
 
 describe('usageObservation', () => {
+    it.each([
+        { lastUseAtMs: 0 },
+        { lastUseAtMs: 123.5, ttlMs: 300_000 },
+    ])('preserves the accepted prompt-cache request clock %j through normalization', (promptCache) => {
+        const observation = extractUsageObservationFromTokenCountMessage({
+            provider: 'runtime-agent',
+            body: { source: 'runtime', tokens: { total: 12 }, promptCache },
+        });
+
+        expect(observation).toHaveProperty('promptCache', promptCache);
+        expect(observation && normalizeUsageObservation(observation)).toHaveProperty('promptCache', promptCache);
+    });
+
+    it.each([
+        { lastUseAtMs: Number.NaN },
+        { lastUseAtMs: Number.POSITIVE_INFINITY },
+        { lastUseAtMs: 123, ttlMs: 0 },
+        { lastUseAtMs: 123, ttlMs: -1 },
+        { lastUseAtMs: 123, ttlMs: Number.POSITIVE_INFINITY },
+        { lastUseAtMs: 123, ttlMs: Number.NaN },
+        { ttlMs: 300_000 },
+        { lastUseAtMs: 123, receiptAtMs: 456 },
+    ])('drops malformed prompt-cache facts without losing accounting data: %j', (promptCache) => {
+        const observation = extractUsageObservationFromTokenCountMessage({
+            provider: 'runtime-agent',
+            body: { source: 'runtime', tokens: { total: 12 }, promptCache },
+        });
+
+        expect(observation?.tokens?.total).toBe(12);
+        expect(observation).not.toHaveProperty('promptCache');
+    });
+
     const contextSnapshot = {
         v: 1,
         modelId: 'gpt-5.4',

@@ -2763,6 +2763,8 @@ export {
   UsageAnalyticsSeriesBucketSchema,
   UsageAnalyticsTotalsSchema,
   UsageEventIngestRequestSchema,
+  UsagePromptCacheSchema,
+  type UsagePromptCache,
   UsageNativeAccountingSubjectSchema,
   UsageNativeAccountingEvidenceSchema,
   UsageNativeHistoryDeleteRequestSchema,

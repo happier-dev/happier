@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { AgentSessionCompactionCapability } from '@happier-dev/protocol/plugins/agents';
 import type { ActiveSuggestionsHandler } from '@/components/autocomplete/useActiveSuggestions';
 import { listCurrentComposerReferences, type ComposerReferenceSearchHost, type ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
 import type { ComposerSuggestionTrigger } from '@/components/autocomplete/composerSuggestionGrammar';
@@ -13,8 +14,9 @@ export function useSessionComposerSuggestions(options: Readonly<{
     composerReferenceHost: ComposerReferenceSearchHost | null;
     actionController: Readonly<{ listSlashCommands(): readonly PluginContributedActionDescriptor[] }>;
     skillSource: SkillComposerSource | null;
+    compaction?: AgentSessionCompactionCapability | null;
 }>): Readonly<Record<ComposerSuggestionTrigger, ActiveSuggestionsHandler>> {
-    const { sessionId, kinds, composerReferenceHost, actionController, skillSource } = options;
+    const { sessionId, kinds, composerReferenceHost, actionController, skillSource, compaction } = options;
     const references = React.useMemo(() => composerReferenceHost && kinds.includes('composerReference')
         ? listCurrentComposerReferences(composerReferenceHost.projection) : [], [composerReferenceHost, kinds]);
     const atHost = references.some(({ presentation }) => presentation.triggers.includes('@')) ? composerReferenceHost : null;
@@ -28,6 +30,7 @@ export function useSessionComposerSuggestions(options: Readonly<{
     }), [sessionId, kinds, skillHost, skillSource]);
     const slash = React.useCallback<ActiveSuggestionsHandler>((query, signal, onUpdate) => resolveSessionComposerSuggestions(sessionId, query, {
         kinds, signal, onUpdate, composerReferenceHost: slashHost, contributedActions: actionController.listSlashCommands(),
-    }), [sessionId, kinds, slashHost, actionController]);
+        compaction,
+    }), [sessionId, kinds, slashHost, actionController, compaction]);
     return React.useMemo(() => ({ '@': at, '$': skill, '/': slash }), [at, skill, slash]);
 }

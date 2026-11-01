@@ -68,3 +68,48 @@ contains the maintained install/reload/restart/update/disable/revoke/uninstall
 journey and the shared UI selectors.
 Use `advanced-package-root` only when the Agent also needs one of its composite
 capabilities, such as External Sessions or a managed Provider.
+
+## Idle compaction (0.3 development)
+
+Declare `sessions.compaction.idle.mode: 'host'` when the runtime implements
+`compact({ compactionId, trigger: 'idle' })`. Add `manual: true` only when the
+same control also accepts manual requests. The host owns the per-Agent defaults
+and reads them once when a Session starts; host mode receives no native idle
+configuration operand.
+
+Report `usage-observed.promptCache: { lastUseAtMs, ttlMs? }` from the last
+provider request. A clock alone is valid: a person's cache-window override can
+supply the window. Omit `ttlMs` unless the request's route and cache lifetime
+are known. The strict public runtime and Usage capture schemas accept this
+field; it does not create another accounting observation.
+
+```ts
+import {
+  PROMPT_CACHE_DURATIONS,
+  resolvePromptCacheLastUseAtMs,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+
+const lastUseAtMs = resolvePromptCacheLastUseAtMs({
+  turnStartedAtMs,
+  lastNonModelItemCompletedAtMs,
+});
+// Use a duration only after observing the applicable request lifetime class.
+const oneHourMs = PROMPT_CACHE_DURATIONS.anthropic.longTtlMs;
+```
+
+The helper selects the last non-model item's completion, otherwise the turn's
+start, otherwise no clock. Usage receipt and model completion are later than
+cache use and cannot supply this fact. A runtime with a genuine provider
+request-start event uses that clock directly.
+
+The host retains the latest cache and context-size facts independently, so they
+can arrive on separate usage events. A changed fact replaces the Session's one
+timer when the pair qualifies; an event carrying neither leaves it alone. The
+timer consumes its cache fact and reads live work only when it fires.
+Busy or unknown work skips that attempt; disposal
+clears the timer. Publish the admitted compaction lifecycle with `trigger:
+'idle'` and the same `compactionId` so it folds into one quiet transcript row.
+Completed events may include measured `tokenCountBefore` and
+`tokenCountAfter` with `tokenCountSource: 'providerReported'`. Idle maintenance
+starts no foreground turn or ready
+notification. New ordinary input keeps its existing lifecycle.

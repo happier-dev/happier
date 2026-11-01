@@ -4,6 +4,42 @@ import { PromptInvocationsV1Schema } from '@happier-dev/protocol/prompts/library
 import { storage } from '../state/storage';
 
 describe('suggestionCommands', () => {
+    it('offers Happier compact only for the opened runtime manual capability', async () => {
+        storage.setState({ sessions: {} });
+        const { getAllCommands, searchCommands } = await import('./suggestionCommands');
+        for (const compaction of [undefined, null, { events: true } as const]) {
+            expect(getAllCommands(null, { compaction }).some(row => row.command === 'compact')).toBe(false);
+            expect((await searchCommands(null, 'compact', { compaction })).some(row => row.command === 'compact')).toBe(false);
+        }
+        const compaction = { events: true, manual: true } as const;
+        expect(getAllCommands('s1', { compaction }).filter(row => row.command === 'compact')).toHaveLength(1);
+        expect((await searchCommands('s1', 'compact', { compaction })).filter(row => row.command === 'compact')).toHaveLength(1);
+        expect(getAllCommands(null).some(row => row.command === 'clear')).toBe(true);
+    });
+
+    it('preserves Agent compact commands and aliases without manual support and merges the default once', async () => {
+        const { getAllCommands, searchCommands } = await import('./suggestionCommands');
+        const nativeCommands = [
+            { command: 'compact', description: 'Agent compaction' },
+            { command: 'condense', description: 'Agent compaction alias' },
+        ];
+        for (const metadata of [
+            { slashCommandDetails: nativeCommands },
+            { slashCommands: nativeCommands.map(row => row.command) },
+        ]) {
+            // Storage boundary fixture supplies only the metadata this owner reads.
+            storage.setState({ sessions: { s1: { metadata } } } as any);
+            for (const compaction of [null, { events: true, manual: true } as const]) {
+                const commands = getAllCommands('s1', { compaction });
+                expect(commands.filter(row => row.command === 'compact')).toHaveLength(1);
+                expect(commands.filter(row => row.command === 'condense')).toHaveLength(1);
+            }
+        }
+        storage.setState({ sessions: {} });
+        expect((await searchCommands(null, '', { nativeCommands, limit: 100 }))
+            .filter(row => row.command === 'compact' || row.command === 'condense')).toEqual(nativeCommands);
+    });
+
     it('uses the admitted Account catalog and never resurrects stale Settings tokens', async () => {
         storage.setState({ sessions: {}, settings: { promptInvocationsV1: { v: 1, entries: [{
             id: 'stale', token: '/stale', title: 'Stale', target: { kind: 'doc', artifactId: 'stale-doc' },

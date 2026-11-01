@@ -69,6 +69,12 @@ function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
           },
         }
       : {}),
+    ...(params.runtime.readSessionCompactionCapability
+      ? { readSessionCompactionCapability: () => params.runtime.readSessionCompactionCapability!() }
+      : {}),
+    ...(params.runtime.compact
+      ? { compact: (...args: Parameters<NonNullable<RuntimeTurnOperations['compact']>>) => params.runtime.compact!(...args) }
+      : {}),
     async steerInFlightTurn(message, meta) {
       await params.runtime.steerInFlightTurn(message, meta);
     },

@@ -111,7 +111,7 @@ import { buildRolesRailPickerOption } from "@/components/roles/rail/buildRolesRa
 import { useSessionRolesRailParams } from "@/components/roles/session/sessionRole";
 import { useDaemonMergedProjectionInputs } from "@/agents/backendCatalog/useDaemonMergedProjectionInputs";
 import { readCurrentProjectedAgentCapabilities, supportsAgentLifecycleCapability } from "@/agents/backendCatalog/currentAgentCapabilities";
-import { parsePermissionIntentAlias, readExternalSessionOperationState, resolveAgentIdFromSessionMetadata } from "@happier-dev/agents";
+import { evaluateAgentSessionCompactionCapability, parsePermissionIntentAlias, readExternalSessionOperationState, resolveAgentIdFromSessionMetadata } from "@happier-dev/agents";
 import { useInSessionAgentPickerControls } from "@/components/sessions/agentPicker/useInSessionAgentPickerControls";
 import { isAskHappierStatusOfferState } from "@/components/sessions/bots/askHappierEntry";
 import { useAskHappierOpener } from "@/components/sessions/bots/useAskHappierOffer";
@@ -5950,12 +5950,19 @@ export function useSessionComposerController({
         serverId: sessionRouteServerId,
     });
 
+    const publishedRuntimeCapabilities = ownerMetadata?.agentRuntimeCapabilitiesV1;
+    const sessionCompactionCapability = React.useMemo(() => lifecycleAgentId ? evaluateAgentSessionCompactionCapability({
+        agentId: lifecycleAgentId,
+        metadata: { agentRuntimeCapabilitiesV1: publishedRuntimeCapabilities },
+        declaredCapability: null,
+    }) : null, [lifecycleAgentId, publishedRuntimeCapabilities]);
     const getAutocompleteSuggestions = useSessionComposerSuggestions({
         sessionId,
         kinds: SESSION_COMPOSER_SUGGESTION_KINDS,
         composerReferenceHost,
         actionController: composerPluginActionController,
         skillSource: sessionComposerSkillSource,
+        compaction: sessionCompactionCapability,
     });
 
     // Stable identities for the memoized AgentInput (R1 churn fix). SessionView

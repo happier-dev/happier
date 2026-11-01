@@ -1,4 +1,5 @@
 import { searchCommands, type CommandItem } from '@/sync/domains/input/suggestionCommands';
+import type { AgentSessionCompactionCapability } from '@happier-dev/protocol/plugins/agents';
 import type { PluginContributedActionDescriptor } from '@/components/plugins/actions/pluginContributedActionController';
 import type { AutocompleteSuggestion } from './autocompleteTypes';
 import { COMMAND_SUGGESTION_ROW_HEIGHT } from './commandSuggestionConstants';
@@ -15,6 +16,7 @@ export async function getCommandSuggestions(
         serverId?: string | null;
         nativeCommands?: readonly Pick<CommandItem, 'command' | 'description'>[];
         contributedActions?: readonly PluginContributedActionDescriptor[];
+        compaction?: AgentSessionCompactionCapability | null;
     }>,
 ): Promise<AutocompleteSuggestion[]> {
     const searchTerm = query.startsWith('/') ? query.slice(1) : query;
@@ -33,6 +35,7 @@ export async function getCommandSuggestions(
         ...(scope ? { invocations: getPromptLibraryCatalogValue(scope, 'invocations').value } : {}),
         limit: options?.limit ?? 8,
         contributedActions: options?.contributedActions,
+        ...(options?.compaction !== undefined ? { compaction: options.compaction } : {}),
         ...(options?.nativeCommands ? { nativeCommands: options.nativeCommands } : {}),
     });
 

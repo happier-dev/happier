@@ -1,3 +1,6 @@
+import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
+import type { RuntimeActivitySnapshotTail } from '@/api/session/sessionClientPort';
+import { hostSubagentStore } from '@/session/subagents/hostSubagentStore';
 import type { AgentSessionRuntimeEventV1 } from '@happier-dev/protocol/runtime';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -4086,6 +4089,72 @@ describe('runHostSessionRuntime', () => {
     expect.soft(committed).toContain('EXTENSION_STARTUP_ANSWER');
     expect(runtime.readSessionIdentity()).toEqual({ sessionId: 'startup-native-session' });
     expect(listeners.size).toBe(0);
+  });
+
+  it.each(['idle', 'missing'] as const)('admits idle compaction through the real host input and child owners only with a proven native producer (%s)', async producer => {
+    const harness = createHarness(`idle-compaction-${producer}`);
+    harness.config.runtimeActivityApplicability = 'supported';
+    harness.session.hasPendingProviderInput.mockReturnValue(false);
+    harness.session.reconcilePendingProviderInputCustodyBeforeMaterialization = async () => true;
+    let tail: RuntimeActivitySnapshotTail = { sequence: 0, custody: null, settlement: null };
+    // Home mutation acknowledgement is the transport boundary. The host's real
+    // Runtime Activity projection supplies the value; this fixture commits it.
+    harness.session.readRuntimeActivitySnapshotTail = () => tail;
+    harness.session.enqueueRegisteredSessionStateFieldMutation = vi.fn(async (mutation: RegisteredSessionStateFieldMutationV1) => {
+      if (mutation.fieldId !== 'runtime.activity' || mutation.op.kind !== 'set') return;
+      const value = mutation.op.value as { state: 'active' | 'idle' | 'unknown'; activeCount: number };
+      const revision = tail.sequence + 1;
+      tail = { sequence: revision, custody: null, settlement: {
+        identity: { mutationKey: `activity-${revision}`, admissionOrder: revision },
+        desiredValue: value, result: 'applied', committedRevision: revision,
+        committedProjection: { ...value, observedAt: Date.now(), revision },
+      } };
+    });
+    harness.runtime.readSessionCompactionCapability = () => ({ events: true, idle: { mode: 'host', defaultEnabled: true } });
+    const compact = vi.fn(async () => ({ status: 'admitted' as const }));
+    harness.runtime.compact = compact;
+    const childId = `idle-child-${producer}`;
+    await hostSubagentStore.upsert({ actor: { kind: 'host' }, input: {
+      id: childId, parentSessionId: harness.session.sessionId, origin: 'agent', kind: 'native',
+    } });
+    harness.deps.runPermissionModePromptLoopFn = async params => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      expect(params.inputConsumer).toBeDefined();
+      if (producer === 'idle') {
+        harness.runtime.emitRuntimeMessage({ kind: 'runtime-activity-snapshot', sequence: 1,
+          sessionId: harness.session.sessionId, emittedAtMs: Date.now(), state: 'idle', activeCount: 0 });
+        await Promise.resolve(); await Promise.resolve();
+      }
+      expect(await params.inputConsumer!.readLiveWork()).toMatchObject({ agents: 'active', agentsActiveCount: 1 });
+      await hostSubagentStore.complete({ actor: { kind: 'host' }, id: childId, parentSessionId: harness.session.sessionId });
+      const facts = await params.inputConsumer!.readLiveWork();
+      expect(facts).toMatchObject({ input: 'settled', agents: 'settled', attention: 'settled',
+        nativeRuntimeActivity: producer === 'idle' ? 'settled' : 'unknown' });
+      if (producer === 'idle') expect(facts).toMatchObject({ session: 'settled', settledAt: expect.any(Number) });
+      const readyBefore = harness.metrics.defaultReadyCalls;
+      const turnsBefore = harness.runtime.beginTurn.mock.calls.length;
+      const eventsBefore = harness.session.enqueueSessionEventCommitted.mock.calls.length;
+      harness.runtime.emitRuntimeMessage({ kind: 'usage-observed', sequence: 2,
+        sessionId: harness.session.sessionId, emittedAtMs: Date.now(), usage: {},
+        promptCache: { lastUseAtMs: Date.now(), ttlMs: 1000 } });
+      harness.runtime.emitRuntimeMessage({ kind: 'usage-observed', sequence: 3,
+        sessionId: harness.session.sessionId, emittedAtMs: Date.now(), usage: {},
+        context: { v: 1, modelId: null, usedTokens: 0, windowTokens: null, totalProcessedTokens: null,
+          baselineTokens: null, isAutoCompactEnabled: null, categories: null,
+          observedAtMs: Date.now(), source: 'provider_turn' } });
+      await vi.advanceTimersByTimeAsync(900);
+      expect(compact).toHaveBeenCalledTimes(producer === 'idle' ? 1 : 0);
+      if (producer === 'idle') expect(compact).toHaveBeenCalledWith(expect.objectContaining({ trigger: 'idle', compactionId: expect.any(String) }), { signal: expect.any(AbortSignal) });
+      expect(harness.runtime.beginTurn).toHaveBeenCalledTimes(turnsBefore);
+      expect(harness.metrics.defaultReadyCalls).toBe(readyBefore);
+      expect(harness.session.enqueueSessionEventCommitted).toHaveBeenCalledTimes(eventsBefore);
+    };
+    try {
+      await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    } finally {
+      await hostSubagentStore.complete({ actor: { kind: 'host' }, id: childId, parentSessionId: harness.session.sessionId });
+      vi.useRealTimers();
+    }
   });
 
   it('binds the supported current-runtime observer and publishes idle before provider input starts', async () => {

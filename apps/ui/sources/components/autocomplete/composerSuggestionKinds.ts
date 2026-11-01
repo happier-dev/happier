@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { AgentSessionCompactionCapability } from '@happier-dev/protocol/plugins/agents';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 import { DaemonPluginComposerReferenceSearchResponseSchema, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -205,6 +206,7 @@ export type ComposerSuggestionResolveContext = Readonly<{
     composerReferenceHost?: ComposerReferenceSearchHost | null;
     /** Current controller-admitted session Actions for the slash kind only. */
     contributedActions?: readonly PluginContributedActionDescriptor[];
+    compaction?: AgentSessionCompactionCapability | null;
     /** Incremental rows from a provider family, still fenced by its host currentness. */
     publish?: (suggestions: readonly AutocompleteSuggestion[]) => void;
     /** Absent outside a human discussion's composer. */
@@ -775,6 +777,7 @@ async function resolveSlashCommandSuggestions(
         serverId: context.serverId,
         limit: context.limit,
         contributedActions: context.contributedActions,
+        compaction: context.compaction,
         ...(catalogs.commands ? { nativeCommands: catalogs.commands } : {}),
     });
 }

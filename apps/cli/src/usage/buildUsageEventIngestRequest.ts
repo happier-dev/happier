@@ -124,6 +124,7 @@ export function buildUsageEventIngestRequest(params: Readonly<{
         tokens,
         cost,
         context,
+        ...(observation.promptCache ? { promptCache: observation.promptCache } : {}),
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     };
 }

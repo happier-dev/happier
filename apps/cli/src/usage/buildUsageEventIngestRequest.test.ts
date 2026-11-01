@@ -1,8 +1,48 @@
 import { describe, expect, it } from 'vitest';
+import { UsageEventIngestRequestSchema } from '@happier-dev/protocol';
 
 import { buildUsageEventIngestRequest } from './buildUsageEventIngestRequest';
 
 describe('buildUsageEventIngestRequest', () => {
+    it.each([
+        undefined,
+        { lastUseAtMs: 0 },
+        { lastUseAtMs: 100, ttlMs: 300_000 },
+    ])('preserves optional prompt-cache facts without changing accounting identity or totals: %j', (promptCache) => {
+        const params = {
+            sessionId: 'session-1', observedAt: 500, externalKey: 'inference-1', turnId: 'turn-1',
+            attribution: { v: 1 as const, turnId: 'turn-1', source: { kind: 'native' as const, connectedAccount: null } },
+            observation: {
+                provider: 'runtime-agent', source: 'runtime', scope: 'turn_delta' as const,
+                key: 'observation-1', modelId: 'model-1', tokens: { total: 12 }, cost: null,
+                contextUsedTokens: null, contextWindowTokens: null,
+            },
+        };
+        const baseline = buildUsageEventIngestRequest(params);
+        const request = buildUsageEventIngestRequest({
+            ...params,
+            observation: { ...params.observation, ...(promptCache ? { promptCache } : {}) },
+        });
+
+        expect(request).toEqual({ ...baseline, ...(promptCache ? { promptCache } : {}) });
+        expect(UsageEventIngestRequestSchema.parse(request)).toMatchObject({
+            externalKey: 'inference-1', attribution: params.attribution, tokens: { total: 12 },
+            ...(promptCache ? { promptCache } : {}),
+        });
+        if (!promptCache) expect(request).not.toHaveProperty('promptCache');
+    });
+
+    it('does not create an accounting record from prompt-cache timing alone', () => {
+        expect(buildUsageEventIngestRequest({
+            sessionId: 'session-1', observedAt: 500,
+            observation: {
+                provider: 'runtime-agent', source: 'runtime', scope: 'turn_delta', key: null, modelId: null,
+                tokens: null, cost: null, contextUsedTokens: null, contextWindowTokens: null,
+                promptCache: { lastUseAtMs: 100, ttlMs: 300_000 },
+            },
+        })).toBeNull();
+    });
+
     it('maps a native subject without inventing a Happier Session or disclosing metadata', () => {
         const subject = {
             kind: 'native' as const, machineId: 'machine-1',

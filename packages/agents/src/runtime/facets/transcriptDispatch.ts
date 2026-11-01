@@ -2,6 +2,7 @@ import type {
   SessionContextUsageSnapshotV1,
   SessionMessageRole,
   UsageObservationScope,
+  UsagePromptCache,
   ProviderTranscriptDispatchRequestV1,
 } from '@happier-dev/protocol';
 
@@ -65,6 +66,7 @@ export type RuntimeOutboundTranscriptUsageObservationV1 = Readonly<{
   contextUsedTokens: number | null;
   contextWindowTokens: number | null;
   contextSnapshot?: SessionContextUsageSnapshotV1;
+  promptCache?: UsagePromptCache;
 }>;
 
 export type RuntimeOutboundTranscriptPostSendEffectV1 =

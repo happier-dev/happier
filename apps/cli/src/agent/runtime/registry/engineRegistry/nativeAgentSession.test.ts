@@ -15286,6 +15286,7 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
             emittedAtMs: 1_000,
             kind: 'usage-observed',
             observationId: 'obs-cumulative-1',
+            promptCache: { lastUseAtMs: 900, ttlMs: 300_000 },
             accounting: { nativeSessionId: 'native-session-1', inferenceId: 'native-inference-1' },
             turnId: 'turn-42',
             source: 'agent-runtime-native',
@@ -15334,6 +15335,7 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
             contextWindowTokens: 200_000,
         });
         expect(call.observation.contextSnapshot).toMatchObject({ v: 1, usedTokens: 156, windowTokens: 200_000, source: 'provider_live' });
+        expect(call.observation).toHaveProperty('promptCache', { lastUseAtMs: 900, ttlMs: 300_000 });
 
         // The very next hop (server ingest request builder) preserves every analytics field.
         const ingest = buildUsageEventIngestRequest({
@@ -15351,6 +15353,7 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
             scope: 'session_cumulative',
             isCumulative: true,
             externalKey: 'obs-cumulative-1',
+            promptCache: { lastUseAtMs: 900, ttlMs: 300_000 },
             turnId: 'turn-42',
             modelId: 'claude-opus-4',
             tokens: { input: 100, output: 40, reasoning: 8, cacheRead: 5, cacheWrite: 3, total: 156 },

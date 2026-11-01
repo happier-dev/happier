@@ -2109,6 +2109,7 @@ export function toNativeAgentUsageObservation(
             reportedCostUsd,
         },
         ...(event.context ? { contextSnapshot: event.context } : {}),
+        ...(event.promptCache ? { promptCache: event.promptCache } : {}),
     };
 }
 

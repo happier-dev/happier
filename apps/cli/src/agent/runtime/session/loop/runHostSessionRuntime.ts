@@ -185,6 +185,8 @@ import {
 } from '@/agent/runtime/session/loop/factoryResult';
 import { createSwapAwareRpcHandlerRegistrar } from '@/agent/runtime/session/loop/createSwapAwareRpcHandlerRegistrar';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/session/input/sessionProviderInputConsumer';
+import { createSessionIdleCompactionScheduler } from '@/agent/runtime/session/createSessionIdleCompactionScheduler';
+import { resolveSessionIdleCompactionSeed } from '@/settings/agents/idleCompactionSeed';
 import {
   publishSessionFollowWakeInvalidation,
   readSessionFollowWakeInvalidationGeneration,
@@ -1241,6 +1243,7 @@ export async function runHostSessionRuntime(
   let applyMcpAccountPolicyUpdate: (() => void) | null = null;
   let runtimeForSessionRollback: HostSessionRuntimeHookRuntime | null = null;
   let runtimeActivityProjection: HostRuntimeActivityProjection | null = null;
+  let idleCompactionScheduler: ReturnType<typeof createSessionIdleCompactionScheduler> | null = null;
   let agentRuntimeActivityBinding: ReturnType<HostRuntimeActivityProjection['bindAgentRuntime']> | null = null;
   let executionRunsActivityBinding: ReturnType<HostRuntimeActivityProjection['bindExecutionRuns']> | null = null;
   let unsubscribeExecutionRunActivity: (() => void) | null = null;
@@ -1335,6 +1338,7 @@ export async function runHostSessionRuntime(
     newSession.setOwnerActivityDelivery(ownerActivityDelivery);
     if (previousSession && previousSession.sessionId !== newSession.sessionId) {
       latestSessionContextUsage = null;
+      idleCompactionScheduler?.dispose();
     }
     const retainsRuntimeActivityProjection = runtimeActivityProjection !== null
       && previousSession?.sessionId === newSession.sessionId;
@@ -1731,6 +1735,7 @@ export async function runHostSessionRuntime(
         unsubscribeExecutionRunActivity = null;
       });
       await runCleanupStep('dispose runtime Activity projection', () => {
+        idleCompactionScheduler?.dispose();
         runtimeActivityProjection?.dispose();
         runtimeActivityProjection = null;
       });
@@ -3016,6 +3021,24 @@ export async function runHostSessionRuntime(
   let terminalRemoteModeLoop = initialTerminalRemoteModeLoop;
   let presentationOwnsCurrentTerminalDisplay = false;
   const hookRuntime = (nativeRuntime ?? runtime) as HostSessionRuntimeHookRuntime;
+  const idleCompactionCapability = hookRuntime.readSessionCompactionCapability?.()?.idle;
+  const idleCompactionPreference = resolveSessionIdleCompactionSeed({
+    accountSettings,
+    backendTarget: runtimeOpts.backendTarget ?? { kind: 'backend', backendId: policyAgentId, sourceKind: 'built_in' },
+    idle: idleCompactionCapability,
+  });
+  if (idleCompactionPreference && idleCompactionCapability?.mode === 'host') {
+    idleCompactionScheduler = createSessionIdleCompactionScheduler({
+      mode: idleCompactionCapability.mode,
+      preference: idleCompactionPreference,
+      signal: startupRegistrationLifetime.signal,
+      compact: hookRuntime.compact?.bind(hookRuntime),
+      readLiveWork: () => inputConsumer!.readLiveWork(),
+      onError: () => logger.debug(`${config.uiLogPrefix} Idle compaction attempt failed`, {
+        error: 'session_idle_compaction_failed',
+      }),
+    });
+  }
   if (skillsDelivered === false && runnerSkills?.delivery) {
     await publishRunnerSkillNotice(currentLifecycleSession, runnerSkills, false);
   }
@@ -3902,6 +3925,10 @@ export async function runHostSessionRuntime(
         publishHostRuntimeEvent: (event) => {
           observeAgentRuntimeActivityEvent(event);
           unsubscribeRuntimePublication.observeRuntimeEvent(event);
+          if (event.kind === 'turn-start' || event.kind === 'input-accepted') {
+            idleCompactionScheduler?.notifyForegroundActivity();
+          }
+          if (event.kind === 'usage-observed') idleCompactionScheduler?.observeUsage(event);
           if (event.kind === 'usage-observed' && event.context) {
             latestSessionContextUsage = event.context;
             publishSessionFollowWakeInvalidation();
@@ -4043,6 +4070,7 @@ export async function runHostSessionRuntime(
       },
     });
   } finally {
+    idleCompactionScheduler?.dispose();
     await modelTransitionCoordinator.dispose();
     modelTransitionOwnerCurrent = false;
     modelTransitionCoordinator = null;

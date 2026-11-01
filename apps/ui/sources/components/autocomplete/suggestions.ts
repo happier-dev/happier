@@ -1,4 +1,5 @@
 import { log } from '@/log';
+import type { AgentSessionCompactionCapability } from '@happier-dev/protocol/plugins/agents';
 import { ensureSessionSuggestionCatalogs } from '@/sync/ops/sessionCatalogs';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import type { FileSuggestionScope } from '@/sync/domains/input/suggestionFile';
@@ -117,6 +118,7 @@ export type GetSuggestionsOptions = Readonly<{
     composerReferenceHost?: ComposerReferenceSearchHost | null;
     /** Controller-admitted external Actions for the slash kind. */
     contributedActions?: readonly PluginContributedActionDescriptor[];
+    compaction?: AgentSessionCompactionCapability | null;
     /** Current aggregate rows as individual kinds settle; final settlement is marked complete. */
     onUpdate?: AutocompleteSuggestionUpdate;
     /** The host's library/Found source, for the `$` skill kind only. */
@@ -314,6 +316,7 @@ type KindResolveArgs = Readonly<{
     signal: AbortSignal | undefined;
     composerReferenceHost: ComposerReferenceSearchHost | null | undefined;
     contributedActions: readonly PluginContributedActionDescriptor[] | undefined;
+    compaction: AgentSessionCompactionCapability | null | undefined;
     accountMentions: ComposerAccountMentionSource | null | undefined;
     skillSource: SkillComposerSource | null | undefined;
     publish?: (suggestions: readonly AutocompleteSuggestion[]) => void;
@@ -367,6 +370,7 @@ async function resolveKindCandidates(
         signal: args.signal,
         composerReferenceHost: args.composerReferenceHost,
         contributedActions: args.contributedActions,
+        compaction: args.compaction,
         accountMentions: args.accountMentions,
         skillSource: args.skillSource,
         ...(args.publish ? { publish: args.publish } : {}),
@@ -410,6 +414,7 @@ export async function getSuggestions(
         signal,
         composerReferenceHost: options?.composerReferenceHost,
         contributedActions: options?.contributedActions,
+        compaction: options?.compaction,
         accountMentions: options?.accountMentions,
         skillSource: options?.skillSource,
     };

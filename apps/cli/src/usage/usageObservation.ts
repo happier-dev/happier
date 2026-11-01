@@ -1,5 +1,12 @@
 import { SessionContextUsageSnapshotV1Schema } from '@happier-dev/protocol/usage/contextUsage';
-import type { SessionContextUsageSnapshotV1, UsageObservationCost, UsageObservationScope, UsageObservationTokens } from '@happier-dev/protocol';
+import {
+    UsagePromptCacheSchema,
+    type UsagePromptCache,
+    type SessionContextUsageSnapshotV1,
+    type UsageObservationCost,
+    type UsageObservationScope,
+    type UsageObservationTokens,
+} from '@happier-dev/protocol';
 import type { RuntimeOutboundTranscriptUsageObservationV1 } from '@happier-dev/agents';
 
 export type { UsageObservationScope } from '@happier-dev/protocol';
@@ -25,6 +32,7 @@ export type UsageObservation = {
         reportedCostUsd: boolean;
     }>;
     contextSnapshot?: SessionContextUsageSnapshotV1;
+    promptCache?: UsagePromptCache;
 };
 
 export type UsageObservationBoundaryInput = RuntimeOutboundTranscriptUsageObservationV1 | UsageObservation;
@@ -302,6 +310,7 @@ export function extractUsageObservationFromTokenCountMessage(params: Readonly<{
         : false;
     const parsedContextSnapshot = SessionContextUsageSnapshotV1Schema.safeParse(record.contextSnapshot);
     const contextSnapshot = parsedContextSnapshot.success ? parsedContextSnapshot.data : null;
+    const parsedPromptCache = record.promptCache === undefined ? null : UsagePromptCacheSchema.safeParse(record.promptCache);
     const hasData = tokens != null || cost != null || contextUsedTokens != null || contextWindowTokens != null;
     if (!hasData) return null;
 
@@ -321,6 +330,7 @@ export function extractUsageObservationFromTokenCountMessage(params: Readonly<{
             reportedCostUsd,
         },
         ...(contextSnapshot ? { contextSnapshot } : {}),
+        ...(parsedPromptCache?.success ? { promptCache: parsedPromptCache.data } : {}),
     };
 }
 

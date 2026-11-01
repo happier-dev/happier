@@ -123,7 +123,7 @@ describe('createUsageObservationPublisher', () => {
         }
     });
 
-    it('posts usage events to v2 analytics ingest when the server advertises support', async () => {
+    it('posts prompt-cache facts in one existing v2 accounting request when the server advertises support', async () => {
         const fetchServerFeaturesSnapshot = vi.fn(async () => ({
             status: 'ready' as const,
             features: FeaturesResponseSchema.parse({
@@ -162,6 +162,7 @@ describe('createUsageObservationPublisher', () => {
                 scope: 'session_final',
                 key: 'claude-session',
                 modelId: 'claude-sonnet',
+                promptCache: { lastUseAtMs: 0 },
                 tokens: { total: 20, input: 12, output: 8, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
                 cost: { reportedUsd: 0.2, estimatedUsd: 0, currency: 'USD' },
                 contextUsedTokens: null,
@@ -170,6 +171,7 @@ describe('createUsageObservationPublisher', () => {
         });
 
         expect(fetchServerFeaturesSnapshot).toHaveBeenCalledTimes(1);
+        expect(postJson).toHaveBeenCalledTimes(1);
         expect(postJson).toHaveBeenCalledWith(
             expect.objectContaining({
                 path: '/v2/usage-events',
@@ -179,10 +181,21 @@ describe('createUsageObservationPublisher', () => {
                     source: 'claude-sdk-result',
                     scope: 'session_final',
                     isCumulative: true,
+                    promptCache: { lastUseAtMs: 0 },
                 }),
             }),
         );
         expect(emitLegacyUsageReport).not.toHaveBeenCalled();
+
+        expect(await publisher.publish({
+            sessionId: 'session-1', observedAt: 20,
+            observation: {
+                provider: 'runtime-agent', source: 'runtime', scope: 'turn_delta', key: null, modelId: null,
+                tokens: null, cost: null, contextUsedTokens: null, contextWindowTokens: null,
+                promptCache: { lastUseAtMs: 10, ttlMs: 300_000 },
+            },
+        })).toEqual({ status: 'skipped' });
+        expect(postJson).toHaveBeenCalledTimes(1);
     });
 
     it('falls back to legacy usage-report when the server does not advertise v2 analytics ingest', async () => {
