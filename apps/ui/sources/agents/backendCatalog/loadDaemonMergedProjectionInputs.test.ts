@@ -1,13 +1,16 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { defineProtocolNumber, defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { createMachineFixture } from '@/dev/testkit';
+import { createDeferred, createMachineFixture } from '@/dev/testkit';
 import { createPluginDeclarativeModelFixture } from '@/dev/testkit/fixtures/pluginDeclarativeModelFixture';
 import { RPC_METHODS, RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { createPluginContributionIdentity, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { DaemonContributionRegistryProjectionSectionsResponseSchema, DaemonContributionRegistryProjectionDescribeResponseSchema,
+    buildDaemonProjectionSections, buildDeferredDaemonProjectionSections, DaemonProjectionSectionBodyResponseSchema,
+    DaemonProjectionDeferredSectionsResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
 let storage: typeof import('@/sync/domains/state/storage').storage;
@@ -45,8 +48,6 @@ function daemonProjection(generation: number) {
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-        toolsById: {},
-        commandsById: {},
         resourcesById: {},
         settingsById: {},
         familiesById: {},
@@ -167,6 +168,33 @@ const composerSurfaceCatalog = [{
 }] as const;
 
 describe('loadDaemonMergedProjectionCacheEntry', () => {
+    it('shares one slow cold describe and starts freshness when the daemon returns', async () => {
+        const { loadDaemonMergedProjectionCacheEntry, readReusableDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const account = createAccountLifetime('account-a');
+        const response = createDeferred<{ supported: true; projection: ReturnType<typeof daemonProjection> }>();
+        let clock = Date.now();
+        const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+        projectionDescribeMock.mockImplementation(() => response.promise);
+        const params = { ...projectionScope, accountLifetime: account.lifetime, sections: ['agentsById'] };
+        const first = loadDaemonMergedProjectionCacheEntry(params);
+        const joined = loadDaemonMergedProjectionCacheEntry(params);
+        try {
+            await vi.waitFor(() => expect(projectionDescribeMock).toHaveBeenCalledTimes(1));
+            clock += 186_406;
+            response.resolve({ supported: true, projection: daemonProjection(7) });
+            const [ready, sibling] = await Promise.all([first, joined]);
+            expect(ready?.kind).toBe('ready');
+            expect(sibling).toBe(ready);
+            expect(readReusableDaemonMergedProjectionCacheEntry(params)).toBe(ready);
+            expect(projectionDescribeMock).toHaveBeenCalledTimes(1);
+        } finally {
+            response.resolve({ supported: true, projection: daemonProjection(7) });
+            await Promise.allSettled([first, joined]);
+            now.mockRestore();
+            account.retire();
+        }
+    });
+
     beforeEach(async () => {
         textBoundary.locale = 'en';
         network.resetRequests();
@@ -187,7 +215,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             if (request.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
                 return { ok: false, error: 'Unsupported fixture RPC', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
             }
-            const response = await projectionDescribeMock(request.targetId, { serverId: homeIds.get(request.serverUrl) });
+            const response = await projectionDescribeMock(request.targetId, { serverId: homeIds.get(request.serverUrl), payload: request.payload });
             if (response.supported !== true) {
                 if (response.reason === 'not-supported') return { ok: false, error: 'Unsupported projection', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
                 if (response.reason === 'timeout') {
@@ -351,6 +379,51 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         expect(projectionDescribeMock).toHaveBeenCalledTimes(2);
     });
 
+    it('hydrates only current demand after a new manifest while merging concurrent same-manifest coverage', async () => {
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const account = createAccountLifetime('account-a');
+        onTestFinished(() => account.retire());
+        const snapshot = (generation: number) => buildDeferredDaemonProjectionSections(
+            DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+                projectionDigest: String(generation).repeat(64), projection: daemonProjection(generation),
+                automationEligibleEvents: automationEligibleEvents.map(entry => ({ ...entry,
+                    event: { ...entry.event, title: `Repository updated ${generation}` } })),
+            }));
+        let current = snapshot(7);
+        const reads: string[] = [];
+        network.setRpcAckResponder(async request => {
+            const payload = request.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>;
+            if (!payload.sectionRead) return { ok: true, result: current.manifest };
+            const { digest, offset, includeDigests } = payload.sectionRead;
+            reads.push(digest, ...includeDigests ?? []);
+            return { ok: true, result: current.read(digest, offset, includeDigests) };
+        });
+        const params = { ...projectionScope, accountLifetime: account.lifetime };
+        expect(await loadDaemonMergedProjectionCacheEntry(params)).toMatchObject({ kind: 'ready',
+            inputs: { automationEligibleEvents: [{ event: { title: 'Repository updated 7' } }] } });
+        current = snapshot(8);
+        publishMachineContributionRegistryProjectionInvalidation(projectionScope);
+        reads.length = 0;
+        const narrow = await loadDaemonMergedProjectionCacheEntry({ ...params, sections: ['agentsById'] });
+        expect(narrow).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { generation: 8 } } });
+        expect(reads).not.toContain(current.manifest.sections.automationEligibleEvents);
+        // A full reader still acquires its own coverage; neither completion
+        // order may erase the other's same-manifest facts.
+        current = snapshot(9);
+        publishMachineContributionRegistryProjectionInvalidation(projectionScope);
+        const [full, concurrentNarrow] = await Promise.all([
+            loadDaemonMergedProjectionCacheEntry(params),
+            loadDaemonMergedProjectionCacheEntry({ ...params, sections: ['agentsById'] }),
+        ]);
+        expect(full).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { generation: 9 },
+            automationEligibleEvents: [{ event: { title: 'Repository updated 9' } }] } });
+        expect(concurrentNarrow).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { generation: 9 } } });
+        reads.length = 0;
+        const retained = await loadDaemonMergedProjectionCacheEntry({ ...params, sections: ['agentsById'], reuseFreshReady: true });
+        expect(reads).toHaveLength(0);
+        expect(retained).toMatchObject({ kind: 'ready', inputs: { automationEligibleEvents: [{ event: { title: 'Repository updated 9' } }] } });
+    });
+
     it('is the one per-machine owner: readers share one describe per projection revision', async () => {
         let resolveDescribe!: (value: unknown) => void;
         projectionDescribeMock.mockImplementationOnce(async () => await new Promise((resolve) => {
@@ -392,6 +465,400 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             expect(call[1]).not.toHaveProperty('timeoutMs');
             expect(call[1]).not.toHaveProperty('requestEpoch');
             expect(call[1]).not.toHaveProperty('selection');
+        }
+    });
+
+    it('conditionally revalidates unchanged targets once for concurrent readers without republishing full inputs', async () => {
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const account = createAccountLifetime('account-a');
+        const digest = 'a'.repeat(64);
+        const changedDigest = 'b'.repeat(64);
+        let currentDigest = digest;
+        let fullPayloads = 0;
+        const bytes: number[] = [];
+        projectionDescribeMock.mockImplementation(async (_machineId, options) => {
+            const unchanged = options.payload.knownProjectionDigest === currentDigest;
+            const reply = unchanged
+                ? { supported: true, unchanged: true, projectionDigest: currentDigest }
+                : { supported: true, projection: daemonProjection(currentDigest === digest ? 7 : 8), projectionDigest: currentDigest };
+            if (!unchanged) fullPayloads++;
+            bytes.push(new TextEncoder().encode(JSON.stringify(reply)).length);
+            return reply;
+        });
+        const params = { ...projectionScope, accountLifetime: account.lifetime };
+        const initial = await loadDaemonMergedProjectionCacheEntry(params);
+        expect(initial?.kind).toBe('ready');
+        expect(fullPayloads).toBe(1);
+        publishMachineContributionRegistryProjectionInvalidation(projectionScope);
+        bytes.length = 0;
+        const refreshed = await Promise.all(Array.from({ length: 32 }, () => loadDaemonMergedProjectionCacheEntry(params)));
+        expect(projectionDescribeMock).toHaveBeenCalledTimes(2);
+        expect(fullPayloads).toBe(1);
+        expect(bytes).toHaveLength(1);
+        expect(bytes[0]).toBeLessThanOrEqual(256);
+        expect(refreshed.every(entry => entry?.kind === 'ready' && initial?.kind === 'ready' && entry.inputs === initial.inputs)).toBe(true);
+        currentDigest = changedDigest;
+        publishMachineContributionRegistryProjectionInvalidation(projectionScope);
+        const changed = await Promise.all(Array.from({ length: 32 }, () => loadDaemonMergedProjectionCacheEntry(params)));
+        expect(projectionDescribeMock).toHaveBeenCalledTimes(3);
+        expect(fullPayloads).toBe(2);
+        expect(changed[0]).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { generation: 8 } } });
+        textBoundary.locale = 'fr';
+        await loadDaemonMergedProjectionCacheEntry(params);
+        expect(projectionDescribeMock.mock.calls.at(-1)?.[1].payload).not.toHaveProperty('knownProjectionDigest');
+        expect(fullPayloads).toBe(3);
+    });
+
+    it('rejects an unchanged reply without the exact held digest and degrades to full replies from older daemons', async () => {
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const account = createAccountLifetime('account-a');
+        const params = { ...projectionScope, accountLifetime: account.lifetime };
+        projectionDescribeMock.mockResolvedValueOnce({ supported: true, unchanged: true, projectionDigest: 'a'.repeat(64) });
+        expect(await loadDaemonMergedProjectionCacheEntry(params)).toMatchObject({ kind: 'error', reason: 'invalid-response' });
+        projectionDescribeMock.mockResolvedValueOnce({ supported: true, projection: daemonProjection(7), projectionDigest: 'a'.repeat(64) });
+        await loadDaemonMergedProjectionCacheEntry(params);
+        projectionDescribeMock.mockResolvedValueOnce({ supported: true, unchanged: true, projectionDigest: 'b'.repeat(64) });
+        expect(await loadDaemonMergedProjectionCacheEntry(params)).toMatchObject({ kind: 'error', reason: 'invalid-response' });
+        projectionDescribeMock.mockResolvedValue({ supported: true, projection: daemonProjection(8) });
+        expect(await loadDaemonMergedProjectionCacheEntry(params)).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { generation: 8 } } });
+        await loadDaemonMergedProjectionCacheEntry(params);
+        expect(projectionDescribeMock.mock.calls.at(-1)?.[1].payload).not.toHaveProperty('knownProjectionDigest');
+    });
+
+    it.each(['array', 'raw', 'unversioned-raw', 'held-upgrade', 'fallback-refused', 'fallback-denied',
+        'unsupported-version', 'null-version', 'bad-page', 'full'] as const)('negotiates %s index frames through the real loader and daemon handler', async encoding => {
+        const { RpcHandlerManager } = await import(new URL('../../../../cli/src/api/rpc/RpcHandlerManager.ts', import.meta.url).href);
+        const { registerDaemonContributionRegistryProjectionHandler } = await import(new URL('../../../../cli/src/rpc/handlers/daemonContributionRegistryProjection.ts', import.meta.url).href);
+        const { createResolvedContributionRegistry } = await import(new URL('../../../../cli/src/plugins/projection/registry/createResolvedContributionRegistry.ts', import.meta.url).href);
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine-1', encryptionMode: 'plain', logger: () => {} });
+        registerDaemonContributionRegistryProjectionHandler(rpc, {
+            resolveRegistry: async () => createResolvedContributionRegistry({}), resolveGeneration: async () => 7,
+            resolveInstalledPackages: async () => [], resolveServerFeaturesSnapshot: () => undefined,
+        });
+        const frames: unknown[] = [];
+        const requests: Record<string, unknown>[] = [];
+        let fullRead = encoding === 'full';
+        let unversionedRaw = encoding === 'unversioned-raw' || encoding === 'fallback-refused' || encoding === 'fallback-denied';
+        network.setRpcAckResponder(async request => {
+            // QF41's loaded daemon predates frame negotiation. Its full-read
+            // request is additive-open: the new offer is safely ignored.
+            const payload = { ...request.payload as Record<string, unknown> };
+            requests.push({ ...payload });
+            if (encoding === 'fallback-denied' && !payload.deferredSections) {
+                return { ok: false, error: 'Fixture full-read refusal', errorCode: RPC_ERROR_CODES.FORBIDDEN };
+            }
+            if (fullRead || (encoding !== 'raw' && encoding !== 'bad-page')) {
+                delete payload.supportedSectionFrameVersions;
+                delete payload.sectionFrameVersion;
+            }
+            if (fullRead) {
+                delete payload.deferredSections;
+                delete payload.knownSectionDigests;
+            }
+            // Round 8 sent raw index text without advertising a frame version.
+            // Use the real codec/handler's raw producer, omitting only its later
+            // Round 9 advertisement. Ordinary body pages use the same encoding.
+            if (unversionedRaw && payload.sectionRead) payload.sectionFrameVersion = 2;
+            if (encoding === 'fallback-refused') payload.deferredSections = true;
+            const produced = await rpc.invokeLocal(request.method, payload);
+            let reply = unversionedRaw && produced && typeof produced === 'object'
+                && 'deferredSections' in produced
+                ? (({ sectionFrameVersion: _version, ...manifest }) => manifest)(produced as Record<string, unknown>)
+                : produced;
+            if ((encoding === 'unsupported-version' || encoding === 'null-version') && reply && typeof reply === 'object'
+                && 'deferredSections' in reply) reply = { ...reply, sectionFrameVersion: encoding === 'null-version' ? null : 3 };
+            if (encoding === 'bad-page' && reply && typeof reply === 'object' && 'sectionBody' in reply) {
+                reply = { ...reply, digest: '0'.repeat(64) };
+            }
+            frames.push(reply);
+            return { ok: true, result: reply };
+        });
+        const account = createAccountLifetime('account-a');
+        const params = { ...projectionScope, accountLifetime: account.lifetime,
+            sections: encoding === 'held-upgrade' ? ['agentsById'] : undefined };
+        let result = await loadDaemonMergedProjectionCacheEntry(params);
+        if (encoding === 'held-upgrade') {
+            expect(result).toMatchObject({ kind: 'ready' });
+            requests.length = 0;
+            frames.length = 0;
+            unversionedRaw = true;
+            result = await loadDaemonMergedProjectionCacheEntry({ ...params, sections: ['actionsById'], reuseFreshReady: true });
+            expect(requests.find(request => request.sectionRead)).toHaveProperty('knownProjectionDigest');
+        }
+        if (encoding === 'fallback-denied') {
+            expect(result).toMatchObject({ kind: 'error', reason: 'access-denied', deferredHydrationRejection: 'section-spans' });
+            expect(requests.filter(request => !request.deferredSections)).toHaveLength(1);
+            account.retire();
+            return;
+        }
+        if (encoding === 'fallback-refused' || encoding === 'bad-page') {
+            expect(result).toMatchObject({ kind: 'error', reason: 'invalid-response', retryAtMs: null,
+                deferredHydrationRejection: encoding === 'bad-page' ? 'section-page-position' : 'section-spans' });
+            expect(requests.filter(request => !request.deferredSections)).toHaveLength(encoding === 'bad-page' ? 0 : 1);
+            const settledCount = requests.length;
+            const { readDaemonMergedProjectionRetryDelayMs } = await import('./loadDaemonMergedProjectionInputs');
+            expect(readDaemonMergedProjectionRetryDelayMs(result)).toBeNull();
+            expect(await loadDaemonMergedProjectionCacheEntry({ ...params, shareRetryCadence: true })).toBe(result);
+            expect(requests).toHaveLength(settledCount);
+            if (encoding === 'bad-page') {
+                // A failed parallel hydration releases all carrier custody.
+                // Fresh demand can use a full-reply peer without old frames
+                // leaking into that new read or poisoning its admission.
+                fullRead = true;
+                expect(await loadDaemonMergedProjectionCacheEntry({ ...params, reuseFreshReady: false }))
+                    .toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { generation: 7 } } });
+                expect(requests).toHaveLength(settledCount + 1);
+                expect(requests.at(-1)).not.toHaveProperty('sectionRead');
+            }
+            account.retire();
+            return;
+        }
+        expect(result, result?.kind === 'error' ? JSON.stringify({ reason: result.reason,
+            hydration: result.deferredHydrationRejection }) : undefined)
+            .toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { generation: 7 } } });
+        if (unversionedRaw || encoding === 'unsupported-version' || encoding === 'null-version') {
+            expect(result).toHaveProperty('deferredHydrationRejection', unversionedRaw ? 'section-spans' : 'manifest-admission');
+            const fallback = requests.filter(request => !request.deferredSections);
+            expect(fallback).toHaveLength(1);
+            expect(fallback[0]).not.toHaveProperty('knownProjectionDigest');
+            expect(fallback[0]).not.toHaveProperty('sectionRead');
+            expect(requests.filter(request => request.sectionRead)).toHaveLength(unversionedRaw ? 1 : 0);
+            const settledCount = requests.length;
+            expect(await loadDaemonMergedProjectionCacheEntry({ ...params, reuseFreshReady: true })).toBe(result);
+            expect(requests).toHaveLength(settledCount);
+        }
+        if (encoding === 'full') {
+            expect(DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(frames[0]).success).toBe(true);
+        } else if (encoding !== 'unsupported-version' && encoding !== 'null-version' && encoding !== 'held-upgrade') {
+            const manifest = DaemonProjectionDeferredSectionsResponseSchema.parse(frames[0]);
+            expect(manifest).toMatchObject(encoding === 'raw' ? { sectionFrameVersion: 2 } : { deferredSections: true });
+            if (encoding !== 'raw') expect(manifest).not.toHaveProperty('sectionFrameVersion');
+            const indexDigest = manifest.sections.base;
+            const index = frames.map(frame => DaemonProjectionSectionBodyResponseSchema.safeParse(frame))
+                .find(page => page.success && page.data.digest === indexDigest);
+            if (!index?.success) throw new Error('Missing base index');
+            // The old producer's exact encoding observed by QF41 is JSON([frame]).
+            expect(Array.isArray(JSON.parse(index.data.chunk))).toBe(encoding === 'array');
+            for (const request of requests.filter(request => request.sectionRead)) {
+                expect(request.sectionFrameVersion).toBe(encoding === 'raw' ? 2 : undefined);
+            }
+            expect(Math.max(...frames.map(frame => new TextEncoder().encode(JSON.stringify(frame)).length))).toBeLessThanOrEqual(49_152);
+        }
+        frames.length = 0;
+        publishMachineContributionRegistryProjectionInvalidation(projectionScope);
+        expect(await loadDaemonMergedProjectionCacheEntry(params)).toMatchObject({ kind: 'ready' });
+        expect(frames).toHaveLength(1);
+        expect(new TextEncoder().encode(JSON.stringify(frames[0])).length).toBe(124);
+
+        if (encoding === 'raw') {
+            // An old UI never offers the new version; a new daemon must keep the
+            // strict old manifest and JSON-array index readable without dual parsing.
+            const oldRequest = { machineId: 'machine-1', locale: 'en', deferredSections: true };
+            const oldManifest = DaemonProjectionDeferredSectionsResponseSchema.parse(await rpc.invokeLocal(
+                RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, oldRequest));
+            expect(oldManifest).not.toHaveProperty('sectionFrameVersion');
+            const oldPage = DaemonProjectionSectionBodyResponseSchema.parse(await rpc.invokeLocal(
+                RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+                { ...oldRequest, sectionRead: { digest: oldManifest.sections.base, offset: 0 } }));
+            const oldSpans = JSON.parse(oldPage.chunk);
+            expect(oldSpans).toHaveLength(1);
+            expect(DaemonContributionRegistryProjectionSectionsResponseSchema.safeParse(JSON.parse(oldSpans[0])).success).toBe(true);
+        }
+        account.retire();
+    });
+
+    it('resends only the changed plugin section for a Machine with one different plugin version', async () => {
+        const { RpcHandlerManager } = await import(new URL('../../../../cli/src/api/rpc/RpcHandlerManager.ts', import.meta.url).href);
+        const { registerDaemonContributionRegistryProjectionHandler } = await import(new URL('../../../../cli/src/rpc/handlers/daemonContributionRegistryProjection.ts', import.meta.url).href);
+        const { createResolvedContributionRegistry } = await import(new URL('../../../../cli/src/plugins/projection/registry/createResolvedContributionRegistry.ts', import.meta.url).href);
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        let account = createAccountLifetime('account-a');
+        const daemons = new Map(['one', 'two', 'different'].map(machineId => {
+            const settings = ['acme.one', 'acme.two'].map(pluginId => ({
+                provenance: 'external', source: { kind: 'path' }, pluginId,
+                sourceSpec: { kind: 'path', locator: `/plugins/${pluginId}`, resolvedVersion: machineId === 'different' && pluginId === 'acme.one' ? '2.0.0' : '1.0.0' },
+                definition: { id: 'preferences', version: 1, title: `Preferences for ${pluginId}`, target: { kind: 'plugin' }, scope: 'daemon',
+                    fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' }, default: false }],
+                    presentation: { sections: [], subagentSections: [] } },
+            }));
+            const registry = createResolvedContributionRegistry({ settings });
+            const rpc = new RpcHandlerManager({ scopePrefix: machineId, encryptionMode: 'plain', logger: () => {} });
+            registerDaemonContributionRegistryProjectionHandler(rpc, { resolveRegistry: async () => registry,
+                resolveGeneration: async () => 1, resolveInstalledPackages: async () => [], resolveServerFeaturesSnapshot: () => undefined });
+            return [machineId, rpc] as const;
+        }));
+        const bodies: string[][] = [];
+        const indexes = new Set<string>();
+        network.setRpcAckResponder(async request => {
+            const reply = await daemons.get(request.targetId)!.invokeLocal(request.method, request.payload);
+            const manifest = DaemonProjectionDeferredSectionsResponseSchema.safeParse(reply);
+            if (manifest.success) {
+                bodies.push([]);
+                for (const digest of Object.values(manifest.data.sections)) indexes.add(digest);
+            }
+            const page = DaemonProjectionSectionBodyResponseSchema.safeParse(reply);
+            if (page.success) {
+                expect(page.data.offset).toBe(0);
+                expect(page.data.nextOffset).toBeNull();
+                if (!indexes.has(page.data.digest)) {
+                    const spans: string[] = JSON.parse(page.data.chunk);
+                    bodies.at(-1)!.push(spans.join(''));
+                }
+                for (const extra of page.data.bodies ?? []) {
+                    if (!indexes.has(extra.digest)) bodies.at(-1)!.push(extra.body.join(''));
+                }
+            }
+            return { ok: true, result: reply };
+        });
+        const read = (machineId: string) => loadDaemonMergedProjectionCacheEntry({ machineId, serverId: 'server-1', accountLifetime: account.lifetime });
+        expect(await read('one')).toMatchObject({ kind: 'ready' });
+        expect(await read('two')).toMatchObject({ kind: 'ready' });
+        expect(await read('different')).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: {
+            installedPackagesById: { 'acme.one': { version: '2.0.0' }, 'acme.two': { version: '1.0.0' } },
+        } } });
+        expect(bodies[0]!.length).toBeGreaterThan(1);
+        expect(bodies[1]).toEqual([]);
+        expect(bodies[2]).toHaveLength(1);
+        expect(bodies[2]![0]).toContain('acme.one');
+        expect(bodies[2]![0]).not.toContain('acme.two');
+        textBoundary.locale = 'fr';
+        expect(await read('one')).toMatchObject({ kind: 'ready' });
+        expect(bodies[3]!.length).toBeGreaterThan(1);
+        const peerHome = await network.addHome('https://sections-peer.test', 'account-peer');
+        const peer = createAccountLifetime('account-peer', peerHome.id);
+        expect(await loadDaemonMergedProjectionCacheEntry({ machineId: 'one', serverId: peerHome.id, accountLifetime: peer.lifetime }))
+            .toMatchObject({ kind: 'ready' });
+        expect(bodies[4]!.length).toBeGreaterThan(1);
+        peer.retire();
+        account.retire();
+        account = createAccountLifetime('account-a');
+        expect(await read('one')).toMatchObject({ kind: 'ready' });
+        expect(bodies[5]!.length).toBeGreaterThan(1);
+        account.retire();
+    });
+
+    it('does not retain shared bodies from framing whose reconstructed projection fails admission', async () => {
+        const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+            projection: { ...daemonProjection(7), installedPackagesById: { 'acme.one': {
+                id: 'acme.one', displayName: 'One', enabled: true, source: { kind: 'bundled', locator: 'acme.one' },
+            } } },
+        });
+        const framed = buildDaemonProjectionSections(response);
+        const malformed = { ...framed, parts: framed.parts.map(part => typeof part === 'string' ? part.replace('"v":2', '"v":3') : part) };
+        const account = createAccountLifetime('account-a');
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        projectionDescribeMock.mockResolvedValueOnce({ supported: true, ...malformed });
+        expect(await loadDaemonMergedProjectionCacheEntry({ ...projectionScope, accountLifetime: account.lifetime }))
+            .toMatchObject({ kind: 'error', reason: 'invalid-response', retryAtMs: null });
+        projectionDescribeMock.mockResolvedValueOnce({ supported: true, ...framed });
+        expect(await loadDaemonMergedProjectionCacheEntry({ ...projectionScope, accountLifetime: account.lifetime }))
+            .toMatchObject({ kind: 'ready' });
+        expect(projectionDescribeMock.mock.calls.at(-1)?.[1].payload.deferredSections).toBe(true);
+        const deferred = buildDeferredDaemonProjectionSections({ ...response, projectionDigest: 'a'.repeat(64) });
+        let invalid = true;
+        let reads = 0;
+        network.setRpcAckResponder(async request => {
+            reads++;
+            const payload = request.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>;
+            return { ok: true, result: payload.sectionRead
+                ? deferred.read(payload.sectionRead.digest, payload.sectionRead.offset, payload.sectionRead.includeDigests)
+                : invalid ? { ...deferred.manifest, sections: { ...deferred.manifest.sections,
+                    installedPackagesById: deferred.manifest.sections.base } } : deferred.manifest };
+        });
+        expect(await loadDaemonMergedProjectionCacheEntry({ ...projectionScope, accountLifetime: account.lifetime, shareRetryCadence: true }))
+            .toMatchObject({ kind: 'error', reason: 'invalid-response', retryAtMs: null });
+        const failedReads = reads;
+        await loadDaemonMergedProjectionCacheEntry({ ...projectionScope, accountLifetime: account.lifetime, shareRetryCadence: true });
+        expect(reads).toBe(failedReads);
+        invalid = false;
+        expect(await loadDaemonMergedProjectionCacheEntry({ ...projectionScope, accountLifetime: account.lifetime })).toMatchObject({ kind: 'ready' });
+        account.retire();
+    });
+
+    it('reads a shared digest through its own Machine after the byte issuer is cancelled', async () => {
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const account = createAccountLifetime('account-a');
+        const abort = new AbortController();
+        let release!: () => void;
+        const held = new Promise<void>(resolve => { release = resolve; });
+        const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projection: daemonProjection(7),
+        });
+        const deferred = buildDeferredDaemonProjectionSections({ ...response, projectionDigest: 'a'.repeat(64) });
+        const manifests: string[] = [];
+        const bodyReads: string[] = [];
+        network.setRpcAckResponder(async request => {
+            const payload = request.payload as Readonly<{
+                sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] };
+            }>;
+            if (!payload.sectionRead) {
+                manifests.push(request.targetId);
+                return { ok: true, result: deferred.manifest };
+            }
+            bodyReads.push(request.targetId);
+            if (request.targetId === 'issuer') await held;
+            return { ok: true, result: deferred.read(payload.sectionRead.digest,
+                payload.sectionRead.offset, payload.sectionRead.includeDigests) };
+        });
+        const first = loadDaemonMergedProjectionCacheEntry({ machineId: 'issuer', serverId: 'server-1',
+            accountLifetime: account.lifetime, signal: abort.signal });
+        await vi.waitFor(() => expect(bodyReads).toEqual(['issuer']));
+        const peer = loadDaemonMergedProjectionCacheEntry({ machineId: 'reader', serverId: 'server-1',
+            accountLifetime: account.lifetime });
+        try {
+            await vi.waitFor(() => expect(manifests).toEqual(['issuer', 'reader']));
+            expect(bodyReads).toEqual(['issuer']);
+            abort.abort();
+            await expect(first).resolves.toBeNull();
+            await expect(peer).resolves.toMatchObject({ kind: 'ready',
+                inputs: { pluginProjectionV2: { generation: 7 } } });
+            expect(bodyReads).toContain('reader');
+        } finally {
+            release();
+            abort.abort();
+            await Promise.allSettled([first, peer]);
+            account.retire();
+        }
+    });
+
+    it('settles an independent cold Machine while a peer is stalled and keeps each captured locale', async () => {
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const account = createAccountLifetime('account-a');
+        let release = () => {};
+        const seed = new Promise<void>(resolve => { release = resolve; });
+        const locales: string[] = [];
+        network.setRpcAckResponder(async request => {
+            const payload = request.payload as Readonly<{ locale: string }>;
+            locales.push(payload.locale);
+            if (request.targetId === 'seed') await seed;
+            return { ok: true, result: buildDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+                protocolVersion: 1, projection: { ...daemonProjection(7), installedPackagesById: { 'acme.one': {
+                    id: 'acme.one', displayName: payload.locale, enabled: true, source: { kind: 'bundled', locator: 'acme.one' },
+                } } },
+            })) };
+        });
+        const read = (machineId: string) => loadDaemonMergedProjectionCacheEntry({ machineId, serverId: 'server-1', accountLifetime: account.lifetime });
+        const first = read('seed');
+        await vi.waitFor(() => expect(locales).toEqual(['en']));
+        const peer = read('peer');
+        let peerReady = false;
+        void peer.then(result => { peerReady = result?.kind === 'ready'; });
+        try {
+            // One unresponsive Machine must not hold another's first RPC or
+            // readiness. This crosses the real cache, transport and ingress.
+            await vi.waitFor(() => expect(peerReady).toBe(true));
+            expect(locales).toEqual(['en', 'en']);
+            textBoundary.locale = 'fr';
+            release();
+            for (const result of await Promise.all([first, peer])) expect(result).toMatchObject({ kind: 'ready',
+                inputs: { pluginProjectionV2: { installedPackagesById: { 'acme.one': { displayName: 'en' } } } } });
+            expect(await read('peer')).toMatchObject({ kind: 'ready',
+                inputs: { pluginProjectionV2: { installedPackagesById: { 'acme.one': { displayName: 'fr' } } } } });
+        } finally {
+            release();
+            await Promise.allSettled([first, peer]);
+            account.retire();
         }
     });
 
@@ -457,7 +924,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         }
     });
 
-    it('reuses a current unsupported answer without re-reading its Machine, but revalidates changed, explicit and stale demand', async () => {
+    it('retains unsupported answers across elapsed time, but revalidates changed and explicit fresh demand', async () => {
         const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
         const account = createAccountLifetime('account-a');
         const params = { ...projectionScope, accountLifetime: account.lifetime, reuseFreshReady: true };
@@ -482,10 +949,10 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
                 .resolves.toMatchObject({ kind: 'unsupported' });
             expect(machineReads()).toBe(3);
 
-            // Keep the incumbent 60-second projection freshness boundary.
+            // Age is not a registry or endpoint change.
             vi.setSystemTime(Date.now() + 60_001);
             await expect(loadDaemonMergedProjectionCacheEntry(params)).resolves.toMatchObject({ kind: 'unsupported' });
-            expect(machineReads()).toBe(4);
+            expect(machineReads()).toBe(3);
         } finally {
             vi.useRealTimers();
         }
@@ -735,10 +1202,10 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         await expect(successorRead).resolves.toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { generation: 8 } } });
     });
 
-    it('settles every read with the answer it got while newer revisions keep arriving', async () => {
+    it('keeps one target request in flight while newer revisions coalesce behind it', async () => {
         // A daemon whose state keeps advancing while each describe is slow:
-        // every read must still settle with its own answer (tagged with its
-        // revision) instead of waiting on the next, newer read.
+        // The issued read settles with its answer. Newer readers then make one
+        // fresh request for the latest revision, without overlapping bodies.
         const pending: Array<(value: unknown) => void> = [];
         projectionDescribeMock.mockImplementation(() => new Promise((resolve) => { pending.push(resolve); }));
         const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
@@ -747,7 +1214,8 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         await vi.waitFor(() => expect(pending).toHaveLength(1));
         publishMachineContributionRegistryProjectionInvalidation(projectionScope);
         const second = loadDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId: 'server-1' });
-        await vi.waitFor(() => expect(pending).toHaveLength(2));
+        await new Promise(resolve => setTimeout(resolve, 20));
+        expect(pending).toHaveLength(1);
         publishMachineContributionRegistryProjectionInvalidation(projectionScope);
 
         pending[0]!({ supported: true, projection: daemonProjection(1) });
@@ -756,17 +1224,17 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             projectionRevision: initialRevision,
             inputs: { pluginProjectionV2: { generation: 1 } },
         });
-
+        await vi.waitFor(() => expect(pending).toHaveLength(2));
         pending[1]!({ supported: true, projection: daemonProjection(2) });
         await expect(second).resolves.toMatchObject({
             kind: 'ready',
-            projectionRevision: initialRevision + 1,
+            projectionRevision: initialRevision + 2,
             inputs: { pluginProjectionV2: { generation: 2 } },
         });
         // A late answer never replaces a newer one already published.
         const { readCachedDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
         expect(readCachedDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId: 'server-1' }))
-            .toMatchObject({ projectionRevision: initialRevision + 1 });
+            .toMatchObject({ projectionRevision: initialRevision + 2 });
     });
 
     it('shares automatic failure recovery without delaying an explicit fresh read', async () => {

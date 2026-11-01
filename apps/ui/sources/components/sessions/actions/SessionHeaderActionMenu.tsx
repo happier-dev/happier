@@ -108,12 +108,9 @@ import {
   type SessionCompanionHeaderIntent,
 } from '@/components/sessions/companion/sessionCompanionHeaderIntent';
 import { SessionCompanionHeaderButton } from '@/components/sessions/companion/SessionCompanionHeaderButton';
-import {
-  applySessionCompanionMutationWithNotice,
-  buildSessionPresentationNoticeKeyPrefix,
-} from '@/components/sessions/companion/presentation/sessionCompanionPresentationAdapter';
+import { applySessionCompanionHumanIntent } from '@/components/sessions/companion/presentation/sessionCompanionHumanAction';
+import type { SessionCompanionMutationOutcome } from '@/components/sessions/companion/state/useSessionCompanionController';
 import { useSessionCompanionRevealPort } from '@/components/sessions/companion/presentation/SessionCompanionRevealPort';
-import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createSessionPeopleMenuItem, useSessionPeopleAttentionLabel } from './sessionHeaderPeopleMenuItem';
@@ -393,61 +390,35 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     && props.companionHeaderIntent !== null
     && props.companionHeaderIntent !== undefined;
   const companionHeaderIntent = props.companionHeaderIntent;
-  const companionNoticeKeyPrefix = React.useMemo(() => buildSessionPresentationNoticeKeyPrefix(
-    normalizeSessionAddress(sessionServerId, props.sessionId),
-    props.sessionId,
-  ), [props.sessionId, sessionServerId]);
-  const applyCompanionHeaderIntent = React.useCallback(() => {
+  const applyCompanionHeaderIntent = React.useCallback(async () => {
     if (!companionHeaderIntent) return;
-    const mutate = (input: Readonly<{
-      kind: string;
-      message: string;
-      apply: Parameters<typeof applySessionCompanionMutationWithNotice>[0]['apply'];
-    }>) => applySessionCompanionMutationWithNotice({
-      companion,
-      publishNotice: publishPresentationNotice,
-      noticeKeyPrefix: companionNoticeKeyPrefix,
-      ...input,
-    });
     switch (companionHeaderIntent.operation) {
       case 'hide':
-        mutate({
-          kind: 'companion.hide',
-          message: t('sessionBoard.companion.notices.hidden'),
-          apply: (controller) => controller.hide(),
-        });
+        await applySessionCompanionHumanIntent({ address: companionAddress, intent: { kind: 'companion.hide' } });
         return;
       case 'expand':
-        mutate({
-          kind: 'companion.collapse.set',
-          message: t('sessionBoard.companion.actions.expand'),
-          apply: (controller) => controller.setCollapsed(false),
-        });
+        await applySessionCompanionHumanIntent({ address: companionAddress, intent: { kind: 'companion.collapse.set', collapsed: false } });
         return;
       case 'show':
+      case 'show_and_open_full':
         {
-          const outcome = mutate({
-            kind: 'companion.show',
-            message: t('sessionBoard.companion.notices.shown'),
-            apply: (controller) => controller.show(),
+          const mutation: { outcome: SessionCompanionMutationOutcome | null } = { outcome: null };
+          const admitted = await applySessionCompanionHumanIntent({
+            address: companionAddress,
+            intent: { kind: 'companion.show' },
+            onCompanionMutation: outcome => { mutation.outcome = outcome; },
           });
-          if (outcome) companionRevealPort?.revealAfterMutation(outcome);
+          if (admitted && mutation.outcome) {
+            if (companionHeaderIntent.operation === 'show') companionRevealPort?.revealAfterMutation(mutation.outcome);
+            else companionRevealPort?.openFullSurface();
+          }
         }
         return;
       case 'open_full':
         companionRevealPort?.openFullSurface();
         return;
-      case 'show_and_open_full':
-        {
-          const outcome = mutate({
-            kind: 'companion.show',
-            message: t('sessionBoard.companion.notices.shown'),
-            apply: (controller) => controller.show(),
-          });
-          if (outcome) companionRevealPort?.openFullSurface();
-        }
     }
-  }, [companion, companionHeaderIntent, companionNoticeKeyPrefix, companionRevealPort]);
+  }, [companionAddress, companionHeaderIntent, companionRevealPort]);
   const executionRunsEnabled = useFeatureEnabled('execution.runs', sessionServerId
     ? { scopeKind: 'spawn', serverId: sessionServerId }
     : undefined);

@@ -319,7 +319,7 @@ function rejectMismatchedClientPlatforms(
   }
 }
 
-/** The machine-wide catalog read. It never carries a mounted target. */
+/** Full discovery and named exact reads share the current registry authority. */
 export const DaemonContributionRegistryProjectionDescribeRequestSchema = lazyZodSchema(() => z.union([
   z.strictObject({
     ...DaemonContributionRegistryProjectionClientContextV1Shape,
@@ -328,11 +328,39 @@ export const DaemonContributionRegistryProjectionDescribeRequestSchema = lazyZod
   }).check(z.superRefine(rejectMismatchedClientPlatforms)),
   z.looseObject({
     ...DaemonContributionRegistryProjectionClientContextV1Shape,
+    /** Safely ignorable by older daemons: an unmatched witness returns the full response. */
+    knownProjectionDigest: z.optional(z.string()),
+    /** Opts into section framing, including an empty cold inventory. Older daemons ignore it. */
+    knownSectionDigests: z.optional(z.array(z.string().check(z.regex(/^[a-f0-9]{64}$/u)))),
+    /** Opt-in digest-only manifest; older daemons safely return the full reply. */
+    deferredSections: z.optional(z.literal(true)),
+    /** Capability offer only; the manifest must confirm before versioned reads. */
+    supportedSectionFrameVersions: z.optional(z.array(z.literal(2))),
+    /** Selects the advertised encoding for sectionRead; absent means the original array encoding. */
+    sectionFrameVersion: z.optional(z.literal(2)),
+    /** Only used after a matching daemon advertised its digest manifest. */
+    sectionRead: z.optional(z.strictObject({ digest: z.string().check(z.regex(/^[a-f0-9]{64}$/u)),
+      offset: z.number().check(z.int(), z.minimum(0)),
+      includeDigests: z.optional(z.array(z.string().check(z.regex(/^[a-f0-9]{64}$/u)))) })),
     /** Named reads project only the catalog slice required by their caller. */
     selection: z.optional(z.enum(['agents', 'settings', 'connectedAccountAdmission'])),
   }).check(z.superRefine((value, context) => {
     rejectMismatchedClientPlatforms(value, context);
     if ('skillIds' in value) context.addIssue({ code: 'custom', path: ['skillIds'], message: 'Skill ids require the skills selection' });
+    if (value.selection !== undefined && value.knownProjectionDigest !== undefined) {
+      context.addIssue({ code: 'custom', path: ['knownProjectionDigest'], message: 'A projection digest requires full discovery' });
+    }
+    if (value.selection !== undefined && value.knownSectionDigests !== undefined) {
+      context.addIssue({ code: 'custom', path: ['knownSectionDigests'], message: 'Section digests require full discovery' });
+    }
+    if ((value.selection !== undefined && value.deferredSections !== undefined)
+      || (value.sectionRead !== undefined && value.deferredSections !== true)) {
+      context.addIssue({ code: 'custom', message: 'Section reads require negotiated full discovery' });
+    }
+    if ((value.supportedSectionFrameVersions !== undefined && (value.selection !== undefined || value.deferredSections !== true))
+      || (value.sectionFrameVersion !== undefined && value.sectionRead === undefined)) {
+      context.addIssue({ code: 'custom', message: 'Frame encoding requires deferred section negotiation' });
+    }
   })),
 ]));
 export type DaemonContributionRegistryProjectionDescribeRequest = z.infer<
@@ -2933,12 +2961,15 @@ export type PluginProjectionV2 = z.infer<typeof PluginProjectionV2Schema>;
  */
 export const DaemonContributionRegistryProjectionDescribeResponseSchema: z.ZodMiniObject<{
   protocolVersion: z.ZodMiniLiteral<1>;
+  projectionDigest: z.ZodMiniOptional<z.ZodMiniString>;
   projection: typeof PluginProjectionV2Schema;
   composerSurfaceCatalog: z.ZodMiniOptional<z.ZodMiniArray<typeof DaemonPluginUiComposerSurfaceCatalogEntryV1Schema>>;
   automationEligibleEvents: z.ZodMiniOptional<typeof DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema>;
   pluginSkills: z.ZodMiniOptional<typeof PluginSkillLibraryContentV1Schema>;
 }, z.core.$loose> = lazyZodSchema(() => z.looseObject({
   protocolVersion: z.literal(1),
+  /** Digest of the complete full response, excluding this field; absent on older daemons. */
+  projectionDigest: z.optional(z.string()),
   projection: PluginProjectionV2Schema,
   /**
    * Daemon-selected static Composer renderer facts. The UI joins each row to
@@ -2954,4 +2985,21 @@ export type DaemonContributionRegistryProjectionDescribeResponse = z.infer<
   typeof DaemonContributionRegistryProjectionDescribeResponseSchema
 >;
 
+/** Returned only for an explicitly supplied matching full-discovery witness. */
+export const DaemonContributionRegistryProjectionDescribeUnchangedResponseSchema = lazyZodSchema(() => z.strictObject({
+  protocolVersion: z.literal(1),
+  unchanged: z.literal(true),
+  projectionDigest: z.string(),
+}));
+export type DaemonContributionRegistryProjectionDescribeUnchangedResponse = z.infer<
+  typeof DaemonContributionRegistryProjectionDescribeUnchangedResponseSchema
+>;
+
 export type DaemonContributionRegistryProjection = PluginProjectionV2;
+export { DaemonContributionRegistryProjectionSectionsResponseSchema, buildDaemonProjectionSections,
+  DAEMON_PROJECTION_SECTION_FRAME_BYTES, DAEMON_PROJECTION_SECTION_STALE_CODE, DaemonProjectionDeferredSectionsResponseSchema,
+  DaemonProjectionSectionBodyResponseSchema, buildDeferredDaemonProjectionSections, demandedDaemonProjectionSections,
+  type DaemonProjectionDeferredSectionsResponse,
+  computeDaemonProjectionSectionDigest, omitKnownDaemonProjectionSectionBodies, reassembleDaemonProjectionSections,
+  type DaemonContributionRegistryProjectionSectionsResponse,
+} from './contributionRegistryProjectionSections.js';

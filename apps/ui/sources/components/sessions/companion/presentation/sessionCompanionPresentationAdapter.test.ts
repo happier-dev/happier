@@ -26,7 +26,6 @@ import {
     applySessionCompanionMutationWithNotice,
     applySessionPresentationIntent,
     buildSessionPresentationNoticeKeyPrefix,
-    showSessionBoardItemInCompanion,
     type SessionPresentationPorts,
 } from './sessionCompanionPresentationAdapter';
 
@@ -198,56 +197,6 @@ describe('applySessionPresentationIntent', () => {
         expect(applySessionPresentationIntent(owner, { kind: 'companion.item.remove', item: retained })).toEqual({ status: 'applied' });
         expect(companion.preference.items.some((ref) => ref.kind === 'instance')).toBe(false);
     });
-    it('reveals an exact Board item only after its Companion preference mutation applied', () => {
-        const order: string[] = [];
-        const applied = {
-            previous: HIDDEN_SESSION_COMPANION_PREFERENCE_V1,
-            applied: showSessionCompanion(HIDDEN_SESSION_COMPANION_PREFERENCE_V1, {
-                kind: 'widget',
-                widgetId: 'item-1',
-            }),
-        };
-        const companion = controllerStub({
-            show: vi.fn(() => {
-                order.push('mutate');
-                return applied;
-            }),
-        });
-        const revealAfterMutation = vi.fn(() => { order.push('reveal'); });
-
-        expect(showSessionBoardItemInCompanion({
-            companion,
-            publishNotice: vi.fn(),
-            noticeKeyPrefix: 'home-a:session-1',
-            itemId: 'item-1',
-            revealAfterMutation,
-        })).toBe(applied);
-        expect(order).toEqual(['mutate', 'reveal']);
-        expect(revealAfterMutation).toHaveBeenCalledWith(applied);
-    });
-
-    it('does not reveal a Board item when its Companion mutation is unavailable or unchanged', () => {
-        const revealAfterMutation = vi.fn();
-        const unavailable = controllerStub({ availability: 'realm_unavailable' });
-        const unchanged = controllerStub({ show: vi.fn(() => null) });
-
-        expect(showSessionBoardItemInCompanion({
-            companion: unavailable,
-            publishNotice: vi.fn(),
-            noticeKeyPrefix: 'home-a:session-1',
-            itemId: 'item-1',
-            revealAfterMutation,
-        })).toBeNull();
-        expect(showSessionBoardItemInCompanion({
-            companion: unchanged,
-            publishNotice: vi.fn(),
-            noticeKeyPrefix: 'home-a:session-1',
-            itemId: 'item-1',
-            revealAfterMutation,
-        })).toBeNull();
-        expect(revealAfterMutation).not.toHaveBeenCalled();
-    });
-
     it('gives mounted human controls the same applied-only notice and safe inverse seam', () => {
         const publishNotice = vi.fn();
         const applied = {

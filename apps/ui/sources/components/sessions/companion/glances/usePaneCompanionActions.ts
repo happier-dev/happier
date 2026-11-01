@@ -1,15 +1,13 @@
 import * as React from 'react';
 
 import type { ItemAction } from '@/components/ui/lists/itemActions';
-import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { t } from '@/text';
 
 import { useSessionCompanionRevealPort } from '../presentation/SessionCompanionRevealPort';
-import {
-    applySessionCompanionMutationWithNotice,
-    buildSessionPresentationNoticeKeyPrefix,
-} from '../presentation/sessionCompanionPresentationAdapter';
+import { showSessionCompanionItem } from '../presentation/sessionCompanionHumanAction';
+import { buildSessionPresentationNoticeKeyPrefix } from '../presentation/sessionCompanionPresentationAdapter';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { useSessionCompanionController } from '../state/useSessionCompanionController';
 
 const NOOP_OPEN_COMPANION = (): void => {};
@@ -34,10 +32,6 @@ export function usePaneCompanionActions(input: Readonly<{
         serverId: input.serverId,
         openFullSurface: reveal?.openFullSurface ?? NOOP_OPEN_COMPANION,
     });
-    const noticeKeyPrefix = React.useMemo(
-        () => buildSessionPresentationNoticeKeyPrefix(address, input.sessionId),
-        [address, input.sessionId],
-    );
     const paneId = input.paneId;
     const kept = paneId !== null && companion.preference.items.some((item) => item.kind === 'pane' && item.paneId === paneId);
     return React.useMemo<readonly ItemAction[]>(() => {
@@ -47,16 +41,13 @@ export function usePaneCompanionActions(input: Readonly<{
             title: t('sessionBoard.companion.actions.addToCompanion'),
             icon: 'stack',
             onPress: () => {
-                const outcome = applySessionCompanionMutationWithNotice({
-                    companion,
-                    publishNotice: publishPresentationNotice,
-                    noticeKeyPrefix,
-                    kind: 'companion.item.add',
-                    message: t('sessionBoard.companion.notices.added'),
-                    apply: (current) => current.show({ kind: 'pane', paneId }),
+                void showSessionCompanionItem({
+                    address, companion, publishNotice: publishPresentationNotice,
+                    noticeKeyPrefix: buildSessionPresentationNoticeKeyPrefix(address, input.sessionId),
+                    item: { kind: 'pane', paneId },
+                    revealAfterMutation: reveal.revealAfterMutation,
                 });
-                if (outcome) reveal.revealAfterMutation(outcome);
             },
         }];
-    }, [companion, kept, noticeKeyPrefix, paneId, reveal]);
+    }, [address, companion, input.sessionId, kept, paneId, reveal]);
 }

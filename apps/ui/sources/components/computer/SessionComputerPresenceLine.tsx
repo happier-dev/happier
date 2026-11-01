@@ -58,7 +58,8 @@ function MountedSessionComputerPresenceLine(props: Readonly<{
                     onTakeControl={control.takeControl}
                     onHandBack={control.handBack}
                     onCheckAgain={control.checkAgain}
-                    onWatch={open ?? undefined}
+                    onWatch={open?.open}
+                    watchDisabledReason={open?.disabledReason}
                 />
             </View>
         </View>

@@ -21,11 +21,8 @@ import { useSessionBoardHostActionBindings } from './useSessionBoardHostActionBi
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import type { CallerHostedHtmlRuntime } from '@/components/ui/surfaces/hostedHtml/HostedHtmlSurfaceAdapter';
 import { useSessionCompanionController } from '@/components/sessions/companion/state/useSessionCompanionController';
-import {
-    applySessionCompanionMutationWithNotice,
-    buildSessionPresentationNoticeKeyPrefix,
-    showSessionBoardItemInCompanion,
-} from '@/components/sessions/companion/presentation/sessionCompanionPresentationAdapter';
+import { applySessionCompanionHumanIntent, showSessionCompanionItem } from '@/components/sessions/companion/presentation/sessionCompanionHumanAction';
+import { buildSessionPresentationNoticeKeyPrefix } from '@/components/sessions/companion/presentation/sessionCompanionPresentationAdapter';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -128,30 +125,22 @@ export function SessionBoardPane(props: SessionBoardPaneProps): React.ReactEleme
     const companionWidgetIds = React.useMemo(() => new Set(
         companion.preference.items.flatMap((item) => item.kind === 'widget' ? [item.widgetId] : []),
     ), [companion.preference.items]);
-    const companionNoticeKeyPrefix = React.useMemo(() => buildSessionPresentationNoticeKeyPrefix(
-        normalizeSessionAddress(props.serverId ?? null, props.sessionId),
-        props.sessionId,
-    ), [props.serverId, props.sessionId]);
     const addToCompanion = React.useCallback((itemId: string) => {
         if (!companionReveal) return;
-        showSessionBoardItemInCompanion({
-            companion,
-            publishNotice: publishPresentationNotice,
-            noticeKeyPrefix: companionNoticeKeyPrefix,
-            itemId,
+        void showSessionCompanionItem({
+            address: boardAddress,
+            companion, publishNotice: publishPresentationNotice,
+            noticeKeyPrefix: buildSessionPresentationNoticeKeyPrefix(boardAddress, props.sessionId),
+            item: { kind: 'widget', widgetId: itemId },
             revealAfterMutation: companionReveal.revealAfterMutation,
         });
-    }, [companion, companionNoticeKeyPrefix, companionReveal]);
+    }, [boardAddress, companion, companionReveal, props.sessionId]);
     const removeFromCompanion = React.useCallback((itemId: string) => {
-        applySessionCompanionMutationWithNotice({
-            companion,
-            publishNotice: publishPresentationNotice,
-            noticeKeyPrefix: companionNoticeKeyPrefix,
-            kind: 'companion.item.remove',
-            message: t('sessionBoard.companion.notices.removed'),
-            apply: (current) => current.removeItem({ kind: 'widget', widgetId: itemId }),
+        void applySessionCompanionHumanIntent({
+            address: boardAddress,
+            intent: { kind: 'companion.item.remove', item: { kind: 'widget', widgetId: itemId } },
         });
-    }, [companion, companionNoticeKeyPrefix]);
+    }, [boardAddress]);
     const navigationOnly = props.interaction === 'navigation';
     const retained = props.retained === true;
     // The compact sidebar and a retained background tab are read-only for

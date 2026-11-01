@@ -444,29 +444,14 @@ describe('SessionCompanionHost (mounted, desktop/tablet)', () => {
         ]);
     });
 
-    it('routes rail edge, density, collapse, and hide through applied-only feedback', async () => {
+    it('keeps unbound rail edits from changing preferences', async () => {
         const renderer = await render();
-        const [menu] = renderer.findAll((node) => (
-            node.props?.overflowTriggerTestID === 'session-companion-menu'
-        ));
+        const [menu] = renderer.findAll(node => node.props?.overflowTriggerTestID === 'session-companion-menu');
         const actions = menu?.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>;
-
-        actions.find((action) => action.id === 'edge-leading')?.onPress?.();
-        expect(readPresentationNotice()).toMatchObject({ message: 'sessionBoard.companion.notices.moved' });
-        retirePresentationNotice();
-
-        actions.find((action) => action.id === 'density-comfortable')?.onPress?.();
-        expect(readPresentationNotice()).toMatchObject({ message: 'sessionBoard.companion.actions.comfortable' });
-        retirePresentationNotice();
-
-        actions.find((action) => action.id === 'collapse')?.onPress?.();
-        expect(readPresentationNotice()).toMatchObject({ message: 'sessionBoard.companion.actions.collapse' });
-        retirePresentationNotice();
-
-        actions.find((action) => action.id === 'hide')?.onPress?.();
-        expect(readPresentationNotice()).toMatchObject({
-            message: 'sessionBoard.companion.notices.hidden',
-            undo: { label: 'sessionBoard.companion.actions.undo' },
-        });
+        for (const id of ['edge-leading', 'density-comfortable', 'collapse', 'hide']) {
+            await actions.find(action => action.id === id)?.onPress?.();
+        }
+        expect(mutate).not.toHaveBeenCalled();
+        expect(readPresentationNotice()).toBeNull();
     });
 });

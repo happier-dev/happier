@@ -707,13 +707,11 @@ describe('SessionHeaderActionMenu handoff', () => {
     const dropdown = screen.findByType('DropdownMenu' as any);
     expect(dropdown.props.items.map((item: { id: string }) => item.id)).toContain('header.openCompanion');
     await act(async () => { dropdown.props.onSelect('header.openCompanion'); });
-    expect(revealAfterMutation).toHaveBeenCalledWith(expect.objectContaining({
-      applied: expect.objectContaining({ visible: true, collapsed: false }),
-    }));
+    expect(revealAfterMutation).not.toHaveBeenCalled();
     expect(sessionActionsModuleState.routerPushSpy).not.toHaveBeenCalled();
   });
 
-  it('hands a first show to the exact mounted reveal owner after the preference applies', async () => {
+  it('keeps an unbound first show from reaching its reveal owner', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
     const { SessionCompanionRevealPortProvider } = await import(
       '@/components/sessions/companion/presentation/SessionCompanionRevealPort'
@@ -756,11 +754,8 @@ describe('SessionHeaderActionMenu handoff', () => {
     if (!companionButton) throw new Error('Expected the direct Companion action');
     act(() => companionButton.props.onPress());
 
-    expect(mutateSessionCompanionPreferenceMock).toHaveBeenCalledTimes(1);
-    expect(revealAfterMutation).toHaveBeenCalledTimes(1);
-    expect(revealAfterMutation).toHaveBeenCalledWith(expect.objectContaining({
-      applied: expect.objectContaining({ visible: true }),
-    }));
+    expect(mutateSessionCompanionPreferenceMock).not.toHaveBeenCalled();
+    expect(revealAfterMutation).not.toHaveBeenCalled();
     expect(sessionActionsModuleState.routerPushSpy).not.toHaveBeenCalled();
   });
 
@@ -851,7 +846,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     if (!companionButton) throw new Error('Expected the direct Companion action');
     act(() => companionButton.props.onPress());
 
-    expect(mutateSessionCompanionPreferenceMock).toHaveBeenCalledTimes(1);
+    expect(mutateSessionCompanionPreferenceMock).not.toHaveBeenCalled();
     expect(openFullSurface).not.toHaveBeenCalled();
   });
 

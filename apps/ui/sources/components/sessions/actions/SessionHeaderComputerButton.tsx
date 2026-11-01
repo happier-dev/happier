@@ -29,7 +29,7 @@ function useSessionComputerEntryOpener(input: Readonly<{ sessionId: string; serv
         void requestSemantic?.({ kind: 'viewer.open', source: 'computer' });
     }, [requestSemantic]);
     if (!requestSemantic || !hasMachine) return null;
-    return open ?? openHere;
+    return open?.disabledReason ? openHere : open?.open ?? openHere;
 }
 
 /**

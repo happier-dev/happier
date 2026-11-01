@@ -1,4 +1,6 @@
+import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
 import * as React from 'react';
+import { applySessionCompanionHumanIntent } from './presentation/sessionCompanionHumanAction';
 import { I18nManager, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -9,15 +11,9 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
-import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
-import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { useSessionWidgetSurface } from '@/components/widgets/surface/useWidgetInputsEditor';
 
 import { SessionCompanionContent } from './SessionCompanionContent';
-import {
-    applySessionCompanionMutationWithNotice,
-    buildSessionPresentationNoticeKeyPrefix,
-} from './presentation/sessionCompanionPresentationAdapter';
 import { buildSessionCompanionMenuActions } from './sessionCompanionMenu';
 import { SessionCompanionAddControl } from './picker/SessionCompanionAddControl';
 import { useSessionCompanionBoardAdd } from './picker/useSessionCompanionBoardAdd';
@@ -59,26 +55,13 @@ export const SessionCompanionScreen = React.memo(function SessionCompanionScreen
         // The full surface IS this screen; it never re-navigates to itself.
         openFullSurface: () => {},
     });
-    const noticeKeyPrefix = React.useMemo(
-        () => buildSessionPresentationNoticeKeyPrefix(props.address, props.sessionId),
-        [props.address, props.sessionId],
-    );
-    const mutateCompanion = React.useCallback((input: Readonly<{
-        kind: string;
-        message: string;
-        apply: Parameters<typeof applySessionCompanionMutationWithNotice>[0]['apply'];
-    }>) => applySessionCompanionMutationWithNotice({
-        companion: controller,
-        publishNotice: publishPresentationNotice,
-        noticeKeyPrefix,
-        ...input,
-    }), [controller, noticeKeyPrefix]);
+    const mutateCompanion = React.useCallback((intent: Parameters<typeof applySessionCompanionHumanIntent>[0]['intent']) =>
+        applySessionCompanionHumanIntent({ address: props.address, intent }), [props.address]);
     const addBoard = useSessionCompanionBoardAdd(mountedBoard);
     const addItem = React.useCallback(async (item: SessionCompanionItemRefV1) => {
-        const outcome = mutateCompanion({
+        const outcome = await mutateCompanion({
             kind: 'companion.item.add',
-            message: t('sessionBoard.companion.notices.added'),
-            apply: (companion) => companion.addItem(item),
+            item,
         });
         if (!outcome) throw new Error('session_companion_write_refused');
     }, [mutateCompanion]);
@@ -103,27 +86,16 @@ export const SessionCompanionScreen = React.memo(function SessionCompanionScreen
             layoutDirection: I18nManager.isRTL ? 'rtl' : 'ltr',
             setEdge: (edge) => { mutateCompanion({
                 kind: 'companion.edge.set',
-                message: t('sessionBoard.companion.notices.moved'),
-                apply: (companion) => companion.setEdge(edge),
+                edge,
             }); },
             setDensity: (density) => { mutateCompanion({
                 kind: 'companion.density.set',
-                message: density === 'compact'
-                    ? t('sessionBoard.companion.actions.compact')
-                    : t('sessionBoard.companion.actions.comfortable'),
-                apply: (companion) => companion.setDensity(density),
+                density,
             }); },
             // This surface is always full height, so collapse/expand would be
             // controls with no observable effect; they are absent, not disabled.
             setCollapsed: () => {},
-            hide: () => {
-                mutateCompanion({
-                    kind: 'companion.hide',
-                    message: t('sessionBoard.companion.notices.hidden'),
-                    apply: (companion) => companion.hide(),
-                });
-                props.onRequestClose();
-            },
+            hide: () => { void mutateCompanion({ kind: 'companion.hide' }).then(applied => { if (applied) props.onRequestClose(); }); },
         }).filter((action) => action.id !== 'collapse' && action.id !== 'expand'),
         [controller.preference, mutateCompanion, props.onRequestClose],
     );

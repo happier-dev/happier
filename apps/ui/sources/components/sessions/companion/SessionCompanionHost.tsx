@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { applySessionCompanionHumanIntent } from './presentation/sessionCompanionHumanAction';
 import { I18nManager, Platform, View, useWindowDimensions, type ViewProps } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -12,16 +13,11 @@ import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
 import type { SessionBoardSourceAvailabilityResolver } from '@/components/sessions/board/sessionBoardItemPresentation';
-import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 
 import {
     SessionCompanionContent,
     type SessionCompanionBoardBinding,
 } from './SessionCompanionContent';
-import {
-    applySessionCompanionMutationWithNotice,
-    buildSessionPresentationNoticeKeyPrefix,
-} from './presentation/sessionCompanionPresentationAdapter';
 import { useSessionCompanionPlacement } from './layout/useSessionCompanionPlacement';
 import { buildSessionCompanionMenuActions } from './sessionCompanionMenu';
 import { useSessionCompanionBoardAdd } from './picker/useSessionCompanionBoardAdd';
@@ -113,20 +109,8 @@ export const SessionCompanionHost = React.memo(function SessionCompanionHost(
         serverId: props.address.serverId,
         paneScopeId: props.paneScopeId,
     });
-    const noticeKeyPrefix = React.useMemo(
-        () => buildSessionPresentationNoticeKeyPrefix(props.address, props.session.id),
-        [props.address, props.session.id],
-    );
-    const mutateCompanion = React.useCallback((input: Readonly<{
-        kind: string;
-        message: string;
-        apply: Parameters<typeof applySessionCompanionMutationWithNotice>[0]['apply'];
-    }>) => applySessionCompanionMutationWithNotice({
-        companion: controller,
-        publishNotice: publishPresentationNotice,
-        noticeKeyPrefix,
-        ...input,
-    }), [controller, noticeKeyPrefix]);
+    const mutateCompanion = React.useCallback((intent: Parameters<typeof applySessionCompanionHumanIntent>[0]['intent']) =>
+        applySessionCompanionHumanIntent({ address: props.address, intent }), [props.address]);
     const publishCardBounds = React.useCallback((bounds: Readonly<{ widthPx: number; heightPx: number }>) => {
         publishSessionCompanionCardBounds({
             sessionId: props.session.id,
@@ -145,27 +129,18 @@ export const SessionCompanionHost = React.memo(function SessionCompanionHost(
         layoutDirection: I18nManager.isRTL ? 'rtl' : 'ltr',
         setEdge: (edge) => { mutateCompanion({
             kind: 'companion.edge.set',
-            message: t('sessionBoard.companion.notices.moved'),
-            apply: (companion) => companion.setEdge(edge),
+            edge,
         }); },
         setDensity: (density) => { mutateCompanion({
             kind: 'companion.density.set',
-            message: density === 'compact'
-                ? t('sessionBoard.companion.actions.compact')
-                : t('sessionBoard.companion.actions.comfortable'),
-            apply: (companion) => companion.setDensity(density),
+            density,
         }); },
         setCollapsed: (collapsed) => { mutateCompanion({
             kind: 'companion.collapse.set',
-            message: collapsed
-                ? t('sessionBoard.companion.actions.collapse')
-                : t('sessionBoard.companion.actions.expand'),
-            apply: (companion) => companion.setCollapsed(collapsed),
+            collapsed,
         }); },
         hide: () => { mutateCompanion({
             kind: 'companion.hide',
-            message: t('sessionBoard.companion.notices.hidden'),
-            apply: (companion) => companion.hide(),
         }); },
         openFullSurface: props.openFullSurface,
     }), [controller.preference, mutateCompanion, props.openFullSurface]);

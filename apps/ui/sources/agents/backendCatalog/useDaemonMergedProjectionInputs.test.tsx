@@ -1,4 +1,5 @@
 import { act } from 'react-test-renderer';
+import * as React from 'react';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -28,7 +29,7 @@ await loadSyncSingletonForTests();
 await import('@/sync/domains/session/humanPresence/sessionHumanPresenceRuntime');
 const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
-const { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+const { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCacheEntry, captureDaemonMergedProjectionReader } = await import('./loadDaemonMergedProjectionInputs');
 const { useDaemonMergedProjectionInputs, useDaemonMergedProjectionSummary } = await import('./useDaemonMergedProjectionInputs');
 const { storage } = await import('@/sync/domains/state/storage');
 const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
@@ -76,21 +77,34 @@ describe('useDaemonMergedProjectionInputs', () => {
     let serverId: string;
     let otherServerId: string;
 
-    it('does not resolve the descriptive Home key again on unchanged summary renders', async () => {
-        await primeCache(7);
-        const hook = await renderHook(() => useDaemonMergedProjectionSummary({ serverId, machineId: 'machine-1' }));
-        const resolve = vi.spyOn(serverProfiles, 'resolveServerProfileScopeIdForIdentifier');
-        const capture = vi.spyOn(serverProfiles, 'captureServerProfileScopeResolver');
+    it('binds routed credentials only while projection demand is enabled', async () => {
+        // The nonfocused Home has no active Sync connection; only this actual
+        // projection consumer can demand its device credential in this case.
+        const homeUrl = 'https://projection-hook-other.example.test';
+        const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
+        const targetCredentialReads = () => credentials.mock.calls.filter(([url]) => url === homeUrl).length;
+        const hook = await renderHook<ReturnType<typeof useDaemonMergedProjectionInputs>, Readonly<{ enabled: boolean; machineId: string | null }>>(({ enabled, machineId }) => (
+            useDaemonMergedProjectionInputs({ serverId: otherServerId, machineId, enabled })
+        ), { initialProps: { enabled: false, machineId: 'machine-1' } });
         try {
-            const first = hook.getCurrent();
-            expect(first.current).toBe(true);
-            for (let index = 0; index < 3; index++) {
-                await hook.rerender();
-                expect(hook.getCurrent()).toBe(first);
-            }
-            expect(resolve).not.toHaveBeenCalled();
-            expect(capture).not.toHaveBeenCalled();
-        } finally { resolve.mockRestore(); capture.mockRestore(); await hook.unmount(); }
+            expect(hook.getCurrent()).toEqual({ phase: 'idle', inputs: null });
+            expect.soft(targetCredentialReads()).toBe(0);
+            await hook.rerender({ enabled: true, machineId: null });
+            expect(hook.getCurrent().inputs).toBeNull();
+            expect.soft(targetCredentialReads()).toBe(0);
+            await hook.rerender({ enabled: true, machineId: 'machine-1' });
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: 'ready',
+                inputs: { pluginProjectionV2: { generation: 1 } } }));
+            expect(targetCredentialReads()).toBeGreaterThan(0);
+            daemonDescribe.mockRejectedValueOnce(new RpcError('Private transport details', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE));
+            await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: otherServerId }));
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: 'error',
+                failureReason: 'transport-unavailable', inputs: { pluginProjectionV2: { generation: 1 } } }));
+            const boundReads = targetCredentialReads();
+            await hook.rerender({ enabled: false, machineId: 'machine-1' });
+            expect(hook.getCurrent()).toEqual({ phase: 'idle', inputs: null });
+            expect(targetCredentialReads()).toBe(boundReads);
+        } finally { await hook.unmount(); credentials.mockRestore(); }
     });
 
     it('rebinds a summary key on real Home correspondence publication without borrowing a foreign Home', async () => {
@@ -160,6 +174,47 @@ describe('useDaemonMergedProjectionInputs', () => {
         }
         daemonDescribe.mockClear();
     }
+
+    it('publishes no replacement state for an unchanged warm projection and still delivers real invalidation', async () => {
+        await primeCache(7);
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        expect(accountLifetime).not.toBeNull();
+        const observed: Array<ReturnType<typeof useDaemonMergedProjectionInputs>> = [];
+        const hook = await renderHook((options: Readonly<{ sections?: readonly string[] }>) => {
+            const snapshot = useDaemonMergedProjectionInputs({ serverId, machineId: 'machine-1', accountLifetime,
+                sections: options.sections });
+            observed.push(snapshot);
+            return snapshot;
+        }, { initialProps: {} });
+        try {
+            const initial = hook.getCurrent();
+            expect(initial).toMatchObject({ phase: 'ready', inputs: { pluginProjectionV2: { generation: 7 } } });
+            expect(new Set(observed).size).toBe(1);
+            expect(observed).toHaveLength(1);
+            for (let revisit = 0; revisit < 3; revisit++) {
+                await hook.rerender();
+                expect(hook.getCurrent()).toBe(initial);
+            }
+            expect(daemonDescribe).not.toHaveBeenCalled();
+
+            // A changed section request may share the full cached inputs, but
+            // its render-time scope fence must still settle after commit.
+            await hook.rerender({ sections: [] });
+            expect(hook.getCurrent()).toMatchObject({ phase: 'ready', inputs: initial.inputs });
+            expect(daemonDescribe).not.toHaveBeenCalled();
+
+            const changed = createDeferred<ReturnType<typeof readyResponse>>();
+            daemonDescribe.mockReturnValueOnce(changed.promise);
+            await act(async () => publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'machine-1' }));
+            expect(hook.getCurrent()).toMatchObject({ phase: 'loading', inputs: initial.inputs });
+            await act(async () => { changed.resolve(readyResponse(8)); });
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({
+                phase: 'ready', inputs: { pluginProjectionV2: { generation: 8 } },
+            }));
+            expect(hook.getCurrent().inputs).not.toBe(initial.inputs);
+            expect(daemonDescribe).toHaveBeenCalledTimes(1);
+        } finally { await hook.unmount(); }
+    });
 
     it('retries an unanswered read after effect supersession and after its final mounted reader leaves', async () => {
         daemonDescribe.mockImplementationOnce(() => new Promise(() => {}));
@@ -645,10 +700,41 @@ describe('useDaemonMergedProjectionInputs', () => {
         expect(daemonDescribe).not.toHaveBeenCalled();
     });
     it('updates an already mounted cache reader when another consumer publishes the ready projection', async () => {
-        const hook = await renderHook(() => useDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId, load: false }));
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const committed: Array<Readonly<{ state: ReturnType<typeof useDaemonMergedProjectionInputs>; lifetime: object | null }>> = [];
+        const identities = new WeakMap<object, number>();
+        let nextIdentity = 1;
+        const identity = (value: object | null): number | null => {
+            if (!value) return null;
+            const held = identities.get(value);
+            if (held !== undefined) return held;
+            const assigned = nextIdentity++;
+            identities.set(value, assigned);
+            return assigned;
+        };
+        const hook = await renderHook(() => {
+            const account = useServerCredentialAccountScopeBinding(serverId);
+            const state = useDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId, load: false,
+                accountLifetime: account.binding });
+            React.useLayoutEffect(() => { committed.push({ state, lifetime: account.binding }); });
+            return state;
+        });
         await flushHookEffects({ cycles: 3, turns: 2 });
         expect(daemonDescribe).not.toHaveBeenCalled();
         expect(hook.getCurrent().inputs).toBeNull();
+        const sequence = committed.map(({ state, lifetime }) => ({
+            phase: state.phase, state: identity(state), inputs: identity(state.inputs), lifetime: identity(lifetime),
+            generation: state.inputs?.pluginProjectionV2?.generation ?? null, failureReason: state.failureReason ?? null,
+        }));
+        // A real Account transition may fence stale content with a new loading
+        // value. Only compare equal public states under the identical lifetime.
+        const equalStateReallocations = committed.flatMap(({ state, lifetime }, index) => {
+            const previous = committed[index - 1];
+            return previous && previous.lifetime === lifetime && previous.state !== state
+                && previous.state.phase === state.phase && previous.state.inputs === state.inputs
+                && previous.state.failureReason === state.failureReason ? [index] : [];
+        });
+        expect.soft(equalStateReallocations, JSON.stringify({ sequence })).toEqual([]);
         await act(async () => {
             await loadDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId,
                 accountLifetime: captureActiveServerAccountScopeLifetime() });
@@ -746,6 +832,85 @@ describe('useDaemonMergedProjectionInputs', () => {
         pending.resolve(readyResponse(2));
         await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: 'ready', inputs: { pluginProjectionV2: { generation: 2 } } }));
     });
+    it.each(['routed credential', 'active runtime'] as const)('reacquires exactly once when a cold deferred Describe loses its %s binding', async owner => {
+        const { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const { readCachedDaemonMergedProjectionCacheEntry, subscribeDaemonMergedProjectionSummary } = await import('./loadDaemonMergedProjectionInputs');
+        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockRestore();
+        const credentials = { token: createAccountTokenForTests('account-a') };
+        const homeUrl = 'https://projection-hook.example.test';
+        expect(await TokenStorage.setCredentialsForServerUrl(homeUrl, { serverId }, credentials)).toBe(true);
+        const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(readyResponse(7));
+        const deferred = buildDeferredDaemonProjectionSections({ ...response, projectionDigest: 'a'.repeat(64) });
+        const firstSection = createDeferred<void>();
+        let manifests = 0;
+        let sections = 0;
+        daemonDescribe.mockImplementation(async ({ payload }) => {
+            if (!payload.sectionRead) {
+                manifests++;
+                return { ...deferred.manifest, sectionFrameVersion: 2 };
+            }
+            if (++sections === 1) await firstSection.promise;
+            return deferred.read(payload.sectionRead.digest, payload.sectionRead.offset,
+                payload.sectionRead.includeDigests, payload.sectionFrameVersion);
+        });
+        const published: number[] = [];
+        const unsubscribe = subscribeDaemonMergedProjectionSummary({ serverId, machineId: 'machine-1' }, () => {
+            const entry = readCachedDaemonMergedProjectionCacheEntry({ serverId, machineId: 'machine-1' });
+            if (entry?.kind === 'ready') published.push(entry.inputs.pluginProjectionV2!.generation);
+        });
+        const hook = await renderHook(() => {
+            const account = useServerCredentialAccountScopeBinding(serverId);
+            const projection = useDaemonMergedProjectionInputs({ machineId: 'machine-1',
+                ...(owner === 'routed credential' ? { serverId, accountLifetime: account.binding } : {}) });
+            return { account, projection };
+        });
+        try {
+            await vi.waitFor(() => expect(sections).toBe(1));
+            const previous = owner === 'routed credential' ? hook.getCurrent().account.binding! : captureActiveServerAccountScopeLifetime()!;
+            expect(previous.isCurrent()).toBe(true);
+            expect(manifests).toBe(1);
+            expect(published).toEqual([]);
+            await act(async () => {
+                if (owner === 'routed credential') {
+                    expect(await TokenStorage.setCredentialsForServerUrl(homeUrl, { serverId }, credentials)).toBe(true);
+                } else {
+                    // The real connection owner withdraws then reapplies even the
+                    // same Home/Account during restore; demand stays mounted.
+                    publishAppliedActiveServerRuntimeAvailability(false);
+                    publishAppliedActiveServerRuntimeAvailability(true);
+                }
+            });
+            expect(previous.isCurrent()).toBe(false);
+            await vi.waitFor(() => expect(hook.getCurrent().projection).toMatchObject({
+                phase: 'ready', inputs: { pluginProjectionV2: { generation: 7 } },
+            }));
+            expect(hook.getCurrent().account.binding?.isCurrent()).toBe(true);
+            expect(manifests).toBe(2);
+            expect(published).toEqual([7]);
+            const settledReads = daemonDescribe.mock.calls.length;
+            await hook.rerender();
+            await hook.rerender();
+            expect(daemonDescribe).toHaveBeenCalledTimes(settledReads);
+            await act(async () => {
+                storage.getState().applyMachines([createMachineFixture({
+                    id: 'unrelated-machine', daemonStateVersion: 2,
+                    daemonState: { contributionRegistryProjectionRevision: 2, runtimeId: 'unrelated-daemon' },
+                })], false, { sourceServerId: serverId });
+            });
+            await flushHookEffects();
+            expect(daemonDescribe.mock.calls.length - settledReads).toBe(0);
+            expect(manifests).toBe(2);
+            expect(published).toEqual([7]);
+            expect(hook.getCurrent().projection.phase).toBe('ready');
+        } finally {
+            firstSection.resolve();
+            await hook.unmount();
+            unsubscribe();
+        }
+    });
+
     it('withdraws retained metadata on a real credential replacement within the same Home', async () => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
@@ -866,4 +1031,47 @@ describe('useDaemonMergedProjectionInputs', () => {
         pending.resolve(readyResponse(2));
         await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: 'ready', inputs: { pluginProjectionV2: { generation: 2 } } }));
     });
+});
+
+// Summary reads need a real routed Account, not a focused Sync bootstrap whose
+// independent Machine census would contaminate the descriptive-key budget.
+it('does not resolve the descriptive Home key again on unchanged summary renders', async () => {
+    network.resetRequests();
+    storage.setState(storage.getInitialState(), true);
+    clearDaemonMergedProjectionCacheForTests();
+    const home = await network.addHome('https://projection-summary-unfocused.example.test', 'account-a');
+    network.setRpcAckResponder(async (request) => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+        ? { ok: true, result: readyResponse(7) }
+        : { ok: false, error: 'Unsupported fixture RPC', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
+    const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+    const credential = await renderHook(() => useServerCredentialAccountScopeBinding(home.id));
+    try {
+        await vi.waitFor(() => expect(credential.getCurrent().binding).not.toBeNull());
+        const accountLifetime = credential.getCurrent().binding;
+        if (!accountLifetime) throw new Error('The routed summary fixture did not bind its Account');
+        const entry = await loadDaemonMergedProjectionCacheEntry({ serverId: home.id, machineId: 'machine-1', accountLifetime });
+        expect(entry).toMatchObject({ kind: 'ready' });
+        const reader = captureDaemonMergedProjectionReader({ serverId: home.id, machineId: 'machine-1' });
+        const hook = await renderHook(() => useDaemonMergedProjectionSummary({ serverId: home.id, machineId: 'machine-1' }));
+        const resolve = vi.spyOn(serverProfiles, 'resolveServerProfileScopeIdForIdentifier');
+        const capture = vi.spyOn(serverProfiles, 'captureServerProfileScopeResolver');
+        try {
+            const first = hook.getCurrent();
+            expect(first.current).toBe(true);
+            for (let index = 0; index < 3; index++) {
+                await hook.rerender();
+                expect(hook.getCurrent()).toBe(first);
+                expect(reader.readSummary()).toBe(first);
+            }
+            expect(resolve).not.toHaveBeenCalled();
+            expect(capture).not.toHaveBeenCalled();
+        } finally { resolve.mockRestore(); capture.mockRestore(); await hook.unmount(); }
+    } finally {
+        await credential.unmount();
+        standardCleanup();
+        clearDaemonMergedProjectionCacheForTests();
+        await serverScopedRpcSocketPool.stopAll();
+        serverScopedRpcSocketPool.resetForTests();
+        resetScopedMachineTransportCacheForTests();
+    }
 });

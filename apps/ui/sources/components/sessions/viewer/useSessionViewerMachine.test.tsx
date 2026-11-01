@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import * as React from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { act, createMachineFixture, createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { clearMachineRequestReachabilityForTest, withdrawMachinePresenceForScope, captureMachinePresenceObservation } from '@/sync/domains/machines/reachability/machineReachability';
@@ -9,6 +10,9 @@ installHomeGovernanceBoundaries(home);
 const { getStorage } = await import('@/sync/domains/state/storage');
 const { useSessionViewerMachine, resolveSessionViewerMachineName } = await import('./useSessionViewerMachine');
 const { useSessionComputerScreen } = await import('@/components/computer/useSessionComputerScreen');
+const { useOpenSessionComputerScreen } = await import('@/components/computer/useOpenSessionComputerScreen');
+const { SessionViewerControllerProvider } = await import('./SessionViewerControllerProvider');
+const { useOptionalSessionViewerController } = await import('./SessionViewerController');
 
 const initialStorage = getStorage().getState();
 const serverId = 'srv_viewer_machine';
@@ -31,6 +35,26 @@ function seed(machineSeed: Parameters<typeof createMachineFixture>[0] | null) {
 }
 
 describe('the Machine name the viewer says', () => {
+    it('keeps an offline Computer launcher disabled and refuses another requested Machine', async () => {
+        seed({ active: false, activeAt: Date.now() - 120_000 });
+        const openDocked = vi.fn();
+        function Wrapper(props: React.PropsWithChildren) {
+            return React.createElement(SessionViewerControllerProvider, {
+                sessionId: 's1', serverId, phone: false, canPresentSource: () => true, openDocked,
+            }, props.children);
+        }
+        const hook = await renderHook(() => ({
+            own: useOpenSessionComputerScreen({ sessionId: 's1', serverId }),
+            other: useOpenSessionComputerScreen({ sessionId: 's1', serverId, machineId: 'another-machine' }),
+            mode: useOptionalSessionViewerController()?.state.mode,
+        }), { wrapper: Wrapper });
+        expect(hook.getCurrent().own).not.toBeNull();
+        expect(hook.getCurrent().own?.disabledReason).toBeTruthy();
+        expect(hook.getCurrent().other).toBeNull();
+        await act(async () => { hook.getCurrent().own?.open(); });
+        expect(hook.getCurrent().mode).toBe('closed');
+        expect(openDocked).not.toHaveBeenCalled();
+    });
     it('retains Machine identity without an offline dot while its Home presence is withdrawn', async () => {
         seed({ active: false, activeAt: Date.now() - 120_000 });
         const hook = await renderHook(() => useSessionViewerMachine('s1', serverId, 'computer'));

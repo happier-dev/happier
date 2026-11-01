@@ -3,6 +3,9 @@ import {
     machineContributionRegistryProjectionDescribe,
     subscribeMachineContributionRegistryProjectionInvalidation,
     type MachineContributionRegistryProjectionFailureReason,
+    type DeferredDaemonProjection,
+    type DaemonProjectionHydrationRejection,
+    type DaemonProjectionSectionCache,
 } from '@/sync/ops/machineContributionRegistryProjection';
 import {
     captureActiveServerAccountScopeLifetime,
@@ -26,26 +29,36 @@ import {
     clearProjectedAgentUiBehaviorDescriptors,
     publishProjectedAgentUiBehaviorDescriptors,
 } from '@/agents/registry/agentUiBehaviorProjection';
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { getPreferredLanguage } from '@/text';
+import { mergeProjectionSections } from './mergeProjectionSections';
+import { entryIsFresh, matchesProjectionCurrentness } from './projectionCurrentness';
+export { entryIsFresh } from './projectionCurrentness';
 export type { DaemonMergedProjectionInputs } from './daemonContributionRegistryProjectionAdapters';
 
 type ProjectionCacheResult = (
-    | Readonly<{ kind: 'ready'; fetchedAtMs: number; inputs: DaemonMergedProjectionInputs }>
-    | Readonly<{ kind: 'unsupported'; fetchedAtMs: number }>
+    | Readonly<{ kind: 'ready'; inputs: DaemonMergedProjectionInputs }>
+    | Readonly<{ kind: 'unsupported' }>
     | Readonly<{
         kind: 'error';
-        fetchedAtMs: number;
         /** Why the latest read failed; the last good inputs stay available. */
         reason: MachineContributionRegistryProjectionFailureReason;
         retryAttempt: number;
-        retryAtMs: number;
+        /** Null settles a semantic failure until fresh demand or authority change. */
+        retryAtMs: number | null;
         inputs?: DaemonMergedProjectionInputs;
     }>
 );
 type ProjectionCacheEntry = Readonly<{
+    fetchedAtMs: number;
     projectionRevision: number;
+    retirement?: Readonly<{ dispose(): void }>;
+    /** Daemon content identity of the held full answer; never a freshness authority. */
+    projectionDigest?: string;
+    deferredProjection?: DeferredDaemonProjection;
+    deferredHydrationRejection?: DaemonProjectionHydrationRejection;
+    sectionHolding?: ProjectionSectionHolding;
     accountScope?: ServerAccountScope | null;
     /** The locale whose narrowed translation bundles this answer carries. */
     locale: string;
@@ -61,9 +74,52 @@ type ReusableProjectionCacheEntry = Extract<ProjectionCacheEntry, { kind: 'ready
  * The one UI owner of each machine's daemon projection. Every reader — the
  * AppShell plugin UI currentness, `useDaemonMergedProjectionInputs`, and the
  * direct callers — goes through this cache and its single in-flight request
- * per machine scope, projection revision and requested locale.
+ * per machine scope, projection revision, requested locale and section demand.
  */
 const PROJECTION_CACHE = new Map<string, ProjectionCacheEntry>();
+type ProjectionSectionPool = DaemonProjectionSectionCache & {
+    key: string;
+    references: Map<string, number>;
+    pending: number;
+};
+type ProjectionSectionHolding = {
+    pool: ProjectionSectionPool;
+    bodies: ReadonlyMap<string, readonly string[]>;
+    retirement?: Readonly<{ dispose(): void }>;
+};
+// This is the byte inventory of the existing held Machine answers. Replacement
+// and Account retirement release their references; superseded bodies do not linger.
+const PROJECTION_SECTION_POOLS = new Map<string, ProjectionSectionPool>();
+
+/** An unfetched dictionary is unknown, never an authoritative empty catalogue. */
+export function daemonProjectionHasSections(entry: Readonly<{ deferredProjection?: DeferredDaemonProjection }>, sections?: readonly string[]): boolean {
+    const deferred = entry.deferredProjection;
+    return !deferred || (sections ?? Object.keys(deferred.manifest.sections))
+        .every(id => !(id in deferred.manifest.sections) || deferred.loadedSections.includes(id));
+}
+function discardEmptySectionPool(pool: ProjectionSectionPool): void {
+    if (pool.pending === 0) {
+        for (const digest of pool.bodies.keys()) {
+            if (!pool.references.has(digest)) pool.bodies.delete(digest);
+        }
+    }
+    if (pool.pending === 0 && pool.references.size === 0 && PROJECTION_SECTION_POOLS.get(pool.key) === pool) {
+        PROJECTION_SECTION_POOLS.delete(pool.key);
+    }
+}
+function releaseProjectionSections(holding: ProjectionSectionHolding | undefined): void {
+    if (!holding) return;
+    holding.retirement?.dispose();
+    for (const digest of holding.bodies.keys()) {
+        const references = (holding.pool.references.get(digest) ?? 0) - 1;
+        if (references > 0) holding.pool.references.set(digest, references);
+        else {
+            holding.pool.references.delete(digest);
+            if (holding.pool.pending === 0) holding.pool.bodies.delete(digest);
+        }
+    }
+    discardEmptySectionPool(holding.pool);
+}
 type ProjectionSummarySubscription = Readonly<{
     listeners: Set<() => void>;
     notify(): void;
@@ -102,14 +158,14 @@ export function readDaemonMergedProjectionSummary(params: Readonly<{
     machineId: string | null | undefined;
     serverId?: string | null;
 }>): DaemonMergedProjectionSummary {
-    const entry = readCachedDaemonMergedProjectionCacheEntry(params);
+    const entry = readCachedDaemonMergedProjectionCacheEntry({ ...params, sections: ['agentsById'] });
     return readProjectionSummary(entry, () => getMachineContributionRegistryProjectionRevision({
         machineId: normalizeKeyPart(params.machineId), serverId: normalizeKeyPart(params.serverId) || null,
     }));
 }
 
 function readProjectionSummary(entry: ProjectionCacheEntry | null, readRevision: () => number): DaemonMergedProjectionSummary {
-    if (!entry || !entry.accountCurrentness || (entry.kind !== 'ready' && entry.kind !== 'error') || !entry.inputs) {
+    if (!entry || !daemonProjectionHasSections(entry, ['agentsById']) || !entry.accountCurrentness || (entry.kind !== 'ready' && entry.kind !== 'error') || !entry.inputs) {
         return EMPTY_PROJECTION_SUMMARY;
     }
     return entry.kind === 'ready'
@@ -122,11 +178,12 @@ function readProjectionSummary(entry: ProjectionCacheEntry | null, readRevision:
 export function subscribeDaemonMergedProjectionSummary(params: Readonly<{
     machineId: string | null | undefined;
     serverId?: string | null;
+    selection?: 'connectedAccountAdmission';
 }>, listener: () => void): () => void {
     const machineId = normalizeKeyPart(params.machineId);
     if (!machineId) return () => {};
     const serverId = normalizeKeyPart(params.serverId) || null;
-    const key = buildCacheKey(machineId, serverId);
+    const key = buildCacheKey(machineId, serverId, params.selection);
     return subscribeProjectionSummary(key, listener => subscribeMachineContributionRegistryProjectionInvalidation({ machineId, serverId }, listener), listener);
 }
 
@@ -169,29 +226,33 @@ function subscribeProjectionSummary(
 export function captureDaemonMergedProjectionReader(params: Readonly<{
     machineId: string | null | undefined;
     serverId?: string | null;
+    sections?: readonly string[];
 }>, resolveScopeId?: ProfileScopeResolver) {
     const machineId = normalizeKeyPart(params.machineId);
     const scope = captureMachineContributionRegistryProjectionScope({
         machineId, serverId: normalizeKeyPart(params.serverId) || null,
     }, resolveScopeId);
-    const readCached = () => machineId ? currentProjectionCacheEntry(scope.key) : null;
+    const readAny = () => machineId ? currentProjectionCacheEntry(scope.key) : null;
+    const readCached = () => {
+        const entry = readAny();
+        return entry && daemonProjectionHasSections(entry, params.sections) ? entry : null;
+    };
     return {
         readCached,
         readRevision: scope.readRevision,
         subscribeInvalidation: scope.subscribe,
-        readSummary: () => readProjectionSummary(readCached(), scope.readRevision),
+        readSummary: () => readProjectionSummary(readAny(), scope.readRevision),
         subscribeSummary: (listener: () => void) => machineId
             ? subscribeProjectionSummary(scope.key, scope.subscribe, listener) : () => {},
     };
 }
-const DEFAULT_PROJECTION_STALE_MS = 60_000;
 // Preserve the incumbent transient burst and 30 s recovery cadence. Attempts
 // belong to the shared Machine question, not each mounted reader's timer.
 const PROJECTION_RETRY_BACKOFF_MS = [250, 1_000, 2_500, 5_000, 30_000] as const;
 
-export function readDaemonMergedProjectionRetryDelayMs(entry?: ProjectionCacheEntry | null): number {
+export function readDaemonMergedProjectionRetryDelayMs(entry?: ProjectionCacheEntry | null): number | null {
     return entry?.kind === 'error'
-        ? Math.max(0, entry.retryAtMs - Date.now())
+        ? entry.retryAtMs === null ? null : Math.max(0, entry.retryAtMs - Date.now())
         : PROJECTION_RETRY_BACKOFF_MS[0];
 }
 type ProjectionRequest = Readonly<{
@@ -209,7 +270,9 @@ type ProjectionRequest = Readonly<{
 const LATEST_PROJECTION_REQUEST = new Map<string, ProjectionRequest>();
 
 export function clearDaemonMergedProjectionCacheForTests(): void {
+    for (const entry of PROJECTION_CACHE.values()) { entry.retirement?.dispose(); releaseProjectionSections(entry.sectionHolding); }
     PROJECTION_CACHE.clear();
+    PROJECTION_SECTION_POOLS.clear();
     for (const subscription of PROJECTION_SUMMARY_SUBSCRIPTIONS.values()) subscription.notify();
     clearProjectedAgentUiBehaviorDescriptors();
     LATEST_PROJECTION_REQUEST.clear();
@@ -222,22 +285,21 @@ function normalizeKeyPart(value: string | null | undefined): string {
 function buildCacheKey(
     machineId: string,
     serverId: string | null | undefined,
+    selection?: 'connectedAccountAdmission',
 ): string {
-    return machineContributionRegistryProjectionScopeKey({
+    const key = machineContributionRegistryProjectionScopeKey({
         serverId: normalizeKeyPart(serverId) || null,
         machineId: normalizeKeyPart(machineId),
     });
-}
-
-export function entryIsFresh(entry: Readonly<{ fetchedAtMs: number }>, staleMs: number): boolean {
-    const ageMs = Date.now() - entry.fetchedAtMs;
-    return ageMs >= 0 && ageMs <= staleMs;
+    return selection ? JSON.stringify([key, selection]) : key;
 }
 
 function currentProjectionCacheEntry(cacheKey: string): ProjectionCacheEntry | null {
     const entry = PROJECTION_CACHE.get(cacheKey) ?? null;
     if (entry?.accountCurrentness && !entry.accountCurrentness.isCurrent()) {
         PROJECTION_CACHE.delete(cacheKey);
+        entry.retirement?.dispose();
+        releaseProjectionSections(entry.sectionHolding);
         return null;
     }
     return entry;
@@ -246,12 +308,46 @@ function currentProjectionCacheEntry(cacheKey: string): ProjectionCacheEntry | n
 export function readCachedDaemonMergedProjectionCacheEntry(params: Readonly<{
     machineId: string | null | undefined;
     serverId?: string | null;
+    sections?: readonly string[];
+    selection?: 'connectedAccountAdmission';
 }>): ProjectionCacheEntry | null {
     const machineId = normalizeKeyPart(params.machineId);
     if (!machineId) {
         return null;
     }
-    return currentProjectionCacheEntry(buildCacheKey(machineId, normalizeKeyPart(params.serverId) || null));
+    const entry = currentProjectionCacheEntry(buildCacheKey(machineId, normalizeKeyPart(params.serverId) || null, params.selection));
+    return entry && daemonProjectionHasSections(entry, params.sections) ? entry : null;
+}
+
+/** Current Account/locale/revision facts, including failures, for passive observers. */
+export function readObservedDaemonMergedProjectionCacheEntry(params: Readonly<{
+    machineId: string | null | undefined;
+    serverId?: string | null;
+    accountLifetime?: ActiveServerAccountScopeLifetime | null;
+    sections?: readonly string[];
+    selection?: 'connectedAccountAdmission';
+}>): ProjectionCacheEntry | null {
+    const machineId = normalizeKeyPart(params.machineId);
+    if (!machineId) return null;
+    const accountLifetime = params.accountLifetime ?? captureActiveServerAccountScopeLifetime();
+    if (!accountLifetime?.isCurrent()) return null;
+    const serverId = normalizeKeyPart(params.serverId) || null;
+    const cached = currentProjectionCacheEntry(buildCacheKey(machineId, serverId, params.selection));
+    if (
+        !cached
+        // Missing bodies make a successful answer incomplete, not a settled
+        // failure pending. Passive readers must see the source's typed refusal.
+        || (cached.kind === 'ready' && !daemonProjectionHasSections(cached, params.sections))
+        || !matchesProjectionCurrentness(cached, {
+            projectionRevision: getMachineContributionRegistryProjectionRevision({ machineId, serverId }),
+            locale: getPreferredLanguage(), accountScope: accountLifetime.scope,
+        })
+    ) return null;
+    // A settled answer belongs to every current reader that reuses it, just
+    // as an in-flight answer does. Retiring its issuer cannot evict a sibling's
+    // projection or make that sibling describe the same question again.
+    cached.accountCurrentness?.retainReader(accountLifetime);
+    return cached;
 }
 
 /** The single authoritative reuse decision for every projection reader. */
@@ -260,27 +356,12 @@ export function readReusableDaemonMergedProjectionCacheEntry(params: Readonly<{
     serverId?: string | null;
     accountLifetime?: ActiveServerAccountScopeLifetime | null;
     staleMs?: number;
+    sections?: readonly string[];
+    selection?: 'connectedAccountAdmission';
 }>): ReusableProjectionCacheEntry | null {
-    const machineId = normalizeKeyPart(params.machineId);
-    if (!machineId) return null;
-    const accountLifetime = params.accountLifetime ?? captureActiveServerAccountScopeLifetime();
-    if (!accountLifetime?.isCurrent()) return null;
-    const serverId = normalizeKeyPart(params.serverId) || null;
-    const cached = currentProjectionCacheEntry(buildCacheKey(machineId, serverId));
-    const staleMs = params.staleMs ?? DEFAULT_PROJECTION_STALE_MS;
-    if (
-        !cached || cached.kind === 'error'
-        || !entryIsFresh(cached, staleMs)
-        || cached.projectionRevision !== getMachineContributionRegistryProjectionRevision({ machineId, serverId })
-        || cached.locale !== getPreferredLanguage()
-        || (cached.accountScope !== accountLifetime.scope
-            && !areServerAccountScopesEqual(cached.accountScope ?? null, accountLifetime.scope))
-    ) return null;
-    // A settled answer belongs to every current reader that reuses it, just
-    // as an in-flight answer does. Retiring its issuer cannot evict a sibling's
-    // projection or make that sibling describe the same question again.
-    cached.accountCurrentness?.retainReader(accountLifetime);
-    return cached;
+    const cached = readObservedDaemonMergedProjectionCacheEntry(params);
+    return cached && cached.kind !== 'error' && entryIsFresh(cached, params.staleMs)
+        ? cached : null;
 }
 
 export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
@@ -294,12 +375,17 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
      * Omit for an explicit one-shot read with ordinary fresh/rejection semantics. */
     shareRetryCadence?: boolean;
     signal?: AbortSignal;
+    /** Omitted means the complete catalogue, for existing full consumers. */
+    sections?: readonly string[];
+    /** Existing purpose admission query; never authoritative for full presentation coverage. */
+    selection?: 'connectedAccountAdmission';
 }>): Promise<ProjectionCacheEntry | null> {
     if (params.signal?.aborted) return null;
     const accountLifetime = params.accountLifetime ?? captureActiveServerAccountScopeLifetime();
     if (accountLifetime && !accountLifetime.isCurrent()) return null;
     const locale = getPreferredLanguage();
-    const cacheKey = buildCacheKey(params.machineId, params.serverId);
+    const cacheKey = buildCacheKey(params.machineId, params.serverId, params.selection);
+    const full = !params.selection;
     // The canonical per-machine projection scope. Its revision advances on
     // socket reconnect, on an explicit invalidation, and on a known daemon
     // replacement. Initial inventory only discovers the endpoint a successful
@@ -311,21 +397,35 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
     };
     const requestRevision = getMachineContributionRegistryProjectionRevision(projectionScope);
     const accountScope = accountLifetime?.scope ?? null;
-    const matchesRequest = (entry: ProjectionCacheEntry) => entry.projectionRevision === requestRevision
-        && entry.locale === locale && (entry.accountScope === accountScope
-            || areServerAccountScopesEqual(entry.accountScope ?? null, accountScope));
-    const incumbentRequest = LATEST_PROJECTION_REQUEST.get(cacheKey);
+    // Only the same Account, locale and demand share a pending question.
+    // Newer revisions of that question keep the existing serial admission;
+    // unrelated sections and locales never wait for its answer.
+    const requestKey = JSON.stringify([cacheKey, accountScope?.serverId ?? null, accountScope?.accountId ?? null, locale,
+        params.sections === undefined ? null : [...new Set(params.sections)].sort()]);
+    const matchesRequest = (entry: ProjectionCacheEntry) => matchesProjectionCurrentness(entry, { projectionRevision: requestRevision, locale, accountScope });
+    const incumbentRequest = LATEST_PROJECTION_REQUEST.get(requestKey);
     if (
         incumbentRequest?.revision === requestRevision
         && incumbentRequest.locale === locale
         && (incumbentRequest.accountScope === accountScope
             || areServerAccountScopesEqual(incumbentRequest.accountScope, accountScope))
     ) {
-        return await incumbentRequest.wait(accountLifetime, params.signal);
+        const answer = await incumbentRequest.wait(accountLifetime, params.signal);
+        if (!answer || answer.kind !== 'ready' || daemonProjectionHasSections(answer, params.sections)) return answer;
+        return await loadDaemonMergedProjectionCacheEntry({ ...params, accountLifetime, reuseFreshReady: true });
+    }
+    if (incumbentRequest && (incumbentRequest.accountScope === accountScope
+        || areServerAccountScopesEqual(incumbentRequest.accountScope, accountScope))) {
+        // A newer revision needs its own fresh answer, but not a second
+        // full body queued behind the first. Finish the issued read, then let
+        // all waiting readers share one request for the latest facts.
+        try { await incumbentRequest.wait(accountLifetime, params.signal); } catch { /* The successor still reads fresh authority. */ }
+        if (params.signal?.aborted || (accountLifetime && !accountLifetime.isCurrent())) return null;
+        return await loadDaemonMergedProjectionCacheEntry({ ...params, accountLifetime, reuseFreshReady: true });
     }
     const previousAttempt = params.shareRetryCadence ? currentProjectionCacheEntry(cacheKey) : null;
     if (params.shareRetryCadence && previousAttempt?.kind === 'error' && matchesRequest(previousAttempt)
-        && Date.now() < previousAttempt.retryAtMs) {
+        && (previousAttempt.retryAtMs === null || Date.now() < previousAttempt.retryAtMs)) {
         if (accountLifetime) previousAttempt.accountCurrentness?.retainReader(accountLifetime);
         return previousAttempt;
     }
@@ -334,6 +434,8 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
             machineId: params.machineId,
             serverId: params.serverId,
             accountLifetime,
+            sections: params.sections,
+            selection: params.selection,
         });
         if (cached) {
             return accountLifetime && !accountLifetime.isCurrent() ? null : cached;
@@ -384,16 +486,29 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
     // Every answer is published tagged with the revision it answered, unless a
     // newer one is already cached. A read never waits on a newer read: when the
     // daemon's state keeps advancing, waiting would never settle.
-    const publish = (entry: ProjectionCacheResult & Readonly<{ projectionRevision: number }>): ProjectionCacheEntry => {
+    const publish = (entry: ProjectionCacheResult & Readonly<{ projectionRevision: number; projectionDigest?: string;
+        deferredProjection?: DeferredDaemonProjection;
+        sectionHolding?: ProjectionSectionHolding }>): ProjectionCacheEntry => {
         const current = currentProjectionCacheEntry(cacheKey);
         if (current !== null && current.projectionRevision > entry.projectionRevision) return current;
         const inputs = entry.kind === 'ready' || entry.kind === 'error' ? entry.inputs : undefined;
         const previousInputs = current?.kind === 'ready' || current?.kind === 'error' ? current.inputs : undefined;
+        const retirement = !full && routedAccount ? routedAccount.currentness.onRetire(() => {
+            const cached = PROJECTION_CACHE.get(cacheKey);
+            if (cached?.accountCurrentness === routedAccount.currentness && !routedAccount.currentness.isCurrent()) {
+                PROJECTION_CACHE.delete(cacheKey);
+                cached.retirement?.dispose();
+            }
+        }) : undefined;
         const published = Object.freeze({
             ...entry,
+            // Freshness starts when the admitted answer becomes usable, not
+            // before a cold describe and its section hydration have finished.
+            fetchedAtMs: Date.now(),
+            ...(retirement ? { retirement } : {}),
             accountScope,
             locale,
-            summaries: routedAccount
+            summaries: routedAccount && full
                 ? current && inputs === previousInputs ? current.summaries : publishProjectionSummaries(inputs)
                 : EMPTY_PROJECTION_SUMMARIES,
             ...(routedAccount ? { accountCurrentness: routedAccount.currentness } : {}),
@@ -401,38 +516,101 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
         // A former locale may settle after the current one. It still answers
         // its reader, but never replaces the current locale's shared cache.
         if (locale === getPreferredLanguage()) {
+            const holding = published.sectionHolding;
+            if (holding) {
+                for (const [digest, body] of holding.bodies) {
+                    holding.pool.bodies.set(digest, body);
+                    holding.pool.references.set(digest, (holding.pool.references.get(digest) ?? 0) + 1);
+                }
+            }
             PROJECTION_CACHE.set(cacheKey, published);
+            current?.retirement?.dispose();
+            releaseProjectionSections(current?.sectionHolding);
+            if (holding && published.accountCurrentness) {
+                holding.retirement = published.accountCurrentness.onRetire(() => {
+                    if (PROJECTION_CACHE.get(cacheKey) === published && !published.accountCurrentness?.isCurrent()) {
+                        PROJECTION_CACHE.delete(cacheKey);
+                        releaseProjectionSections(holding);
+                        PROJECTION_SUMMARY_SUBSCRIPTIONS.get(cacheKey)?.notify();
+                    }
+                });
+            }
             PROJECTION_SUMMARY_SUBSCRIPTIONS.get(cacheKey)?.notify();
         }
         return published;
     };
     const requestAbort = new AbortController();
-    const publishFailure = (reason: MachineContributionRegistryProjectionFailureReason, fetchedAtMs: number) => {
+    const publishFailure = (reason: MachineContributionRegistryProjectionFailureReason,
+        deferredHydrationRejection?: DaemonProjectionHydrationRejection) => {
         const previous = currentProjectionCacheEntry(cacheKey);
         const retryAttempt = params.shareRetryCadence && previous?.kind === 'error' && matchesRequest(previous)
             ? previous.retryAttempt + 1 : 0;
-        return publish({ kind: 'error', fetchedAtMs, projectionRevision: requestRevision, reason, retryAttempt,
-            retryAtMs: Date.now() + PROJECTION_RETRY_BACKOFF_MS[
+        return publish({ kind: 'error', projectionRevision: requestRevision, reason, retryAttempt,
+            ...(deferredHydrationRejection ? { deferredHydrationRejection } : {}),
+            // An answered malformed/mismatched body or a second build replacement
+            // is not a transport blip.
+            // Keep its typed failure; real invalidation or explicit fresh
+            // demand can recover without mounted readers polling that body.
+            retryAtMs: reason === 'invalid-response' || reason === 'projection-stale' ? null : Date.now() + PROJECTION_RETRY_BACKOFF_MS[
                 Math.min(retryAttempt, PROJECTION_RETRY_BACKOFF_MS.length - 1)
             ]!,
+            ...(previous?.deferredProjection && previous.locale === locale
+                && areServerAccountScopesEqual(previous.accountScope ?? null, accountScope)
+                ? { deferredProjection: previous.deferredProjection } : {}),
+            ...(previous?.projectionDigest && previous.locale === locale
+                && areServerAccountScopesEqual(previous.accountScope ?? null, accountScope)
+                ? { projectionDigest: previous.projectionDigest } : {}),
+            ...(previous?.sectionHolding && previous.locale === locale
+                && areServerAccountScopesEqual(previous.accountScope ?? null, accountScope)
+                ? { sectionHolding: { pool: previous.sectionHolding.pool, bodies: previous.sectionHolding.bodies } } : {}),
             ...((previous?.kind === 'ready' || previous?.kind === 'error') && previous.inputs
                 ? { inputs: previous.inputs } : {}),
         });
     };
-    const fetchedAtMs = Date.now();
+    const held = currentProjectionCacheEntry(cacheKey);
+    const heldInputs = held && (held.kind === 'ready' || held.kind === 'error')
+        && held.locale === locale && areServerAccountScopesEqual(held.accountScope ?? null, accountScope)
+        ? held.inputs : undefined;
+    const knownProjection = held?.projectionDigest && heldInputs?.pluginProjectionV2
+        ? { projection: heldInputs.pluginProjectionV2, projectionDigest: held.projectionDigest,
+            ...(heldInputs.composerSurfaceCatalog === undefined ? {} : { composerSurfaceCatalog: heldInputs.composerSurfaceCatalog }),
+            ...(heldInputs.automationEligibleEvents === undefined ? {} : { automationEligibleEvents: heldInputs.automationEligibleEvents }) }
+        : undefined;
     const request = (async (): Promise<ProjectionCacheEntry | null> => {
-        const res = await machineContributionRegistryProjectionDescribe(params.machineId, {
+        const poolKey = routedAccount && full ? JSON.stringify([routedAccount.scope.serverId, routedAccount.scope.accountId, locale]) : null;
+        let sectionPool = poolKey ? PROJECTION_SECTION_POOLS.get(poolKey) : undefined;
+        if (!sectionPool && poolKey) {
+            sectionPool = { key: poolKey, bodies: new Map(), pendingReads: new Map(), references: new Map(), pending: 0 };
+            PROJECTION_SECTION_POOLS.set(poolKey, sectionPool);
+        }
+        if (sectionPool) {
+            sectionPool.pending += 1;
+        }
+        try {
+        if (requestAbort.signal.aborted || (routedAccount && !routedAccount.currentness.isCurrent())) return null;
+        let res = await machineContributionRegistryProjectionDescribe(params.machineId, {
+            selection: params.selection,
+            locale,
             ...(params.serverId ? { serverId: params.serverId } : {}),
             ...(accountLifetime ? { accountLifetime } : {}),
             signal: requestAbort.signal,
+            ...(knownProjection ? { knownProjection } : {}),
+            sections: params.sections,
+            ...(held?.deferredProjection && heldInputs ? { deferredProjection: held.deferredProjection,
+                reuseManifest: params.reuseFreshReady === true && matchesRequest(held) && held.kind === 'ready'
+                    && !daemonProjectionHasSections(held, params.sections) } : {}),
+            ...(sectionPool ? { sectionCache: sectionPool } : {}),
         });
         if (requestAbort.signal.aborted) return null;
         if (routedAccount && !routedAccount.currentness.isCurrent()) return null;
         if (res.supported !== true) {
+            // A cancelled read supplies no new projection fact. Leave the
+            // held answer intact; only a new consumer demand may reacquire.
+            if (res.reason === 'aborted') return null;
             // Retiring retained custody is destructive, so only the endpoint
             // that is still current may do it.
             if (
-                res.reason === 'not-supported'
+                full && res.reason === 'not-supported'
                 && getMachineContributionRegistryProjectionRevision(projectionScope) === requestRevision
             ) {
                 // Method-not-found is a machine fact: the endpoint that answered
@@ -445,8 +623,9 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
                 });
             }
             return res.reason === 'not-supported'
-                ? publish({ kind: 'unsupported', fetchedAtMs, projectionRevision: requestRevision })
-                : publishFailure(res.reason, fetchedAtMs);
+                ? publish({ kind: 'unsupported', projectionRevision: requestRevision,
+                    ...(res.deferredHydrationRejection ? { deferredHydrationRejection: res.deferredHydrationRejection } : {}) })
+                : publishFailure(res.reason, res.deferredHydrationRejection);
         }
 
         // The machine-wide read sees every installed Agent, so it owns this
@@ -460,13 +639,26 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
             && areServerAccountScopesEqual(newerPublished.accountScope ?? null, accountScope)
             && (newerPublished.kind === 'ready' || newerPublished.kind === 'error')
             ? newerPublished.inputs : undefined;
-        const inputs = publishDaemonMergedProjectionInputs({
+        if (full && newerPublished && previousInputs?.pluginProjectionV2
+            && matchesRequest(newerPublished)) {
+            res = mergeProjectionSections(res, {
+                supported: true,
+                projection: previousInputs.pluginProjectionV2,
+                projectionDigest: newerPublished.projectionDigest,
+                deferredProjection: newerPublished.deferredProjection,
+                sectionBodies: newerPublished.sectionHolding?.bodies,
+                ...(previousInputs.composerSurfaceCatalog === undefined ? {} : { composerSurfaceCatalog: previousInputs.composerSurfaceCatalog }),
+                ...(previousInputs.automationEligibleEvents === undefined ? {} : { automationEligibleEvents: previousInputs.automationEligibleEvents }),
+            });
+        }
+        const inputs = res.unchanged && heldInputs ? heldInputs : publishDaemonMergedProjectionInputs({
             projection: res.projection,
-            resourceDeclarations: 'complete',
+            ...(full && daemonProjectionHasSections(res, ['resourcesById']) ? { resourceDeclarations: 'complete' as const } : {}),
             ...(res.composerSurfaceCatalog === undefined ? {} : { composerSurfaceCatalog: res.composerSurfaceCatalog }),
             ...(res.automationEligibleEvents === undefined ? {} : { automationEligibleEvents: res.automationEligibleEvents }),
         }, previousInputs);
-        if (routedAccount && locale === getPreferredLanguage()
+        if (full && !res.unchanged && daemonProjectionHasSections(res, ['familiesById.pluginUi', 'resourcesById'])
+            && routedAccount && locale === getPreferredLanguage()
             && getMachineContributionRegistryProjectionRevision(projectionScope) === requestRevision) {
             savePluginUiProjectionAdmissionSnapshot({
                 scope: routedAccount.scope,
@@ -475,7 +667,7 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
                 projection: res.projection,
             });
         }
-        if (routedAccount && locale === getPreferredLanguage()) {
+        if (full && daemonProjectionHasSections(res, ['agentsById']) && routedAccount && locale === getPreferredLanguage()) {
             publishProjectedAgentUiBehaviorDescriptors({
                 machineId: projectionScope.machineId,
                 accountScope: routedAccount.scope,
@@ -487,22 +679,32 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
         }
         return publish({
             kind: 'ready',
-            fetchedAtMs,
             projectionRevision: requestRevision,
+            ...(res.deferredHydrationRejection ? { deferredHydrationRejection: res.deferredHydrationRejection } : {}),
+            ...(res.projectionDigest === undefined ? {} : { projectionDigest: res.projectionDigest }),
+            ...(res.deferredProjection ? { deferredProjection: res.deferredProjection } : {}),
+            ...(sectionPool && (res.sectionBodies || (res.unchanged && held?.sectionHolding))
+                ? { sectionHolding: { pool: sectionPool, bodies: res.sectionBodies ?? held!.sectionHolding!.bodies } } : {}),
             inputs,
         });
+        } finally {
+            if (sectionPool) {
+                sectionPool.pending -= 1;
+                discardEmptySectionPool(sectionPool);
+            }
+        }
     })().catch((error: unknown) => {
         // Automatic recovery owns failures after transport normalization too.
         // Explicit one-shot callers retain their ordinary rejection contract.
         if (params.shareRetryCadence === undefined) throw error;
         if (requestAbort.signal.aborted || (routedAccount && !routedAccount.currentness.isCurrent())) return null;
-        return publishFailure('error', fetchedAtMs);
+        return publishFailure('error');
     });
     let waitingReaders = 0;
     let settled = false;
     void request.then(() => { settled = true; }, () => { settled = true; });
     const forget = () => {
-        if (LATEST_PROJECTION_REQUEST.get(cacheKey) === requestOwner) LATEST_PROJECTION_REQUEST.delete(cacheKey);
+        if (LATEST_PROJECTION_REQUEST.get(requestKey) === requestOwner) LATEST_PROJECTION_REQUEST.delete(requestKey);
     };
     const requestOwner: ProjectionRequest = Object.freeze({
         revision: requestRevision,
@@ -537,14 +739,14 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
             }
         },
     });
-    LATEST_PROJECTION_REQUEST.set(cacheKey, requestOwner);
+    LATEST_PROJECTION_REQUEST.set(requestKey, requestOwner);
     void request.then(forget, forget);
     return await requestOwner.wait(accountLifetime, params.signal);
 }
 
 /**
- * Returns this machine's current projection inputs, reusing a ready entry
- * younger than `staleMs` for the current projection revision.
+ * Returns this machine's admitted projection until its Account, locale or
+ * currentness revision changes. Explicit fresh callers may still set staleMs.
  */
 export async function loadDaemonMergedProjectionInputs(params: Readonly<{
     machineId: string | null | undefined;
@@ -553,6 +755,7 @@ export async function loadDaemonMergedProjectionInputs(params: Readonly<{
     /** Exact routed Account lifetime; background Home descriptors never borrow focus. */
     accountLifetime?: ActiveServerAccountScopeLifetime | null;
     signal?: AbortSignal;
+    sections?: readonly string[];
 }>): Promise<DaemonMergedProjectionInputs | null> {
     if (params.signal?.aborted) return null;
     const machineId = normalizeKeyPart(params.machineId);
@@ -563,12 +766,13 @@ export async function loadDaemonMergedProjectionInputs(params: Readonly<{
     const serverId = normalizeKeyPart(params.serverId);
     const staleMs = typeof params.staleMs === 'number' && Number.isFinite(params.staleMs) && params.staleMs >= 0
         ? Math.max(0, Math.floor(params.staleMs))
-        : DEFAULT_PROJECTION_STALE_MS;
+        : undefined;
     const cached = readReusableDaemonMergedProjectionCacheEntry({
         machineId,
         serverId: serverId || null,
         accountLifetime: params.accountLifetime,
         staleMs,
+        sections: params.sections,
     });
     if (cached?.kind === 'ready') {
         return cached.inputs;
@@ -577,6 +781,9 @@ export async function loadDaemonMergedProjectionInputs(params: Readonly<{
     const entry = await loadDaemonMergedProjectionCacheEntry({
         machineId,
         signal: params.signal,
+        sections: params.sections,
+        reuseFreshReady: readReusableDaemonMergedProjectionCacheEntry({ machineId, serverId: serverId || null,
+            accountLifetime: params.accountLifetime, staleMs, sections: [] }) !== null,
         ...(serverId ? { serverId } : {}),
         ...(params.accountLifetime ? { accountLifetime: params.accountLifetime } : {}),
     });

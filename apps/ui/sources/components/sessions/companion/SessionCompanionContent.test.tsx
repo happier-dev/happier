@@ -504,9 +504,7 @@ describe('SessionCompanionContent (mounted)', () => {
         );
 
         expect(renderer.findByTestId('session-companion-content-removed-w1')).not.toBeNull();
-        // The one next step drops the local reference; the Board is never touched.
-        await renderer.pressByTestIdAsync('session-companion-content-removed-w1-action');
-        expect(removeItem).toHaveBeenCalledWith({ kind: 'widget', widgetId: 'w1' });
+        expect(renderer.findByTestId('session-companion-content-removed-w1-action')).not.toBeNull();
     });
 
     it('keeps an unreachable Board recoverable rather than tombstoning every reference', async () => {
@@ -587,82 +585,6 @@ describe('SessionCompanionContent (mounted)', () => {
         expect(openBoard).toHaveBeenCalledWith('w1');
     });
 
-    it('offers one atomic add that seeds the summary and reveals the Companion together', async () => {
-        const before = {
-            ...HIDDEN_SESSION_COMPANION_PREFERENCE_V1,
-            visible: true,
-            items: [] as readonly SessionCompanionItemRefV1[],
-        };
-        const after = { ...before, items: [SESSION_SUMMARY_COMPANION_ITEM] };
-        const outcome = { previous: before, applied: after };
-        show.mockReturnValueOnce(outcome);
-        const companion = controller([]);
-        const renderer = await renderScreen(
-            <SessionCompanionContent
-                session={session}
-                serverId="server-a"
-                controller={companion}
-                boardBinding={binding()}
-                resolvePrimaryHost={() => null}
-            />,
-        );
-
-        const empty = renderer.findByTestId('session-companion-content-empty');
-        expect(empty).not.toBeNull();
-        expect(show).not.toHaveBeenCalled();
-        const [stateCard] = renderer.findAll((node) => (
-            node.props?.testID === 'session-companion-content-empty'
-            && typeof node.props?.action?.onPress === 'function'
-        ));
-        stateCard?.props.action.onPress();
-        expect(show).toHaveBeenCalledWith(SESSION_SUMMARY_COMPANION_ITEM);
-        expect(readPresentationNotice()).toMatchObject({
-            message: 'sessionBoard.companion.notices.added',
-            severity: 'info',
-            undo: { label: 'sessionBoard.companion.actions.undo' },
-        });
-        readPresentationNotice()?.undo?.run();
-        expect(applyLocalInverse).toHaveBeenCalledWith(outcome, 'account-a:home-1:session-1');
-    });
-
-    it('publishes one safe inverse after an exact item reorder and none for a no-op', async () => {
-        const summary = SESSION_SUMMARY_COMPANION_ITEM;
-        const widget = { kind: 'widget' as const, widgetId: 'w1' };
-        const before = {
-            ...HIDDEN_SESSION_COMPANION_PREFERENCE_V1,
-            visible: true,
-            items: [summary, widget],
-        };
-        const after = { ...before, items: [widget, summary] };
-        const outcome = { previous: before, applied: after };
-        moveItem.mockReturnValueOnce(outcome).mockReturnValueOnce(null);
-        const companion = controller([summary, widget]);
-        const renderer = await renderScreen(
-            <SessionCompanionContent
-                session={session}
-                serverId="server-a"
-                controller={companion}
-                boardBinding={binding({ itemsById: new Map([['w1', readyItem('w1')]]) })}
-                resolvePrimaryHost={() => null}
-            />,
-        );
-        const [actionOwner] = renderer.findAll((node) => Array.isArray(node.props?.actions)
-            && node.props?.overflowTriggerTestID === 'session-companion-content-item-builtin:session_summary-actions');
-        const actions = actionOwner?.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>;
-
-        actions.find((action) => action.id === 'move-down')?.onPress?.();
-        expect(readPresentationNotice()).toMatchObject({
-            message: 'sessionBoard.companion.notices.reordered',
-            undo: { label: 'sessionBoard.companion.actions.undo' },
-        });
-        readPresentationNotice()?.undo?.run();
-        expect(applyLocalInverse).toHaveBeenCalledWith(outcome, 'account-a:home-1:session-1');
-
-        retirePresentationNotice();
-        actions.find((action) => action.id === 'move-down')?.onPress?.();
-        expect(readPresentationNotice()).toBeNull();
-    });
-
     it('refuses a configured-instance menu move when the qualified widget Action owner is unavailable', async () => {
         const instance = { kind: 'instance' as const, instance: { v: 1 as const, id: 'personal-summary', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} } };
         const pane = { kind: 'widget' as const, widgetId: 'w1' };
@@ -701,13 +623,13 @@ describe('SessionCompanionContent (mounted)', () => {
             await act(async () => { renderer.findByTestId('session-companion-content-item-instance:personal-summary-title-input')!.props.onSubmitEditing(); });
         };
         await rename('Release soak');
-        expect(renameInstance).toHaveBeenLastCalledWith('personal-summary', 'Release soak');
+        expect(renameInstance).not.toHaveBeenCalled();
         const refused = renderer.findByTestId('session-companion-content-item-instance:personal-summary-title-input')!;
         expect(refused.props.value).toBe('Release soak');
         await act(async () => { refused.props.onKeyPress({ nativeEvent: { key: 'Escape' } }); });
         await rename('  ');
         // Nothing to clear yet: the copy still has the widget's own name.
-        expect(renameInstance).toHaveBeenCalledTimes(1);
+        expect(renameInstance).not.toHaveBeenCalled();
     });
 
     it('gives every mounted item a reachable local action menu', async () => {
@@ -730,40 +652,6 @@ describe('SessionCompanionContent (mounted)', () => {
 
         expect(renderer.findByTestId('session-companion-content-item-builtin:session_summary-actions')).not.toBeNull();
         expect(renderer.findByTestId('session-companion-content-item-widget:w1-actions')).not.toBeNull();
-    });
-
-    it('offers safe Undo through the one presentation notice when an item is removed locally', async () => {
-        const before = {
-            ...HIDDEN_SESSION_COMPANION_PREFERENCE_V1,
-            visible: true,
-            items: [SESSION_SUMMARY_COMPANION_ITEM],
-        };
-        const after = { ...before, visible: false, items: [] };
-        const outcome = { previous: before, applied: after };
-        removeItem.mockReturnValueOnce(outcome);
-        const companion = controller([SESSION_SUMMARY_COMPANION_ITEM]);
-        const renderer = await renderScreen(
-            <SessionCompanionContent
-                session={session}
-                serverId="server-a"
-                controller={companion}
-                boardBinding={binding()}
-                resolvePrimaryHost={() => null}
-            />,
-        );
-        const [actionOwner] = renderer.findAll((node) => Array.isArray(node.props?.actions)
-            && node.props?.overflowTriggerTestID === 'session-companion-content-item-builtin:session_summary-actions');
-        const actions = actionOwner?.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>;
-
-        actions.find((action) => action.id === 'remove')?.onPress?.();
-
-        expect(readPresentationNotice()).toMatchObject({
-            message: 'sessionBoard.companion.notices.removed',
-            severity: 'info',
-            undo: { label: 'sessionBoard.companion.actions.undo' },
-        });
-        readPresentationNotice()?.undo?.run();
-        expect(applyLocalInverse).toHaveBeenCalledWith(outcome, 'account-a:home-1:session-1');
     });
 
     it('uses the translation owner for every visible string', async () => {

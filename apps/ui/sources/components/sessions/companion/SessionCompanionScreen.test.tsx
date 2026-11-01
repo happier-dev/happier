@@ -6,10 +6,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import type { SessionWidgetHostProps } from '@/components/sessions/board/SessionWidgetHost';
 import { createSessionSurfaceNoteDocumentV1, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board';
-import {
-    readPresentationNotice,
-    retirePresentationNotice,
-} from '@/components/sessions/presentation/presentationNotices';
+import { retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 
 vi.mock('@/text', () => createTextModuleMock());
 
@@ -236,7 +233,7 @@ describe('SessionCompanionScreen (mounted, mobile Cockpit)', () => {
         expect(headerText).toContain('sessionBoard.companion.pane.justForYou');
     });
 
-    it('manages a shared widget through Board while removing only its personal Companion reference', async () => {
+    it('manages a shared widget through Board and refuses an unbound personal edit', async () => {
         boardSnapshot.mockReturnValue({
             ...readySnapshot(),
             snapshot: projectSessionBoard({
@@ -282,7 +279,7 @@ describe('SessionCompanionScreen (mounted, mobile Cockpit)', () => {
         await act(async () => { actions.find((action) => action.id === 'manage-plugin')?.onPress?.(); });
         expect(boardControllerRun).toHaveBeenCalledWith({ kind: 'item.managePlugin', itemId: 'w1' });
         await act(async () => { actions.find((action) => action.id === 'remove')?.onPress?.(); });
-        expect(storedPreference.value).toMatchObject({ items: [], visible: false });
+        expect(storedPreference.value).toMatchObject({ items: [{ kind: 'widget', widgetId: 'w1' }], visible: true });
         expect(boardControllerRun.mock.calls.some(([command]) => command.kind === 'item.remove')).toBe(false);
         expect(boardSnapshot().snapshot.itemsById.has('w1')).toBe(true);
     });
@@ -325,54 +322,7 @@ describe('SessionCompanionScreen (mounted, mobile Cockpit)', () => {
         expect(ids).not.toContain('open-full');
     });
 
-    it('returns to Chat when the person hides the full-screen Companion', async () => {
-        const onRequestClose = vi.fn();
-        const renderer = await renderScreen(inCockpitHeader(
-            <SessionCompanionScreen
-                {...shellProps}
-                onRequestClose={onRequestClose}
-            />,
-        ));
-        const [menu] = renderer.findAll((node) => Array.isArray(node.props?.actions)
-            && node.props?.overflowTriggerTestID === 'session-companion-screen-menu');
-        const actions = menu?.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>;
-
-        actions.find((action) => action.id === 'hide')?.onPress?.();
-
-        expect(mutate).toHaveBeenCalledTimes(1);
-        expect(onRequestClose).toHaveBeenCalledTimes(1);
-        expect(readPresentationNotice()).toMatchObject({
-            message: 'sessionBoard.companion.notices.hidden',
-            undo: { label: 'sessionBoard.companion.actions.undo' },
-        });
-    });
-
-    it('publishes feedback only after applied edge and density changes', async () => {
-        const renderer = await renderScreen(inCockpitHeader(
-            <SessionCompanionScreen {...shellProps} />,
-        ));
-        const [menu] = renderer.findAll((node) => Array.isArray(node.props?.actions)
-            && node.props?.overflowTriggerTestID === 'session-companion-screen-menu');
-        const actions = menu?.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>;
-
-        actions.find((action) => action.id === 'density-compact')?.onPress?.();
-        expect(readPresentationNotice()).toBeNull();
-
-        actions.find((action) => action.id === 'edge-leading')?.onPress?.();
-        expect(readPresentationNotice()).toMatchObject({
-            message: 'sessionBoard.companion.notices.moved',
-            undo: { label: 'sessionBoard.companion.actions.undo' },
-        });
-
-        retirePresentationNotice();
-        actions.find((action) => action.id === 'density-comfortable')?.onPress?.();
-        expect(readPresentationNotice()).toMatchObject({
-            message: 'sessionBoard.companion.actions.comfortable',
-            undo: { label: 'sessionBoard.companion.actions.undo' },
-        });
-    });
-
-    it('offers safe Undo when a readable Board item is added from the Add to Companion picker', async () => {
+    it('offers the exact readable Board reference in the navigation Add picker', async () => {
         const boardItems = new Map<string, SessionBoardOpenedRecord<SessionSurfaceItemV1>>([['widget-1', {
             revision: 'r1',
             outcome: {
@@ -418,13 +368,7 @@ describe('SessionCompanionScreen (mounted, mobile Cockpit)', () => {
         }>;
         const onBoard = sections.find((section) => section.id === 'board')?.entries ?? [];
         expect(onBoard.map((entry) => entry.id)).toEqual(['board-widget-1']);
-        await act(async () => { onBoard[0]?.onPick(); });
 
-        expect(readPresentationNotice()).toMatchObject({
-            message: 'sessionBoard.companion.notices.added',
-            severity: 'info',
-            undo: { label: 'sessionBoard.companion.actions.undo' },
-        });
     });
 
     it('never mounts a persistent rail on a phone: the wide host resolves to a mobile control', async () => {

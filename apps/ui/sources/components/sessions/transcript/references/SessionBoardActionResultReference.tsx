@@ -4,10 +4,8 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { useMountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
 import { useSessionCompanionController } from '@/components/sessions/companion/state/useSessionCompanionController';
-import {
-    buildSessionPresentationNoticeKeyPrefix,
-    showSessionBoardItemInCompanion,
-} from '@/components/sessions/companion/presentation/sessionCompanionPresentationAdapter';
+import { buildSessionPresentationNoticeKeyPrefix } from '@/components/sessions/companion/presentation/sessionCompanionPresentationAdapter';
+import { showSessionCompanionItem } from '@/components/sessions/companion/presentation/sessionCompanionHumanAction';
 import {
     useSessionCompanionRevealPort,
     type SessionCompanionRevealPort,
@@ -263,14 +261,15 @@ function MountedInlineBoardWidget(props: Readonly<{
         [props.address],
     );
     const addToCompanion = React.useCallback(() => {
-        showSessionBoardItemInCompanion({
+        return showSessionCompanionItem({
+            address: props.address,
             companion,
             publishNotice: publishPresentationNotice,
             noticeKeyPrefix,
-            itemId: props.itemId,
+            item: { kind: 'widget', widgetId: props.itemId },
             revealAfterMutation: props.revealPort.revealAfterMutation,
         });
-    }, [companion, noticeKeyPrefix, props.itemId, props.revealPort]);
+    }, [companion, noticeKeyPrefix, props.address, props.itemId, props.revealPort]);
 
     return (
         <SessionWidgetHost

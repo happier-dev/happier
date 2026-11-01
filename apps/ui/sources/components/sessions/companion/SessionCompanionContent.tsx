@@ -1,10 +1,11 @@
 import * as React from 'react';
+import { applySessionCompanionHumanIntent, showSessionCompanionItem } from './presentation/sessionCompanionHumanAction';
+import { buildSessionPresentationNoticeKeyPrefix } from './presentation/sessionCompanionPresentationAdapter';
 import { Dimensions, ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { SessionWidgetHost } from '@/components/sessions/board/SessionWidgetHost';
 import { CurrentSessionPresentationActionInputV1Schema } from '@happier-dev/protocol/sessions';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { EntityDropEffectV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useEntityDragDropRuntime, readWindowBounds, measureWindowBounds, type WindowBounds, useTreeDropAutoscroll } from '@/components/ui/treeDragDrop';
@@ -45,11 +46,6 @@ import {
     type SessionCompanionGlanceItem,
 } from './glances/SessionCompanionGlance';
 import { SESSION_COMPANION_WIDGET_BODY_MIN_HEIGHT_PX, SessionCompanionItemFrame, type SessionCompanionInstanceControls, type SessionCompanionInstanceView } from './SessionCompanionItemFrame';
-import {
-    applySessionCompanionMutationWithNotice,
-    applySessionCompanionItemPresentationIntent,
-    buildSessionPresentationNoticeKeyPrefix,
-} from './presentation/sessionCompanionPresentationAdapter';
 import { buildSessionCompanionItemActions } from './sessionCompanionMenu';
 import {
     resolveSessionCompanionBoardInventory,
@@ -59,7 +55,6 @@ import {
 } from './sessionCompanionContentModel';
 import type { SessionCompanionController } from './state/useSessionCompanionController';
 import {
-    SESSION_SUMMARY_COMPANION_ITEM,
     sessionCompanionItemKey,
     type SessionCompanionBuiltinItemId,
 } from './state/sessionCompanionPreference';
@@ -377,20 +372,9 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
     // Freshness is not authorization. Last-known Board content remains a valid
     // navigation target while its Home is reachable; CAS owns write concurrency.
     const boardReachable = board?.reachability === 'reachable';
-    const noticeKeyPrefix = React.useMemo(() => buildSessionPresentationNoticeKeyPrefix(
-        normalizeSessionAddress(props.serverId ?? null, props.session.id),
-        props.session.id,
-    ), [props.serverId, props.session.id]);
-    const mutateCompanion = React.useCallback((input: Readonly<{
-        kind: string;
-        message: string;
-        apply: Parameters<typeof applySessionCompanionMutationWithNotice>[0]['apply'];
-    }>) => applySessionCompanionMutationWithNotice({
-        companion: controller,
-        publishNotice: publishPresentationNotice,
-        noticeKeyPrefix,
-        ...input,
-    }), [controller, noticeKeyPrefix]);
+    const mutateCompanion = React.useCallback((intent: Parameters<typeof applySessionCompanionHumanIntent>[0]['intent']) =>
+        applySessionCompanionHumanIntent({ address: normalizeSessionAddress(props.serverId ?? null, props.session.id), intent }),
+    [props.serverId, props.session.id]);
     // One reorder owner for the menu entries and the pointer/keyboard handle, so
     // direct manipulation and the explicit Move commands can never diverge.
     const moveCompanionItemTo = (entry: SessionCompanionContentItem, toIndex: number) => {
@@ -406,21 +390,18 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
         }
         // The mounted menu already has its qualified controller and full
         // mixed-item index, so it uses the incumbent native presentation owner.
-        applySessionCompanionItemPresentationIntent({ companion: controller, publishNotice: publishPresentationNotice,
-            noticeKeyPrefix, canAddCompanionItem: () => false }, { kind: 'companion.item.move', item: entry.ref, toIndex });
+        void mutateCompanion({ kind: 'companion.item.move', item: entry.ref, toIndex });
     };
     const setCompanionItemFrameStyle = React.useCallback((entry: SessionCompanionContentItem, style: WidgetFrameStyle | null) => {
         mutateCompanion({
             kind: 'companion.item.frameStyle.set',
-            message: t('widgetFrame.noticeChanged'),
-            apply: (companion) => companion.setItemFrameStyle(entry.ref, style),
+            item: entry.ref, frameStyle: style,
         });
     }, [mutateCompanion]);
     const removeFromCompanion = React.useCallback((entry: SessionCompanionContentItem) => {
         mutateCompanion({
             kind: 'companion.item.remove',
-            message: t('sessionBoard.companion.notices.removed'),
-            apply: (companion) => companion.removeItem(entry.ref),
+            item: entry.ref,
         });
     }, [mutateCompanion]);
     const machineName = useSessionMachineName(props.session.id, props.serverId ?? null);
@@ -434,10 +415,9 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
     }, [revealTranscript, sessionId]);
     const [pickerRequest, setPickerRequest] = React.useState(0);
     const addItem = React.useCallback(async (ref: SessionCompanionAddBinding['refs'][number]) => {
-        const outcome = mutateCompanion({
+        const outcome = await mutateCompanion({
             kind: 'companion.item.add',
-            message: t('sessionBoard.companion.notices.added'),
-            apply: (companion) => companion.addItem(ref),
+            item: ref,
         });
         if (!outcome) throw new Error('session_companion_write_refused');
     }, [mutateCompanion]);
@@ -456,27 +436,25 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
     // A direct personal copy's Edit inputs… and Rename change that copy alone, through the
     // Companion's own owner (the same intents `widgets.item.inputs.set`/`.rename` reach).
     const setInstanceInputs = React.useCallback(async (instanceId: string, bindings: WidgetInputBindingsV1): Promise<WidgetSetupSubmitResult> => {
-        if (controller.availability !== 'ready' || !noticeKeyPrefix) return { ok: false, message: t('widgetAdd.saveFailed') };
+        if (controller.availability !== 'ready') return { ok: false, message: t('widgetAdd.saveFailed') };
         const existing = controller.preference.items.find(item => item.kind === 'instance' && item.instance.id === instanceId);
         if (existing?.kind !== 'instance') return { ok: false, message: t('widgetAdd.saveFailed') };
-        const outcome = mutateCompanion({
+        const outcome = await mutateCompanion({
             kind: 'companion.instance.inputs.set',
-            message: t('common.done'),
-            apply: (companion) => companion.setInstanceInputs(instanceId, bindings),
+            instanceId, bindings,
         });
-        return outcome || sameStrictJsonValue(existing.instance.bindings, bindings) ? { ok: true } : { ok: false, message: t('widgetAdd.saveFailed') };
-    }, [controller.availability, controller.preference.items, mutateCompanion, noticeKeyPrefix]);
+        return outcome ? { ok: true } : { ok: false, message: t('widgetAdd.saveFailed') };
+    }, [controller.availability, controller.preference.items, mutateCompanion]);
     const renameInstance = React.useCallback(async (instanceId: string, displayName: string | null) => {
-        if (controller.availability !== 'ready' || !noticeKeyPrefix) throw new Error('session_companion_write_refused');
+        if (controller.availability !== 'ready') throw new Error('session_companion_write_refused');
         const existing = controller.preference.items.find(item => item.kind === 'instance' && item.instance.id === instanceId);
         if (existing?.kind !== 'instance') throw new Error('session_companion_instance_missing');
-        const outcome = mutateCompanion({
+        const outcome = await mutateCompanion({
             kind: 'companion.instance.rename',
-            message: t('common.done'),
-            apply: (companion) => companion.renameInstance(instanceId, displayName),
+            instanceId, displayName,
         });
-        if (!outcome && (existing.instance.displayName ?? null) !== displayName) throw new Error('session_companion_write_refused');
-    }, [controller.availability, controller.preference.items, mutateCompanion, noticeKeyPrefix]);
+        if (!outcome) throw new Error('session_companion_write_refused');
+    }, [controller.availability, controller.preference.items, mutateCompanion]);
     const instanceControls = (entry: SessionCompanionContentItem): SessionCompanionInstanceControls | undefined => (
         entry.kind === 'instance' && !props.measurementOnly ? {
             instance: entry.ref.instance,
@@ -664,8 +642,8 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
     );
 
     // Geometry and preferences are read at resolution/release, never captured at pickup.
-    const liveDrop = React.useRef({ controller, board, dragScope, noticeKeyPrefix });
-    liveDrop.current = { controller, board, dragScope, noticeKeyPrefix };
+    const liveDrop = React.useRef({ controller, board, dragScope });
+    liveDrop.current = { controller, board, dragScope };
     const address = dragScope ? normalizeSessionAddress(dragScope.serverId, props.session.id) : null;
     const widgetMovementSurface = React.useMemo(() => dragScope && address ? { ...dragScope.scope, owner: { kind: 'companion' as const, sessionId: address.sessionId } } : null, [dragScope, address]);
     const widgetMovement = useWidgetMovementAdmission(props.measurementOnly ? null : widgetMovementSurface, controller.preference);
@@ -680,12 +658,14 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
         if (!intent || (intent.kind !== 'companion.item.add' && intent.kind !== 'companion.item.move')) {
             return { status: 'refused', reason: { code: 'invalid-placement', message: t('entityDragDrop.reasons.generic') } };
         }
-        const outcome = applySessionCompanionItemPresentationIntent({ companion: live.controller,
-            publishNotice: publishPresentationNotice, noticeKeyPrefix: live.noticeKeyPrefix,
-            canAddCompanionItem: ref => ref.kind === 'widget' && live.board?.reachability === 'reachable'
-                && live.board.itemsById.get(ref.widgetId)?.state.kind === 'ready' }, intent);
-        return outcome.status === 'applied' ? { status: 'applied' }
-            : { status: 'refused', reason: { code: outcome.status, message: t(outcome.status === 'unchanged' ? 'entityDragDrop.reasons.noChange' : 'entityDragDrop.reasons.gone') } };
+        let changed = false;
+        const admitted = await applySessionCompanionHumanIntent({
+            address: normalizeSessionAddress(live.dragScope.serverId, props.session.id), intent,
+            onCompanionMutation: () => { changed = true; },
+        });
+        return changed ? { status: 'applied' }
+            : { status: 'refused', reason: { code: admitted ? 'unchanged' : 'unavailable',
+                message: t(admitted ? 'entityDragDrop.reasons.noChange' : 'entityDragDrop.reasons.gone') } };
     }, [props.session.id]);
     const target = (key?: string): NonNullable<SessionSurfaceEntityBinding['target']> => ({
         getDestinationKey: (_context, admission) => sessionSurfaceEntityDropDestinationKey(admission),
@@ -764,10 +744,11 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                             label: t('sessionBoard.companion.actions.addSummary'),
                             // One atomic local mutation seeds the summary and reveals
                             // the Companion together, never as two observable steps.
-                            onPress: () => { mutateCompanion({
-                                kind: 'companion.item.add',
-                                message: t('sessionBoard.companion.notices.added'),
-                                apply: (companion) => companion.show(SESSION_SUMMARY_COMPANION_ITEM),
+                            onPress: () => { void showSessionCompanionItem({
+                                address: contentAddress, companion: controller, publishNotice: publishPresentationNotice,
+                                noticeKeyPrefix: buildSessionPresentationNoticeKeyPrefix(contentAddress, sessionId),
+                                item: { kind: 'builtin', id: 'session_summary' },
+                                revealAfterMutation: () => {},
                             }); },
                         },
                     })}

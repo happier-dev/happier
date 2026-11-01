@@ -118,7 +118,8 @@ function describeComputerAction(reference: Extract<TranscriptComputerActionRefer
 function ComputerWatchButton(props: Readonly<{ sessionId: string; serverId: string | null; machineId: string; testID: string }>): React.ReactElement | null {
     const open = useOpenSessionComputerScreen({ sessionId: props.sessionId, serverId: props.serverId, machineId: props.machineId });
     if (!open) return null;
-    return <RoundButton size="small" display="secondary" title={t('computerUse.request.watch')} onPress={open} testID={props.testID} />;
+    return <RoundButton size="small" display="secondary" title={t('computerUse.request.watch')}
+        onPress={open.open} disabled={Boolean(open.disabledReason)} accessibilityHint={open.disabledReason ?? undefined} testID={props.testID} />;
 }
 
 /** What the agent did on the shared window: the act in words, its screenshot, and Watch. */

@@ -14,6 +14,7 @@ export type DaemonContributionRegistryProjection = PluginProjectionV2;
 /** The one typed response envelope the UI transport may carry forward. */
 export type DaemonContributionRegistryProjectionDescribeParsedResponse = Readonly<{
     projection: DaemonContributionRegistryProjection;
+    projectionDigest?: string;
     /** Daemon-selected Composer renderers; the UI may only exact-match these rows. */
     composerSurfaceCatalog?: readonly DaemonPluginUiComposerSurfaceCatalogEntryV1[];
     automationEligibleEvents?: DaemonContributionRegistryProjectionAutomationEligibleEventsV1;
@@ -37,6 +38,7 @@ export function parseDaemonContributionRegistryProjectionDescribeResponse(
     if (!projection.success) return null;
     return Object.freeze({
         projection: projection.data,
+        ...(parsed.data.projectionDigest === undefined ? {} : { projectionDigest: parsed.data.projectionDigest }),
         ...(parsed.data.composerSurfaceCatalog === undefined
             ? {}
             : { composerSurfaceCatalog: parsed.data.composerSurfaceCatalog }),

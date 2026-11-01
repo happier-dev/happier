@@ -404,6 +404,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                     connectedAccountProjection: CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR };
             });
             const delayMs = readDaemonMergedProjectionRetryDelayMs(nextRetryEntry);
+            if (delayMs === null) return;
             retryTimer = setTimeout(() => {
                 retryTimer = null;
                 requestProjection();

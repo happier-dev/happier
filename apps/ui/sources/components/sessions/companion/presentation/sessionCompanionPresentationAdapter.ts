@@ -141,33 +141,6 @@ export function applySessionCompanionMutationWithNotice(input: Readonly<{
     return outcome;
 }
 
-/**
- * The one human/inline entry point for placing a readable Board item in this
- * viewer's exact-Session Companion. The controller owns preference mutation and
- * `presentationNotices` owns the single safe local inverse; callers only decide
- * whether their current Board item is readable and whether another placement
- * needs an additional navigation gesture after the preference becomes visible.
- */
-export function showSessionBoardItemInCompanion(input: Readonly<{
-    companion: SessionCompanionController;
-    publishNotice: (notice: PresentationNotice) => void;
-    noticeKeyPrefix: string | null;
-    itemId: string;
-    /** Exact mounted Session-shell destination; invoked only after a real write. */
-    revealAfterMutation: (outcome: SessionCompanionMutationOutcome) => void;
-}>): SessionCompanionMutationOutcome | null {
-    const outcome = applySessionCompanionMutationWithNotice({
-        companion: input.companion,
-        publishNotice: input.publishNotice,
-        noticeKeyPrefix: input.noticeKeyPrefix,
-        kind: 'companion.item.add',
-        message: t('sessionBoard.companion.notices.added'),
-        apply: (companion) => companion.show({ kind: 'widget', widgetId: input.itemId }),
-    });
-    if (outcome) input.revealAfterMutation(outcome);
-    return outcome;
-}
-
 function announce(
     ports: SessionPresentationPorts,
     kind: string,
@@ -330,6 +303,7 @@ export function applySessionPresentationIntent(
                 'companion.show',
                 t('sessionBoard.companion.notices.shown'),
                 () => exactPorts.companion.show(),
+                onCompanionMutation,
             );
 
         case 'companion.hide':
