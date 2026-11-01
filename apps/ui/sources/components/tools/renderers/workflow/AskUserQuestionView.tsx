@@ -318,7 +318,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
     const hasActiveAskUserQuestionRequest =
         activeMatchingRequest?.tool === 'AskUserQuestion' &&
         resolveAgentRequestKind({ toolName: activeMatchingRequest.tool, requestKind: activeMatchingRequest.kind }) === 'user_action';
-    const canInteract = isRunning && !isSubmitted && canApprovePermissions && hasActiveAskUserQuestionRequest;
+    const canInteract = isRunning && !isSubmitted && !isSubmitting && canApprovePermissions && hasActiveAskUserQuestionRequest;
     const disabledMessage =
         interaction?.permissionDisabledReason === 'public'
             ? t('session.sharing.permissionApprovalsDisabledPublic')
@@ -506,13 +506,8 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
             setIsSubmitting(true);
             setSubmissionGuidance(null);
 
-            // HACK: Disable the form immediately by switching to the submitted view.
-            // Without this, users could edit their selections while the network calls
-            // are in flight, but those edits would be ignored since we've already
-            // captured the values above. TODO: Revisit this logic.
-            setIsSubmitted(true);
-
             await sessionAllowWithAnswers(sessionId, toolCallId, payload.send);
+            setIsSubmitted(true);
             const dialog = input?.happierDialog;
             if (dialog && typeof dialog === 'object' && !Array.isArray(dialog)) {
                 const metadata = dialog as Record<string, unknown>;
@@ -732,7 +727,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                     </Text>
                 ) : null}
 
-                {canInteract && (
+                {(canInteract || isSubmitting) && (
                     <View style={styles.actionsContainer}>
                         {requiresCliUpdate ? (
                             <Text style={styles.optionDescription}>{t('deps.ui.notAvailableUpdateCli')}</Text>

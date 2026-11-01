@@ -2279,10 +2279,6 @@ class Sync {
                 });
             }
             if (hasDeferredSessionStateHydration(this.deferredSessionStateHydrationState, sessionId)) {
-                this.deferredSessionStateHydrationState = clearDeferredSessionStateHydration(
-                    this.deferredSessionStateHydrationState,
-                    sessionId,
-                );
                 fireAndForget(this.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true }), {
                     tag: 'Sync.onSessionVisible.deferredSessionStateHydration',
                 });
@@ -2406,6 +2402,16 @@ class Sync {
                 return await existing;
             }
 
+            // Consume only the invalidation this exact read can satisfy. A hidden update
+            // arriving while it is in flight must remain pending for the next reveal.
+            const hadDeferredSessionState = hasDeferredSessionStateHydration(
+                this.deferredSessionStateHydrationState,
+                normalized,
+            );
+            this.deferredSessionStateHydrationState = clearDeferredSessionStateHydration(
+                this.deferredSessionStateHydrationState,
+                normalized,
+            );
             const inFlight = (async () => {
                 try {
                     if (DEBUG_SESSION_HYDRATE) {
@@ -2513,6 +2519,9 @@ class Sync {
             });
 
             const result = await inFlight;
+            if (result.kind !== 'available' && hadDeferredSessionState && isRouteHydrationScopeCurrent()) {
+                this.markSessionStateHydrationDeferred(normalized);
+            }
             if (result.kind === 'available') {
                 // A message invalidation may have observed the session before this route
                 // hydration committed its owner. Replay that deferred attempt now that the

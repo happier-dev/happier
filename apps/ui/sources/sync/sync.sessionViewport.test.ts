@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionFixture } from '@/dev/testkit';
+import { createDeferred, createSessionFixture } from '@/dev/testkit';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
 import type { NormalizedMessage } from '@/sync/typesRaw';
@@ -705,31 +706,99 @@ describe('sync session viewport', () => {
         expect(hydrated?.offsetY).toBe(980);
     });
 
-    it('hydrates deferred hidden session state on reveal and clears the marker', async () => {
+    it.each([
+        ['retries failed deferred state hydration on reveal and stops refreshing after materialization', false],
+        ['preserves a hidden invalidation during hydration for the next reveal', true],
+    ] as const)('%s', async (_name, hiddenUpdateDuringRead) => {
         const { sync } = await import('./sync');
-        const invalidateCoalesced = vi.fn();
-        const hydrateVisibleSession = vi.fn(async () => true);
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const { Encryption } = await import('@/sync/encryption/encryption');
         const sessionId = 'session-state-reveal';
         type DeferredStateHydrationHarness = {
+            credentials: AuthCredentials;
             markSessionStateHydrationDeferred: (sessionId: string) => void;
-            messagesSync: Map<string, { invalidateCoalesced: () => void }>;
-            ensureSessionVisibleForMessageRoute: (
-                sessionId: string,
-                options?: Readonly<{ forceRefresh?: boolean }>,
-            ) => Promise<boolean>;
+            sessionByIdHydrationInFlight: Map<string, Promise<unknown>>;
         };
         const harness = sync as unknown as DeferredStateHydrationHarness;
+        const requestMock = vi.mocked(apiSocket.request);
+        const firstResponse = createDeferred<Response>();
+        const response = createDeferred<Response>();
+        const sessionPath = `/v2/sessions/${sessionId}`;
+        const sessionReads = () => requestMock.mock.calls.filter(([path]) => path === sessionPath);
+        const staleSession = createSessionFixture({
+            id: sessionId,
+            encryptionMode: 'plain',
+            agentState: {},
+        });
+        const currentAgentState = {
+            requests: {
+                'question-request': {
+                    tool: 'AskUserQuestion',
+                    arguments: { questions: [{ question: 'Which option?' }] },
+                },
+            },
+        };
 
-        harness.messagesSync = new Map([[sessionId, { invalidateCoalesced }]]);
-        harness.ensureSessionVisibleForMessageRoute = hydrateVisibleSession;
+        storage.getState().applySessions([staleSession]);
+        sync.encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        harness.credentials = { token: 'deferred-state-test', secret: '' };
+        requestMock.mockReset();
+        requestMock.mockImplementation(async (path) => {
+            if (path === sessionPath) {
+                if (sessionReads().length === 1) {
+                    if (!hiddenUpdateDuringRead) throw new Error('Network unavailable');
+                    return await firstResponse.promise;
+                }
+                return await response.promise;
+            }
+            return Response.json({ messages: [], hasMore: false, nextAfterSeq: null });
+        });
         harness.markSessionStateHydrationDeferred(sessionId);
 
         sync.onSessionVisible(sessionId);
         sync.onSessionVisible(sessionId);
+        await expect.poll(() => sessionReads().length).toBe(1);
+        const firstAgentState = hiddenUpdateDuringRead ? { controlledByUser: true } : {};
+        if (hiddenUpdateDuringRead) {
+            // A socket update while the session is hidden invalidates the snapshot already in flight.
+            harness.markSessionStateHydrationDeferred(sessionId);
+            firstResponse.resolve(Response.json({
+                session: {
+                    ...staleSession,
+                    metadata: JSON.stringify(staleSession.metadata),
+                    agentState: JSON.stringify(firstAgentState),
+                    dataEncryptionKey: null,
+                    share: null,
+                },
+            }));
+        }
+        await expect.poll(() => harness.sessionByIdHydrationInFlight.size).toBe(0);
+        expect(storage.getState().sessions[sessionId]?.agentState).toEqual(firstAgentState);
 
-        expect(hydrateVisibleSession).toHaveBeenCalledTimes(1);
-        expect(hydrateVisibleSession).toHaveBeenCalledWith(sessionId, { forceRefresh: true });
-        expect(invalidateCoalesced).toHaveBeenCalledTimes(2);
+        // A later reveal retries; concurrent reveals share the owner's in-flight refresh.
+        sync.onSessionVisible(sessionId);
+        sync.onSessionVisible(sessionId);
+        await expect.poll(() => sessionReads().length).toBe(2);
+        response.resolve(Response.json({
+            session: {
+                ...staleSession,
+                updatedAt: staleSession.updatedAt + 1,
+                metadata: JSON.stringify(staleSession.metadata),
+                agentState: JSON.stringify(currentAgentState),
+                agentStateVersion: staleSession.agentStateVersion + 1,
+                dataEncryptionKey: null,
+                share: null,
+            },
+        }));
+        await expect.poll(() => storage.getState().sessions[sessionId]?.agentState).toEqual(currentAgentState);
+        await expect.poll(() => harness.sessionByIdHydrationInFlight.size).toBe(0);
+
+        sync.onSessionVisible(sessionId);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(sessionReads()).toHaveLength(2);
+        expect(storage.getState().sessions[sessionId]?.agentState).toEqual(currentAgentState);
+        expect(requestMock.mock.calls.filter(([path]) => /^\/v\d+\/sessions(?:\?|$)/.test(path))).toHaveLength(0);
     });
 
     it('limits historical viewport sessions used for session-list hydration priority', async () => {

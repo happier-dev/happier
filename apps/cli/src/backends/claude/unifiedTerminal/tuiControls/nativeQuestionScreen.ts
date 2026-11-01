@@ -80,14 +80,27 @@ function matchesQuestionHeading(presentation: ClaudeNativeQuestionPresentation, 
   return false;
 }
 
-/** Native question forms characterized against real Claude Code 2.1.304, 309 and 310 tmux captures. */
+/** Native question forms characterized against real Claude Code 2.1.304, 309, 310 and 316 tmux captures. */
 export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQuestionPresentation | null {
   let lines = readClaudeNativeDialogScreenLines(rawText);
   let headerIndex = -1;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     if (HEADER.test(lines[index]!)) { headerIndex = index; break; }
   }
-  const bodyStart = headerIndex + 1;
+  const boundary = /^([─━]+)(?:\s.*)?$/u.exec(lines[headerIndex - 1] ?? '')
+    ?? lines.map((line) => /^([─━]+)(?:\s.*)?$/u.exec(line)).reverse().find((match) => match !== null);
+  // Claude's split view can place unrelated content beside its dialog. Crop to
+  // the native rule before deciding which dialog rows are blank or continued.
+  if (boundary) {
+    const width = boundary[1]!.length;
+    lines = lines.map((line, index) => index >= headerIndex ? clipDialogLine(line, width).trimEnd() : line);
+  }
+  let bodyStart = headerIndex + 1;
+  const multiple = lines[headerIndex]?.trimStart().startsWith('←') ?? false;
+  if (multiple) {
+    // Each native tab wraps within its own column, independently of its neighbours.
+    while (bodyStart < lines.length && lines[bodyStart]!.trim()) bodyStart += 1;
+  }
   const reviewHeading = lines.slice(bodyStart).find((line) => line.trim().length > 0)?.trim() === 'Review your answers';
   const tail = lines.filter((line) => line.trim().length > 0).slice(-3);
   const reviewClipped = headerIndex < 0 && !reviewHeading
@@ -95,21 +108,25 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
     && REVIEW_SUBMIT_ROW.test(tail[1] ?? '')
     && /^\s*[>›❯]?\s*2\. Cancel$/u.test(tail[2] ?? '');
   const review = reviewHeading || reviewClipped;
-  const boundary = /^([─━]+)(?:\s.*)?$/u.exec(lines[headerIndex - 1] ?? '')
-    ?? lines.map((line) => /^([─━]+)(?:\s.*)?$/u.exec(line)).reverse().find((match) => match !== null);
   if (!boundary && !review) return null;
-  // Claude's split view can place unrelated content beside its dialog. The native
-  // rule establishes the dialog's own width, rather than the full terminal width.
-  if (boundary) {
-    const width = boundary[1]!.length;
-    lines = lines.map((line, index) => index >= headerIndex ? clipDialogLine(line, width).trimEnd() : line);
+  const header = lines[headerIndex] ?? '';
+  let tabs: ClaudeNativeQuestionPresentation['tabs'] = null;
+  if (multiple) {
+    if (!/→\s*$/u.test(header)) return null;
+    const markers = [...header.matchAll(/[☐☒✔]/gu)];
+    if (markers.length < 2 || markers.at(-1)?.[0] !== '✔' || markers.slice(0, -1).some((match) => match[0] === '✔')) return null;
+    // The checkbox has one leading cell of padding; wrapped text resumes there.
+    const columns = [...markers.map((match) => stringWidth(header.slice(0, match.index)) - 1), stringWidth(header.slice(0, header.lastIndexOf('→')))];
+    const captions = markers.map((_, index) => lines.slice(headerIndex, bodyStart).map((line, row) => {
+      const start = columns[index]! + (row === 0 ? 2 : 0);
+      return clipDialogLine(line, columns[index + 1]!).slice(clipDialogLine(line, start).length).trim();
+    }).filter(Boolean).join('\n'));
+    if (!matchesClaudeNativeQuestionText(captions.at(-1) ?? '', 'Submit')) return null;
+    tabs = markers.slice(0, -1).map((match, index) => ({ header: captions[index]!, answered: match[0] === '☒' }));
+  } else if (headerIndex >= 0) {
+    tabs = [...header.matchAll(/([☐☒])\s+([^☐☒]+?)(?=\s+[☐☒]|$)/gu)]
+      .map((match) => ({ header: match[2]!.trim(), answered: match[1] === '☒' }));
   }
-  const header = lines[headerIndex]?.trim() ?? '';
-  const multiple = header.startsWith('←');
-  if (multiple && !/\s+✔ Submit\s+→$/u.test(header)) return null;
-  const tabText = multiple ? header.replace(/^←\s+/u, '').replace(/\s+✔ Submit\s+→$/u, '') : header;
-  const tabs = headerIndex < 0 ? null : [...tabText.matchAll(/([☐☒])\s+([^☐☒]+?)(?=\s+[☐☒]|$)/gu)]
-    .map((match) => ({ header: match[2]!.trim(), answered: match[1] === '☒' }));
   if (tabs && (tabs.length === 0 || (!multiple && tabs.length !== 1))) return null;
   const body = lines.slice(bodyStart);
   // Review answers are arbitrary text and may themselves contain numbered controls.

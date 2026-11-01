@@ -36,6 +36,39 @@ const focus = (screen: string, from: string, to: string) => screen.replace(`❯ 
 const controls = { isCurrent: () => true, wait: async () => undefined, settleMs: 0, verifyPollIntervalMs: 1, verifyPollTimeoutMs: 2 };
 
 describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
+  it('answers every question and submits when narrow tabs and Submit wrap into aligned columns', async () => {
+    // Tab columns captured from Claude 2.1.316 at 48 columns.
+    const input = ['Color mode', 'Glass style', 'Phone hints'].map((header, index) => ({
+      ...questions[0]!, header, question: `Which probe color for panel ${index + 1}?`,
+    }));
+    const header = (answered: number) => [
+      `←  ${answered > 0 ? '☒' : '☐'} Color    ${answered > 1 ? '☒' : '☐'} Glass      ${answered > 2 ? '☒' : '☐'} Phone     ✔       →`,
+      '  mode       style        hints       Submit',
+    ].join('\n');
+    const pages = input.map((question, index) => single
+      .replace(' ☐ Header Color', header(index))
+      .replaceAll('Which probe color?', question.question));
+    const reviewed = [header(3), '', 'Review your answers', '',
+      ...input.flatMap((question) => [` ● ${question.question}`, '   → Amber']),
+      '', 'Ready to submit your answers?', '', '❯ 1. Submit answers', '  2. Cancel',
+    ].join('\n');
+    const parsed = parseClaudeNativeQuestionScreen(reviewed);
+    expect(parsed?.tabs).toEqual(input.map(({ header }) => ({ header: header.replace(' ', '\n'), answered: true })));
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input.map((question, index) => index === 1
+      ? { ...question, header: 'Glass other' } : question))).toBe(false);
+    const splitView = ['─'.repeat(48), ...reviewed.split('\n')]
+      .map((line) => `${line.padEnd(52)}Adjacent panel`).join('\n');
+    const splitPresentation = parseClaudeNativeQuestionScreen(splitView);
+    expect(splitPresentation).not.toBeNull();
+    expect(matchesClaudeNativeQuestionScreen(splitPresentation!, input)).toBe(true);
+    const port = createFakeControlPort({ captures: [...pages, reviewed, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input,
+      answers: Object.fromEntries(input.map((question) => [question.question, ['Amber']])),
+    })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentKeys).toEqual(['Enter', 'Enter', 'Enter', 'Enter']);
+  });
+
   it('recognizes and answers preview choices without treating the last choice or side panel as freeform input', async () => {
     const screen = [
       '────────────────────────────────────────────────────────────────────────────────',
