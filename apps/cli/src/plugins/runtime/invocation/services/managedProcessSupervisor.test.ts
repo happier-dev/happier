@@ -290,8 +290,18 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         const reads: number[] = [];
         const output = async (options: Readonly<{ maxBytes: number }>) => {
             reads.push(options.maxBytes);
-            return 'native failure detail native-output-fixture-secret';
+            return { kind: 'page' as const, page: { sourceRevision: 'native-generation', text: 'native failure detail native-output-fixture-secret', nextCursor: null, truncated: false } };
         };
+        type NativeInstance = import('@happier-dev/plugin-sdk/managed-services').ManagedServiceNativeInstanceV1;
+        type NativeRead = import('@happier-dev/plugin-sdk/managed-services').ManagedServiceNativeLogReadV1;
+        type NativeWatch = import('@happier-dev/plugin-sdk/managed-services').ManagedServiceNativeLogWatchV1;
+        function logs(instance: NativeInstance, request: NativeRead): Promise<import('@happier-dev/protocol').ManagedServiceNativeLogResultV1>;
+        function logs(instance: NativeInstance, request: NativeWatch): Promise<import('@happier-dev/plugin-sdk').Disposable>;
+        async function logs(_instance: NativeInstance, request: NativeRead | NativeWatch): Promise<import('@happier-dev/protocol').ManagedServiceNativeLogResultV1 | import('@happier-dev/plugin-sdk').Disposable> {
+            if (request.kind === 'read') return output(request);
+            request.emit({ kind: 'unavailable', reason: 'unsupported' });
+            return { dispose() {} };
+        }
         const terminal = deferred<PluginProcessResult>();
         terminal.resolve(CLEAN_EXIT);
         const { servers } = createHarness([createProcess(42, terminal)]);
@@ -299,7 +309,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             launch: { executable: { kind: 'systemTool', id: 'fixture.server' }, env: { FIXTURE_SECRET: 'native-output-fixture-secret' } },
             mode: adapter === 'builtin' ? { kind: 'native', builtinLifecycle: { inspect, stop, logs: output } }
                 : { kind: 'native', instance: { adapter: { pluginId: 'fixture.plugin', localId: 'native' }, nativeResourceId: 'resource' },
-                    lifecycle: { inspect, stop, ...(adapter === 'external' ? { logs: async (_instance, options) => output(options) } : {}) } },
+                    lifecycle: { inspect, stop, ...(adapter === 'external' ? { logs } : {}) } },
         }));
         try {
             const before = inspections;

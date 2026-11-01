@@ -1,3 +1,4 @@
+import type { HealthChecksService } from '../healthCheckKinds.js';
 /** @moduleRealm daemon */
 import type { PluginOperationAvailability } from '../availability.js';
 import type { BackgroundServicesService } from '../backgroundServices.js';
@@ -333,6 +334,7 @@ export type PluginServiceId =
     | 'secrets'
     | 'events'
     | 'http'
+    | 'healthChecks'
     | 'fs'
     | 'exec'
     | 'providers'
@@ -357,6 +359,7 @@ export interface PluginServices {
     readonly secrets: SecretsService;
     readonly events: EventsService;
     readonly http: HttpService;
+    readonly healthChecks: HealthChecksService;
     readonly fs: FileSystemService;
     readonly exec: ExecService;
     readonly providers: ProvidersService;

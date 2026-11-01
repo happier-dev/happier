@@ -1,3 +1,4 @@
+import type { HealthCheckKindContributionV1 } from './healthCheckKinds.js';
 import type { MachineRecipeV1, MachineSetupPresetContributionV1 } from './machineSetup.js';
 import type { PluginManifestIngestionDiagnostic } from '@happier-dev/protocol/plugins/manifest/ingest';
 // Portable declarative grammar is projected by the single Action DTO producer.
@@ -527,7 +528,13 @@ export interface PluginManifest {
   readonly brand?: Readonly<{ iconResourceId: string; monochrome?: boolean }>;
   /** Run-on defaults to automatic placement; false asks when several Machines are eligible. */
   readonly executionTarget?: Readonly<{ default?: 'installation'; autoPick?: boolean }>;
-  readonly activation?: Readonly<{ events?: readonly Readonly<{ kind: 'startup' }>[] }>;
+  readonly activation?: Readonly<{
+    events?: readonly Readonly<{ kind: 'startup' }>[];
+    configuration?: Readonly<{
+      accountCollections?: readonly Readonly<{ pluginId: string; collectionId: string }>[];
+      automationEventSources?: true;
+    }>;
+  }>;
   readonly hostAccess?: Readonly<{
     required?: readonly Readonly<{
       id: string;
@@ -582,6 +589,7 @@ export interface PluginManifest {
     }>[];
   } & {
     machineProvisioners?: readonly MachineProvisionerContributionV1[];
+    healthCheckKinds?: readonly HealthCheckKindContributionV1[];
     machineRecipes?: readonly MachineRecipeV1[];
     machineSetupPresets?: readonly MachineSetupPresetContributionV1[];
     projectNativeAdapters?: readonly Readonly<PluginProjectNativeAdapterContributionV1>[];
@@ -725,6 +733,7 @@ export interface PluginManifest {
 /** Canonical readonly contribution collection returned by public structural parsing. */
 export type PluginContributes = Readonly<{
   machineProvisioners: readonly MachineProvisionerContributionV1[];
+  healthCheckKinds: readonly HealthCheckKindContributionV1[];
   machineRecipes: readonly MachineRecipeV1[];
   machineSetupPresets: readonly MachineSetupPresetContributionV1[];
   projectNativeAdapters: NonNullable<NonNullable<PluginManifest['contributes']>['projectNativeAdapters']>;

@@ -914,6 +914,7 @@ export type DefinePluginInput<
             Omit<PluginLanguageServerContributionV1, 'id'>
         >>;
         machineProvisioners?: Readonly<Record<PluginContributionLocalId, MachineProvisionerAuthorDefinitionV1>>;
+        healthCheckKinds?: Readonly<Record<PluginContributionLocalId, Omit<import('./healthCheckKinds.js').HealthCheckKindContributionV1, 'id'>>>;
         machineRecipes?: Readonly<Record<PluginContributionLocalId, ReadonlyAuthorDeclaration<Omit<MachineRecipeV1, 'id'>>>>;
         machineSetupPresets?: Readonly<Record<PluginContributionLocalId, ReadonlyAuthorDeclaration<Omit<MachineSetupPresetContributionV1, 'id'>>>>;
         systemTools?: Readonly<Record<
@@ -2448,6 +2449,7 @@ const WORKFLOWS_ADAPTER = descriptorFamilyAdapter('workflows');
 const INPUT_TYPES_ADAPTER = descriptorFamilyAdapter('inputTypes');
 const ATMOSPHERE_PICTURES_ADAPTER = descriptorFamilyAdapter('atmospherePictures');
 const REGISTRY_SOURCES_ADAPTER = descriptorFamilyAdapter('registrySources');
+const HEALTH_CHECK_KINDS_ADAPTER = descriptorFamilyAdapter('healthCheckKinds');
 const MACHINE_RECIPES_ADAPTER = descriptorFamilyAdapter('machineRecipes');
 const MACHINE_SETUP_PRESETS_ADAPTER = descriptorFamilyAdapter('machineSetupPresets');
 const SKILLS_ADAPTER = descriptorFamilyAdapter('skills');
@@ -2652,6 +2654,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     inputTypes: { classification: 'descriptor-only', authorKey: 'inputTypes', inputShape: 'descriptor', adapter: INPUT_TYPES_ADAPTER },
     atmospherePictures: { classification: 'descriptor-only', authorKey: 'atmospherePictures', inputShape: 'descriptor', adapter: ATMOSPHERE_PICTURES_ADAPTER },
     registrySources: { classification: 'descriptor-only', authorKey: 'registrySources', inputShape: 'descriptor', adapter: REGISTRY_SOURCES_ADAPTER },
+    healthCheckKinds: { classification: 'descriptor-only', authorKey: 'healthCheckKinds', inputShape: 'descriptor', adapter: HEALTH_CHECK_KINDS_ADAPTER },
     machineRecipes: { classification: 'descriptor-only', authorKey: 'machineRecipes', inputShape: 'descriptor', adapter: MACHINE_RECIPES_ADAPTER },
     machineSetupPresets: { classification: 'descriptor-only', authorKey: 'machineSetupPresets', inputShape: 'descriptor', adapter: MACHINE_SETUP_PRESETS_ADAPTER },
     skills: { classification: 'descriptor-only', authorKey: 'skills', inputShape: 'descriptor', adapter: SKILLS_ADAPTER },

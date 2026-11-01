@@ -1,3 +1,5 @@
+import type { ManagedServiceNativeInstanceV1, ManagedServiceNativeLogReadV1, ManagedServiceNativeLogWatchV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/plugin-sdk/managed-services';
+import type { Disposable } from '@happier-dev/plugin-sdk';
 import { createHash } from 'node:crypto';
 import { isAbsolute, relative } from 'node:path';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -402,12 +404,29 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                     if (recovery.kind !== 'ready') throw new ServiceStartRefusal(recovery.code);
                     return recovery;
                 };
+                function logs(candidate: ManagedServiceNativeInstanceV1, options: ManagedServiceNativeLogReadV1): Promise<ManagedServiceNativeLogResultV1>;
+                function logs(candidate: ManagedServiceNativeInstanceV1, options: ManagedServiceNativeLogWatchV1): Promise<Disposable>;
+                async function logs(candidate: ManagedServiceNativeInstanceV1,
+                    options: ManagedServiceNativeLogReadV1 | ManagedServiceNativeLogWatchV1): Promise<ManagedServiceNativeLogResultV1 | Disposable> {
+                    const current = await resolveCurrentLifecycle();
+                    if (options.kind === 'read' || !current.lifecycle.logs) {
+                        try {
+                            if (options.kind === 'read') return await current.lifecycle.logs?.(candidate, options)
+                                ?? { kind: 'unavailable', reason: 'unsupported' };
+                            options.emit({ kind: 'unavailable', reason: 'unsupported' });
+                            return { dispose() {} };
+                        } finally { await current.release(); }
+                    }
+                    try {
+                        const subscription = await current.lifecycle.logs(candidate, options);
+                        return { async dispose() {
+                            try { await subscription.dispose(); }
+                            finally { await current.release(); }
+                        } };
+                    } catch (error) { await current.release(); throw error; }
+                }
                 processMode = { kind: 'native', instance, lifecycle: {
-                    async logs(candidate, options) {
-                        const current = await resolveCurrentLifecycle();
-                        try { return await current.lifecycle.logs?.(candidate, options) ?? ''; }
-                        finally { await current.release(); }
-                    },
+                    logs,
                     async inspect(candidate, options) {
                         const current = await resolveCurrentLifecycle();
                         try { return await current.lifecycle.inspect(candidate, options); }

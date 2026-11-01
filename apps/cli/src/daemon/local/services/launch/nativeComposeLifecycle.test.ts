@@ -31,7 +31,7 @@ describe('Compose exact native resource lifetime', () => {
         const h = fixture();
         await h.control.lifecycle.inspect();
         h.requests.length = 0;
-        expect(await h.control.lifecycle.logs?.({ maxBytes: 8_192 })).toBe('native output');
+        expect(await h.control.lifecycle.logs?.({ kind: 'read', maxBytes: 8_192 })).toMatchObject({ kind: 'page', page: { text: 'native output' } });
         expect(h.requests).toEqual([['logs', '--tail', '8192', 'a'.repeat(64)]]);
     });
     it('recovers the incumbent identity, treats unavailable inspection as unknown, and never stops a replacement', async () => {
@@ -156,12 +156,12 @@ describe('Compose exact native resource lifetime', () => {
             const id = (await run(list)).stdout.trim();
             expect(id).toMatch(/^[a-f0-9]{64}$/u);
             const observation = await first.lifecycle.inspect();
-            if (observation.phase !== 'running') throw new Error(`Native fixture did not stay running: ${await first.lifecycle.logs?.({ maxBytes: 8_192 })}`);
+            if (observation.phase !== 'running') throw new Error(`Native fixture did not stay running: ${await first.lifecycle.logs?.({ kind: 'read', maxBytes: 8_192 })}`);
             expect(observation).toMatchObject({ phase: 'running', readiness: 'not_reported' });
             expect(observation.endpoint).toBeTruthy();
             await expect(fetch(observation.endpoint!).then(response => response.text())).resolves.toContain('fx16-http');
-            expect(await first.lifecycle.logs?.({ maxBytes: 8_192 })).toContain('fx16-out');
-            expect(await first.lifecycle.logs?.({ maxBytes: 8_192 })).toContain('fx16-err');
+            expect(await first.lifecycle.logs?.({ kind: 'read', maxBytes: 8_192 })).toMatchObject({ kind: 'page', page: { text: expect.stringContaining('fx16-out') } });
+            expect(await first.lifecycle.logs?.({ kind: 'read', maxBytes: 8_192 })).toMatchObject({ kind: 'page', page: { text: expect.stringContaining('fx16-err') } });
             const cancelled = new AbortController();
             // Docker's exact-resource kill event proves Stop reached the daemon
             // before cancellation. The fixture ignores TERM, using Docker's own

@@ -324,6 +324,15 @@ export type PluginManifestHostAccessV2 = z.infer<typeof PluginManifestHostAccess
 
 export const PluginManifestActivationV2Schema = lazyZodSchema(() => z.optional(z.strictObject({
   events: z._default(z.array(z.strictObject({ kind: z.literal('startup') })), []),
+  /** A declaration-only positive demand; plugin domain rules still run after activation. */
+  configuration: z.optional(z.strictObject({
+    accountCollections: z.optional(z.array(z.strictObject({
+      pluginId: asProtocolZod(PluginIdSchema),
+      collectionId: asProtocolZod(PluginContributionLocalIdSchema),
+    })).check(z.minLength(1))),
+    automationEventSources: z.optional(z.literal(true)),
+  }).check(z.refine(value => Boolean(value.accountCollections?.length || value.automationEventSources),
+    'Configuration activation requires a declared demand source.'))),
 })));
 export type PluginManifestActivationV2 = z.infer<typeof PluginManifestActivationV2Schema>;
 

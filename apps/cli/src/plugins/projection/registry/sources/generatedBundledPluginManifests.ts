@@ -69,6 +69,7 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Objec
   "@happier-dev/plugins-machine-lima",
   "@happier-dev/plugins-machine-lume",
   "@happier-dev/plugins-machine-modal",
+  "@happier-dev/plugins-machine-services",
   "@happier-dev/plugins-minimax",
   "@happier-dev/plugins-ohmypi",
   "@happier-dev/plugins-ollama",
@@ -400,6 +401,13 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_METADATA: readonly BundledFirstPartyPlug
     "pluginPackageId": "machine-modal"
   },
   {
+    "manifestPath": "bundled:happier.machine.services",
+    "packageName": "@happier-dev/plugins-machine-services",
+    "packageVersion": "0.0.0",
+    "pluginId": "happier.machine.services",
+    "pluginPackageId": "machine-services"
+  },
+  {
     "manifestPath": "bundled:happier.provider.minimax",
     "packageName": "@happier-dev/plugins-minimax",
     "packageVersion": "0.0.0",
@@ -681,6 +689,19 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS: readonly BundledFirstPartyPlug
     sourceSpec: Object.freeze({
       kind: 'bundled',
       locator: "@happier-dev/plugins-claude",
+      trustPolicy: 'local_trusted',
+      installPolicy: 'link',
+      resolvedVersion: "0.0.0",
+    }),
+  }),
+  Object.freeze({
+    pluginId: "happier.machine.services",
+    manifestRelativePath: "assets/bundled-plugin-manifests/machine-services.json",
+    manifestPath: "bundled:happier.machine.services",
+    daemonEntryPath: "@happier-dev/plugins-machine-services",
+    sourceSpec: Object.freeze({
+      kind: 'bundled',
+      locator: "@happier-dev/plugins-machine-services",
       trustPolicy: 'local_trusted',
       installPolicy: 'link',
       resolvedVersion: "0.0.0",

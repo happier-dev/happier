@@ -1,3 +1,6 @@
+import type { ManagedServiceNativeLogWatchV1 } from '@happier-dev/plugin-sdk/managed-services';
+import type { ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
+import { createManagedServiceNativeLogs, MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES, type ManagedServiceNativeLogReadForHost, type ManagedServiceNativeLogReadOptionsForHost } from './managedServiceNativeLogs';
 import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 
@@ -121,7 +124,7 @@ type ManagedServiceProcessLaunch =
 export type ProjectBuiltinNativeLifecycle = Readonly<{
     inspect(options?: Readonly<{ signal?: AbortSignal }>): Promise<ManagedServiceNativeObservationV1>;
     stop(options?: Readonly<{ signal?: AbortSignal }>): ReturnType<ManagedServiceNativeLifecycleV1['stop']>;
-    logs?(options: Parameters<NonNullable<ManagedServiceNativeLifecycleV1['logs']>>[1]): Promise<string>;
+    logs?(options: ManagedServiceNativeLogReadForHost | ManagedServiceNativeLogWatchV1): Promise<ManagedServiceNativeLogResultV1 | import('@happier-dev/plugin-sdk').Disposable>;
     prepareStart?(options?: Readonly<{ signal?: AbortSignal }>): Promise<void>;
     /** Builtin native codecs retain uncertainty once their starter can create resources. */
     markStarted?(): void;
@@ -209,6 +212,8 @@ export type ManagedServiceProcessStopResult = Readonly<{
 }>;
 
 export interface ManagedServiceProcessHandle {
+    readNativeLogs?(options?: ManagedServiceNativeLogReadOptionsForHost): Promise<ManagedServiceNativeLogResultV1>;
+    watchNativeLogs?(options: Omit<ManagedServiceNativeLogWatchV1, 'kind' | 'maxBytes'>): Promise<Readonly<{ dispose(): Promise<void> }>>;
     snapshot(): ManagedServiceProcessSnapshot;
     observe?(
         listener: (snapshot: ManagedServiceProcessSnapshot) => void,
@@ -1656,6 +1661,24 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             if (portReservation === reservation) portReservation = null;
         }
 
+        const nativeLogs = createManagedServiceNativeLogs({ signal: entry.lifecycle.signal,
+            maxBytes: MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES,
+            isCurrent: isGenerationUsable,
+            redactedValues: () => [...launchRedactedValues, ...(spec.mode.kind === 'native' ? spec.mode.builtinLifecycle?.redactedValues ?? [] : [])
+                .flatMap(rawCredential => readCredentialRedactionValues({ rawCredential }))],
+            ...(spec.mode.kind === 'native' && (spec.mode.builtinLifecycle?.logs || !spec.mode.builtinLifecycle && spec.mode.lifecycle.logs) ? {
+                async invoke(request: ManagedServiceNativeLogReadForHost | ManagedServiceNativeLogWatchV1) {
+                    if (spec.mode.kind !== 'native') return { kind: 'unavailable' as const, reason: 'unsupported' as const };
+                    if (spec.mode.builtinLifecycle) return spec.mode.builtinLifecycle.logs!(request);
+                    if (request.kind === 'watch') return spec.mode.lifecycle.logs!(spec.mode.instance, request);
+                    // The disclosure option is host-private, never a plugin SDK input.
+                    const { allowIncompleteSecretMasking: _allowIncompleteSecretMasking, ...pluginRequest } = request;
+                    return spec.mode.lifecycle.logs!(spec.mode.instance, pluginRequest);
+                },
+            } : {}),
+        });
+        const readNativeLogs = nativeLogs.read;
+
         async function collectNativeFailureOutput(signal?: AbortSignal): Promise<void> {
             if (spec.mode.kind !== 'native' || isStopping() || nativeStopped || !isGenerationUsable()) return;
             const mode = spec.mode;
@@ -1666,12 +1689,11 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             const outputSignal = AbortSignal.any([entry.lifecycle.signal, lifecycleProbeController.signal, ...(signal ? [signal] : [])]);
             if (outputSignal.aborted) return;
             try {
-                const output = await waitWithAbort(logs({ maxBytes: MAX_MANAGED_SERVICE_DIAGNOSTIC_BYTES, signal: outputSignal }), outputSignal);
+                const output = await readNativeLogs({ signal: outputSignal });
                 if (outputSignal.aborted || isStopping() || nativeStopped || !isGenerationUsable()) return;
-                const message = sanitizeExecDiagnosticText(output, MAX_MANAGED_SERVICE_DIAGNOSTIC_BYTES, {
-                    redactedValues: [...launchRedactedValues, ...(mode.builtinLifecycle?.redactedValues ?? [])
-                        .flatMap(rawCredential => readCredentialRedactionValues({ rawCredential }))],
-                });
+                if (output.kind === 'unavailable' && output.reason === 'unsupported') return;
+                if (output.kind !== 'page') throw new Error('native_service_logs_unavailable');
+                const message = output.page.text;
                 if (message && !snapshot.diagnostics.some(item => item.code === 'native_service_output' && item.message === message)) {
                     setSnapshot({ ...snapshot, ...retainManagedServiceDiagnostic(snapshot, {
                         code: 'native_service_output', severity: 'info', message,
@@ -1786,6 +1808,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 stopWatchdog();
                 const attempt = (async () => {
                     const failures: ManagedServiceCleanupFailure[] = [];
+                    await nativeLogs.dispose();
                     if (spec.mode.kind === 'native' && !nativeStopped) {
                         if (snapshot.state === 'stopped') {
                             nativeStopped = true;
@@ -2423,6 +2446,8 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         }
 
         const handle: ManagedServiceProcessHandle = Object.freeze({
+            readNativeLogs,
+            watchNativeLogs: nativeLogs.watch,
             snapshot: () => snapshot,
             observe(listener: (snapshot: ManagedServiceProcessSnapshot) => void) {
                 snapshotListeners.add(listener);

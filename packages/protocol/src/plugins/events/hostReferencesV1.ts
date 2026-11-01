@@ -1,3 +1,4 @@
+import { PluginWebhookHeartbeatReceiptHintV1Schema } from '../webhooks/endpointV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -13,12 +14,18 @@ export const HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1 =
 export const HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1 =
   '@happier/automation/event-sources-invalidated' as const;
 
+export const HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1 = '@happier/health-check/heartbeat-received' as const;
+export const HealthCheckHeartbeatReceivedHostEventV1Schema = PluginWebhookHeartbeatReceiptHintV1Schema;
+export type HealthCheckHeartbeatReceivedHostEventV1 = z.infer<typeof HealthCheckHeartbeatReceivedHostEventV1Schema>;
+
+
 export type HostSemanticEventKindV1 = typeof AGENT_SESSION_RUNTIME_EVENT_KINDS_V1[number];
 export type RuntimeHostEventIdV1 =
   `${typeof HAPPIER_RUNTIME_HOST_EVENT_PREFIX_V1}${HostSemanticEventKindV1}`;
 export type HostEventIdV1 = RuntimeHostEventIdV1
   | typeof HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1
-  | typeof HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1;
+  | typeof HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1
+  | typeof HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1;
 
 /** Runtime Host Event author scopes deliberately remain separate from Account scope. */
 export type HostEventScopeV1 =
@@ -115,6 +122,7 @@ export const HOST_EVENT_IDS_V1 = Object.freeze([
   ...RUNTIME_HOST_EVENT_IDS_V1,
   HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
   HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
+  HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
 ] as const);
 
 const HOST_EVENT_ID_SET_V1 = new Set<string>(HOST_EVENT_IDS_V1);
@@ -155,6 +163,7 @@ export const AutomationHostEventTargetV1Schema = lazyZodSchema(() => z.strictObj
   eventId: z.enum([
     HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
     HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
+  HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
   ]),
   scope: AutomationHostEventScopeV1Schema,
 }));
@@ -162,6 +171,10 @@ export const AutomationHostEventTargetV1Schema = lazyZodSchema(() => z.strictObj
 export const HostEventTargetV1Schema = lazyZodSchema(() => z.union([
   RuntimeHostEventTargetV1Schema,
   AutomationHostEventTargetV1Schema,
+  z.strictObject({
+    eventId: z.literal(HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1),
+    scope: z.strictObject({ kind: z.literal('account') }),
+  }),
 ]));
 
 export type RuntimeHostEventCatalogEntryV1 = Readonly<{
@@ -188,6 +201,12 @@ export type AutomationRunStateChangedHostEventCatalogEntryV1 = Readonly<{
 }>;
 
 export type HostEventCatalogEntryV1 =
+  | Readonly<{
+    id: typeof HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1;
+    canonicalProducer: 'webhook-receipt'; sourceProducers: readonly ['webhook-receipt'];
+    payloadType: 'HealthCheckHeartbeatReceivedHostEventV1'; privacy: 'account';
+    allowedScopes: readonly ['account']; realm: 'daemon'; disposition: 'public';
+  }>
   | RuntimeHostEventCatalogEntryV1
   | AutomationRunStateChangedHostEventCatalogEntryV1
   | Readonly<{
@@ -232,5 +251,11 @@ export const HOST_EVENT_CATALOG_V1: readonly HostEventCatalogEntryV1[] = Object.
     allowedScopes: Object.freeze(['account'] as const),
     realm: 'daemon',
     disposition: 'public',
+  }),
+  Object.freeze({
+    id: HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
+    canonicalProducer: 'webhook-receipt', sourceProducers: Object.freeze(['webhook-receipt'] as const),
+    payloadType: 'HealthCheckHeartbeatReceivedHostEventV1', privacy: 'account',
+    allowedScopes: Object.freeze(['account'] as const), realm: 'daemon', disposition: 'public',
   }),
 ]);

@@ -1,6 +1,7 @@
 /** @moduleRealm daemon */
 import type { PluginContributionLocalId } from '@happier-dev/protocol';
 import type { PluginInvocationContext } from './invocation.js';
+import type { PluginMachineMaterializationRefV1 } from './executionOrigin.js';
 
 export type { BackgroundServiceContribution } from '@happier-dev/protocol';
 
@@ -13,7 +14,9 @@ export type BackgroundServiceContext =
     Omit<PluginInvocationContext, 'surface' | 'session'>
     & Readonly<{
         surface: 'background';
-        session?: undefined;
+        session?: never;
+        /** This running service's host-stamped installation; absent for source-only execution. */
+        materialization?: PluginMachineMaterializationRefV1;
     }>;
 
 export type BackgroundServiceRunner = (
@@ -22,7 +25,7 @@ export type BackgroundServiceRunner = (
 
 /** One caller's demand; cancelling it never cancels another caller's demand. */
 export type BackgroundServiceDemandHandle = Readonly<{
-    /** Successful settlement joins the finite batch, its cleanup, and any child process exit. */
+    /** Joins the finite batch, invocation cleanup and, for process placement, child exit. */
     settlement: Promise<void>;
     /** Rejects only this caller's settlement; other coalesced callers keep running. */
     cancel(): void;

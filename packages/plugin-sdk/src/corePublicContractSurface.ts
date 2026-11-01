@@ -75,6 +75,7 @@ type _ServiceIdsMustBeExact = AssertTrue<Equal<
     | 'secrets'
     | 'events'
     | 'http'
+    | 'healthChecks'
     | 'fs'
     | 'exec'
     | 'providers'

@@ -1,3 +1,4 @@
+import type { PluginProjectNativeFailureV1 } from '../projectNativeAdapters.js';
 /** @moduleRealm daemon */
 import { ManagedServiceLocalIdSchema as canonicalManagedServiceLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ManagedServiceLocalId, PluginContributionLocalId } from '@happier-dev/protocol/plugins/manifest';
@@ -313,18 +314,59 @@ export type ManagedServiceNativeObservationV1 = Readonly<{
     endpoint: string | null;
 }>;
 
+export type { ManagedServiceNativeLogCursorV1, ManagedServiceNativeLogPageV1, ManagedServiceNativeLogReadV1,
+    ManagedServiceNativeLogResultV1, ManagedServiceUnavailableReasonV1 } from '@happier-dev/protocol';
+
+/** Native push owned by one visible host demand; dispose joins native settlement. */
+export type ManagedServiceNativeLogWatchV1 = Readonly<{
+    kind: 'watch';
+    maxBytes: number;
+    cursor?: import('@happier-dev/protocol').ManagedServiceNativeLogCursorV1;
+    signal?: AbortSignal;
+    emit(result: import('@happier-dev/protocol').ManagedServiceNativeLogResultV1): void;
+}>;
+
 export interface ManagedServiceNativeLifecycleV1 {
+    /** Passive, demand-owned discovery on this exact Machine; no Project root is implied. */
+    discover?(machine: Readonly<{ serverId: string; machineId: string }>, options?: PluginCancellationOptions,
+        context?: PluginInvocationContext): Promise<Readonly<{
+        kind: 'ready' | 'partial';
+        candidates: readonly Readonly<{
+            instance: ManagedServiceNativeInstanceV1;
+            name: string;
+            observation: ManagedServiceNativeObservationV1;
+        }>[];
+        failures: readonly PluginProjectNativeFailureV1[];
+    }> | PluginProjectNativeFailureV1>;
     /** Project-native hosts supply admitted services as the additive third argument.
      * Existing resource-only adapters may ignore it; it is never serialized or plugin-supplied.
      */
     inspect(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions, context?: PluginInvocationContext): Promise<ManagedServiceNativeObservationV1>;
-    /** Optional failure-diagnostic output for this exact admitted instance, not a live log stream.
-     * Called on failure transitions or an explicit failed inspection, never healthy/unchanged
-     * watchdog samples. Bound the native read using maxBytes (UTF-8), or the native tool's
-     * bounded tail granularity; the host sanitizes and retains at most that byte budget.
-     * Hosts without output support may ignore this callback; omission leaves lifecycle intact.
+    /** Controls the existing admitted resource; never recreates it or runs a Project launcher. */
+    start?(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions,
+        context?: PluginInvocationContext): Promise<ManagedServiceNativeObservationV1 | PluginProjectNativeFailureV1>;
+    restart?(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions,
+        context?: PluginInvocationContext): Promise<ManagedServiceNativeObservationV1 | PluginProjectNativeFailureV1>;
+    /** One requested batch, not a sampler. Unknown native facts remain null. */
+    accounting?(instances: readonly ManagedServiceNativeInstanceV1[], options?: PluginCancellationOptions,
+        context?: PluginInvocationContext): Promise<Readonly<{
+        kind: 'sample';
+        samples: readonly Readonly<{
+            instance: ManagedServiceNativeInstanceV1;
+            cpuPercent: number | null;
+            memoryBytes: number | null;
+        }>[];
+    }> | PluginProjectNativeFailureV1>;
+    /** Bounded on-demand output for this admitted generation. Healthy/unchanged
+     * inspection never reads logs. Omission leaves native lifecycle intact.
+     * Caller cancellation/final release cancels the watch; disposal joins native settlement.
      */
-    logs?(instance: ManagedServiceNativeInstanceV1, options: PluginCancellationOptions & Readonly<{ maxBytes: number }>, context?: PluginInvocationContext): Promise<string>;
+    logs?: {
+        (instance: ManagedServiceNativeInstanceV1, request: import('@happier-dev/protocol').ManagedServiceNativeLogReadV1,
+            context?: PluginInvocationContext): Promise<import('@happier-dev/protocol').ManagedServiceNativeLogResultV1>;
+        (instance: ManagedServiceNativeInstanceV1, request: ManagedServiceNativeLogWatchV1,
+            context?: PluginInvocationContext): Promise<Disposable>;
+    };
     stop(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions, context?: PluginInvocationContext): Promise<Readonly<{
         status: 'stopped' | 'accepted' | 'unsupported' | 'termination_incomplete';
     }>>;

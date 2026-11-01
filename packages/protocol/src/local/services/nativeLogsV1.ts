@@ -23,6 +23,7 @@ export type MachineServiceLogsReadInputV1 = z.infer<typeof MachineServiceLogsRea
 export const ManagedServiceNativeLogPageV1Schema = lazyZodSchema(() => z.strictObject({
   sourceRevision: z.string().check(z.minLength(1)), text: z.string(),
   nextCursor: z.nullable(ManagedServiceNativeLogCursorV1Schema), truncated: z.boolean(),
+  secretMasking: z.optional(z.literal('incomplete')),
 }));
 export type ManagedServiceNativeLogPageV1 = z.infer<typeof ManagedServiceNativeLogPageV1Schema>;
 

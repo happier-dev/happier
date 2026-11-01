@@ -1,3 +1,4 @@
+import { DeploymentIdentifierV1Schema } from '../../deployments/deploymentIdentifiersV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -104,6 +105,14 @@ export const PluginWebhookEndpointEnsureResultV1Schema = lazyZodSchema(() => z.s
 export const PluginWebhookEndpointReadInputV1Schema = lazyZodSchema(() => z.strictObject({
   webhookEndpointId: PluginWebhookEndpointIdV1Schema,
 }));
+
+export const PluginWebhookHeartbeatReceiptHintV1Schema = lazyZodSchema(() => z.strictObject({
+  webhookEndpointId: PluginWebhookEndpointIdV1Schema,
+  sourceInstanceId: PluginWebhookSourceInstanceIdV1Schema,
+  checkId: DeploymentIdentifierV1Schema,
+  lastAcceptedAt: PluginWebhookTimestampMsV1Schema,
+}));
+export type PluginWebhookHeartbeatReceiptHintV1 = z.infer<typeof PluginWebhookHeartbeatReceiptHintV1Schema>;
 
 export const PluginWebhookEndpointReadResultV1Schema = lazyZodSchema(() => z.strictObject({
   webhookEndpointId: PluginWebhookEndpointIdV1Schema,

@@ -153,6 +153,7 @@ export type PluginContributionCatalogEntryV2 = Readonly<{
 }>;
 
 const REFERENCE_RULES: Readonly<Record<string, readonly PluginContributionReferenceRuleV2[]>> = Object.freeze({
+  healthCheckKinds: [{ field: 'action', targetFamily: 'actions' }],
   actions: [{ field: 'hostAccess', targetFamily: 'manifest.hostAccess', many: true }],
   hooks: [{ field: 'hostAccess', targetFamily: 'manifest.hostAccess', many: true }],
   resources: [{ field: 'hostAccess', targetFamily: 'manifest.hostAccess', many: true }],
@@ -194,6 +195,7 @@ type FamilyPolicy = Pick<PluginContributionCatalogEntryV2,
   'identityField' | 'disposition' | 'activationDemand' | 'projectionFamily' | 'allowedRuntimeRegistration' | 'consumer' | 'platforms'> &
   Readonly<{ registrationHost?: Exclude<PluginContributionCatalogEntryV2['registrationHost'], null> }>;
 const FAMILY_POLICIES = {
+  healthCheckKinds: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'healthCheckKinds', allowedRuntimeRegistration: null, consumer: 'health-check-source-catalog', platforms: ALL_PLATFORMS },
   agents: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'agents', consumer: 'agent-runtime', platforms: CLI_PLATFORMS },
   providers: { identityField: 'id', disposition: 'delegated', activationDemand: 'conditional', projectionFamily: 'providers', allowedRuntimeRegistration: 'providers', registrationHost: 'daemon', consumer: 'providers-first-class', platforms: CLI_PLATFORMS },
   machineProvisioners: { identityField: 'id', disposition: 'reshaped', activationDemand: 'declarative', projectionFamily: 'machineProvisioners', allowedRuntimeRegistration: null, consumer: 'managed-machine-admission', platforms: CLI_PLATFORMS },

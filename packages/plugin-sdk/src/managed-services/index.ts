@@ -30,3 +30,5 @@ export type { ManagedServiceSnapshot } from './contract.js';
 export type { ManagedServiceSpec } from './contract.js';
 export type { ManagedServices } from './contract.js';
 export { readManagedServiceEndpointUrl } from './contract.js';
+export type { ManagedServiceNativeLogCursorV1, ManagedServiceNativeLogPageV1, ManagedServiceNativeLogReadV1,
+    ManagedServiceNativeLogResultV1, ManagedServiceNativeLogWatchV1, ManagedServiceUnavailableReasonV1 } from './contract.js';

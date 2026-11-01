@@ -1,3 +1,6 @@
+import type { ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
+import type { ManagedServiceNativeLogReadForHost } from '@/plugins/runtime/invocation/services/managedServiceNativeLogs';
+import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 import type { ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
 import { hostname } from 'node:os';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -75,6 +78,50 @@ function containers(stdout: string, project: string): readonly Container[] | nul
         }
         return new Set(result.map(item => item.id)).size === result.length ? result : null;
     } catch { return null; }
+}
+
+export async function readNativeComposeLogsForHost(input: Readonly<{
+    containerIds: readonly string[];
+    observedIds?: readonly string[];
+    environment?: boolean;
+    redactionLease?: Pick<ProviderRedactionLease, 'isActive' | 'redact'>;
+    redactionComplete?: boolean;
+    run(args: readonly string[], signal?: AbortSignal): Promise<Readonly<{ exitCode: number | null; stdout: string; stderr?: string }>>;
+}>, options: ManagedServiceNativeLogReadForHost): Promise<ManagedServiceNativeLogResultV1> {
+    const assertRedaction = () => {
+        const incomplete = Boolean(input.redactionComplete === false || input.environment && !input.redactionLease?.isActive()
+            || input.redactionLease && !input.redactionLease.isActive());
+        if (incomplete && !options.allowIncompleteSecretMasking) {
+            throw new PluginError({ code: 'secret_redaction_unavailable', message: 'Service log secret masking is unavailable' });
+        }
+        return incomplete;
+    };
+    options.signal?.throwIfAborted();
+    assertRedaction();
+    if (!input.containerIds.length) return { kind: 'unavailable', reason: 'admission_unavailable' };
+    const sourceRevision = JSON.stringify([...input.containerIds].sort());
+    const observedRevision = input.observedIds ? JSON.stringify([...input.observedIds].sort()) : sourceRevision;
+    if (observedRevision !== sourceRevision || options.cursor && options.cursor.sourceRevision !== sourceRevision) {
+        return { kind: 'source-changed', sourceRevision: observedRevision };
+    }
+    const output: string[] = [];
+    for (const id of input.containerIds) {
+        // Docker tails by lines; the existing diagnostic byte budget bounds
+        // that upstream window without rediscovering the admitted instances.
+        const result = await input.run(['logs', '--tail', String(options.maxBytes), id], options.signal);
+        if (result.exitCode !== 0) return { kind: 'unavailable', reason: 'unavailable' };
+        output.push(result.stdout + (result.stderr ?? ''));
+    }
+    options.signal?.throwIfAborted();
+    const incomplete = assertRedaction();
+    const raw = output.join('\n');
+    const masked = input.redactionLease?.isActive() ? input.redactionLease.redact(raw) : raw;
+    const text = incomplete ? `secret masking may be incomplete until the next deploy\n${masked}` : masked;
+    const bytes = Buffer.from(text, 'utf8');
+    return { kind: 'page', page: { sourceRevision,
+        text: new TextDecoder('utf-8').decode(bytes.subarray(0, options.maxBytes), { stream: true }),
+        nextCursor: null, truncated: bytes.byteLength > options.maxBytes,
+        ...(incomplete ? { secretMasking: 'incomplete' as const } : {}) } };
 }
 
 function endpoint(rows: readonly Container[]): string | null {
@@ -155,16 +202,12 @@ export function createNativeComposeLifecycle(input: Readonly<{
         markStarted() { starterStarted = true; observedEmpty = false; },
         get redactedValues() { return Object.values(launch?.env ?? {}).filter((value): value is string => typeof value === 'string' && value.length > 0); },
         async logs(options) {
-            if (!ids?.length) throw new Error('native_service_observation_unavailable');
-            const output: string[] = [];
-            for (const id of ids) {
-                // Docker tails by lines; the diagnostic byte budget also bounds that
-                // upstream window. Do not rediscover an already admitted instance.
-                const result = await run(['logs', '--tail', String(options.maxBytes), id], options.signal);
-                if (result.exitCode !== 0) throw new Error('native_service_logs_unavailable');
-                output.push(result.stdout + (result.stderr ?? ''));
+            if (options.kind === 'watch') {
+                options.signal?.throwIfAborted();
+                options.emit({ kind: 'unavailable', reason: 'unsupported' });
+                return { dispose() {} };
             }
-            return output.join('\n');
+            return readNativeComposeLogsForHost({ containerIds: ids ?? [], run }, options);
         },
         async inspect(options) {
             if (cleared) return stopped;

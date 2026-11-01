@@ -1,8 +1,9 @@
+import type { ManagedServiceNativeLogReadV1, ManagedServiceNativeLogWatchV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/plugin-sdk/managed-services';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { PluginApi, PluginProjectNativeAdapterRuntimeV1 } from '@happier-dev/plugin-sdk';
+import type { PluginApi, PluginProjectNativeAdapterRuntimeV1, PluginInvocationContext, Disposable } from '@happier-dev/plugin-sdk';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -39,13 +40,20 @@ describe('native lifecycle-only invocation recovery', () => {
                 return { command: process.execPath };
             },
         } });
+        function logs(candidate: typeof instance, request: ManagedServiceNativeLogReadV1, context?: PluginInvocationContext): Promise<ManagedServiceNativeLogResultV1>;
+        function logs(candidate: typeof instance, request: ManagedServiceNativeLogWatchV1, context?: PluginInvocationContext): Promise<Disposable>;
+        async function logs(candidate: typeof instance, request: ManagedServiceNativeLogReadV1 | ManagedServiceNativeLogWatchV1, context?: PluginInvocationContext): Promise<ManagedServiceNativeLogResultV1 | Disposable> {
+            if (!context || candidate.nativeResourceId !== instance.nativeResourceId) throw new Error('Exact lifecycle context unavailable');
+            if (request.kind === 'watch') {
+                request.emit({ kind: 'unavailable', reason: 'unsupported' });
+                return { dispose() {} };
+            }
+            const result = await context.services.exec.run({ executable: { kind: 'systemTool', id: 'fixture.native' },
+                args: ['-e', `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(statePath)}, 'utf8').slice(-${request.maxBytes}))`] }, request);
+            return { kind: 'page' as const, page: { sourceRevision: 'fixture-1', text: new TextDecoder().decode(result.stdout), nextCursor: null, truncated: false } };
+        }
         const nativeServiceLifecycle: NonNullable<PluginProjectNativeAdapterRuntimeV1['nativeServiceLifecycle']> = {
-            async logs(candidate, options, context) {
-                if (!context || candidate.nativeResourceId !== instance.nativeResourceId) throw new Error('Exact lifecycle context unavailable');
-                const result = await context.services.exec.run({ executable: { kind: 'systemTool', id: 'fixture.native' },
-                    args: ['-e', `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(statePath)}, 'utf8').slice(-${options.maxBytes}))`] }, options);
-                return new TextDecoder().decode(result.stdout);
-            },
+            logs,
             async inspect(candidate, options, context) {
                 if (!context || candidate.nativeResourceId !== instance.nativeResourceId) throw new Error('Exact lifecycle context unavailable');
                 const result = await context.services.exec.run({ executable: { kind: 'systemTool', id: 'fixture.native' },
@@ -92,11 +100,11 @@ describe('native lifecycle-only invocation recovery', () => {
             if (captured.kind !== 'ready') throw new Error(captured.code);
             releases.push(captured.release);
             expect(await captured.lifecycle.inspect(instance)).toMatchObject({ phase: 'running' });
-            expect(await captured.lifecycle.logs?.(instance, { maxBytes: 8_192 })).toBe('{"phase":"running"}');
-            await expect(captured.lifecycle.logs?.({ ...instance, nativeResourceId: 'replacement' }, { maxBytes: 8_192 }))
+            expect(await captured.lifecycle.logs?.(instance, { kind: 'read', maxBytes: 8_192 })).toMatchObject({ kind: 'page', page: { text: '{"phase":"running"}' } });
+            await expect(captured.lifecycle.logs?.({ ...instance, nativeResourceId: 'replacement' }, { kind: 'read', maxBytes: 8_192 }))
                 .rejects.toMatchObject({ code: 'native_adapter_reference_mismatch' });
             await original.dispose();
-            await expect(captured.lifecycle.logs?.(instance, { maxBytes: 8_192 })).rejects.toMatchObject({ code: 'native_adapter_retired' });
+            await expect(captured.lifecycle.logs?.(instance, { kind: 'read', maxBytes: 8_192 })).rejects.toMatchObject({ code: 'native_adapter_retired' });
             await expect(captured.lifecycle.stop(instance)).rejects.toThrow();
             expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({ phase: 'running' });
             replacement = await activate(2);

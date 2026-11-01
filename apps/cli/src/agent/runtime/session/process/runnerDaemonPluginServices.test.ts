@@ -47,6 +47,25 @@ const daemonWitness = Object.freeze({
 });
 const witness = daemonWitness;
 
+it('returns typed unavailability for native observation and saved health without a runner transport', async () => {
+    const services = await prepareRunnerDaemonPluginServices({
+        invocationId: 'native-service-unavailable',
+        signal: new AbortController().signal,
+        local: createUnavailablePluginServices(),
+        dispatch: async operation => {
+            if (operation.kind === 'plugin_services.prepare_v1') return preparedSnapshot();
+            throw new Error(`Unexpected native service transport: ${operation.kind}`);
+        },
+    });
+    await expect(Promise.resolve().then(() => services.fs.observeMachinePath(
+        { absolutePath: '/var/log/journal' }, () => {},
+    ))).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+    await expect(Promise.resolve().then(() => services.healthChecks.read(
+        { sourceInstanceId: 'health-source', checkIds: [] },
+    ))).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+});
+
+
 function createSeparatelyBundledPluginError(input: Readonly<{
     code: string;
     message: string;

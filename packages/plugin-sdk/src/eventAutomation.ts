@@ -32,6 +32,11 @@ export type PluginEventObservationScopeV1 = Readonly<{
     kind: 'socket';
 }>;
 
+/** Internal admission scope; public socket/pull observation contracts stay unchanged. */
+export type PluginEventAdmissionScope = Extract<
+    PluginActionInputById['automation.event.source.status.report'], { kind: 'catalogReconciliation' }
+>['scope'];
+
 export type PluginEventObservationV1 = Readonly<{
     eventRef: PluginContributionRef;
     sourceInstanceId: string;
@@ -46,6 +51,17 @@ export type PluginEventObservationV1 = Readonly<{
 
 export type PluginEventDispositionV1 = Readonly<{
     kind: 'checkpointSafe' | 'unsettled';
+    /**
+     * Exact server outcomes, not an inference from checkpoint safety. A skipped
+     * occurrence may be safe to checkpoint without admitting any execution.
+     * Absent metadata from an older caller never proves admission.
+     */
+    admissions?: readonly Readonly<{
+        observation: Pick<PluginEventObservationV1, 'eventRef' | 'sourceInstanceId' | 'sourceContractVersion' | 'occurrenceId'>;
+        scope: Extract<PluginActionInputById['automation.event.source.status.report'], { kind: 'catalogReconciliation' }>['scope'];
+        definition: PluginActionInputById['automation.event.admit']['definitions'][number];
+        result: PluginActionResultById['automation.event.admit']['results'][number];
+    }>[];
 }>;
 
 /**
@@ -68,14 +84,16 @@ export type PluginEventSourceConnectionStatusProjectionV1 = Readonly<{
     status: PluginEventSourceConnectionStatusV1;
 }>;
 
-type CurrentSourceCatalog = Readonly<{
+export type CurrentSourceCatalog = Readonly<{
     revision: string;
     definitions: readonly SourceDefinition[];
 }>;
 
-async function readCurrentSourceDefinitions(
+export async function readCurrentSourceDefinitions(
     context: PluginInvocationContext,
-    scope: PluginEventObservationScopeV1,
+    scope: Readonly<{ kind: 'checkpointedPull' | 'socket' | 'durablePush' }>,
+    knownCatalog?: CurrentSourceCatalog,
+    onObservedRevision?: (revision: string, definitions: readonly SourceDefinition[]) => Promise<void>,
 ): Promise<CurrentSourceCatalog | null> {
     const definitions: SourceDefinition[] = [];
     const seenCursors = new Set<string>();
@@ -84,8 +102,8 @@ async function readCurrentSourceDefinitions(
     for (;;) {
         context.signal.throwIfAborted();
         const request: PluginActionInputById['automation.event.sources.list'] = {
-            transport: scope,
-            ...(cursor === undefined ? {} : { cursor }),
+            transport: { kind: scope.kind },
+            ...(cursor === undefined ? knownCatalog === undefined ? {} : { knownRevision: knownCatalog.revision } : { cursor }),
         };
         let result: unknown;
         try {
@@ -100,6 +118,14 @@ async function readCurrentSourceDefinitions(
         }
         context.signal.throwIfAborted();
         const canonicalResult = AutomationEventSourcesListResultV1Schema.safeParse(result);
+        if (canonicalResult.success) {
+            const page = canonicalResult.data;
+            await onObservedRevision?.(page.kind === 'cursorStale' ? page.currentRevision : page.revision,
+                page.kind === 'page' ? page.definitions : knownCatalog?.definitions ?? []);
+        }
+        if (canonicalResult.success && canonicalResult.data.kind === 'unchanged') {
+            return knownCatalog?.revision === canonicalResult.data.revision ? knownCatalog : null;
+        }
         if (
             !canonicalResult.success
             || canonicalResult.data.kind !== 'page'
@@ -120,25 +146,39 @@ async function readCurrentSourceDefinitions(
     }
 }
 
-async function reportCurrentSourceCatalog(
+export async function reportPluginEventSourceStatus(
     context: PluginInvocationContext,
-    revision: string,
-    scope: PluginEventObservationScopeV1,
+    input: PluginActionInputById['automation.event.source.status.report'],
 ): Promise<void> {
     try {
-        await context.services.actions.execute('automation.event.source.status.report', {
-            kind: 'catalogReconciliation',
-            scope,
-            observedRevision: revision,
-            adoptedRevision: revision,
-            state: 'current',
-            scanStartedAt: null,
-            nextRetryAt: null,
-        }, { signal: context.signal });
+        await context.services.actions.execute('automation.event.source.status.report', input, { signal: context.signal });
         context.signal.throwIfAborted();
     } catch (error) {
         if (context.signal.aborted) throw error;
     }
+}
+
+export async function reportPluginEventSourceCatalogStatus(
+    context: PluginInvocationContext,
+    input: Extract<PluginActionInputById['automation.event.source.status.report'], { kind: 'catalogReconciliation' }>,
+): Promise<void> {
+    await reportPluginEventSourceStatus(context, input);
+}
+
+async function reportCurrentSourceCatalog(
+    context: PluginInvocationContext,
+    revision: string,
+    scope: PluginEventAdmissionScope,
+): Promise<void> {
+    await reportPluginEventSourceCatalogStatus(context, {
+        kind: 'catalogReconciliation',
+        scope,
+        observedRevision: revision,
+        adoptedRevision: revision,
+        state: 'current',
+        scanStartedAt: null,
+        nextRetryAt: null,
+    });
 }
 
 export function projectPluginEventAdmissionSourceStatusV1(input: Readonly<{
@@ -187,21 +227,14 @@ async function reportAdmissionStatuses(input: Readonly<{
     observedDelta: 0 | 1;
 }>): Promise<void> {
     for (let index = 0; index < input.definitions.length; index += 1) {
-        try {
-            await input.context.services.actions.execute(
-                'automation.event.source.status.report',
-                projectPluginEventAdmissionSourceStatusV1({
+        await reportPluginEventSourceStatus(input.context,
+            projectPluginEventAdmissionSourceStatusV1({
                     definition: input.definitions[index]!,
                     result: input.results[index],
                     observationReceivedAt: input.observationReceivedAt,
                     observedDelta: input.observedDelta,
-                }),
-                { signal: input.context.signal },
-            );
-            input.context.signal.throwIfAborted();
-        } catch (error) {
-            if (input.context.signal.aborted) throw error;
-        }
+            }),
+        );
     }
 }
 
@@ -236,16 +269,7 @@ async function reportConnectionStatuses(input: Readonly<{
     status: PluginEventSourceConnectionStatusV1;
 }>): Promise<void> {
     for (const definition of input.definitions) {
-        try {
-            await input.context.services.actions.execute(
-                'automation.event.source.status.report',
-                sourceStatusForConnection({ definition, status: input.status }),
-                { signal: input.context.signal },
-            );
-            input.context.signal.throwIfAborted();
-        } catch (error) {
-            if (input.context.signal.aborted) throw error;
-        }
+        await reportPluginEventSourceStatus(input.context, sourceStatusForConnection({ definition, status: input.status }));
     }
 }
 
@@ -284,19 +308,28 @@ export async function projectPluginEventSourceConnectionStatusV1(
  * failures never change the disposition, while cancellation always propagates.
  * The caller owns the transport truthfulness of its declared source.
  */
-async function admitPluginEventObservationUnderScopeV1(
+export async function admitPluginEventObservationUnderScopeV1(
     observation: PluginEventObservationV1,
     context: PluginInvocationContext,
-    scope: PluginEventObservationScopeV1,
+    scope: PluginEventAdmissionScope,
+    selectedDefinitions?: readonly SourceDefinition[],
+    reportCatalogCurrent = true,
 ): Promise<PluginEventDispositionV1> {
-    const catalog = await readCurrentSourceDefinitions(context, scope);
-    if (catalog === null) return { kind: 'unsettled' };
-    await reportCurrentSourceCatalog(context, catalog.revision, scope);
-    const matchingDefinitions = catalog.definitions.filter((definition) => (
+    let definitions = selectedDefinitions;
+    if (definitions === undefined) {
+        const catalog = await readCurrentSourceDefinitions(context, scope);
+        if (catalog === null) return { kind: 'unsettled' };
+        if (reportCatalogCurrent) await reportCurrentSourceCatalog(context, catalog.revision, scope);
+        definitions = catalog.definitions;
+    }
+    const matchingDefinitions = definitions.filter((definition) => (
         definition.eventRef.pluginId === observation.eventRef.pluginId
         && definition.eventRef.localId === observation.eventRef.localId
         && definition.sourceInstanceId === observation.sourceInstanceId
         && definition.sourceContractVersion === observation.sourceContractVersion
+        && definition.observationTransport.kind === scope.kind
+        && (scope.kind !== 'durablePush' || (definition.observationTransport.kind === 'durablePush'
+            && definition.observationTransport.webhookEndpointId === scope.webhookEndpointId))
     ));
     if (matchingDefinitions.length === 0) return { kind: 'checkpointSafe' };
 
@@ -343,10 +376,19 @@ async function admitPluginEventObservationUnderScopeV1(
         observationReceivedAt: observation.observationReceivedAt,
         observedDelta: observation.observedDelta,
     });
-    return admitted.results.length === matchingDefinitions.length
-        && admitted.results.every((result) => result.checkpointSafe)
-        ? { kind: 'checkpointSafe' }
-        : { kind: 'unsettled' };
+    const admissions = admission.definitions.flatMap((definition, index) => {
+        const result = admitted.results[index];
+        return result === undefined ? [] : [{
+            observation: { eventRef: observation.eventRef, sourceInstanceId: observation.sourceInstanceId,
+                sourceContractVersion: observation.sourceContractVersion, occurrenceId: observation.occurrenceId },
+            scope, definition, result,
+        }];
+    });
+    return {
+        kind: admitted.results.length === matchingDefinitions.length && admitted.results.every((result) => result.checkpointSafe)
+            ? 'checkpointSafe' : 'unsettled',
+        admissions,
+    };
 }
 
 /**

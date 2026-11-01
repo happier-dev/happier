@@ -1,3 +1,5 @@
+import type { ManagedServiceNativeLogReadV1, ManagedServiceNativeLogWatchV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/plugin-sdk/managed-services';
+import type { Disposable } from '@happier-dev/plugin-sdk';
 import { ProjectDefinitionDetectionV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import {
     PluginProjectNativeCommandResultV1Schema,
@@ -276,14 +278,24 @@ export async function resolveProjectNativeAdapter(params: Readonly<{
                 }
                 return production.invocationContext;
             };
-            return { kind: 'ready', release: async () => { await production?.release(); }, lifecycle: Object.freeze({
-                ...(lifecycle.logs ? { async logs(candidate: ManagedServiceNativeInstanceV1, options: Parameters<NonNullable<ManagedServiceNativeLifecycleV1['logs']>>[1]) {
-                    if (!current()) throw new ProjectNativeAdapterInvocationError('native_adapter_retired');
-                    if (!matchesInstance(candidate)) throw new ProjectNativeAdapterInvocationError('native_adapter_reference_mismatch');
-                    const result = await lifecycle.logs!(retained, options, context());
+            function capturedLogs(candidate: ManagedServiceNativeInstanceV1, request: ManagedServiceNativeLogReadV1): Promise<ManagedServiceNativeLogResultV1>;
+            function capturedLogs(candidate: ManagedServiceNativeInstanceV1, request: ManagedServiceNativeLogWatchV1): Promise<Disposable>;
+            async function capturedLogs(candidate: ManagedServiceNativeInstanceV1, request: ManagedServiceNativeLogReadV1 | ManagedServiceNativeLogWatchV1): Promise<ManagedServiceNativeLogResultV1 | Disposable> {
+                if (!current()) throw new ProjectNativeAdapterInvocationError('native_adapter_retired');
+                if (!matchesInstance(candidate)) throw new ProjectNativeAdapterInvocationError('native_adapter_reference_mismatch');
+                if (request.kind === 'read') {
+                    const result = await lifecycle!.logs!(retained, request, context());
                     if (!current()) throw new ProjectNativeAdapterInvocationError('native_adapter_retired');
                     return result;
-                } } : {}),
+                }
+                const subscription = await lifecycle!.logs!(retained, { ...request, emit(result) {
+                    if (current() && !input.signal?.aborted && !request.signal?.aborted) request.emit(result);
+                } }, context());
+                if (!current()) { await subscription.dispose(); throw new ProjectNativeAdapterInvocationError('native_adapter_retired'); }
+                return subscription;
+            }
+            return { kind: 'ready', release: async () => { await production?.release(); }, lifecycle: Object.freeze({
+                ...(lifecycle.logs ? { logs: capturedLogs } : {}),
                 async inspect(candidate: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions) {
                     if (!current()) throw new ProjectNativeAdapterInvocationError('native_adapter_retired');
                     if (!matchesInstance(candidate)) throw new ProjectNativeAdapterInvocationError('native_adapter_reference_mismatch');

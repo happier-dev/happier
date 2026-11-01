@@ -1,3 +1,4 @@
+export * from './local/services/nativeLogsV1.js';
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
 export * from './actions/specs/machine/services.js';
 export * from './account/publicProfile.js';

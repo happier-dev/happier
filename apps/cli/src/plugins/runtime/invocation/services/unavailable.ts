@@ -258,6 +258,9 @@ export type PluginInvocationServicesFactoryParams = Readonly<{
     resources?: StablePluginResourcesOwner;
     settings?: StablePluginSettingsHost;
     http?: StablePluginHttpHost;
+    healthChecks?: Readonly<{ bind(seed: PluginInvocationServicesSeed, services: Readonly<{
+        actions: ActionsService; http: HttpService;
+    }>): PluginServices['healthChecks'] | null }>;
     connectedAccounts?: StablePluginConnectedAccountsHost;
     approvals?: StablePluginApprovalQueueOwner;
     actionExecutor?: PluginActionsHostExecutor;
@@ -507,11 +510,23 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                 : null;
         },
     },
+    healthChecks: {
+        availabilityOwner: 'host', id: 'healthChecks', publicProperty: 'healthChecks', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['healthChecks'] {
+            return Object.freeze({ read: unavailableMethod('healthChecks', code, diagnostic), setup: unavailableMethod('healthChecks', code, diagnostic) });
+        },
+        createAvailable(context: PluginInvocationServiceDescriptorContext): PluginServices['healthChecks'] | null {
+            if (!context.params.healthChecks) return null;
+            const actions = PLUGIN_SERVICE_DESCRIPTORS.actions.createAvailable(context);
+            const http = PLUGIN_SERVICE_DESCRIPTORS.http.createAvailable(context);
+            return actions && http ? context.params.healthChecks.bind(context.seed, { actions, http }) : null;
+        },
+    },
     fs: {
         id: 'fs', publicProperty: 'fs', availabilityOwner: 'binding', requiredHostAccessCapability: 'filesystem', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): FileSystemService {
             const fail = unavailableMethod('fs', code, diagnostic);
-            return Object.freeze({ readFile: fail, writeFile: fail, stat: fail, list: fail, remove: fail });
+            return Object.freeze({ observeMachinePath: fail, readFile: fail, writeFile: fail, stat: fail, list: fail, remove: fail });
         },
         createAvailable({ fileSystem }): FileSystemService | null {
             return fileSystem;

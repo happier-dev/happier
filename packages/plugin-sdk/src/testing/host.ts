@@ -406,6 +406,7 @@ function createPluginServices(
         secrets: fixtureService(fixture, 'secrets'),
         events: fixtureService(fixture, 'events'),
         http: fixtureService(fixture, 'http'),
+        healthChecks: fixtureService(fixture, 'healthChecks'),
         fs: fixtureService(fixture, 'fs'),
         exec: fixtureService(fixture, 'exec'),
         providers: fixtureService(fixture, 'providers'),

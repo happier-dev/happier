@@ -86,6 +86,19 @@ export type PluginPath =
     | Readonly<{ root: 'project'; projectId: string; relativePath: string }>;
 
 export interface FileSystemService {
+    /** Observe only metadata of a declared read-only Machine path. The ready
+     * snapshot includes changes during attachment. Cancellation or disposal
+     * invalidates reads; disposal awaits native watcher cleanup. The host retains
+     * watcher ownership, and this grants no file content or writes. */
+    observeMachinePath(input: Readonly<{ absolutePath: string }>,
+        emit: (event: Readonly<{ kind: 'changed'; identity: string | null; size: number | null }>
+            | Readonly<{ kind: 'unavailable'; code: string; retryable: boolean }>) => void,
+        options?: PluginCancellationOptions,
+    ): Promise<Disposable & Readonly<{
+        identity: string | null;
+        size: number | null;
+        read(): Promise<Readonly<{ identity: string; size: number }> | null>;
+    }>>;
     readFile(path: PluginPath, options?: { maxBytes?: number; signal?: AbortSignal }): Promise<Uint8Array>;
     writeFile(path: PluginPath, data: Uint8Array, options?: { signal?: AbortSignal }): Promise<void>;
     stat(path: PluginPath, options?: { signal?: AbortSignal }): Promise<{ kind: 'file' | 'directory'; size: number; modifiedAtMs: number }>;

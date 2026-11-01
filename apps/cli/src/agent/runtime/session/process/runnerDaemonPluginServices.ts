@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
-
+import { PLUGIN_SERVICE_DESCRIPTORS } from '@/plugins/runtime/invocation/services/unavailable';
 import type { ZodMiniType as ZodType } from 'zod/mini';
 import type { $ZodIssue } from 'zod/v4/core';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
@@ -1705,6 +1705,7 @@ export async function prepareRunnerDaemonPluginServices(
         },
     } satisfies PluginServices['http']);
     const fs: PluginServices['fs'] = Object.freeze({
+        observeMachinePath: PLUGIN_SERVICE_DESCRIPTORS.fs.createUnavailable().observeMachinePath,
         async readFile(path, options) {
             assertAvailable('fs');
             return await dispatch<Uint8Array>({
@@ -3273,6 +3274,7 @@ export async function prepareRunnerDaemonPluginServices(
         secrets,
         events,
         http: httpService,
+        healthChecks: PLUGIN_SERVICE_DESCRIPTORS.healthChecks.createUnavailable(),
         fs,
         exec,
         providers,

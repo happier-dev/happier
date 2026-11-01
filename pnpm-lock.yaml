@@ -492,6 +492,9 @@ importers:
       '@happier-dev/plugins-machine-modal':
         specifier: 0.0.0
         version: link:../../packages/plugins/machine-modal
+      '@happier-dev/plugins-machine-services':
+        specifier: 0.0.0
+        version: link:../../packages/plugins/machine-services
       '@happier-dev/plugins-machine-vercel':
         specifier: 0.0.0
         version: link:../../packages/plugins/machine-vercel
@@ -3030,6 +3033,22 @@ importers:
       vitest:
         specifier: 3.2.4
         version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@22.20.5)(jiti@2.7.0)(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+
+  packages/plugins/machine-services:
+    dependencies:
+      '@happier-dev/plugin-sdk':
+        specifier: 0.0.0
+        version: link:../../plugin-sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.3
+        version: 22.20.5
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.4
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@22.20.5)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/plugins/machine-vercel:
     dependencies:
