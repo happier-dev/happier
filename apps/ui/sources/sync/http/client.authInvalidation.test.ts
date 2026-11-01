@@ -75,6 +75,28 @@ async function restorePreparedSocketHome() {
 }
 
 describe('serverFetch auth invalidation', () => {
+    it.each([
+        { transport: 'endpoint', recoverStoredCredentials: true },
+        { transport: 'endpoint', recoverStoredCredentials: false },
+        { transport: 'captured', recoverStoredCredentials: true },
+    ])('retires a $transport bearer with recovery=$recoverStoredCredentials independently of reachability supervision', async ({ transport, recoverStoredCredentials }) => {
+        await TokenStorage.setCredentials({ token: rejectedToken });
+        installRejectedBearerBoundary();
+        const { serverId, serverUrl } = getActiveServerSnapshot();
+        const { createServerFetchAtEndpoint } = await import('./client');
+        const request = createServerFetchAtEndpoint({ endpointUrl: serverUrl, serverId,
+            credentials: { token: rejectedToken }, recoverStoredCredentials });
+        const { createCapturedServerReadTransport } = await import('@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport');
+        const status = transport === 'endpoint'
+            ? (await request('/v1/machines', undefined, { retry: 'none' })).status
+            : await createCapturedServerReadTransport({ serverId, profile: { serverUrl }, credentials: { token: rejectedToken } })
+                .read('/v1/machines', undefined, { retry: 'none' }, async response => response.status);
+        expect(status).toBe(401);
+        expect(await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId }))
+            .toEqual(recoverStoredCredentials ? null : { token: rejectedToken });
+        expect(events).toMatchObject(recoverStoredCredentials ? [{ kind: 'credentials_removed', serverId, serverUrl }] : []);
+    });
+
     it('retains marked first-key custody and credential bytes without retrying the rejected bearer', async () => {
         const { serverId, serverUrl } = getActiveServerSnapshot();
         const createdAt = Date.now();

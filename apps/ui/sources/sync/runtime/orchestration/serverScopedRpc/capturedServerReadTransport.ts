@@ -89,6 +89,7 @@ export function createCapturedServerReadTransport(params: Readonly<{
                     serverId: params.serverId,
                     credentials: params.credentials,
                     accountEncryptionObservation: params.accountEncryptionObservation,
+                    recoverStoredCredentials: true,
                     superviseReachability: params.superviseReachability,
                     ...(transport.homeCarrier ? { homeCarrier: transport.homeCarrier } : {}),
                 })(path, init, { recoveryRead: 'unbounded', ...options }, consumeResponse);

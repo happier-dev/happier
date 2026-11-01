@@ -281,6 +281,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                         serverId,
                         credentials,
                         accountEncryptionObservation,
+                        recoverStoredCredentials: true,
                         signal: cancellation.signal,
                         ...(transport.homeCarrier ? { homeCarrier: transport.homeCarrier } : {}),
                     })(path, requestInit, options);
@@ -306,6 +307,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                     serverId,
                     credentials,
                     accountEncryptionObservation,
+                    recoverStoredCredentials: true,
                     isCurrent: accountLifetime.isCurrent,
                     ...(transport.homeCarrier ? { homeCarrier: transport.homeCarrier } : {}),
                 });

@@ -1527,6 +1527,7 @@ class ApiSocket {
                 homeCarrierEndpointId: homeCarrier?.endpointId ?? null,
                 request: createServerFetchAtEndpoint({ endpointUrl: transportConfig.endpoint,
                     credentials, serverId: transportConfig.serverId, runtimeOrigin: transportConfig.runtimeOrigin,
+                    recoverStoredCredentials: true,
                     ...(homeCarrier ? { homeCarrier } : {}),
                 }),
                 isCurrent: () => this.socket === socket && this.config === transportConfig

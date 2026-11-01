@@ -778,7 +778,7 @@ async function requestAtEndpoint<T>(
 
             assertRequestContextCurrent(context);
 
-            if (!usedToken || response.status !== 401 || !isSupervisedOrigin) {
+            if (!usedToken || response.status !== 401 || !recoversStoredCredentials || isCrossOrigin) {
                 break;
             }
 
