@@ -1,3 +1,4 @@
+import type { MachineRecipeV1, MachineSetupPresetContributionV1 } from './machineSetup.js';
 import { COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
 import { declaresHostSynthesizedAgentResumeOnlyExternalSources, findAgentResumeOnlyExternalSourceContractIssue } from '@happier-dev/protocol/plugins/contributions/agent-resume-only-sources';
 import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -913,6 +914,8 @@ export type DefinePluginInput<
             Omit<PluginLanguageServerContributionV1, 'id'>
         >>;
         machineProvisioners?: Readonly<Record<PluginContributionLocalId, MachineProvisionerAuthorDefinitionV1>>;
+        machineRecipes?: Readonly<Record<PluginContributionLocalId, ReadonlyAuthorDeclaration<Omit<MachineRecipeV1, 'id'>>>>;
+        machineSetupPresets?: Readonly<Record<PluginContributionLocalId, ReadonlyAuthorDeclaration<Omit<MachineSetupPresetContributionV1, 'id'>>>>;
         systemTools?: Readonly<Record<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['systemTools']>[number], 'id'>
@@ -2445,6 +2448,8 @@ const WORKFLOWS_ADAPTER = descriptorFamilyAdapter('workflows');
 const INPUT_TYPES_ADAPTER = descriptorFamilyAdapter('inputTypes');
 const ATMOSPHERE_PICTURES_ADAPTER = descriptorFamilyAdapter('atmospherePictures');
 const REGISTRY_SOURCES_ADAPTER = descriptorFamilyAdapter('registrySources');
+const MACHINE_RECIPES_ADAPTER = descriptorFamilyAdapter('machineRecipes');
+const MACHINE_SETUP_PRESETS_ADAPTER = descriptorFamilyAdapter('machineSetupPresets');
 const SKILLS_ADAPTER = descriptorFamilyAdapter('skills');
 const DRAG_SOURCES_ADAPTER = descriptorFamilyAdapter('dragSources');
 const WORK_ITEMS_ADAPTER = descriptorFamilyAdapter('workItems');
@@ -2647,6 +2652,8 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     inputTypes: { classification: 'descriptor-only', authorKey: 'inputTypes', inputShape: 'descriptor', adapter: INPUT_TYPES_ADAPTER },
     atmospherePictures: { classification: 'descriptor-only', authorKey: 'atmospherePictures', inputShape: 'descriptor', adapter: ATMOSPHERE_PICTURES_ADAPTER },
     registrySources: { classification: 'descriptor-only', authorKey: 'registrySources', inputShape: 'descriptor', adapter: REGISTRY_SOURCES_ADAPTER },
+    machineRecipes: { classification: 'descriptor-only', authorKey: 'machineRecipes', inputShape: 'descriptor', adapter: MACHINE_RECIPES_ADAPTER },
+    machineSetupPresets: { classification: 'descriptor-only', authorKey: 'machineSetupPresets', inputShape: 'descriptor', adapter: MACHINE_SETUP_PRESETS_ADAPTER },
     skills: { classification: 'descriptor-only', authorKey: 'skills', inputShape: 'descriptor', adapter: SKILLS_ADAPTER },
     dragSources: { classification: 'adapter', authorKey: 'dragSources', inputShape: 'descriptor', adapter: DRAG_SOURCES_ADAPTER },
     workItems: { classification: 'adapter', authorKey: 'workItems', inputShape: 'descriptor', adapter: WORK_ITEMS_ADAPTER },

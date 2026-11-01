@@ -436,21 +436,21 @@ function readHostAccessReferenceCandidates(manifest: ParsedPluginManifestV2): re
 
 function readReferenceDiagnostics(manifest: ParsedPluginManifestV2): PluginManifestIngestionDiagnostic[] {
   const contributes = manifest.contributes as Readonly<Record<string, unknown>>;
-  const idsByFamily = new Map<string, Set<string>>();
+  const idsByFamily = new Map<string, Map<string, Readonly<Record<string, unknown>>>>();
   const allLocalIds = new Set<string>();
-  idsByFamily.set('manifest.hostAccess', new Set([
+  idsByFamily.set('manifest.hostAccess', new Map([
     ...manifest.hostAccess.required.map((request) => request.id),
     ...manifest.hostAccess.optional.map((request) => request.id),
-  ]));
+  ].map(id => [id, {}])));
   for (const catalogEntry of PLUGIN_CONTRIBUTION_CATALOG_V2) {
     const family = catalogEntry.manifestKey;
     const value = catalogEntry.readEntries(contributes);
-    const ids = new Set<string>();
+    const ids = new Map<string, Readonly<Record<string, unknown>>>();
     for (const entry of value) {
       if (entry && typeof entry === 'object' && catalogEntry.identityField !== null
         && typeof (entry as Readonly<Record<string, unknown>>)[catalogEntry.identityField] === 'string') {
         const id = (entry as Readonly<Record<string, string>>)[catalogEntry.identityField];
-        ids.add(id);
+        ids.set(id, entry as Readonly<Record<string, unknown>>);
         allLocalIds.add(id);
       }
     }
@@ -480,11 +480,13 @@ function readReferenceDiagnostics(manifest: ParsedPluginManifestV2): PluginManif
           if (structured.pluginId !== manifest.id) continue;
           if (candidate.allowQualifiedSamePlugin === true) {
             const localId = structured.localId;
-            if (typeof localId === 'string' && targetFamilies.some((family) => idsByFamily.get(family)?.has(localId))) {
+            if (typeof localId === 'string' && targetFamilies.some((family) => idsByFamily.get(family)?.has(localId)
+              && (candidate.revision === undefined || idsByFamily.get(family)?.get(localId)?.revision === candidate.revision))) {
               continue;
             }
             diagnostics.push({
               code: typeof localId === 'string' && allLocalIds.has(localId)
+                && !targetFamilies.some(family => idsByFamily.get(family)?.has(localId))
                 ? 'plugin_manifest_wrong_family_reference'
                 : 'plugin_manifest_dangling_reference',
               path: ['contributes', ...catalogEntry.manifestKey.split('.'), index, ...candidate.path],
@@ -1087,15 +1089,15 @@ export function ingestPluginManifestV2(input: unknown): PluginManifestIngestionR
 export function resolvePluginManifestSetReferencesV2(
   manifests: readonly ParsedPluginManifestV2[],
 ): PluginManifestSetReferenceResolutionResult {
-  const index = new Map<string, Map<string, Set<string>>>();
+  const index = new Map<string, Map<string, Map<string, Readonly<Record<string, unknown>>>>>();
   for (const manifest of manifests) {
-    const families = new Map<string, Set<string>>();
+    const families = new Map<string, Map<string, Readonly<Record<string, unknown>>>>();
     for (const entry of PLUGIN_CONTRIBUTION_CATALOG_V2) {
-      const ids = new Set<string>();
+      const ids = new Map<string, Readonly<Record<string, unknown>>>();
       for (const value of entry.readEntries(manifest.contributes as Readonly<Record<string, unknown>>)) {
         if (!value || typeof value !== 'object' || entry.identityField === null) continue;
         const id = (value as Readonly<Record<string, unknown>>)[entry.identityField];
-        if (typeof id === 'string') ids.add(id);
+        if (typeof id === 'string') ids.set(id, value as Readonly<Record<string, unknown>>);
       }
       families.set(entry.manifestKey, ids);
     }
@@ -1130,13 +1132,15 @@ export function resolvePluginManifestSetReferencesV2(
           const targetFamilies = candidate.targetFamilies ?? [candidate.targetFamily];
           const foundInTarget = targetFamilies.some((targetFamily) => (
             targetFamilyIndex?.get(targetFamily)?.has(targetLocalId) === true
+              && (candidate.revision === undefined || targetFamilyIndex?.get(targetFamily)?.get(targetLocalId)?.revision === candidate.revision)
           ));
           if (foundInTarget) continue;
           const foundElsewhere = targetFamilyIndex
             ? [...targetFamilyIndex.values()].some((ids) => ids.has(targetLocalId))
             : false;
           diagnostics.push({
-            code: foundElsewhere ? 'plugin_manifest_wrong_family_reference' : 'plugin_manifest_dangling_reference',
+            code: foundElsewhere && !targetFamilies.some(family => targetFamilyIndex?.get(family)?.has(targetLocalId))
+              ? 'plugin_manifest_wrong_family_reference' : 'plugin_manifest_dangling_reference',
             path: ['contributes', ...entry.manifestKey.split('.'), contributionIndex, ...candidate.path],
             message: `${manifest.id} references missing ${targetFamilies.join(' or ')} contribution ${targetPluginId}/${targetLocalId}.`,
           });

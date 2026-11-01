@@ -1,3 +1,4 @@
+import type { MachineSetupPresetContributionV1 } from './machineSetupPresets.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import type { z } from 'zod/mini';
 
@@ -41,6 +42,8 @@ export type PluginContributionReferenceRuleV2 = Readonly<{
   many?: boolean;
 }>;
 export type PluginContributionReferenceCandidateV2 = Readonly<{
+  /** Exact immutable declaration revision when the target family versions its data. */
+  revision?: string;
   targetFamily: string;
   /** A closed alternative family set for one polymorphic reference. */
   targetFamilies?: readonly string[];
@@ -194,6 +197,8 @@ const FAMILY_POLICIES = {
   agents: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'agents', consumer: 'agent-runtime', platforms: CLI_PLATFORMS },
   providers: { identityField: 'id', disposition: 'delegated', activationDemand: 'conditional', projectionFamily: 'providers', allowedRuntimeRegistration: 'providers', registrationHost: 'daemon', consumer: 'providers-first-class', platforms: CLI_PLATFORMS },
   machineProvisioners: { identityField: 'id', disposition: 'reshaped', activationDemand: 'declarative', projectionFamily: 'machineProvisioners', allowedRuntimeRegistration: null, consumer: 'managed-machine-admission', platforms: CLI_PLATFORMS },
+  machineRecipes: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'machineRecipes', allowedRuntimeRegistration: null, consumer: 'machine-recipe-catalog', platforms: ALL_PLATFORMS },
+  machineSetupPresets: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'machineSetupPresets', allowedRuntimeRegistration: null, consumer: 'machine-recipe-catalog', platforms: ALL_PLATFORMS },
   actions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'actions', registrationHost: 'discriminated', consumer: 'action-dispatch', platforms: ALL_PLATFORMS },
   commands: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'cli-commands', platforms: CLI_PLATFORMS },
   tools: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'agent-tools', platforms: CLI_PLATFORMS },
@@ -260,6 +265,15 @@ function extractRuleReferences(
 }
 
 function extractNestedReferences(family: string, value: Readonly<Record<string, unknown>>): PluginContributionReferenceCandidateV2[] {
+  if (family === 'machineSetupPresets') {
+    const preset = value as MachineSetupPresetContributionV1;
+    return (preset.setup.items ?? []).flatMap((item, index) => item.kind === 'app' ? [] : [{
+      targetFamily: 'machineRecipes', allowQualifiedSamePlugin: true, allowQualifiedCrossPlugin: true,
+      reference: { pluginId: item.selection.ref.pluginId, localId: item.selection.ref.recipeId },
+      revision: item.selection.ref.revision,
+      path: ['setup', 'items', index, 'selection', 'ref'],
+    }]);
+  }
   if (family === 'actions') {
     const parsed = PluginActionDeclaredExecutionV2Schema.safeParse(value.execution);
     if (!parsed.success || parsed.data.target === 'daemon') return [];

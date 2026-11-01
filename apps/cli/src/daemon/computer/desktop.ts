@@ -22,14 +22,17 @@ export function createComputerDesktop() {
   const children: ChildProcess[] = [];
 
   const stop = async () => {
+    const exits: Promise<unknown>[] = [];
     for (const child of [...children].reverse()) {
       if (child.exitCode !== null || child.signalCode !== null || !child.pid) continue;
-      const exited = once(child, 'close');
+      exits.push(once(child, 'close'));
       // Each child owns a new POSIX process group; include D-Bus-activated AT-SPI children.
       try { process.kill(-child.pid, 'SIGTERM'); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
-      await exited;
     }
+    // Activated desktop services can inherit another child's output handles.
+    // Signal every owned group before waiting for those handles to close.
+    await Promise.all(exits);
     children.length = 0;
     if (runtimeDirectory) await rm(runtimeDirectory, { recursive: true, force: true });
   };
@@ -54,7 +57,7 @@ export function createComputerDesktop() {
     };
     stream.on('data', data); stream.once('end', fail); child.once('error', fail); child.once('exit', fail);
   });
-  const start = async (xvfb: string, dbus: string, gdbus: string, wm: string): Promise<ComputerDesktopConnection> => {
+  const start = async (xvfb: string, dbus: string, gdbus: string, wm: string, openbox: boolean): Promise<ComputerDesktopConnection> => {
     try {
       runtimeDirectory = await mkdtemp(join(tmpdir(), 'happier-desktop-'));
       // Enable only this session, without changing the person's persistent desktop preferences.
@@ -80,7 +83,11 @@ export function createComputerDesktop() {
         '--method', 'org.a11y.Bus.GetAddress'], { ...environment, ...desktopEnvironment }, false, false);
       const [readyCode] = await once(ready, 'exit');
       if (readyCode !== 0) throw unavailable();
-      const windowManager = launch(wm, ['--sm-disable'], { ...environment, ...desktopEnvironment });
+      // Fluxbox uses HOME rather than XDG_CONFIG_HOME. Only this owned WM
+      // receives a private home; the daemon, Agents and apps keep theirs.
+      const windowManager = launch(wm, openbox ? ['--sm-disable'] : [], {
+        ...environment, ...desktopEnvironment, HOME: runtimeDirectory,
+      });
       await once(windowManager, 'spawn');
       if (closed) throw unavailable();
       connection = { displayId, environment: desktopEnvironment };
@@ -100,9 +107,10 @@ export function createComputerDesktop() {
       const xvfb = resolveExecutableCommand('Xvfb');
       const dbus = resolveExecutableCommand('dbus-daemon');
       const gdbus = resolveExecutableCommand('gdbus');
-      const wm = resolveExecutableCommand('openbox');
+      const openbox = resolveExecutableCommand('openbox');
+      const wm = openbox ?? resolveExecutableCommand('fluxbox');
       if (!xvfb || !dbus || !gdbus || !wm) throw unavailable();
-      return initialization = start(xvfb, dbus, gdbus, wm);
+      return initialization = start(xvfb, dbus, gdbus, wm, Boolean(openbox));
     },
     async dispose() {
       closed = true;

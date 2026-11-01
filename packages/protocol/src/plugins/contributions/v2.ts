@@ -1,3 +1,6 @@
+import { MachineRecipeV1Schema } from './machineRecipes.js';
+import { MachineSetupPresetContributionV1Schema } from './machineSetupPresets.js';
+export * from './machineSetupPresets.js';
 import { z } from 'zod/mini';
 
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -883,6 +886,8 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'agents', schema: PluginAgentContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'providers', schema: ProviderContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'machineProvisioners', schema: MachineProvisionerContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'machineRecipes', schema: MachineRecipeV1Schema }),
+  definePluginContributionFamilyV2({ family: 'machineSetupPresets', schema: MachineSetupPresetContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'actions', schema: PluginActionContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'commands', schema: PluginCommandContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'tools', schema: PluginToolContributionV2Schema }),
