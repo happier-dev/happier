@@ -1,5 +1,127 @@
 # Changelog
 
+## Release 2026-11-01.1 - 2026-11-01
+
+<!-- happier-release-note-projections:v1
+{
+  "expo": { "message": "Answer Agent questions and permission requests from notifications, quote selected chat text, choose how to send your next message, and organize sessions with synced colors. Custom themes sync across devices. Session reconnects, queued messages, updates and voice handoffs are more dependable. Install the new native app for this release." },
+  "appStore": { "whatsNew": "Answer Agent questions and permission requests from notifications. Quote selected chat text and choose whether to queue, steer or interrupt when the Agent supports it. Give sessions colors that sync across devices, and sync your custom theme library while keeping each device's appearance choice. Optional system navigation on iOS and better foldable layouts make more room for your sessions. Fixes improve reconnects, older transcript loading, session deletion, update progress and voice handoffs. Install this native update to receive the refreshed runtime." },
+  "playStore": { "whatsNew": "Answer Agent questions and permission requests from notifications, including while the app is in the background. Quote selected chat text, choose how to send a message, and sync session colors and custom themes. Better foldable layouts, reconnects, transcript scrolling and update progress. Install this native update for the refreshed runtime." }
+}
+-->
+
+This release makes it easier to keep work moving from your phone, browser or desktop: answer requests from notifications, quote part of a conversation, choose how your next message reaches the Agent, and recognize sessions by color. It also adds more control over Claude sessions, improves recovery when accounts hit usage limits, and makes Windows background services easier to install and update.
+
+### Chat and session organization
+
+- **Answer questions and permission requests from notifications** on iOS and Android, including supported background actions. Requests that need more detail take you into the app to review them.
+- **Quote selected text from a conversation** into your next message on web and native apps.
+- **Choose how to send your next message:** queue it, steer the current turn or interrupt, according to the Agent's supported modes. Open the send menu with a long press or right click.
+- **Give sessions a color** from the session menu, including a custom color. Colors sync across your devices when the relay supports session appearances.
+- **Sync your custom theme library across devices.** Each device keeps its own choice of light and dark theme.
+- Pin sessions and copy their session id from the session actions. Deleting an archived session uses a clearer confirmation; deleting a running session offers an explicit stop-and-delete action.
+- Once a new session has been accepted, its composer and attachments stop accepting edits while it starts. You can still choose to start another session.
+- Keep your model choice when switching Agents. Profiles respect the Agents they allow and apply their default Agent when starting a session.
+- Automations, delegated subagent runs, connected services and quotas, attachment uploads, and the embedded terminal no longer require the Experiments switch. Availability still follows your server's enabled features and the Agent's capabilities.
+
+### Staying connected and reading conversations
+
+- Session lists catch up after a reconnect or return to the foreground. An explicit retry can resume a connection that was waiting to retry automatically.
+- Reconnecting keeps a useful failure state visible until recovery succeeds.
+- **Recover a stalled embedded terminal with Retry** without restarting the terminal session. Hidden terminal panels pause output reads and reconnect to the existing terminal when reopened.
+- Older conversations fill the initial web transcript more reliably, and loading earlier messages preserves the scroll position.
+- Tool-result previews load when opened; images keep their surrounding tool context.
+- Native subagent handback messages appear with the Agent's activity instead of looking like messages you sent.
+- Activity acknowledgements survive navigation, and failed dismiss actions remain visible for retry.
+- New-session guidance on native devices covers the composer correctly and dismisses reliably. Profile environment editors avoid repeated update loops.
+
+### Phone, desktop and voice
+
+- iOS can use optional system tab navigation. Layouts account for foldable window divisions and safe areas.
+- The desktop app remembers its macOS window frame. Windows users can choose a native title bar, with compact window controls available in the app chrome.
+- Update progress survives refreshing the page. A cached release no longer makes an older running version look current, and manual update instructions are available when remote updating is unavailable.
+- Choose which session's diagnostics to include in a bug report, with machine and CLI details. Crash diagnostics can be retained and exported, and notification delivery can be tested from troubleshooting settings.
+- Browser voice recording handles supported recorder formats more reliably. Voice handoffs clear their pending state when acknowledged, and messages from another participant are kept out of spoken replies.
+- Local voice model-pack verification can use native file hashing outside the JavaScript thread, with a fallback for older native builds.
+
+### App compatibility
+
+- **Install the new native app.** The native runtime changes from `0.2.9-native` to `0.2.11-native`; an OTA update for the new runtime does not update older native builds. This release includes native notification work, iOS scene support and updated native dependencies.
+- **Self-hosted session colors require the updated relay.** Older relays keep existing session behavior but cannot save the new colors.
+- Custom theme libraries sync with updated clients; older clients keep their previous local theme behavior. Preserve local theme backups when downgrading.
+
+### App contributors
+
+Thanks to Zac Fias for Android notification actions; Dan Ljungström for native file hashing, attachment handling and subagent handback display; Wang Dong for session deletion and transcript scrolling; kunde21 for profile Agent choices; Dax Liniere for new-session composer fixes; kaestnerheisser207-web for native getting-started guidance; and xx-Sk8-xx for documentation updates.
+### CLI and Agents
+
+#### Claude sessions
+
+- **Choose where to answer Claude questions and permission requests:** in Happier, in the terminal, or in either place. Terminal questions support choosing and editing answers, and permission prompts show the command or read scope being requested.
+- Confirm the Claude model and effort used by the session. An explicit default-effort choice takes precedence over a previously saved native choice.
+- Optionally release an idle remote Claude process and resume it on the next prompt. Sessions using checkpointing keep the process alive.
+- Queued messages track when Claude actually consumes them, and pending messages are republished after the connection returns.
+- Claude stays busy while its reply or queued input is still in progress, including turns started from the native terminal.
+
+#### Accounts and recovery
+
+- Connected-service recovery can switch to a healthier account as quota changes during a session, preserving the selected account context and respecting provider retry delays.
+- Account recovery waits for evidence from the Agent before reporting success. Native usage-limit waits and transient failures in delegated runs can recover within the run's existing lifetime.
+- Starting a new session with a disabled Agent gives a clear refusal; existing live sessions can still be adopted.
+- A missing Codex installation or an exhausted context window produces a failed turn instead of leaving the session apparently idle.
+- Codex reviews preserve their read-only and workspace permission restrictions when using native configuration profiles.
+
+#### Agent history and controls
+
+- Codex reasoning summaries are readable in the transcript, with a preference to enable, disable or follow the default behavior across its supported connections.
+- Codex's app-server connection recovers through its WebSocket proxy. Direct history includes web searches and omits internal review sessions.
+- Claude Direct session listings reuse known titles while loading more history. Codex listings continue beyond the native response's first result budget.
+- FX follows its current automatic-mode and model choices, without counting managed connection metadata as extra usage.
+- OpenCode's managed server exits after its last tracked client closes.
+- Session titles survive switching Agents. Automatic title generation starts with the session rather than being repeated on later turns.
+- Direct-session workspace recovery uses the receiving machine's paths. Reusing a tmux window targets the correct isolated tmux server and session.
+
+#### Commands, startup and background services
+
+- Send display-only messages with `happier session send --kind notice` or `--no-deliver`, with an optional `--from` label. Text after `--` is treated as message text, even when it resembles a CLI flag.
+- Live session configuration changes update the session's published configuration, so other clients can see the selected value.
+- MCP selection accepts its supported optional fields and reports unsupported ones clearly.
+- Cancelling startup stops unfinished background initialization. A failed SDK import can be retried, and unused schema and Agent modules load when needed.
+- **Windows background services use the bundled native launcher.** Installation checks that it is available before stopping or replacing an existing service; legacy scheduled tasks can be discovered and reinstalled. Background commands avoid opening extra console windows.
+- Service definitions preserve their environment and paths on Windows, macOS and Linux. A stale inherited systemd path no longer triggers a false service-drift report.
+
+#### CLI compatibility
+
+Update the machine's CLI and daemon to use the new Claude response-location controls, account recovery and Windows service behavior. Existing sessions on older daemons keep their previous behavior. Keep the previous CLI and service definition available when testing an upgrade or rollback, and verify resume and queued-message continuity before replacing a long-running installation.
+
+#### CLI contributors
+
+Thanks to Zac Fias for the Windows native service launcher; Dan Ljungström for idle Claude process control and startup fixes; Wang Dong for disabled-Agent handling, missing-Codex failures and session recovery; KolorYan for Direct session listings; Interfish for Codex web-search history; Jacob Lasky for acknowledgement timeout handling; and Mani Japra for session stall detection and tmux recovery.
+### Self-hosting and relay
+
+- **Session colors sync through the relay** while keeping their contents in the account's existing plain or encrypted format. Each account has its own appearance for a session.
+- API responses can use the client's negotiated Brotli or gzip compression. Live update streams remain uncompressed by this API middleware.
+- Session heartbeats waiting for a database write retain their observed time. Loading the tail of a turn uses indexed pages instead of scanning its full history.
+- Switching Agents clears a stale failed status from the current session view while keeping historical turn records.
+- Requests that delete a resource can omit a JSON body. Removing a push token no longer repeats the unregister operation indefinitely.
+- Container images move from Node.js 22 to Node.js 24. Published server binaries and the server runner remain available for their supported deployment paths.
+
+### Relay migration and rollback
+
+- **Apply the new `20261026150000_add_session_appearance` migration when upgrading the relay.** PostgreSQL, MySQL and SQLite each gain an additive `SessionAppearance` table, its indexes and account/session foreign keys. Back up the retained database before upgrading; do not recreate it.
+- Older clients continue using their existing organization snapshot fields. New clients on older relays keep existing session behavior, but saving a session color requires the new relay and reports a failure on an older one.
+- Keep the added table if rolling the executable back. This migration does not rewrite session content or provide a destructive down migration; older executables do not use the new appearance records.
+- The migration and negotiated API additions do not call for upgrading all clients together. Verify the relay upgrade, database contract and old/new client combinations before promoting the release.
+
+Thanks to Dan Ljungström for accepting bodiless JSON delete requests.
+### Stack tools
+
+- Self-hosted relay services check their runtime and launcher before replacing a running service. Restarting a service keeps the selected service-definition path and home directory.
+- Windows stack and service commands avoid opening extra console windows, including when starting the self-hosted relay.
+- Dependency refreshes recognize patch-only changes. When a dependency patch cannot be reapplied, the refresh path can restore pristine dependencies and reapply the patch instead of repeatedly failing against a partially patched tree.
+
+Thanks to Zac Fias for the Windows service-launcher work shared by the CLI and stack tools.
+
 ## Release 2026-10-22.1 - 2026-10-22
 
 <!-- happier-release-note-projections:v1
