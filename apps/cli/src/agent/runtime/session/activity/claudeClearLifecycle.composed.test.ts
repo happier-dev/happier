@@ -13,11 +13,14 @@ import { subscribeSessionRuntimePublicationToMetadata } from '@/agent/runtime/id
 import { createCliRuntimeSessionStateBridge } from '@/agent/runtime/state/bridge';
 import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
 import { createClaudeUnifiedTerminalTurnOperations } from '../../../../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/turnOperations';
 import { createClaudeNativeSessionRuntimeFromOperations } from '../../../../../../../packages/plugins/claude/src/agent/runtime/nativeRuntime';
 import { createEventsFixture, createPluginContextFixture, createTerminalHostFixture } from '../../../../../../../packages/plugins/claude/src/agent/runtime/engine.testkit';
 
-it.each([false, true])('settles real clear hooks and publishes B without an OS exit (B file exists: %s)', async materialized => {
+it.each([false, true])('resumes B after real clear hooks and Stop (B file exists: %s)', async materialized => {
   const directory = await mkdtemp(join(tmpdir(), 'claude-clear-lifecycle-'));
   const sessionId = 'clear-lifecycle';
   const lifetime = new AbortController();
@@ -141,6 +144,31 @@ it.each([false, true])('settles real clear hooks and publishes B without an OS e
     expect(runtime.readSessionIdentity().sessionId).toBe('native-b');
     await operations.disposeProviderSession();
     expect(admitted).toEqual(['native-a', 'native-b']);
+    // Resume opens the retained Home tuple, rather than inheriting the stopped
+    // runtime's in-memory identity or its original launch arguments.
+    const credentials = { token: 'test-home', encryption: null };
+    const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
+      metadata, agentState: null, storedContentMode: 'plain' });
+    const rawSession = createSessionRecordFixture({ id: sessionId, active: false, encryptionMode: 'plain',
+      metadataLayoutVersion: 1, metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata });
+    const resume = buildCliSessionRowModel({ credentials, accountEncryptionMode: 'plain', rawSession }).vendorResume;
+    expect(resume).toEqual({ eligible: true, vendorResumeId: 'native-b' });
+    if (!resume.eligible) throw new Error('Cleared Session is not resumable');
+    const resumedTerminal = createTerminalHostFixture();
+    const resumed = createClaudeUnifiedTerminalTurnOperations({
+      ctx: { ...ctx, agentRuntime: { ...ctx.agentRuntime, terminalHost: resumedTerminal.service } },
+      directory, happierSessionId: sessionId, hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
+      launchIntent: { kind: 'resume_native', providerSessionId: resume.vendorResumeId },
+    });
+    try {
+      await resumed.startProviderSession();
+      const launch = vi.mocked(resumedTerminal.service.createOrAttachHost).mock.calls[0]?.[0];
+      if (launch?.launch.kind !== 'agent-cli') throw new Error('Native Agent was not launched');
+      expect(launch.launch.args).toEqual(expect.arrayContaining(['--resume', 'native-b']));
+      expect(launch.launch.args).not.toContain('native-a');
+    } finally {
+      await resumed.disposeProviderSession();
+    }
   } finally {
     lifetime.abort();
     for (const child of children) child.kill();
