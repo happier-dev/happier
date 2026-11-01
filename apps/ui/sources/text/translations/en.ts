@@ -17582,6 +17582,7 @@ const enTerminal = {
 };
 
 const enTerminalEmbedded = {
+  inputRecovery: "Input delivery is uncertain. Copy your input and check the terminal before continuing.",
   nativeAccessibility: {
     terminalLabel: 'Terminal',
     fallbackValue:

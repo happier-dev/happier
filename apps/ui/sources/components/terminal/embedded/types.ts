@@ -28,6 +28,9 @@ export type EmbeddedTerminalPaneController = Readonly<{
     outputRetention?: TerminalOutputRetention | null;
     /** `error` that followed a connected stream: the terminal started, then its connection dropped. */
     connectionLost?: boolean;
+    inputRecoveryAvailable?: boolean;
+    copyInputRecovery?: () => Promise<void>;
+    discardInputRecovery?: () => void;
     detectedUrl: EmbeddedTerminalDetectedUrl;
     onInput: (data: string) => void;
     onPaste: (data: string) => void | Promise<unknown>;

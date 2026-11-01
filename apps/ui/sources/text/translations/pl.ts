@@ -14162,6 +14162,7 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    inputRecovery: "Nie można potwierdzić dostarczenia tekstu. Skopiuj go i sprawdź terminal przed kontynuowaniem.",
     nativeAccessibility: {
       terminalLabel: 'Terminal',
       fallbackValue: 'Natywna zawartość terminala jest niedostępna. Użyj widoku xterm WebView, aby uzyskać dostęp do terminala.',

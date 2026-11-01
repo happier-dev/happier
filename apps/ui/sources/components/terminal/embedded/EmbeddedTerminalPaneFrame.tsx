@@ -10,7 +10,7 @@ import { t } from '@/text';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { resolveTerminalErrorCopy } from '@/components/sessions/terminal/terminalErrorCopy';
-import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SurfaceFreshnessLine, type SurfaceFreshnessAction } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { describeActionOperationStatusLabel } from '@/components/inbox/actionOperations/actionOperationPresentation';
 import { embeddedTerminalPaneStyles } from './embeddedTerminalPaneStyles';
@@ -54,7 +54,7 @@ const MACHINE_UNREACHABLE_ERROR = 'terminal_machine_unreachable';
 type TerminalFrameState =
     | Readonly<{ kind: 'live' }>
     | Readonly<{ kind: 'not-open' }>
-    | Readonly<{ kind: 'line'; reason: string; busy?: boolean; tone?: 'neutral' | 'warning'; action?: Readonly<{ label: string; onPress: () => void }> }>
+    | Readonly<{ kind: 'line'; reason: string; busy?: boolean; tone?: 'neutral' | 'warning'; action?: Readonly<{ label: string; onPress: () => void }>; actions?: readonly SurfaceFreshnessAction[] }>
     | Readonly<{ kind: 'failed'; title: string; reason: string; code: string | null }>;
 
 /**
@@ -64,6 +64,15 @@ type TerminalFrameState =
  */
 function resolveTerminalFrameState(props: EmbeddedTerminalPaneFrameProps): TerminalFrameState {
     const { controller } = props;
+    if (controller.inputRecoveryAvailable && !controller.readOnly) return {
+        kind: 'line', tone: 'warning', reason: t('terminalEmbedded.inputRecovery'),
+        actions: [
+            { label: t('common.copy'), onPress: () => { void controller.copyInputRecovery?.(); },
+                testID: props.testIdPrefix ? `${props.testIdPrefix}-recover-input` : undefined },
+            { label: t('common.discard'), onPress: () => controller.discardInputRecovery?.(),
+                testID: props.testIdPrefix ? `${props.testIdPrefix}-discard-input` : undefined },
+        ],
+    };
     // Consent is asked before any PTY exists: the shell is `not-open` (or just starting), and the line
     // says it is waiting on the person. Only the Approvals shortcut needs the owner's callback.
     if (controller.approvalPending && (controller.status === 'not-open' || controller.status === 'idle' || controller.status === 'connecting')) {
@@ -136,8 +145,8 @@ function resolveTerminalFrameState(props: EmbeddedTerminalPaneFrameProps): Termi
  * have no process to receive them, so the phone key rail and arrow pad stay away.
  */
 /** Whether the phone key rail and arrow pad are offered: a writable terminal that is open or opening. */
-export function terminalAcceptsKeys(controller: Pick<EmbeddedTerminalPaneController, 'status' | 'readOnly'>): boolean {
-    if (controller.readOnly) return false;
+export function terminalAcceptsKeys(controller: Pick<EmbeddedTerminalPaneController, 'status' | 'readOnly' | 'inputRecoveryAvailable'>): boolean {
+    if (controller.readOnly || controller.inputRecoveryAvailable) return false;
     return controller.status === 'idle' || controller.status === 'connecting' || controller.status === 'connected';
 }
 
@@ -182,7 +191,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
     const surfaceCovered = frameState.kind === 'failed' || frameState.kind === 'not-open';
     const showsOwnChrome = props.chrome !== 'none';
     const readOnly = props.controller.readOnly === true;
-    const hidesExitLine = props.ownerStatesExit === true && props.controller.status === 'exited';
+    const hidesExitLine = props.ownerStatesExit === true && props.controller.status === 'exited' && !props.controller.inputRecoveryAvailable;
     const hugsContent = typeof props.contentHeight === 'number';
 
     return (
@@ -309,6 +318,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                     busy={frameState.busy}
                     tone={frameState.tone}
                     action={frameState.action}
+                    actions={frameState.actions}
                 />
             ) : null}
 

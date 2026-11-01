@@ -90,6 +90,23 @@ function makeController(overrides: Partial<EmbeddedTerminalPaneController>): Emb
 }
 
 describe('EmbeddedTerminalPaneFrame states (terminal lab ST)', () => {
+    it('keeps uncertain input recoverable with copy and discard while retaining output', async () => {
+        const copyInputRecovery = vi.fn(async () => {});
+        const discardInputRecovery = vi.fn();
+        const screen = await renderScreen(<EmbeddedTerminalPaneFrame title="shell" controller={makeController({
+            status: 'error', connectionLost: true, inputRecoveryAvailable: true, copyInputRecovery, discardInputRecovery,
+        })} chrome="none" surface={React.createElement('TerminalSurface')} testIdPrefix="input" platformOS="web" />);
+        expect(screen.findByTestId('input-surface')).toBeTruthy();
+        expect(screen.findByTestId('input-overlay')).toBeFalsy();
+        const copy = screen.findByTestId('input-recover-input');
+        const discard = screen.findByTestId('input-discard-input');
+        expect(copy).toBeTruthy();
+        expect(discard).toBeTruthy();
+        await copy?.props.onPress();
+        discard?.props.onPress();
+        expect(copyInputRecovery).toHaveBeenCalledOnce();
+        expect(discardInputRecovery).toHaveBeenCalledOnce();
+    });
     it('offers the shared pending-approval continuation while retaining the terminal surface', async () => {
         const onOpenApproval = vi.fn();
         const controller = { ...makeController({ status: 'connecting' }), approvalPending: true, onOpenApproval };

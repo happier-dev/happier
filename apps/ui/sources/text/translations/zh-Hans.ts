@@ -13832,6 +13832,7 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    inputRecovery: "无法确认输入是否已送达。请复制输入并检查终端，然后再继续。",
     nativeAccessibility: {
       terminalLabel: '终端',
       fallbackValue: '原生终端内容不可用。请使用 xterm WebView 访问无障碍终端内容。',

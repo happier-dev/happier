@@ -14391,6 +14391,7 @@ settingsSession: {
     },
 
     terminalEmbedded: {
+        inputRecovery: "Die Eingabe wurde möglicherweise übertragen. Kopiere sie und prüfe das Terminal, bevor du fortfährst.",
         nativeAccessibility: {
             terminalLabel: 'Terminal',
             fallbackValue: 'Native Terminalinhalte sind nicht verfügbar. Nutze die xterm-WebView für barrierefreie Terminalinhalte.',

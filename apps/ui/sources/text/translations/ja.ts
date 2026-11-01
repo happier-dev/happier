@@ -14609,6 +14609,7 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    inputRecovery: "入力が届いたか確認できません。入力をコピーし、ターミナルを確認してから続けてください。",
     nativeAccessibility: {
       terminalLabel: 'ターミナル',
       fallbackValue: 'ネイティブターミナルの内容を利用できません。アクセシブルなターミナル内容には xterm WebView を使用してください。',

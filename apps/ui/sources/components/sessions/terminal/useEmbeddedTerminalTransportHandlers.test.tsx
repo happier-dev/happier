@@ -98,6 +98,7 @@ describe('useEmbeddedTerminalTransportHandlers', () => {
         const failure = Object.assign(new Error('terminal_not_found'), { code: 'terminal_not_found' });
         await act(async () => pending.reject(failure));
         expect(onInputErrorSpy).not.toHaveBeenCalled();
+        if (operation === 'input') act(() => hook.getCurrent().discardInputRecovery());
         carrierSendInputSpy.mockRejectedValueOnce(failure);
         await act(async () => {
             if (operation === 'input') hook.getCurrent().onInput('current');

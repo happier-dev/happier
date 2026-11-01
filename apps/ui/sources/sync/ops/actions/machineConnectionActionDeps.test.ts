@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { createActionExecutor, computeHomeQrBindingProofV2, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -203,6 +204,21 @@ describe('UI machine connection Actions', () => {
         expect(await makeExecutor().execute('machines.terminal.list', { machineId: 'machine', serverId }, { surface: 'ui', authority: 'present_user', serverId }))
             .toEqual({ ok: true, result: null });
     });
+    it('preserves a terminal write pre-effect refusal through the real Action executor', async () => {
+        const serverId = await harness.addHome({ name: 'Input Home', serverUrl: 'https://input.example', accountId: 'alice' });
+        const input = { machineId: 'machine', serverId, terminalId: 'pty', event: { t: 'text' as const, text: 'safe' } };
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId,
+            actionsSettings: { v: 1 as const, actions: {}, approvalWaivedSurfaces: { 'machines.terminal.write': ['ui' as const] } } };
+        boundary.rpc.mockRejectedValueOnce(markRpcRequestDisposition(Object.assign(new Error('offline'), {
+            code: 'RPC_CLIENT_NOT_AVAILABLE', rpcErrorCode: 'RPC_CLIENT_NOT_AVAILABLE',
+        }), 'notSent'));
+        expect(await makeExecutor().execute('machines.terminal.write', input, context)).toMatchObject({
+            ok: false, errorCode: 'RPC_CLIENT_NOT_AVAILABLE', effectAttempted: false,
+        });
+        boundary.rpc.mockResolvedValueOnce({ ok: true });
+        expect(await makeExecutor().execute('machines.terminal.write', input, context)).toEqual({ ok: true, result: { ok: true } });
+    });
+
     it('stops the exact Machine daemon through admitted UI Action RPC', async () => {
         const serverId = await harness.addHome({ name: 'Stop Home', serverUrl: 'https://stop.example', accountId: 'alice' });
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());

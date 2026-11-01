@@ -11543,6 +11543,7 @@ settingsSession: {
     },
 
     terminalEmbedded: {
+        inputRecovery: "無法確認輸入是否已送達。請複製輸入並檢查終端，然後再繼續。",
         nativeAccessibility: {
             terminalLabel: '終端機',
             fallbackValue: '原生終端機內容無法使用。請使用 xterm WebView 存取無障礙終端機內容。',

@@ -14545,6 +14545,7 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    inputRecovery: "La consegna del testo è incerta. Copialo e controlla il terminale prima di continuare.",
     nativeAccessibility: {
       terminalLabel: 'Terminale',
       fallbackValue: 'Il contenuto del terminale nativo non è disponibile. Usa la WebView xterm per contenuti del terminale accessibili.',

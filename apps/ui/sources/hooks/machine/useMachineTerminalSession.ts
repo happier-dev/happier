@@ -328,6 +328,10 @@ export function useMachineTerminalSession(params: Readonly<{
         onPaste,
         onResize,
         onReady: notifyTransportReady,
+        flushPendingInput,
+        inputRecoveryAvailable,
+        readInputRecovery,
+        discardInputRecovery,
     } = useEmbeddedTerminalTransportHandlers({
         machineId: params.machineId,
         readOnly: params.readOnly,
@@ -399,7 +403,7 @@ export function useMachineTerminalSession(params: Readonly<{
     }, []);
 
     const copySelection = React.useCallback((request?: Readonly<{
-        source: 'user-selection' | 'remote-osc52';
+        source: 'user-selection' | 'remote-osc52' | 'input-recovery';
         text: string;
     }>) => {
         if (request?.source === 'remote-osc52') return;
@@ -408,6 +412,11 @@ export function useMachineTerminalSession(params: Readonly<{
             : '');
         if (text) void setClipboardStringSafe(text);
     }, [params.terminalRef]);
+
+    const copyInputRecovery = React.useCallback(async () => {
+        const text = readInputRecovery();
+        if (text) copySelection({ source: 'input-recovery', text });
+    }, [copySelection, readInputRecovery]);
 
     React.useEffect(() => {
         return () => {
@@ -586,6 +595,7 @@ export function useMachineTerminalSession(params: Readonly<{
                 signal: interest.signal,
             });
             terminalStreamCarrierRef.current = carrier;
+            flushPendingInput();
             terminalRendererAckDeliveryRef.current = createTerminalRendererAckDelivery({
                 send: carrier.acknowledge,
                 onDiagnostic: reportTerminalRendererAckDeliveryDiagnostic,
@@ -849,6 +859,7 @@ export function useMachineTerminalSession(params: Readonly<{
         byteStreamEnabled,
         embeddedTerminalRendererId,
         clearActiveTerminalStream,
+        flushPendingInput,
         hydrateTerminalRendererIfNeeded,
         initialTerminalSize,
         latestTerminalSizeRef,
@@ -1040,6 +1051,9 @@ export function useMachineTerminalSession(params: Readonly<{
             && (!params.readOnly || params.attachedTerminalId === terminalIdRef.current)
             && outputRetention?.terminalId === terminalIdRef.current ? outputRetention.value : null,
         connectionLost: status === 'error' && everConnectedRef.current,
+        inputRecoveryAvailable,
+        copyInputRecovery,
+        discardInputRecovery,
         detectedUrl,
         onInput,
         onPaste,

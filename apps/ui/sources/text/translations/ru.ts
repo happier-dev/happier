@@ -14154,6 +14154,7 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    inputRecovery: "Доставка ввода не подтверждена. Скопируйте ввод и проверьте терминал, прежде чем продолжить.",
     nativeAccessibility: {
       terminalLabel: 'Терминал',
       fallbackValue: 'Содержимое нативного терминала недоступно. Используйте xterm WebView для доступного содержимого терминала.',

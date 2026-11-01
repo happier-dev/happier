@@ -13330,6 +13330,7 @@ settingsSession: {
     },
 
     terminalEmbedded: {
+        inputRecovery: "No es pot confirmar el lliurament de l’entrada. Copia-la i comprova el terminal abans de continuar.",
         nativeAccessibility: {
             terminalLabel: 'Terminal',
             fallbackValue: 'El contingut del terminal natiu no està disponible. Utilitza la WebView xterm per accedir al contingut del terminal.',

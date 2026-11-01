@@ -14207,6 +14207,7 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    inputRecovery: "La réception de la saisie est incertaine. Copiez-la et vérifiez le terminal avant de continuer.",
     nativeAccessibility: {
       terminalLabel: 'Terminal',
       fallbackValue: 'Le contenu du terminal natif est indisponible. Utilise la WebView xterm pour un contenu de terminal accessible.',

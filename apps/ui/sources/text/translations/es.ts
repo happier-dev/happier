@@ -14333,6 +14333,7 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    inputRecovery: "No se puede confirmar la entrega de la entrada. Cópiala y revisa el terminal antes de continuar.",
     nativeAccessibility: {
       terminalLabel: 'Terminal',
       fallbackValue: 'El contenido del terminal nativo no está disponible. Usa la vista web de xterm para acceder al contenido del terminal.',

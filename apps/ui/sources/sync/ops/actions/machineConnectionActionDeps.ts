@@ -1,4 +1,6 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { startPairingForHome } from '@/auth/pairing/startPairingForHome';
 import { buildMachineAddCommand, resolveWebDesktopSetupHandoffTarget } from '@/components/machines/add/machineAddCommand';
 import { createDefaultSshCredentialsDraft } from '@/components/ssh/sshCredentialsDraft';
@@ -193,7 +195,13 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
                 }
                 case 'machines.terminal.write': {
                     const { machineId, serverId, ...request } = MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS[actionId].parse(input);
-                    return await machineTerminalStreamSendInput(machineId, request, { serverId, accountId: context.runtimeAccountId, signal });
+                    try {
+                        return await machineTerminalStreamSendInput(machineId, request, { serverId, accountId: context.runtimeAccountId, signal });
+                    } catch (error) {
+                        if (readRpcRequestDisposition(error) !== 'notSent') throw error;
+                        const errorCode = readRpcErrorCode(error) ?? 'terminal_input_failed';
+                        return { ok: false, errorCode, error: error instanceof Error ? error.message : errorCode, effectAttempted: false };
+                    }
                 }
                 case 'machines.terminal.close': {
                     const { machineId, serverId, ...request } = MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS[actionId].parse(input);
