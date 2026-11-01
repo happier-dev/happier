@@ -1,15 +1,15 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { standardCleanup } from '@/dev/testkit';
+import { createRenderCommitCounter, flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from './sessionFilesViewTestkit';
 
 installSessionFilesViewBoundaries();
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
-beforeAll(prepareSessionFilesViewTestkit);
+await prepareSessionFilesViewTestkit();
 afterEach(async () => {
     standardCleanup();
     if (fixture) {
@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 describe('SessionScmReviewDetailsView (comparison)', () => {
-    it('shows the captured turn a link names and switches scope within the same destination', async () => {
+    it('retains a captured comparison after retry and admits File actions only while a File page is mounted', async () => {
         const comparison = ScmComparisonSchema.parse({ id: 'a'.repeat(64),
             source: { kind: 'turnCheckpoint', turnId: 'turn_1' }, repository: { rootPath: '/tmp/repo' },
             endpoints: { before: 'turn-1-before', after: 'turn-1-after' },
@@ -39,15 +39,46 @@ describe('SessionScmReviewDetailsView (comparison)', () => {
         const { CapturedComparisonFilesView } = await import('@/components/sessions/files/comparison/CapturedComparisonFilesView');
         const { ChangedFilesReview } = await import('@/components/workspaces/scm/review/ChangedFilesReview');
         const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        const { SessionPaneErrorBoundary } = await import('@/components/sessions/panes/SessionPaneLazyLoader');
+        const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
+        const renders = createRenderCommitCounter();
+        let broken = false;
         let pane: ReturnType<typeof useAppPaneScope> | undefined;
         function PaneProbe() {
             pane = useAppPaneScope('session:s1');
             return null;
         }
-        const screen = await fixture.render(<><PaneProbe /><SessionScmReviewDetailsView sessionId="s1"
-            serverId={fixture.home.id} scopeId="session:s1"
-            target={{ comparison: { kind: 'turnCheckpoint', turnId: 'turn_1' }, view: 'files' }} /></>);
+        function Review() {
+            renders.render();
+            if (broken) throw new Error('External pane renderer failed');
+            return <SessionScmReviewDetailsView sessionId="s1" serverId={fixture.home.id} scopeId="session:s1"
+                target={{ comparison: { kind: 'turnCheckpoint', turnId: 'turn_1' }, view: 'files' }} />;
+        }
+        const scene = () => <React.Profiler id="review-recovery" onRender={renders.commit}>
+            <PaneProbe /><SessionPaneErrorBoundary testID="review"><Review /></SessionPaneErrorBoundary>
+        </React.Profiler>;
+        const screen = await fixture.render(scene());
         await vi.waitFor(() => expect(screen.findByTestId('captured-comparison-files')).not.toBeNull());
+        const mountCommits = renders.read().commits;
+        expect(mountCommits).toBeGreaterThan(0);
+        // A Review is not a mounted File page, even though both live under Files.
+        expect(await invokeScopeAction('file.view.get', {}, { serverId: fixture.scope.serverId, runtimeAccountId: 'alice' }))
+            .toMatchObject({ ok: false, errorCode: 'client_surface_unavailable' });
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            broken = true;
+            await screen.update(fixture.wrap(scene()));
+            expect(screen.findByTestId('review-error-diagnostic-pane_render_failed')).not.toBeNull();
+            broken = false;
+            renders.reset();
+            await screen.pressByTestIdAsync('review-error-action');
+            await vi.waitFor(() => expect(screen.findByTestId('captured-comparison-files')).not.toBeNull());
+            await flushHookEffects({ cycles: 20 });
+            expect(renders.read().commits).toBeGreaterThan(0);
+            renders.reset();
+            await flushHookEffects({ cycles: 20 });
+            expect(renders.read()).toEqual({ renders: 0, commits: 0 });
+        } finally { errors.mockRestore(); }
         expect(screen.findByType(CapturedComparisonFilesView).props.comparison.endpoints).toEqual(comparison.endpoints);
         const review = screen.findByType(ChangedFilesReview).props as React.ComponentProps<typeof ChangedFilesReview>;
         expect(review.evidenceOnly).toBe(true);
@@ -66,6 +97,16 @@ describe('SessionScmReviewDetailsView (comparison)', () => {
         expect(pane?.scopeState?.details.tabs[0]?.resource).toMatchObject({
             comparison: { kind: 'turnCheckpoint', turnId: 'turn_1', comparisonId: comparison.id }, view: 'walkthrough',
         });
+        // Opening an actual File page supplies its own mounted authority after the Review retires.
+        const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
+        await screen.update(fixture.wrap(<SessionFileDetailsView sessionId="s1" serverId={fixture.home.id}
+            scopeId="session:s1" filePath="src/earlier.ts" presentation="screen" />));
+        await vi.waitFor(async () => expect(await invokeScopeAction('file.view.get', {}, {
+            serverId: fixture.scope.serverId, runtimeAccountId: 'alice',
+        })).toMatchObject({ tabId: 'file:src/earlier.ts', mode: 'view' }));
+        await screen.unmount();
+        expect(await invokeScopeAction('file.view.get', {}, { serverId: fixture.scope.serverId, runtimeAccountId: 'alice' }))
+            .toMatchObject({ ok: false, errorCode: 'client_surface_unavailable' });
     });
 
     it('says it cannot show a comparison it cannot read yet, instead of showing another one', async () => {
