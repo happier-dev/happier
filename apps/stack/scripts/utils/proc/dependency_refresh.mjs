@@ -1,28 +1,26 @@
-import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, stat, unlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { lstat, readFile, readdir, readlink, realpath, rm, unlink } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { pathExists } from '../fs/fs.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../fs/json.mjs';
-import { coerceHappyMonorepoRootFromPath, getHappyStacksHomeDir, resolveExplicitStackEnvFilePath } from '../paths/paths.mjs';
-import { describeJsonOwnerLock, isJsonOwnerFileLockActive, readJsonOwnerLockSnapshot, withJsonOwnerFileLock } from './jsonOwnerFileLock.mjs';
+import { coerceHappyMonorepoRootFromPath, getHappyStacksHomeDir } from '../paths/paths.mjs';
+import { isJsonOwnerFileLockActive, readJsonOwnerLockSnapshot, withJsonOwnerFileLock } from './jsonOwnerFileLock.mjs';
 import { collectWorkspacePackageJsonPaths, isYarnWorkspace, readWorkspacePatchPaths } from './workspace_package_manifests.mjs';
 import { prepareDependencyConsumersForRefresh } from './dependency_consumers.mjs';
 import { inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
-import { isPidAlive } from './pids.mjs';
+import { DEPENDENCY_LOCK_STALE_AFTER_MS, dependencyWriterEnv, hasDependencyReadLock, inheritedDependencyWriter, waitForDependencyReaders, withDependencyReadLock } from './dependency_consumption.mjs';
 
-// v5 could publish an --ignore-scripts bootstrap as a complete install.
-const REFRESH_STATE_VERSION = 6;
+const REFRESH_STATE_VERSION = 7;
 const REFRESH_MARKER = '.happier-stack-dependencies-ready';
-// Earlier full admission relied on Yarn's lifecycle reuse and could omit UI
-// patches/assets. Only an explicitly completed UI postinstall proves this mode.
-const DEPENDENCY_INSTALL_MODE = 'development-full-ui-postinstall-v1';
-// Scriptless workspace lifecycle admission still completes mandatory UI outputs.
-export const SCRIPTLESS_DEPENDENCY_INSTALL_MODE = 'development-scriptless-ui-postinstall-v1';
+// Prerequisite owners can nest inside the installer in the same asynchronous
+// operation. Independent calls in this process still acquire the real lock.
+const dependencyWriters = new AsyncLocalStorage();
 
 export function isDependencyRefreshDisabled(env = process.env) {
   return String(env?.HAPPIER_STACK_SKIP_REFRESH_DEPS ?? '').trim() === '1'
@@ -33,256 +31,230 @@ export function resolveDependencyRefreshMarkerPath(installDir) {
   return join(installDir, 'node_modules', REFRESH_MARKER);
 }
 
-export const DEPENDENCY_REFRESH_ASIDE_PREFIX = 'hstack-dependency-refresh-';
-
-// Placement and historical cleanup share these parents. Prefer the executor's
-// scratch, then a source sibling; .project/tmp is already excluded by Mutagen.
-export async function resolveDependencyRefreshAsideParents(installDir, { scratchRoot = tmpdir() } = {}) {
-  const installRoot = await realpath(installDir);
-  const sourceRoot = await realpath(coerceHappyMonorepoRootFromPath(installRoot) ?? installRoot);
-  const ignoredParent = join(installRoot, '.project', 'tmp');
-  const parents = [];
-  for (const candidate of [scratchRoot, dirname(sourceRoot), ignoredParent]) {
-    let parent;
-    try { parent = await realpath(candidate); }
-    catch (error) {
-      if (error.code === 'ENOENT') parent = resolve(candidate);
-      else if (['EACCES', 'EPERM'].includes(error.code)) continue;
-      else throw error;
-    }
-    if (isPathInside(sourceRoot, parent) && parent !== ignoredParent) continue;
-    parents.push(parent);
-  }
-  return [...new Set(parents)];
-}
-
-async function createDependencyRefreshAside(installDir, env) {
-  const tree = await lstat(join(installDir, 'node_modules')).catch(error => {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  });
-  if (!tree) return null;
-  const device = tree.dev;
-  const ignoredParent = join(await realpath(installDir), '.project', 'tmp');
-  const parents = await resolveDependencyRefreshAsideParents(installDir, { scratchRoot: env.TMPDIR || tmpdir() });
-  for (const parent of parents) {
-    try {
-      if (parent === ignoredParent) await mkdir(parent, { recursive: true });
-      if ((await stat(parent)).dev !== device) continue;
-      return await mkdtemp(join(parent, DEPENDENCY_REFRESH_ASIDE_PREFIX));
-    } catch (error) {
-      if (!['ENOENT', 'EACCES', 'EPERM', 'EROFS', 'ENOSPC'].includes(error.code)) throw error;
-    }
-  }
-  throw new Error('No writable same-filesystem location is available to preserve dependencies outside synchronized source');
-}
-
 export function resolveDependencyInstallRoot(componentDir) {
   const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
   return monorepoRoot && existsSync(join(monorepoRoot, 'package.json')) ? monorepoRoot : componentDir;
 }
 
-function installDirLockKey(installDir) {
-  return createHash('sha256').update(resolve(installDir), 'utf-8').digest('hex');
-}
-
 export function resolveDependencyRefreshLockPath(installDir, env = process.env) {
-  const monorepoRoot = coerceHappyMonorepoRootFromPath(installDir);
-  if (monorepoRoot && resolve(monorepoRoot) === resolve(installDir)) {
+  // Captured source trees can link the canonical installation. Their readers
+  // must exclude its writer, rather than locking the source-view spelling.
+  let root = resolve(installDir);
+  try {
+    root = realpathSync(root);
+    if (lstatSync(join(root, 'node_modules')).isSymbolicLink()) {
+      const target = realpathSync(join(root, 'node_modules'));
+      if (!isPathInside(root, target)) root = dirname(target);
+    }
+  } catch (error) {
+    if (!['ENOENT', 'ENOTDIR', 'ELOOP'].includes(error.code)) throw error;
+  }
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(root);
+  if (monorepoRoot && resolve(monorepoRoot) === root) {
     return join(monorepoRoot, '.project', 'tmp', 'dependency-install.lock');
   }
-  return join(getHappyStacksHomeDir(env), 'cache', 'dependencies', `${installDirLockKey(installDir)}.lock`);
+  const key = createHash('sha256').update(root, 'utf8').digest('hex');
+  return join(getHappyStacksHomeDir(env), 'cache', 'dependencies', `${key}.lock`);
 }
 
-const BUILD_DEPENDENCY_CUSTODY_ENV = 'HAPPIER_BUILD_DEPENDENCY_CUSTODY';
-
-function readInheritedDependencyCustody(lockPath, env) {
-  let inherited;
-  try { inherited = JSON.parse(env[BUILD_DEPENDENCY_CUSTODY_ENV] ?? 'null'); } catch {}
-  const owner = readJsonOwnerLockSnapshot(lockPath).owner;
-  const owners = Array.isArray(owner?.readers) ? owner.readers : [owner];
-  if (Array.isArray(inherited) && (inherited.length === 3 || inherited.length === 4)
-    && inherited[0] === lockPath && owners.some(reader => inherited[1] === reader?.pid && inherited[2] === reader?.createdAtMs
-      && isPidAlive(Number(reader?.pid)) && (inherited.length === 3 || inherited[3] === reader?.readerId))
-    && isJsonOwnerFileLockActive(lockPath)) return owner;
-  return null;
-}
-
-/** Admission must not wait for more capacity while a containing consumer
- * retains the installed tree. Reuse the same authenticated custody check. */
-export function callerHoldsDependencyConsumption(env = process.env) {
-  let custody;
-  try { custody = JSON.parse(env[BUILD_DEPENDENCY_CUSTODY_ENV] ?? 'null'); } catch { return false; }
-  return Array.isArray(custody) && typeof custody[0] === 'string'
-    && readInheritedDependencyCustody(custody[0], env) !== null;
-}
-
-/**
- * Environment for a package-manager install that runs under the dependency writer lock.
- * First-party workspace postinstall builds take read custody of that same lock, so they inherit
- * the writer's custody instead of waiting on the install that runs them. Unless the caller chose
- * a scope, only the CLI postinstall, which owns real runtime prerequisites, runs as an install
- * side effect; owners prepare other component outputs explicitly.
- */
 export function resolveLockedInstallEnv(env = process.env, { lockPath, owner } = {}) {
+  // The CLI lifecycle unpacks its runtime tools. Other workspace output owners
+  // run explicitly after pnpm; they are not package-manager lifecycle builds.
   const scoped = String(env.HAPPIER_INSTALL_SCOPE ?? '').trim() ? env : { ...env, HAPPIER_INSTALL_SCOPE: 'cli' };
-  if (!lockPath || !owner) return scoped;
-  return { ...scoped, [BUILD_DEPENDENCY_CUSTODY_ENV]: JSON.stringify([lockPath, owner.pid, owner.createdAtMs]) };
+  return lockPath && owner ? dependencyWriterEnv(lockPath, owner, scoped) : scoped;
 }
 
-// Parallel compiler children consume one containing finite build. Reuse its
-// live lock identity instead of queuing them behind their own parent. Writers
-// must prepare before this consumption rather than upgrade inherited reads.
-export async function withDependencyConsumption({ installDir, env = process.env, signal, wait = true }, consume) {
+export async function withDependencyRefreshLock({ installDir, env = process.env, signal, wait = true, isRequired }, action) {
   signal?.throwIfAborted();
+  await assertDependencyTreeWritable(installDir);
   const lockPath = resolveDependencyRefreshLockPath(installDir, env);
-  if (readInheritedDependencyCustody(lockPath, env)) return await consume(env);
-  return await withDependencyRefreshLock({ installDir, env, signal, wait, writerPriority: false }, async ({ owner }) => {
-    return await consume({ ...env, [BUILD_DEPENDENCY_CUSTODY_ENV]: JSON.stringify([lockPath, owner.pid, owner.createdAtMs, owner.readerId]) });
-  });
-}
-
-export async function withDependencyRefreshLock({ installDir, env = process.env, signal, wait = true, writerPriority = true }, action) {
-  signal?.throwIfAborted();
-  const lockPath = resolveDependencyRefreshLockPath(installDir, env);
-  const inherited = readInheritedDependencyCustody(lockPath, env);
-  if (inherited && inherited.priority !== 'reader') return await action({ lockPath, owner: inherited });
-  if (writerPriority && inherited?.priority === 'reader') {
-    throw Object.assign(new Error(`HSTACK_WORKSPACE_ADMISSION_ORDER: a dependency writer cannot wait on inherited read custody (${lockPath}); prepare the producer before finite consumption`),
+  const inherited = dependencyWriters.getStore();
+  const owner = inherited?.get(lockPath);
+  if (owner?.active) return await action(owner.context);
+  const inheritedWriter = inheritedDependencyWriter(lockPath, env);
+  if (inheritedWriter) {
+    const generation = await readJsonIfExists(`${lockPath}.generation`);
+    const writer = { active: true, context: inheritedWriter,
+      beforeGeneration: generation?.completedGeneration ?? null,
+      unfinishedAtEntry: false, installationPublished: false };
+    try {
+      return await dependencyWriters.run(new Map([...(inherited ?? []), [lockPath, writer]]), () => action(inheritedWriter));
+    } finally { writer.active = false; }
+  }
+  if (hasDependencyReadLock(lockPath, env)) {
+    throw Object.assign(new Error('Prepare dependencies before consuming the installed tree; a reader cannot acquire mutation custody.'),
       { code: 'HSTACK_WORKSPACE_ADMISSION_ORDER' });
   }
-  return await withJsonOwnerFileLock(action, {
+  let observedPublication;
+  let required = true;
+  const shouldAcquire = isRequired && (async () => {
+    const publication = await readJsonIfExists(`${lockPath}.generation`);
+    const completed = publication?.completedGeneration ?? null;
+    // The existing publisher wakes all waiters. Reinspect canonical freshness
+    // once per publication, not once per departing ticket or heartbeat.
+    if (observedPublication === undefined || completed !== observedPublication) {
+      required = await isRequired();
+      observedPublication = completed;
+    }
+    return required;
+  });
+  return await withJsonOwnerFileLock(async context => {
+    await waitForDependencyReaders({ lockPath, env, signal, wait });
+    const generationPath = `${lockPath}.generation`;
+    const initialGeneration = await readJsonIfExists(generationPath);
+    const beforeGeneration = initialGeneration?.generation ?? null;
+    const unfinishedAtEntry = beforeGeneration !== null && beforeGeneration !== initialGeneration.completedGeneration;
+    const writer = { active: true, context, beforeGeneration, unfinishedAtEntry, installationPublished: false };
+    let result;
+    try {
+      result = await dependencyWriters.run(new Map([...(inherited ?? []), [lockPath, writer]]), () => action(context));
+    } finally { writer.active = false; }
+    // The root operation, including its nested prerequisite writers, has now
+    // succeeded. A prerequisite repair cannot certify the rest of a tree left
+    // unfinished by an earlier installer; only full installation can do that.
+    const generation = await readJsonIfExists(generationPath);
+    if (generation?.generation && generation.generation !== beforeGeneration
+      && (!unfinishedAtEntry || writer.installationPublished)) {
+      const outputsChanged = generation.outputsChanged ?? ['install'];
+      await writeJsonAtomic(generationPath, { ...generation, completedGeneration: generation.generation,
+        completedExpoGeneration: outputsChanged.some(output => output !== 'server-generated-client:prisma')
+          ? generation.generation : readCompletedExpoGeneration(generation) });
+    }
+    return result;
+  }, {
     lockPath,
     errorLabel: 'dependency refresh lock',
-    // Synchronous package-manager children can outlive or delay heartbeats.
-    // Wait for the live installer; the existing PID check reclaims dead owners.
     timeoutMs: Infinity,
-    staleAfterMs: 240_000,
+    staleAfterMs: DEPENDENCY_LOCK_STALE_AFTER_MS,
     onWait: createWorkspaceBuildWaitNotifier({ env, label: 'dependency refresh', kind: 'lock' }),
     signal,
     wait,
-    // A queued refresh runs immediately after the current finite consumption,
-    // before any new independent reader. Descendants retain containing custody.
-    priority: writerPriority ? 'writer' : 'reader',
-    sharedReaders: true,
+    shouldAcquire,
   });
+}
+
+/** Finite readers share the installer's existing exclusion boundary. Acquire
+ * only after capacity admission; preparation and repairs precede consumption. */
+export async function withDependencyConsumption({ installDir, env = process.env, signal, wait = true }, consume) {
+  const lockPath = resolveDependencyRefreshLockPath(installDir, env);
+  if (dependencyWriters.getStore()?.get(lockPath)?.active) return await consume(env);
+  return await withDependencyReadLock({
+    lockPath, env, signal, wait,
+    onAdmit: async () => {
+      const publication = await readJsonIfExists(`${lockPath}.generation`);
+      assertDependencyPublicationComplete(installDir, publication);
+    },
+  }, consume);
+}
+
+export function callerHoldsDependencyConsumption({ installDir, env = process.env }) {
+  const lockPath = resolveDependencyRefreshLockPath(installDir, env);
+  return hasDependencyReadLock(lockPath, env) || inheritedDependencyWriter(lockPath, env) !== null;
+}
+
+/** The publication-priority owner delegates only dependency continuation here.
+ * A reader blocks a declared writer, but never an independent declared reader. */
+export function callerHoldsDependencyResourceBlocking(resource, env = process.env) {
+  if (!['dependency', 'dependency-input-writer'].includes(resource?.kind)) return false;
+  const lockPath = resolveDependencyRefreshLockPath(resource.installDir, env);
+  if (lockPath !== resolve(resource.path)) return false;
+  const local = dependencyWriters.getStore()?.get(lockPath);
+  const writerEnv = local?.active ? dependencyWriterEnv(lockPath, local.context.owner, env) : env;
+  if (inheritedDependencyWriter(lockPath, writerEnv)) return true;
+  return resource.kind === 'dependency-input-writer' && hasDependencyReadLock(lockPath, env);
 }
 
 export function isDependencyRefreshLockActive({ installDir, env = process.env }) {
   return isJsonOwnerFileLockActive(resolveDependencyRefreshLockPath(installDir, env));
 }
 
-export function isDependencyRefreshMutationActive({ installDir, env = process.env }) {
-  const owner = readJsonOwnerLockSnapshot(resolveDependencyRefreshLockPath(installDir, env)).owner;
-  // Legacy untyped custody remains conservatively a possible writer.
-  return owner?.priority !== 'reader' && isDependencyRefreshLockActive({ installDir, env });
+export function isDependencyRefreshMutationActive(options) {
+  return isDependencyRefreshLockActive(options);
 }
 
-async function collectPatchPaths(installDir) {
-  return (await readWorkspacePatchPaths(installDir)).map(patchPath => resolve(installDir, patchPath));
+/** Starters observe an already-running installer. They acquire no lock and
+ * retain no dependency custody after the writer releases its own exclusion. */
+export async function waitForDependencyRefreshWriter({ installDir, env = process.env, signal }) {
+  signal?.throwIfAborted();
+  const lockPath = resolveDependencyRefreshLockPath(installDir, env);
+  if (dependencyWriters.getStore()?.get(lockPath)?.active) return false;
+  if (inheritedDependencyWriter(lockPath, env)) return false;
+  if (hasDependencyReadLock(lockPath, env)) return false;
+  // A gate may only be draining existing consumers. Readiness observes
+  // installed-byte mutation, as decided by the publication owner, not a
+  // request for future mutation custody.
+  if (!(await readDependencyPublicationState({ installDir, env })).writerActive) return true;
+  const observer = createFileChangeObserver([dirname(lockPath)], {
+    isRelevant: (_directory, filename) => filename == null || String(filename) === basename(lockPath),
+  });
+  const startedAt = Date.now();
+  const notify = createWorkspaceBuildWaitNotifier({ env, label: 'dependency refresh', kind: 'lock' });
+  const readSnapshot = () => {
+    if (!isJsonOwnerFileLockActive(lockPath)) return null;
+    const { updatedAtMs: _updatedAtMs, ...owner } = readJsonOwnerLockSnapshot(lockPath).owner ?? {};
+    return JSON.stringify(owner);
+  };
+  try {
+    for (;;) {
+      const snapshot = observer.capture(readSnapshot);
+      if (snapshot === null) return true;
+      notify({ lockPath, owner: readJsonOwnerLockSnapshot(lockPath).owner, waitedMs: Date.now() - startedAt });
+      await observer.wait({ snapshot, readSnapshot, maxWaitMs: DEFAULT_FILE_CHANGE_CATCH_UP_MS, signal });
+    }
+  } finally { observer.close(); }
 }
 
-async function collectDependencyInputPaths({ installDir, componentDir, versionPreparation = false }) {
+export async function waitForDependencyRefresh({ installDir, env = process.env, signal }) {
+  if (!await waitForDependencyRefreshWriter({ installDir, env, signal })) return;
+  const publication = await readJsonIfExists(`${resolveDependencyRefreshLockPath(installDir, env)}.generation`);
+  assertDependencyPublicationComplete(installDir, publication);
+}
+
+async function collectDependencyInputPaths({ installDir, componentDir }) {
   const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
   const workspaceManifests = monorepoRoot && resolve(installDir) === resolve(monorepoRoot)
     ? await collectWorkspacePackageJsonPaths(monorepoRoot)
-    : resolve(installDir) === resolve(componentDir)
-      ? []
-      : [join(componentDir, 'package.json')];
-  const manifestPaths = Array.from(new Set([
-    join(installDir, 'package.json'),
-    ...(resolve(installDir) === resolve(componentDir) ? [join(componentDir, 'package.json')] : []),
-    ...workspaceManifests,
-  ].map((path) => resolve(path))));
-  const declaredInputs = [];
-  for (const manifestPath of manifestPaths) {
-    let pkg;
-    try {
-      pkg = JSON.parse(await readFile(manifestPath, 'utf-8'));
-    } catch {
-      continue;
-    }
-    const entries = pkg?.happier?.installFreshnessInputs;
-    if (entries == null) continue;
-    if (!Array.isArray(entries) || entries.some((entry) => typeof entry !== 'string' || !entry.trim())) {
-      throw new Error(`Invalid happier.installFreshnessInputs in ${manifestPath}: expected non-empty relative path strings`);
-    }
-    const packageDir = dirname(manifestPath);
-    for (const entry of entries) {
-      if (isAbsolute(entry)) throw new Error(`Invalid happier.installFreshnessInputs entry in ${manifestPath}: paths must be package-relative`);
-      const inputPath = resolve(packageDir, entry);
-      const outside = relative(packageDir, inputPath);
-      if (outside === '..' || outside.startsWith(`..${sep}`)) {
-        throw new Error(`Invalid happier.installFreshnessInputs entry in ${manifestPath}: paths must stay inside the package`);
-      }
-      declaredInputs.push(inputPath);
-    }
-  }
-  // A new physical closure captures the executable prerequisites of the same
-  // UI/server producers. This scope belongs to the version format; extending
-  // it must not invalidate legacy v6 admissions before consumers migrate.
-  if (versionPreparation && existsSync(join(installDir, 'apps/server/scripts/generateClients.ts'))) {
-    declaredInputs.push(...[
-      'apps/server/tsconfig.json',
-      'apps/server/scripts/runTsx.mjs',
-      'apps/server/scripts/resolveServerRepoRoot.mjs',
-      'apps/server/scripts/resolveTsxCliInvocation.mjs',
-      'apps/server/scripts/generateClients.ts',
-      'apps/server/scripts/prismaCli.ts',
-      'apps/server/scripts/runCommand.ts',
-      'apps/server/scripts/schemaSync.ts',
-      'apps/server/sources/app/kv/userKvKeyStorage.ts',
-      'apps/server/sources/storage/enums.generated.ts',
-      'apps/server/prisma/schema.prisma',
-      'apps/server/prisma/sqlite/schema.prisma',
-      'apps/server/prisma/mysql/schema.prisma',
-      'scripts/workspaces/execPnpmCommand.mjs',
-      'packages/cli-common/windowsCommandInvocation.mjs',
-    ].map(path => join(installDir, path)));
-  }
-  if (versionPreparation && existsSync(join(installDir, 'apps/ui/tools/codemirror/buildCodeMirrorWebViewBundle.mjs'))) {
-    declaredInputs.push(join(installDir, 'apps/ui/sources/components/ui/code/editor/bridge/codeMirrorDecorations.ts'));
-  }
-  if (versionPreparation && existsSync(join(installDir, 'apps/stack/scripts/utils/proc/dependency_version_resolution.mjs'))) {
-    declaredInputs.push(...[
-      'apps/stack/scripts/utils/proc/dependency_version_resolution.mjs',
-      'apps/stack/scripts/utils/proc/dependency_version_paths.cjs',
-      'apps/stack/scripts/utils/proc/workspace_package_manifests.mjs',
-      'apps/stack/scripts/utils/fs/fs.mjs',
-    ].map(path => join(installDir, path)));
-  }
-  return Array.from(new Set([
-    join(installDir, 'pnpm-lock.yaml'),
-    join(installDir, 'pnpm-workspace.yaml'),
-    join(installDir, 'package.json'),
-    ...workspaceManifests,
-    ...await collectPatchPaths(installDir),
-    ...declaredInputs,
-  ].map((path) => resolve(path)))).sort();
+    : resolve(installDir) === resolve(componentDir) ? [] : [join(componentDir, 'package.json')];
+  return [...new Set([
+    join(installDir, 'pnpm-lock.yaml'), join(installDir, 'pnpm-workspace.yaml'), join(installDir, 'package.json'),
+    ...workspaceManifests, ...(await readWorkspacePatchPaths(installDir)).map(path => resolve(installDir, path)),
+  ].map(path => resolve(path)))].sort();
 }
 
 function isPathInside(rootPath, candidatePath) {
-  const relativePath = relative(resolve(rootPath), resolve(candidatePath));
-  return relativePath === '' || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`));
+  const path = relative(resolve(rootPath), resolve(candidatePath));
+  return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
 }
 
-function portableRelativePath(rootPath, candidatePath) {
-  const relativePath = relative(resolve(rootPath), resolve(candidatePath));
-  return relativePath ? relativePath.split(sep).join('/') : '.';
+async function inspectBorrowedNodeModulesLink(installDir) {
+  const nodeModules = join(installDir, 'node_modules');
+  try {
+    if (!(await lstat(nodeModules)).isSymbolicLink()) return null;
+    const [root, target] = await Promise.all([realpath(installDir), realpath(nodeModules)]);
+    return isPathInside(root, target) ? null : target;
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(error.code)) return null;
+    throw error;
+  }
+}
+
+function dependenciesBorrowed(installDir, linkTarget) {
+  return Object.assign(new Error(`Dependencies at ${installDir} are borrowed from ${linkTarget}; prepare dependencies in their owning checkout or use a separate installation.`),
+    { code: 'HAPPIER_DEPENDENCIES_BORROWED', installDir, linkTarget });
+}
+
+async function assertDependencyTreeWritable(installDir) {
+  const target = await inspectBorrowedNodeModulesLink(installDir);
+  if (target !== null) throw dependenciesBorrowed(installDir, target);
 }
 
 function dependencyInputIdentityPath({ installDir, componentDir, inputPath }) {
-  if (isPathInside(installDir, inputPath)) {
-    return `install:${portableRelativePath(installDir, inputPath)}`;
+  for (const [domain, root] of [['install', installDir], ['component', componentDir]]) {
+    if (isPathInside(root, inputPath)) return `${domain}:${relative(resolve(root), resolve(inputPath)).split(sep).join('/') || '.'}`;
   }
-  if (isPathInside(componentDir, inputPath)) {
-    return `component:${portableRelativePath(componentDir, inputPath)}`;
-  }
-  throw new Error(`Dependency freshness input is outside its installation and component roots: ${inputPath}`);
+  throw new Error(`Dependency input is outside its installation and component roots: ${inputPath}`);
 }
 
-// Package manifests describe dependency edges, platform selection and lifecycle
-// inputs. pnpm's workspace settings, overrides and patches are hashed above.
 const manifestInstallFields = [
   'name', 'version', 'private', 'dependencies', 'devDependencies', 'optionalDependencies',
   'peerDependencies', 'peerDependenciesMeta', 'bin', 'workspaces', 'resolutions', 'overrides',
@@ -297,10 +269,10 @@ function stableJson(value) {
   return value;
 }
 
-function manifestInstallDigest(bytes, { root = false } = {}) {
+function manifestInstallDigest(bytes, { root }) {
   const manifest = JSON.parse(bytes.toString('utf8'));
-  const inputs = Object.fromEntries(manifestInstallFields
-    .filter(field => Object.hasOwn(manifest, field)).map(field => [field, manifest[field]]));
+  const inputs = Object.fromEntries(manifestInstallFields.filter(field => Object.hasOwn(manifest, field))
+    .map(field => [field, manifest[field]]));
   if (manifest.directories?.bin != null) inputs.directories = { bin: manifest.directories.bin };
   const scripts = Object.fromEntries(['preinstall', 'install', 'postinstall', ...(root ? ['prepublish', 'prepare'] : [])]
     .filter(stage => Object.hasOwn(manifest.scripts ?? {}, stage)).map(stage => [stage, manifest.scripts[stage]]));
@@ -308,655 +280,325 @@ function manifestInstallDigest(bytes, { root = false } = {}) {
   return createHash('sha256').update(JSON.stringify(stableJson(inputs))).digest('hex');
 }
 
-// Lifecycle directories contain their regression tests too. Those files do
-// not change installed bytes; executable scripts and assets remain inputs.
-function isDependencyTestInputPath(inputPath) {
-  return /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(inputPath);
-}
-
 async function readInputSnapshot({ inputPaths, installDir, componentDir }) {
   const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
-  const workspaceManifests = new Set(monorepoRoot && resolve(installDir) === resolve(monorepoRoot)
+  const manifests = new Set(monorepoRoot && resolve(installDir) === resolve(monorepoRoot)
     ? (await collectWorkspacePackageJsonPaths(monorepoRoot)).map(path => resolve(path)) : []);
   const rootManifestPath = resolve(join(installDir, 'package.json'));
+  if (resolve(componentDir) !== resolve(installDir)) manifests.add(resolve(join(componentDir, 'package.json')));
   const snapshot = [];
-  const visit = async (inputPath) => {
-    if (isDependencyTestInputPath(inputPath)) return;
-    try {
-      const stats = await lstat(inputPath);
-      const identityPath = dependencyInputIdentityPath({ installDir, componentDir, inputPath });
-      if (stats.isFile()) {
-        const bytes = await readFile(inputPath);
-        snapshot.push({
-          path: identityPath,
-          kind: 'file',
-          digest: createHash('sha256').update(bytes).digest('hex'),
-          ...(resolve(inputPath) === rootManifestPath || workspaceManifests.has(resolve(inputPath))
-            ? { installDigest: manifestInstallDigest(bytes, { root: resolve(inputPath) === rootManifestPath }) } : {}),
-        });
-      } else if (stats.isDirectory()) {
-        snapshot.push({ path: identityPath, kind: 'directory' });
-      } else if (stats.isSymbolicLink()) {
-        snapshot.push({
-          path: identityPath,
-          kind: 'symlink',
-          targetDigest: createHash('sha256').update(await readlink(inputPath), 'utf8').digest('hex'),
-        });
-      } else {
-        snapshot.push({ path: identityPath, kind: 'other', size: Number(stats.size) });
-      }
-      if (stats.isDirectory()) {
-        const entries = await readdir(inputPath);
-        for (const entry of entries.sort()) await visit(join(inputPath, entry));
-      }
-    } catch {
-      snapshot.push({
-        path: dependencyInputIdentityPath({ installDir, componentDir, inputPath }),
-        kind: 'missing',
-      });
-    }
+  const visit = async inputPath => {
+    const path = dependencyInputIdentityPath({ installDir, componentDir, inputPath });
+    const info = await lstat(inputPath).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+    if (!info) snapshot.push({ path, kind: 'missing' });
+    else if (info.isFile()) {
+      const bytes = await readFile(inputPath);
+      snapshot.push({ path, kind: 'file', digest: createHash('sha256').update(bytes).digest('hex'),
+        ...(resolve(inputPath) === rootManifestPath || manifests.has(resolve(inputPath))
+          ? { installDigest: manifestInstallDigest(bytes, { root: resolve(inputPath) === rootManifestPath }) } : {}) });
+    } else if (info.isSymbolicLink()) {
+      snapshot.push({ path, kind: 'symlink', targetDigest: createHash('sha256').update(await readlink(inputPath)).digest('hex') });
+    } else if (info.isDirectory()) {
+      snapshot.push({ path, kind: 'directory' });
+      for (const entry of (await readdir(inputPath)).sort()) await visit(join(inputPath, entry));
+    } else snapshot.push({ path, kind: 'other', size: Number(info.size) });
   };
-  for (const inputPath of inputPaths) await visit(inputPath);
+  for (const path of inputPaths) await visit(path);
   return snapshot.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-async function resolveDependencyIdentity({ installDir, runtimeIdentity, installMode = DEPENDENCY_INSTALL_MODE }) {
-  if (runtimeIdentity) return runtimeIdentity;
-  let packageManager = 'unknown';
-  try {
-    const packageJson = JSON.parse(await readFile(join(installDir, 'package.json'), 'utf8'));
-    const declaredPackageManager = String(packageJson?.packageManager ?? '').trim();
-    if (declaredPackageManager) packageManager = declaredPackageManager;
-  } catch {
-    // A missing or malformed manifest is already represented in the input
-    // snapshot. Keep the toolchain identity explicit and deterministic too.
-  }
+async function resolveDependencyIdentity({ installDir, runtimeIdentity }) {
+  const manifest = await readJsonIfExists(join(installDir, 'package.json'));
   return {
-    packageManager,
-    nodeVersion: process.versions.node,
-    nodeAbi: process.versions.modules ?? 'unknown',
-    platform: process.platform,
-    architecture: process.arch,
-    installMode,
+    packageManager: runtimeIdentity?.packageManager ?? manifest?.packageManager ?? 'unknown',
+    nodeAbi: runtimeIdentity?.nodeAbi ?? process.versions.modules ?? 'unknown',
+    platform: runtimeIdentity?.platform ?? process.platform,
+    architecture: runtimeIdentity?.architecture ?? process.arch,
   };
 }
 
-function dependencyIdentitySatisfies(before, after) {
-  // Runtime-ready installs also admit source tests. Bootstrap completes UI
-  // outputs but cannot prove the other runtime lifecycle prerequisites.
-  return before?.packageManager === after?.packageManager
-    && before?.nodeVersion === after?.nodeVersion
-    && before?.nodeAbi === after?.nodeAbi
-    && before?.platform === after?.platform
-    && before?.architecture === after?.architecture
-    && (before?.installMode === after?.installMode
-      || (before?.installMode === DEPENDENCY_INSTALL_MODE
-        && after?.installMode === SCRIPTLESS_DEPENDENCY_INSTALL_MODE));
-}
-
-function snapshotsMatch(before, after) {
-  if (!Array.isArray(before) || !Array.isArray(after)) return false;
-  // Already-admitted v6 records include test files. Ignore them on both sides
-  // without rewriting the record or requiring an installation to upgrade it.
-  const currentPaths = new Set(after.map(entry => entry.path));
-  before = before.filter(entry => !isDependencyTestInputPath(entry.path)
-    // Older v6 capture included every top-level patches/*.patch file. Only
-    // current registered/explicit inputs remain authoritative; retain missing
-    // registered patches too, so deletion still invalidates their admission.
-    && (!/^install:patches\/[^/]+\.patch$/u.test(entry.path) || currentPaths.has(entry.path)));
-  after = after.filter(entry => !isDependencyTestInputPath(entry.path));
-  if (before.length !== after.length) return false;
-  return before.every((entry, index) => {
-    const candidate = after[index];
-    return entry.path === candidate?.path
-      && entry.kind === candidate.kind
-      // v6 raw-only admissions still prove unchanged bytes. Once the installer
-      // records projected inputs, runtime-only manifest edits remain fresh.
-      && (entry.installDigest != null && candidate.installDigest != null
-        ? entry.installDigest === candidate.installDigest : entry.digest === candidate.digest)
-      && entry.targetDigest === candidate.targetDigest
-      && entry.size === candidate.size;
-  });
-}
-
-const DEPENDENCY_VERSION_FORMAT = 1;
-export const DEPENDENCY_VERSION_ROOT_ENV = 'HAPPIER_DEPENDENCY_VERSION_ROOT';
-export const DEPENDENCY_VERSION_ID_ENV = 'HAPPIER_DEPENDENCY_VERSION_ID';
-export const DEPENDENCY_SOURCE_ROOT_ENV = 'HAPPIER_DEPENDENCY_SOURCE_ROOT';
-
-function dependencyVersionCacheDir(installDir, env) {
-  const cache = String(env.HAPPIER_STACK_PM_CACHE_BASE_DIR ?? '').trim()
-    || join(getHappyStacksHomeDir(env), 'cache');
-  return join(cache, 'dependencies', installDirLockKey(installDir));
-}
-
-export function resolveDependencyVersionSelectionPath(installDir, env = process.env) {
-  return join(dependencyVersionCacheDir(installDir, env), 'current.json');
-}
-
-export function resolveDependencyVersionEnv(env, { dependencyRoot, dependencyIdentity, installRoot }) {
-  return { ...env, [DEPENDENCY_VERSION_ROOT_ENV]: dependencyRoot, [DEPENDENCY_VERSION_ID_ENV]: dependencyIdentity,
-    [DEPENDENCY_SOURCE_ROOT_ENV]: installRoot };
-}
-
-export async function readInheritedDependencyVersion({ installDir, env = process.env }) {
-  const dependencyRoot = env[DEPENDENCY_VERSION_ROOT_ENV];
-  const dependencyIdentity = env[DEPENDENCY_VERSION_ID_ENV];
-  if (!dependencyRoot && !dependencyIdentity) return null;
-  const marker = typeof dependencyRoot === 'string'
-    && await readJsonIfExists(resolveDependencyRefreshMarkerPath(dependencyRoot));
-  const inherited = { version: DEPENDENCY_VERSION_FORMAT, installRoot: resolve(installDir),
-    dependencyRoot, dependencyIdentity, identity: marker?.identity, inputs: marker?.inputs };
-  const admitted = await admitDependencyVersion({ installDir, env, selected: inherited, marker });
-  if (!admitted) throw Object.assign(new Error('Inherited dependency version is not admitted'),
-    { code: 'HAPPIER_DEPENDENCY_VERSION_UNAVAILABLE' });
-  return admitted;
-}
-
-/** Read the admitted physical closure. This does not recertify its immutable
- * bytes against the moving source checkout; new demand compares source inputs. */
-export async function readSelectedDependencyVersion({ installDir, env = process.env }) {
-  const selected = await readJsonIfExists(resolveDependencyVersionSelectionPath(installDir, env));
-  return await admitDependencyVersion({ installDir, env, selected });
-}
-
-async function admitDependencyVersion({ installDir, env, selected, marker: capturedMarker }) {
-  if (selected?.version !== DEPENDENCY_VERSION_FORMAT || selected.installRoot !== resolve(installDir)
-    || typeof selected.dependencyRoot !== 'string' || typeof selected.dependencyIdentity !== 'string'
-    || !isPathInside(join(dependencyVersionCacheDir(installDir, env), 'versions'), selected.dependencyRoot)) return null;
-  const marker = capturedMarker ?? await readJsonIfExists(resolveDependencyRefreshMarkerPath(selected.dependencyRoot));
-  if (marker?.version !== REFRESH_STATE_VERSION || marker.superseded === true
-    || marker.dependencyVersion?.version !== DEPENDENCY_VERSION_FORMAT
-    || marker.dependencyVersion?.identity !== selected.dependencyIdentity
-    || marker.dependencyVersion?.published !== true
-    || marker.dependencyVersion?.installRoot !== resolve(installDir)
-    || !dependencyIdentitySatisfies(marker.identity, selected.identity)
-    || !snapshotsMatch(marker.inputs, selected.inputs)) return null;
-  return { ...selected, env: resolveDependencyVersionEnv(env, selected) };
-}
-
-async function findPublishedDependencyVersion({ installDir, env, dependencyIdentity, admits }) {
-  const versions = join(dependencyVersionCacheDir(installDir, env), 'versions');
-  const entries = await readdir(versions, { withFileTypes: true }).catch(error => {
-    if (error.code === 'ENOENT') return [];
-    throw error;
-  });
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith(`${dependencyIdentity}-`)) continue;
-    const dependencyRoot = join(versions, entry.name);
-    const marker = await readJsonIfExists(resolveDependencyRefreshMarkerPath(dependencyRoot));
-    // A marker-complete builder still owns cleanup until publication. Reusing
-    // its attempt would let that builder delete another consumer's closure.
-    if (marker?.dependencyVersion?.published !== true) continue;
-    const candidate = await admitDependencyVersion({ installDir, env, marker, selected: {
-      version: DEPENDENCY_VERSION_FORMAT, installRoot: resolve(installDir), dependencyRoot,
-      dependencyIdentity, identity: marker.identity, inputs: marker.inputs,
-    } });
-    if (admits(candidate)) return candidate;
-  }
-  return null;
-}
-
-function dependencyVersionIdentity(identity, inputs) {
-  // Reuse the canonical install projection: descriptive/runtime-only manifest
-  // edits must not produce a second freshness policy or a new installation.
+export function dependencyInputsIdentity(identity, inputs) {
   const projected = inputs.map(({ installDigest, digest, ...entry }) => ({
     ...entry, ...(installDigest != null ? { installDigest } : digest != null ? { digest } : {}),
   }));
   return createHash('sha256').update(JSON.stringify(stableJson({ identity, inputs: projected }))).digest('hex');
 }
 
-async function captureDependencyInputs({ installDir, componentDir, dependencyRoot, inputSnapshot }) {
-  for (const entry of inputSnapshot) {
-    const [domain, ...parts] = entry.path.split(':');
-    const path = parts.join(':');
-    const sourceRoot = domain === 'install' ? installDir : componentDir;
-    const source = resolve(sourceRoot, path);
-    const target = resolve(dependencyRoot, relative(installDir, source));
-    if (!isPathInside(dependencyRoot, target)) throw new Error('Dependency version inputs must belong to its workspace');
-    if (entry.kind === 'missing') continue;
-    await mkdir(dirname(target), { recursive: true });
-    if (entry.kind === 'directory') await mkdir(target, { recursive: true });
-    else if (entry.kind === 'file') await copyFile(source, target);
-    else if (entry.kind === 'symlink') {
-      // A source link can expose mutable bytes outside the private preparation.
-      // Current registered preparation inputs are regular files/directories.
-      throw new Error(`Dependency preparation input must be a physical file or directory: ${entry.path}`);
-    } else throw new Error(`Unsupported dependency preparation input: ${entry.path}`);
-  }
-}
-
-/** Prepare a complete workspace closure at one stable physical path. No live
- * install is mutated, and installation never holds source consumption custody.
- * Only the short atomic selection uses the existing dependency writer owner.
- * Callers must complete mandatory UI/Prisma outputs in `prepare` before return. */
-export async function prepareDependencyVersion({
-  installDir, componentDir = installDir, env = process.env, signal, runtimeIdentity,
-  installMode = SCRIPTLESS_DEPENDENCY_INSTALL_MODE,
-}, prepare) {
-  if (typeof prepare !== 'function') throw new TypeError('prepareDependencyVersion requires a preparation callback');
-  signal?.throwIfAborted();
-  const versions = join(dependencyVersionCacheDir(installDir, env), 'versions');
-  if (isPathInside(installDir, versions)) throw new Error('Dependency versions must be stored outside the source mirror');
-  const inputPaths = await collectDependencyInputPaths({ installDir, componentDir, versionPreparation: true });
-  const inputSnapshot = await readInputSnapshot({ inputPaths, installDir, componentDir });
-  const identity = await resolveDependencyIdentity({ installDir, runtimeIdentity, installMode });
-  const dependencyIdentity = dependencyVersionIdentity(identity, inputSnapshot);
-  const admits = selected => selected && dependencyIdentitySatisfies(selected.identity, identity)
-    && snapshotsMatch(selected.inputs, inputSnapshot);
-  const selected = await readSelectedDependencyVersion({ installDir, env });
-  if (admits(selected)) return { ...selected, prepared: false, selected: true };
-  const inputsChanged = () => Object.assign(new Error('Dependency inputs changed during private preparation; request the current inputs again'),
-    { code: 'HAPPIER_DEPENDENCY_INPUTS_CHANGED' });
-  const selectRetained = async () => {
-    signal?.throwIfAborted();
-    const currentPaths = await collectDependencyInputPaths({ installDir, componentDir, versionPreparation: true });
-    const current = await readInputSnapshot({ inputPaths: currentPaths, installDir, componentDir });
-    const currentIdentity = await resolveDependencyIdentity({ installDir, runtimeIdentity, installMode });
-    if (!snapshotsMatch(inputSnapshot, current) || !dependencyIdentitySatisfies(identity, currentIdentity)) throw inputsChanged();
-    const winner = await readSelectedDependencyVersion({ installDir, env });
-    if (admits(winner)) return winner;
-    const retained = await findPublishedDependencyVersion({ installDir, env, dependencyIdentity, admits });
-    if (retained) {
-      const { env: _consumerEnv, ...record } = retained;
-      await writeJsonAtomic(resolveDependencyVersionSelectionPath(installDir, env), record);
-    }
-    return retained;
-  };
-  // An absent version must not queue a writer before private preparation.
-  // A possible retained version is re-admitted under decision custody before
-  // selection, sharing the collector's eventual decision boundary.
-  if (await findPublishedDependencyVersion({ installDir, env, dependencyIdentity, admits })) {
-    const retained = await withDependencyRefreshLock({ installDir, env, signal }, selectRetained);
-    if (retained) return { ...retained, prepared: false, selected: true };
-  }
-  await mkdir(versions, { recursive: true });
-  const dependencyRoot = await mkdtemp(join(versions, `${dependencyIdentity}-`));
-  let retained = false;
-  let cleanupHandled = false;
-  try {
-    await captureDependencyInputs({ installDir, componentDir, dependencyRoot, inputSnapshot });
-    const capturedComponent = join(dependencyRoot, relative(installDir, componentDir));
-    const captured = await readInputSnapshot({ inputPaths: inputPaths.map(path => join(dependencyRoot, relative(installDir, path))),
-      installDir: dependencyRoot, componentDir: capturedComponent });
-    if (!snapshotsMatch(inputSnapshot, captured)) throw inputsChanged();
-    const prepareEnv = { ...env, pnpm_config_package_import_method: 'copy', pnpm_config_side_effects_cache: 'false' };
-    delete prepareEnv[BUILD_DEPENDENCY_CUSTODY_ENV];
-    delete prepareEnv[DEPENDENCY_VERSION_ROOT_ENV];
-    delete prepareEnv[DEPENDENCY_VERSION_ID_ENV];
-    delete prepareEnv[DEPENDENCY_SOURCE_ROOT_ENV];
-    signal?.throwIfAborted();
-    await prepare({ installDir: dependencyRoot, componentDir: capturedComponent, env: prepareEnv, signal });
-    signal?.throwIfAborted();
-    if (!await pathExists(join(dependencyRoot, 'node_modules'))) throw new Error('Dependency preparation produced no node_modules');
-    const candidate = { version: DEPENDENCY_VERSION_FORMAT, installRoot: resolve(installDir),
-      dependencyRoot, dependencyIdentity, identity, inputs: inputSnapshot };
-    const workerPnpmModules = String(env.HAPPIER_DEV_TARGET_EXECUTION ?? '') === '1'
-      && identity.packageManager.startsWith('pnpm@')
-      ? await readInputSnapshot({ installDir: dependencyRoot, componentDir: capturedComponent,
-        inputPaths: [join(dependencyRoot, 'node_modules/.modules.yaml'), join(dependencyRoot, 'node_modules/.yarn-integrity')] }) : null;
-    if (workerPnpmModules && (workerPnpmModules.find(entry => entry.path === 'install:node_modules/.modules.yaml')?.kind !== 'file'
-      || workerPnpmModules.find(entry => entry.path === 'install:node_modules/.yarn-integrity')?.kind !== 'missing')) {
-      throw new Error('Private pnpm preparation did not produce clean modules metadata');
-    }
-    const readinessMarker = {
-      version: REFRESH_STATE_VERSION, identity, inputs: inputSnapshot, superseded: false,
-      dependencyVersion: { version: DEPENDENCY_VERSION_FORMAT, identity: dependencyIdentity,
-        installRoot: resolve(installDir), published: false },
-      ...(workerPnpmModules ? { workerPnpmModules } : {}),
-    };
-    await writeJsonAtomic(resolveDependencyRefreshMarkerPath(dependencyRoot), readinessMarker);
-    return await withDependencyRefreshLock({ installDir, env, signal }, async () => {
-      const winner = await selectRetained();
-      if (winner) return { ...winner, prepared: false, selected: true };
-      try {
-        await writeJsonAtomic(resolveDependencyRefreshMarkerPath(dependencyRoot), { ...readinessMarker,
-          dependencyVersion: { ...readinessMarker.dependencyVersion, published: true } });
-        await writeJsonAtomic(resolveDependencyVersionSelectionPath(installDir, env), candidate);
-        retained = true;
-        return { ...candidate, env: resolveDependencyVersionEnv(env, candidate), prepared: true, selected: true };
-      } catch (error) {
-        // Revoke admission under source decision custody, then leave recursive
-        // deletion to the outer finally after custody has been released. If
-        // revocation fails, retain the possibly adopted closure instead.
-        cleanupHandled = true;
-        await unlink(resolveDependencyRefreshMarkerPath(dependencyRoot)).catch(failure => {
-          if (failure.code !== 'ENOENT') throw failure;
-        });
-        cleanupHandled = false;
-        throw error;
-      }
-    });
-  } finally {
-    if (!retained && !cleanupHandled) await rm(dependencyRoot, { recursive: true, force: true });
-  }
-}
-
 async function inspectSelfReferentialNodeModulesLink(installDir) {
   const nodeModules = join(installDir, 'node_modules');
   const candidatePath = join(nodeModules, 'node_modules');
   try {
-    const stats = await lstat(candidatePath);
-    if (!stats.isSymbolicLink()) return null;
-    const [nodeModulesRealPath, candidateRealPath] = await Promise.all([
-      realpath(nodeModules),
-      realpath(candidatePath),
-    ]);
-    return nodeModulesRealPath === candidateRealPath ? candidatePath : null;
-  } catch {
-    return null;
+    if (!(await lstat(candidatePath)).isSymbolicLink()) return null;
+    const [root, candidate] = await Promise.all([realpath(nodeModules), realpath(candidatePath)]);
+    return root === candidate ? candidatePath : null;
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(error.code)) return null;
+    throw error;
   }
 }
 
-async function repairSelfReferentialNodeModulesLink(installDir) {
-  const candidatePath = await inspectSelfReferentialNodeModulesLink(installDir);
-  if (!candidatePath) return false;
-  // Remove only the exact self-referential link. `unlink` never traverses its
-  // target, so the admitted dependency tree and every package below it remain
-  // untouched.
-  await unlink(candidatePath);
-  return true;
-}
-
-export async function inspectDependencyRefresh({ installDir, componentDir = installDir, runtimeIdentity, installMode, env = process.env }) {
-  const nodeModules = join(installDir, 'node_modules');
+export async function inspectDependencyRefresh({ installDir, componentDir = installDir, runtimeIdentity, env = process.env }) {
+  const borrowedNodeModulesTarget = await inspectBorrowedNodeModulesLink(installDir);
   const inputPaths = await collectDependencyInputPaths({ installDir, componentDir });
   const inputSnapshot = await readInputSnapshot({ inputPaths, installDir, componentDir });
-  const dependencyIdentity = await resolveDependencyIdentity({ installDir, runtimeIdentity, installMode });
-  // This is the admission record for the installed tree, so keep it with that
-  // tree. Warm readers can prove freshness without touching mutation-lock paths,
-  // and replacing node_modules naturally invalidates the old publication.
+  const dependencyIdentity = await resolveDependencyIdentity({ installDir, runtimeIdentity });
+  const installIdentity = dependencyInputsIdentity(dependencyIdentity, inputSnapshot);
   const markerPath = resolveDependencyRefreshMarkerPath(installDir);
-  const markerState = await readJsonIfExists(markerPath).catch(() => null);
-  // v6 input freshness never proved that pnpm started from a clean tree: it
-  // can retain unrecorded Yarn packages even alongside current .modules.yaml.
-  // Worker-only provenance is published by an actual install below, then bound
-  // to pnpm's produced metadata without another package inventory or parser.
-  const workerPnpmModules = String(env.HAPPIER_DEV_TARGET_EXECUTION ?? '') === '1'
-    && dependencyIdentity.packageManager.startsWith('pnpm@')
-    ? await readInputSnapshot({ installDir, componentDir, inputPaths: [
-        join(nodeModules, '.modules.yaml'), join(nodeModules, '.yarn-integrity'),
-      ] }) : null;
-  const workerPnpmTreeNeedsCleanInstall = workerPnpmModules !== null && (
-    markerState?.identity?.packageManager !== dependencyIdentity.packageManager
-    ||
-    workerPnpmModules.find(entry => entry.path === 'install:node_modules/.modules.yaml')?.kind !== 'file'
-    || workerPnpmModules.find(entry => entry.path === 'install:node_modules/.yarn-integrity')?.kind !== 'missing'
-    || !snapshotsMatch(markerState?.workerPnpmModules, workerPnpmModules)
-  );
-  const nodeModulesPresent = await pathExists(nodeModules);
-  const selfReferentialNodeModulesLinkPath = nodeModulesPresent
-    ? await inspectSelfReferentialNodeModulesLink(installDir)
-    : null;
-  if (
-    markerState?.version === REFRESH_STATE_VERSION
-    && dependencyIdentitySatisfies(markerState.identity, dependencyIdentity)
-    && Array.isArray(markerState.inputs)
-  ) {
-    const inputsMatch = snapshotsMatch(markerState.inputs, inputSnapshot);
-    return {
-      admitted: nodeModulesPresent && !workerPnpmTreeNeedsCleanInstall && selfReferentialNodeModulesLinkPath === null && markerState.superseded !== true,
-      admittedState: nodeModulesPresent && !workerPnpmTreeNeedsCleanInstall && selfReferentialNodeModulesLinkPath === null && markerState.superseded !== true
-        // A warm prerequisite action may publish the proven projection without
-        // installation. Stale raw admissions never acquire a current baseline.
-        ? { ...markerState, inputs: inputsMatch ? inputSnapshot : markerState.inputs } : null,
-      required: !nodeModulesPresent
-        || workerPnpmTreeNeedsCleanInstall
-        || selfReferentialNodeModulesLinkPath !== null
-        || markerState.superseded === true
-        || !inputsMatch,
-      inputPaths,
-      inputSnapshot,
-      dependencyIdentity,
-      markerPath,
-      selfReferentialNodeModulesLinkPath,
-      workerPnpmModules,
-      workerPnpmTreeNeedsCleanInstall,
-    };
-  }
-  return {
-    admitted: false,
-    admittedState: null,
-    required: true,
-    inputPaths,
-    inputSnapshot,
-    dependencyIdentity,
-    markerPath,
-    selfReferentialNodeModulesLinkPath,
-    workerPnpmModules,
-    workerPnpmTreeNeedsCleanInstall,
-  };
+  const marker = await readJsonIfExists(markerPath);
+  // A borrower must observe the publisher's unfinished mutation, rather than
+  // treating the absence of its own generation as proof of completion.
+  const lockPath = resolveDependencyRefreshLockPath(borrowedNodeModulesTarget ? dirname(borrowedNodeModulesTarget) : installDir, env);
+  const generation = await readJsonIfExists(`${lockPath}.generation`);
+  const writer = dependencyWriters.getStore()?.get(lockPath);
+  // Previous failed or interrupted attempts remain unproven even when the
+  // install inputs did not change. Nested checks may consume this writer's
+  // marked attempt, but acquiring a new lock cannot bless an older failure.
+  const currentWriterAttempt = writer?.active && generation?.generation !== writer.beforeGeneration;
+  const unfinishedMutation = generation?.generation != null
+    && generation.generation !== generation.completedGeneration && !currentWriterAttempt;
+  const selfReferentialNodeModulesLinkPath = await inspectSelfReferentialNodeModulesLink(installDir);
+  const admitted = await pathExists(join(installDir, 'node_modules'))
+    && marker?.version === REFRESH_STATE_VERSION && typeof marker.identity === 'string'
+    && selfReferentialNodeModulesLinkPath === null && !unfinishedMutation;
+  const required = !admitted || marker.identity !== installIdentity;
+  if (borrowedNodeModulesTarget !== null && required) throw dependenciesBorrowed(installDir, borrowedNodeModulesTarget);
+  return { admitted, required,
+    inputPaths, inputSnapshot, dependencyIdentity, installIdentity, markerPath, selfReferentialNodeModulesLinkPath };
 }
 
-// Validation reads the primary installed tree; only an explicit dependency
-// refresh may repair it. In particular, skipping installation alone still lets
-// PM preparation repair patches, withdraw admission, or reinstall mixed bytes.
-export async function assertDependenciesReady({ installDir, componentDir = installDir, env = process.env, runtimeIdentity, installMode }) {
-  const requireRefresh = (reason, detail = '') => {
-    const error = new Error(`[local] dependencies need refresh at ${installDir} (${reason}${detail ? `: ${detail}` : ''}). Validation does not install or repair primary dependencies. Complete an explicitly authorized refresh through the owning Stack's dependency refresh workflow, then retry validation.`);
-    error.code = 'HAPPIER_DEPENDENCIES_NEED_REFRESH';
-    error.reason = reason;
-    error.installDir = installDir;
-    throw error;
-  };
-  const checkActiveWriter = () => {
-    if (isDependencyRefreshMutationActive({ installDir, env })) {
-      requireRefresh('refresh-in-progress', describeJsonOwnerLock(resolveDependencyRefreshLockPath(installDir, env)));
-    }
-  };
-  checkActiveWriter();
-  const manifest = await readJsonIfExists(join(installDir, 'package.json'));
-  const isYarnPredecessor = isYarnWorkspace(manifest);
-  // A sibling checkout owns its installed-tree format and lifecycle evidence.
-  // Read its canonical decision; never rewrite its admission with this line's
-  // pnpm inputs or apply this line's newer UI-postinstall contract to it.
+function dependenciesNeedRefresh(installDir, reason, detail = '') {
+  return Object.assign(new Error(`[local] dependencies need refresh at ${installDir} (${reason}${detail ? `: ${detail}` : ''}). Retry through the owning dependency preparation entry point.`),
+    { code: 'HAPPIER_DEPENDENCIES_NEED_REFRESH', reason, installDir });
+}
+
+function assertDependencyPublicationComplete(installDir, publication) {
+  if (publication?.generation == null || publication.generation === publication.completedGeneration) return;
+  if (publication.installationFailure) throw dependencyInstallationFailure(publication.installationFailure);
+  throw dependenciesNeedRefresh(installDir, 'unfinished-installation');
+}
+
+async function assertMandatoryOutputsReady({ installDir, componentDir, env, signal }) {
+  const uiDir = join(installDir, 'apps', 'ui');
+  for (const dir of new Set([uiDir, componentDir])) {
+    const failures = await inspectUiPostinstallOutputs(dir, installDir, { env });
+    if (failures.length) throw dependenciesNeedRefresh(installDir, 'ui-postinstall-incomplete', failures.join('; '));
+  }
+  const { ensureServerGeneratedProviderOutputs } = await import('./pm.mjs');
+  try {
+    await ensureServerGeneratedProviderOutputs(join(installDir, 'apps', 'server'), installDir, { env, quiet: true, checkOnly: true, signal });
+  } catch { signal?.throwIfAborted(); throw dependenciesNeedRefresh(installDir, 'prisma-outputs-incomplete'); }
+}
+
+export async function assertDependenciesReady({ installDir, componentDir = installDir, env = process.env, runtimeIdentity, signal }) {
+  await waitForDependencyRefreshWriter({ installDir, env, signal });
+  const isYarnPredecessor = isYarnWorkspace(await readJsonIfExists(join(installDir, 'package.json')));
   const inspect = isYarnPredecessor
     ? (await import(pathToFileURL(join(installDir, 'apps/stack/scripts/utils/proc/dependency_refresh.mjs')).href)).inspectDependencyRefresh
     : inspectDependencyRefresh;
-  const readiness = await inspect({ installDir, componentDir, runtimeIdentity, installMode, env });
-  if (readiness.required) requireRefresh('stale-or-unadmitted');
-  if (!isYarnPredecessor) {
-    const failures = await inspectUiPostinstallOutputs(join(installDir, 'apps', 'ui'), installDir, { env });
-    if (failures.length > 0) requireRefresh('ui-postinstall-incomplete', failures.join('; '));
-    const { ensureServerGeneratedProviderOutputs } = await import('./pm.mjs');
-    try {
-      await ensureServerGeneratedProviderOutputs(join(installDir, 'apps', 'server'), installDir, { env, quiet: true, checkOnly: true });
-    } catch {
-      requireRefresh('prisma-outputs-incomplete');
-    }
+  const readiness = await inspect({ installDir, componentDir, runtimeIdentity, env });
+  if (readiness.required) {
+    const publication = await readJsonIfExists(`${resolveDependencyRefreshLockPath(installDir, env)}.generation`);
+    assertDependencyPublicationComplete(installDir, publication);
+    throw dependenciesNeedRefresh(installDir, 'stale-or-unadmitted');
   }
-  checkActiveWriter();
+  if (!isYarnPredecessor) await assertMandatoryOutputsReady({ installDir, componentDir, env, signal });
   return readiness;
 }
 
+function readCompletedExpoGeneration(generation) {
+  // The active pre-change development writer publishes only the global pair.
+  // Preserve that conservative meaning until its next producer-owned write.
+  return generation?.completedExpoGeneration !== undefined
+    ? generation.completedExpoGeneration : generation?.completedGeneration ?? null;
+}
+
+/** @typedef {'install' | 'ui-dependency-outputs' | 'server-generated-client:prisma'} DependencyOutput */
+
+/** @param {{ installDir: string, env?: NodeJS.ProcessEnv, output?: DependencyOutput }} options */
+export async function markDependencyMutation({ installDir, env = process.env, output = 'install' }) {
+  await assertDependencyTreeWritable(installDir);
+  const lockPath = resolveDependencyRefreshLockPath(installDir, env);
+  const generationPath = `${lockPath}.generation`;
+  const previous = await readJsonIfExists(generationPath);
+  const writer = dependencyWriters.getStore()?.get(lockPath);
+  const outputsChanged = writer?.active && (previous?.generation ?? null) !== writer.beforeGeneration
+    ? previous?.outputsChanged ?? ['install'] : [];
+  await writeJsonAtomic(generationPath, { generation: randomUUID(), completedGeneration: previous?.completedGeneration ?? null,
+    completedExpoGeneration: readCompletedExpoGeneration(previous),
+    ...(output !== 'install' && previous?.installationFailure
+      ? { installationFailure: previous.installationFailure } : {}),
+    outputsChanged: [...new Set([...outputsChanged, output])] });
+}
+
+export function dependencyInstallationFailure(error) {
+  if (error?.code === 'HAPPIER_DEPENDENCY_REFRESH_FAILED' || error?.name === 'AbortError') return error;
+  const pnpmErrorCode = [error?.pnpmErrorCode, error?.code, error?.stdout, error?.stderr, error?.message]
+    .map(value => String(value ?? '').match(/\bERR_PNPM_[A-Z_]+\b/u)?.[0]).find(Boolean) ?? null;
+  return Object.assign(new Error(`Dependency installation failed (${pnpmErrorCode ?? 'installer-error'}); fix the reported pnpm input error and retry.`, { cause: error }),
+    { code: 'HAPPIER_DEPENDENCY_REFRESH_FAILED', pnpmErrorCode });
+}
+
+export async function removeInstalledDependencyQuarantine(installDir) {
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(installDir);
+  const workspaceManifests = monorepoRoot && resolve(monorepoRoot) === resolve(installDir)
+    ? await collectWorkspacePackageJsonPaths(monorepoRoot) : [];
+  for (const root of new Set([installDir, ...workspaceManifests.map(path => dirname(path))])) {
+    const modulesDir = join(root, 'node_modules');
+    const info = await lstat(modulesDir).catch(error => {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+      throw error;
+    });
+    // pnpm quarantines unrecorded packages during hoisted installation. Once
+    // installation and output preparation succeed, those copies are obsolete.
+    // Never follow a workspace's borrowed dependency tree or scan nested repos.
+    if (info?.isDirectory()) await rm(join(modulesDir, '.ignored'), { recursive: true, force: true });
+  }
+}
+
 export async function withDependencyRefresh({
-  installDir,
-  componentDir = installDir,
-  env = process.env,
-  onDependenciesReady = null,
-  runtimeIdentity,
-  installMode,
-  refreshExisting = true,
-  force = false,
-  waitForPendingStart = false,
-  signal,
+  installDir, componentDir = installDir, env = process.env, onDependenciesReady = null,
+  runtimeIdentity, refreshExisting = true, force = false, signal,
 }, refresh) {
   if (typeof refresh !== 'function') throw new TypeError('withDependencyRefresh requires a refresh callback');
   if (onDependenciesReady != null && typeof onDependenciesReady !== 'function') {
     throw new TypeError('withDependencyRefresh requires onDependenciesReady to be a function when provided');
   }
-  const shouldRunDependencyReadyAction = onDependenciesReady !== null;
-  if (!force && !shouldRunDependencyReadyAction) {
-    // Readiness is not mutation: share installed-tree custody with finite
-    // consumers, and wait as a reader when an installer is active. Release
-    // before requesting a real refresh; never upgrade a held reader to writer.
-    const readiness = await withDependencyConsumption({ installDir, env, signal }, () =>
-      inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, installMode, env }));
-    if (!readiness.required) return { refreshed: false, reason: 'up-to-date' };
-    if (!refreshExisting && readiness.selfReferentialNodeModulesLinkPath === null) {
-      return { refreshed: false, reason: 'refresh-disabled' };
-    }
+  signal?.throwIfAborted();
+  if (!force && onDependenciesReady === null && hasDependencyReadLock(resolveDependencyRefreshLockPath(installDir, env), env)) {
+    // A nested warm consumer verifies readiness without requesting a write.
+    // Its containing preparation owner must repair before admitting readers.
+    await assertDependenciesReady({ installDir, componentDir, env, runtimeIdentity, signal });
+    return { refreshed: false, reason: 'up-to-date' };
   }
-
-  const refreshUnderLock = () => withDependencyRefreshLock({ installDir, env, signal }, async ({ lockPath, owner }) => {
-    const afterDependencyLock = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, installMode, env });
-    if (!force && !afterDependencyLock.required && !shouldRunDependencyReadyAction) return { refreshed: false, reason: 'up-to-date' };
-    let stacksNeedingRestart = [];
-    let priorTreeDirectory = null;
-    const mutate = async () => {
-      let beforeMutation = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, installMode, env });
-      let result = { refreshed: false, reason: 'up-to-date' };
-      if (beforeMutation.selfReferentialNodeModulesLinkPath !== null) {
-        const repaired = await repairSelfReferentialNodeModulesLink(installDir);
-        if (repaired) {
-          beforeMutation = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, installMode, env });
-          result = {
-            refreshed: false,
-            reason: 'repaired-self-referential-node-modules-link',
-          };
-        }
-      }
-      if (force || beforeMutation.required || onDependenciesReady) {
-        const didRefresh = (force || beforeMutation.required) && refreshExisting;
-        if (didRefresh && beforeMutation.workerPnpmTreeNeedsCleanInstall) {
-          const nodeModules = join(installDir, 'node_modules');
-          console.log(`[local] reconciling unproven worker pnpm installation: ${nodeModules}`);
-          // Keep the old tree and its exact admission together until the new
-          // installation and prerequisites succeed. Same-device placement stays
-          // outside synchronized source and under the existing dependency writer.
-          const aside = await createDependencyRefreshAside(installDir, env);
-          if (aside) {
-            try {
-              await rename(nodeModules, join(aside, 'node_modules'));
-              priorTreeDirectory = aside;
-            } catch (error) {
-              await rm(aside, { recursive: true, force: true });
-              if (error?.code !== 'ENOENT') throw error;
-            }
-          }
-        }
-        // A ready action can repair generated/patch outputs even on a warm
-        // install. Withdraw admission before either mutation, and publish only
-        // after every prerequisite succeeds under the same writer lock.
-        await unlink(beforeMutation.markerPath).catch(error => {
-          if (error?.code !== 'ENOENT') throw error;
-        });
-        // The refresh runs under this writer lock; its installer spawns with this environment.
-        if (didRefresh) await refresh({ env: resolveLockedInstallEnv(env, { lockPath, owner }) });
-        if (onDependenciesReady) await onDependenciesReady({ env: resolveLockedInstallEnv(env, { lockPath, owner }) });
-        // Ready-only repairs preserve callers' explicit no-install policy.
-        // They cannot certify stale dependency inputs as newly installed.
-        if ((force || beforeMutation.required) && !didRefresh) {
-          // Last-green consumers may repair mandatory outputs without
-          // installing newer source inputs. Restore only the prior coherent
-          // admission: the normal installer must still see those inputs stale.
-          if (beforeMutation.admittedState) {
-            await writeJsonAtomic(beforeMutation.markerPath, beforeMutation.admittedState);
-          }
-          return { ...result, reason: 'refresh-disabled' };
-        }
-        if (!didRefresh && beforeMutation.admittedState) {
-          // Completing outputs did not replace the installed tree. Retain its
-          // full admission when a scriptless consumer repairs warm outputs.
-          await writeJsonAtomic(beforeMutation.markerPath, beforeMutation.admittedState);
-          return result;
-        }
-        const refreshedInputPaths = await collectDependencyInputPaths({ installDir, componentDir });
-        const refreshedInputSnapshot = await readInputSnapshot({
-          inputPaths: refreshedInputPaths,
-          installDir,
-          componentDir,
-        });
-        const refreshedDependencyIdentity = await resolveDependencyIdentity({ installDir, runtimeIdentity, installMode });
-        const installed = beforeMutation.workerPnpmModules !== null && didRefresh
-          ? await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, installMode, env }) : null;
-        if (installed && (
-          installed.workerPnpmModules?.find(entry => entry.path === 'install:node_modules/.modules.yaml')?.kind !== 'file'
-          || installed.workerPnpmModules?.find(entry => entry.path === 'install:node_modules/.yarn-integrity')?.kind !== 'missing'
-        )) {
-          throw Object.assign(new Error('Worker pnpm installation did not produce clean modules metadata'),
-            { code: 'HAPPIER_DEPENDENCIES_NEED_REFRESH' });
-        }
-        const superseded = !snapshotsMatch(beforeMutation.inputSnapshot, refreshedInputSnapshot)
-          || !dependencyIdentitySatisfies(beforeMutation.dependencyIdentity, refreshedDependencyIdentity);
-        await writeJsonAtomic(beforeMutation.markerPath, {
-          version: REFRESH_STATE_VERSION,
-          identity: superseded ? beforeMutation.dependencyIdentity : refreshedDependencyIdentity,
-          // If inputs advanced during the refresh, publish the admitted generation
-          // as superseded. The next owner schedules exactly one successor instead
-          // of treating the install as an unknown/unpublished attempt forever.
-          inputs: superseded ? beforeMutation.inputSnapshot : refreshedInputSnapshot,
-          superseded,
-          ...(installed ? { workerPnpmModules: installed.workerPnpmModules } : {}),
-          stacksNeedingRestart: didRefresh ? stacksNeedingRestart : [],
-        });
-        if (didRefresh) {
-          result = { refreshed: true, reason: force ? 'forced-refresh' : 'stale-inputs', stacksNeedingRestart };
-          if (stacksNeedingRestart.length) {
-            console.log(`[local] Stacks running on pre-refresh dependencies; restart at the next owner boundary: ${stacksNeedingRestart.join(', ')}`);
-          }
-        }
-      }
-      return result;
-    };
-    // The verifier can itself depend on the new dependency inputs. Probe it
-    // only when reusing installed bytes; a scheduled install precedes probing.
-    const willRefresh = (force || afterDependencyLock.required) && refreshExisting;
-    const uiPrerequisites = onDependenciesReady && !willRefresh
-      ? await inspectUiPostinstallOutputs(join(installDir, 'apps', 'ui'), installDir, { env })
-      : [];
-    const componentPrerequisites = onDependenciesReady && !willRefresh && resolve(componentDir) !== resolve(join(installDir, 'apps', 'ui'))
-      ? await inspectUiPostinstallOutputs(componentDir, installDir, { env })
-      : [];
-    let serverPrerequisitesRequired = false;
-    if (onDependenciesReady && !willRefresh) {
-      // The ready action can replace generated provider clients even when
-      // package inputs/UI outputs are current. Use the generator's own check
-      // before withdrawing admission or permitting any repair during a start.
-      const { ensureServerGeneratedProviderOutputs } = await import('./pm.mjs');
-      try {
-        await ensureServerGeneratedProviderOutputs(join(installDir, 'apps', 'server'), installDir, {
-          env: resolveLockedInstallEnv(env, { lockPath, owner }), quiet: true, checkOnly: true, signal,
-        });
-      } catch {
+  const canInstall = refreshExisting && !isDependencyRefreshDisabled(env);
+  await waitForDependencyRefreshWriter({ installDir, env, signal });
+  if (!force) {
+    // Readiness waits only for actual publication mutation. A gate that is
+    // merely draining consumers does not prevent canonical input inspection,
+    // and an unchanged result never needs mutation custody.
+    const readiness = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, env });
+    if (!readiness.required || (!canInstall && readiness.selfReferentialNodeModulesLinkPath === null)) {
+      if (onDependenciesReady) {
+        // Keep the provisioner's borrowed-tree policy without taking writer
+        // custody for a readiness callback that may perform no mutation.
+        await assertDependencyTreeWritable(installDir);
         signal?.throwIfAborted();
-        serverPrerequisitesRequired = true;
+        await onDependenciesReady({ env });
       }
-    }
-    if (willRefresh
-      || afterDependencyLock.selfReferentialNodeModulesLinkPath !== null
-      || uiPrerequisites.length > 0 || componentPrerequisites.length > 0 || serverPrerequisitesRequired) {
-      ({ stacksNeedingRestart } = await prepareDependencyConsumersForRefresh({ installDir, env }));
-    }
-    let result;
-    try {
-      result = await mutate();
-    } catch (error) {
-      if (priorTreeDirectory) {
-        await rm(join(installDir, 'node_modules'), { recursive: true, force: true });
-        await rename(join(priorTreeDirectory, 'node_modules'), join(installDir, 'node_modules'));
-        await rm(priorTreeDirectory, { recursive: true, force: true });
-      }
-      throw error;
-    }
-    if (priorTreeDirectory) await rm(priorTreeDirectory, { recursive: true, force: true });
-    return result;
-  });
-  for (;;) {
-    signal?.throwIfAborted();
-    try {
-      return await refreshUnderLock();
-    } catch (error) {
-      if (!waitForPendingStart || error?.code !== 'HAPPIER_DEPENDENCY_STACK_START_IN_PROGRESS'
-        || typeof error.pendingStackBaseDir !== 'string') throw error;
-      const callerEnvFile = resolveExplicitStackEnvFilePath(env);
-      // A start cannot await its own readiness. Its existing explicit retry
-      // contract remains authoritative; only independent readers opt in.
-      if (callerEnvFile && resolve(dirname(callerEnvFile)) === resolve(error.pendingStackBaseDir)) throw error;
-      // withDependencyRefreshLock has released both custody and its priority
-      // ticket here. Keeping either would deadlock the start's later readers.
-      const { waitForPendingSourcePreparation } = await import('../../runtime/shared/pending_source_start.mjs');
-      await waitForPendingSourcePreparation({ stackBaseDir: error.pendingStackBaseDir, env, signal });
+      signal?.throwIfAborted();
+      return { refreshed: false, reason: readiness.required ? 'refresh-disabled' : 'up-to-date' };
     }
   }
+  let readinessUnderWriter = false;
+  let skippedReadiness;
+  const result = await withDependencyRefreshLock({ installDir, env, signal,
+    isRequired: force ? undefined : async () => {
+      const readiness = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, env });
+      skippedReadiness = readiness;
+      return (readiness.required && canInstall) || readiness.selfReferentialNodeModulesLinkPath !== null;
+    },
+  }, async context => {
+    let before = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, env });
+    if (!force && !before.required && onDependenciesReady === null) return { refreshed: false, reason: 'up-to-date' };
+    const willInstall = canInstall && (force || before.required);
+    const willRepairLink = before.selfReferentialNodeModulesLinkPath !== null;
+    if (!willInstall && !willRepairLink) return { refreshed: false, reason: before.required ? 'refresh-disabled' : 'up-to-date' };
+    const { stacksNeedingRestart } = willInstall
+      ? await prepareDependencyConsumersForRefresh({ installDir, env }) : { stacksNeedingRestart: [] };
+    // Cold installation/link repair retains its publication boundary. Warm
+    // output inspection runs outside it; output owners exclude actual repairs.
+    if (willInstall || willRepairLink) await markDependencyMutation({ installDir, env });
+    let repaired = false;
+    if (willRepairLink) {
+      await unlink(before.selfReferentialNodeModulesLinkPath);
+      repaired = true;
+      before = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity, env });
+    }
+    const didRefresh = canInstall && (force || before.required);
+    const installEnv = resolveLockedInstallEnv(env, context);
+    try {
+      if (didRefresh) await refresh({ env: installEnv });
+      if (onDependenciesReady) {
+        await onDependenciesReady({ env: installEnv });
+        readinessUnderWriter = true;
+      }
+    } catch (error) {
+      if (!didRefresh) throw error;
+      signal?.throwIfAborted();
+      const failure = dependencyInstallationFailure(error);
+      if (failure.code === 'HAPPIER_DEPENDENCY_REFRESH_FAILED') {
+        const generationPath = `${context.lockPath}.generation`;
+        const publication = await readJsonIfExists(generationPath);
+        await writeJsonAtomic(generationPath, { ...publication,
+          installationFailure: { pnpmErrorCode: failure.pnpmErrorCode } });
+      }
+      throw failure;
+    }
+    signal?.throwIfAborted();
+    if (!didRefresh) return { refreshed: false,
+      reason: before.required ? 'refresh-disabled' : repaired ? 'repaired-self-referential-node-modules-link' : 'up-to-date' };
+    if (!await pathExists(join(installDir, 'node_modules'))) throw dependenciesNeedRefresh(installDir, 'installation-produced-no-tree');
+    await removeInstalledDependencyQuarantine(installDir);
+    // Only successful installation publishes. The captured identity deliberately
+    // precedes installation; a concurrent source edit is the next caller's work.
+    await writeJsonAtomic(before.markerPath, { version: REFRESH_STATE_VERSION,
+      identity: before.installIdentity, stacksNeedingRestart });
+    dependencyWriters.getStore().get(resolveDependencyRefreshLockPath(installDir, env)).installationPublished = true;
+    if (stacksNeedingRestart.length) console.log(`[local] Stacks running on pre-refresh dependencies; restart at the next owner boundary: ${stacksNeedingRestart.join(', ')}`);
+    return { refreshed: true, reason: force ? 'forced-refresh' : 'stale-inputs', stacksNeedingRestart };
+  });
+  if (onDependenciesReady && !readinessUnderWriter) await onDependenciesReady({ env });
+  signal?.throwIfAborted();
+  return result ?? { refreshed: false, reason: skippedReadiness.required ? 'refresh-disabled' : 'up-to-date' };
+}
+
+/** Explicit provisioners already installed this tree. They can publish its
+ * first admission, but cannot recertify an existing mismatched installation. */
+export async function adoptDependencyInstallation({ installDir, componentDir = installDir,
+  env = process.env, onDependenciesReady, signal }) {
+  await waitForDependencyRefreshWriter({ installDir, env, signal });
+  const readiness = await inspectDependencyRefresh({ installDir, componentDir, env });
+  if (!readiness.required) {
+    await assertDependencyTreeWritable(installDir);
+    signal?.throwIfAborted();
+    if (onDependenciesReady) await onDependenciesReady({ env });
+    await assertMandatoryOutputsReady({ installDir, componentDir, env, signal });
+    signal?.throwIfAborted();
+    return { refreshed: false, reason: 'up-to-date' };
+  }
+  return await withDependencyRefreshLock({ installDir, env, signal }, async context => {
+    const before = await inspectDependencyRefresh({ installDir, componentDir, env });
+    const marker = await readJsonIfExists(before.markerPath);
+    if (dependencyWriters.getStore().get(resolveDependencyRefreshLockPath(installDir, env)).unfinishedAtEntry) {
+      throw dependenciesNeedRefresh(installDir, 'unfinished-installation');
+    }
+    if (existsSync(before.markerPath) && before.required) throw dependenciesNeedRefresh(installDir, 'stale-or-unadmitted');
+    if (!await pathExists(join(installDir, 'node_modules'))) throw dependenciesNeedRefresh(installDir, 'missing-installation');
+    if (!marker) await markDependencyMutation({ installDir, env });
+    if (onDependenciesReady) {
+      await onDependenciesReady({ env: resolveLockedInstallEnv(env, context) });
+    }
+    await assertMandatoryOutputsReady({ installDir, componentDir, env, signal });
+    signal?.throwIfAborted();
+    if (!marker && !isDependencyRefreshDisabled(env)) await removeInstalledDependencyQuarantine(installDir);
+    if (!marker) await writeJsonAtomic(before.markerPath, { version: REFRESH_STATE_VERSION,
+      identity: before.installIdentity, stacksNeedingRestart: [] });
+    return { refreshed: false, reason: marker ? 'up-to-date' : 'adopted-installation' };
+  });
+}
+
+export async function readDependencyPublicationState({ installDir, env = process.env }) {
+  const marker = await readJsonIfExists(resolveDependencyRefreshMarkerPath(installDir));
+  const generation = await readJsonIfExists(`${resolveDependencyRefreshLockPath(installDir, env)}.generation`);
+  // The supported Yarn source checkout retains its own installer. It holds
+  // this gate during installation but does not publish mutation generations.
+  const predecessorWriter = isYarnWorkspace(await readJsonIfExists(join(installDir, 'package.json')));
+  return { identity: typeof marker?.identity === 'string' ? marker.identity : null,
+    generation: generation?.generation ?? null, completedGeneration: generation?.completedGeneration ?? null,
+    completedExpoGeneration: readCompletedExpoGeneration(generation),
+    outputsChanged: generation?.outputsChanged ?? (generation?.generation ? ['install'] : []),
+    // Current readiness gates may only drain readers; marked unfinished
+    // attempts mutate bytes. The predecessor installer has no generations.
+    writerActive: (predecessorWriter || (generation?.generation != null && generation.generation !== generation.completedGeneration))
+      && isDependencyRefreshMutationActive({ installDir, env }) };
 }

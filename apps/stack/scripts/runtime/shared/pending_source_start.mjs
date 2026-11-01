@@ -9,7 +9,7 @@ import { readJsonIfExists, writeJsonAtomic } from '../../utils/fs/json.mjs';
 import { readJsonOwnerLockRaw, withJsonOwnerFileLock } from '../../utils/proc/jsonOwnerFileLock.mjs';
 import { createWorkspaceBuildWaitNotifier } from '../../utils/proc/workspaceBuildWaitNotifier.mjs';
 import { isPidAlive, observePidLiveness } from '../../utils/proc/pids.mjs';
-import { resolveDependencyInstallRoot, withDependencyConsumption } from '../../utils/proc/dependency_refresh.mjs';
+import { resolveDependencyInstallRoot, waitForDependencyRefreshWriter } from '../../utils/proc/dependency_refresh.mjs';
 import { getRepoDir } from '../../utils/paths/paths.mjs';
 
 const preparationPhases = new Set(['preparing', 'queued', 'building', 'prepared', 'checking']);
@@ -125,7 +125,8 @@ export async function beginPendingSourceStart({ stackBaseDir, onPhase, requestId
   const controller = new AbortController();
   let ownsMarker = false;
   await mkdir(directory, { recursive: true });
-  await withDependencyConsumption({ installDir: resolveDependencyInstallRoot(repoDir), env }, () => withJsonOwnerFileLock(async () => {
+  await waitForDependencyRefreshWriter({ installDir: resolveDependencyInstallRoot(repoDir), env });
+  await withJsonOwnerFileLock(async () => {
     const current = await readJsonIfExists(markerPath);
     const sameRequest = inheritedRequestId && current?.requestId === requestId;
     const ownerStatus = current ? observePidLiveness(current.pid).status : 'dead';
@@ -137,7 +138,7 @@ export async function beginPendingSourceStart({ stackBaseDir, onPhase, requestId
     // A dead worker's retry takes custody of the same request and its pins.
     await writeJsonAtomic(markerPath, { ...(sameRequest ? current : {}), requestId, pid: process.pid, phase: 'preparing' });
     ownsMarker = true;
-  }, { lockPath }));
+  }, { lockPath });
   let closed = false;
   let backgroundController;
   const backgroundPreparations = new Set();

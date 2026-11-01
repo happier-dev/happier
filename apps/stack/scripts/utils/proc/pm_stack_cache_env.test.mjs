@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { ensureCliBuilt, ensureDepsInstalled, isCliDistFreshForInputs, pmExecBin, readUsableCliDistFreshness } from './pm.mjs';
 import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './cliDistBuildLock.mjs';
-import { inspectDependencyRefresh, SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyConsumption, withDependencyRefresh } from './dependency_refresh.mjs';
+import { assertDependenciesReady, inspectDependencyRefresh, withDependencyConsumption, withDependencyRefresh } from './dependency_refresh.mjs';
 import { bootstrapRemoteDependencies } from '../dev_targets/remote_dependency_bootstrap.mjs';
 import { readHappyCliRuntimeInputFreshness } from './cli_runtime_inputs.mjs';
 import { resolveValidRuntimeSnapshot } from '../../../../cli/bin/_resolveRuntimeEntrypoint.mjs';
@@ -1319,7 +1319,7 @@ test('remote runtime and source-test bootstrap complete UI postinstall under ins
   // Pnpm is the process boundary; installation and scripts use the same stub.
   const env = { ...process.env, PATH: `${binDir}:/usr/bin:/bin`, OUTPUT_PATH: outputPath,
     HAPPIER_STACK_HOME_DIR: join(root, 'home'), HAPPIER_STACK_ENV_FILE: '' };
-  await withDependencyRefresh({ installDir: root, env, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE },
+  await withDependencyRefresh({ installDir: root, env, },
     async () => mkdir(join(root, 'node_modules'), { recursive: true }));
   const prepare = (componentRelativeDir, extraEnv = {}) => bootstrapRemoteDependencies({
     repoDir: root, componentRelativeDir, executionPlacement: 'remote', env: { ...env, ...extraEnv },
@@ -1339,8 +1339,9 @@ test('remote runtime and source-test bootstrap complete UI postinstall under ins
 
   await writeFile(assetSourcePath, 'recovered worker\n');
   await assert.rejects(prepare('apps/ui', { HAPPIER_TEST_UI_POSTINSTALL_FAIL: '1' }));
-  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, true,
-    'postinstall failure must not publish runtime-ready dependency admission');
+  await assert.rejects(assertDependenciesReady({ installDir: root, env }),
+    { code: 'HAPPIER_DEPENDENCIES_NEED_REFRESH', reason: 'unfinished-installation' },
+    'failed output repair remains unavailable even when the install identity is unchanged');
   await prepare('apps/ui');
   assert.equal(await readFile(assetOutputPath, 'utf8'), 'recovered worker\n');
 
@@ -1357,15 +1358,15 @@ test('remote runtime and source-test bootstrap complete UI postinstall under ins
   assert.equal(await readFile(requiredOutputPath, 'utf8'), await readFile(patchPath, 'utf8'),
     'source-test re-extraction must not leave the running UI without its patch');
   assert.equal(await readFile(assetOutputPath, 'utf8'), 'recovered worker\n');
-  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, true,
-    'UI postinstall alone does not certify all runtime lifecycle prerequisites');
+  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, false,
+    'source preparation publishes the canonical install identity after repairing outputs');
   const warmCommands = await readFile(outputPath, 'utf8');
   await sourcePrepare();
   assert.equal(await readFile(outputPath, 'utf8'), warmCommands, 'unchanged source tests do not reinstall');
   await writeFile(join(root, 'pnpm-lock.yaml'), '# failed source-test refresh\n');
   await assert.rejects(sourcePrepare({ HAPPIER_TEST_UI_POSTINSTALL_FAIL: '1' }));
   assert.equal((await inspectDependencyRefresh({ installDir: root,
-    installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE })).required, true);
+    })).required, true);
   await sourcePrepare();
   assert.equal(await readFile(requiredOutputPath, 'utf8'), await readFile(patchPath, 'utf8'));
 });

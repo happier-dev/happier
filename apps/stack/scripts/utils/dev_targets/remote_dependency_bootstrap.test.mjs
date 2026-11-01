@@ -13,7 +13,7 @@ import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 import { installWorkspaceAdmissionProcessFixture } from '../../testkit/core/native_admission_fixture.mjs';
 import { prepareRemoteValidationWorkspace } from './remote_validation_preparation.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
-import { inspectDependencyRefresh, resolveDependencyRefreshLockPath, SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyConsumption, withDependencyRefresh, withDependencyRefreshLock } from '../proc/dependency_refresh.mjs';
+import { inspectDependencyRefresh, resolveDependencyRefreshLockPath, withDependencyConsumption, withDependencyRefresh, withDependencyRefreshLock } from '../proc/dependency_refresh.mjs';
 import { readJsonOwnerLockSnapshot } from '../proc/jsonOwnerFileLock.mjs';
 import { resolveRemoteCommandPolicy } from './remote_commands.mjs';
 import { ensureWorkspacePackagesBuiltForComponent, inspectWorkspaceQaStalePackages, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
@@ -172,7 +172,7 @@ for (const retirement of ['ready', 'failure']) test(`typecheck refresh waits out
     else await pending.dispose();
     await bootstrap;
     assert.equal(installs, 1, 'one legitimate change causes one refresh after retirement');
-    await assertDependenciesReady({ installDir: root, env, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE });
+    await assertDependenciesReady({ installDir: root, env, });
     await bootstrapDependencies({ repoDir: root, executionPlacement: 'remote', validationKind: 'typecheck', env,
       installInitialDependencies: async () => { installs++; } });
     assert.equal(installs, 1, 'unchanged subsequent readers cause zero additional refreshes');
@@ -284,7 +284,7 @@ test('Prisma source preparation repairs schemas before entering compilation; fai
   await assert.rejects(buildSourceRuntimeBundle({ repoDir: root, stackBaseDir: join(root, 'stacks/fixture'),
     component: 'server', env: failingEnv, signal: t.signal }), { exitCode: 37 });
   assert.equal(await readFile(join(server, 'generated-output'), 'utf8'), 'old');
-  await assert.rejects(assertDependenciesReady({ installDir: root, env }), { reason: 'prisma-outputs-incomplete' });
+  await assert.rejects(assertDependenciesReady({ installDir: root, env }), { code: 'HAPPIER_DEPENDENCIES_NEED_REFRESH', reason: 'unfinished-installation' });
   // This fixture deliberately has no compiler: fingerprinting must only reach
   // that missing boundary after the real source preparation repaired outputs.
   await assert.rejects(buildSourceRuntimeBundle({ repoDir: root, stackBaseDir: join(root, 'stacks/fixture'),
@@ -380,7 +380,7 @@ if (args[0] === 'install') {
       assert.equal(typeof createRequire(import.meta.url)(generated).PrismaClient, 'function');
       assert.equal((await inspectDependencyRefresh({ installDir: fixture.root,
         componentDir: owner === 'bootstrap' ? fixture.path('apps', 'stack') : owner === 'package-manager' ? fixture.path('apps', 'cli') : fixture.root,
-        env, ...(owner === 'bootstrap' ? { installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE } : {}) })).required, false);
+        env,  })).required, false);
     }
   });
 });
@@ -1112,16 +1112,14 @@ if (args[0] === '--version') {
   await assert.rejects(stat(join(protocolDir, 'dist')), { code: 'ENOENT' },
     'typecheck bootstrap leaves declaration consumption to the compiler');
   assert.equal((await inspectDependencyRefresh({
-    installDir: repoDir, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE,
-  })).required, false);
+    installDir: repoDir, })).required, false);
   assert.equal((await inspectDependencyRefresh({ installDir: repoDir })).required, true,
     'UI source-test preparation must not claim a full runtime dependency install');
   // A subsequent package-manager link can remove installed patch output while
   // the authored inputs and existing dependency admission remain unchanged.
   await rm(requiredOutputPath);
   assert.equal((await inspectDependencyRefresh({
-    installDir: repoDir, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE,
-  })).required, false);
+    installDir: repoDir, })).required, false);
   await bootstrapRemoteDependencies(bootstrapOptions);
   assert.equal(await readFile(requiredOutputPath, 'utf8'), preparedModule,
     'warm preparation must verify and repair the actual module the UI loads');

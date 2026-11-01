@@ -102,11 +102,9 @@ test('web publication refreshes authored inputs at a stable captured Metro root 
       HAPPIER_STACK_STORAGE_DIR: join(root, 'stacks'), HAPPIER_STACK_STACK: 'artifact-fixture' },
     // Package installation/postinstall and Expo are external tool boundaries;
     // export staging, payload validation, atomic publication and manifests stay real.
-    ensureDepsInstalledImpl: async (dir, _label, { onDependenciesReady }) => {
+    ensureDepsInstalledImpl: async (dir) => {
       assert.equal(dir, join(repoDir, 'apps/ui'), 'supplied environment selects the UI before dependency consumption');
-      await onDependenciesReady();
     },
-    runUiPostinstallImpl: () => {},
     expoExecImpl: async ({ dir, args, env }) => {
       if (captureRoots.length) assert.equal(dir, captureRoots[0], 'changed artifacts must retain their Router-bound Metro project root');
       captureRoots.push(dir);
@@ -162,38 +160,12 @@ test('web publication refreshes authored inputs at a stable captured Metro root 
     rootDir: repoDir, artifactDir, artifactFingerprint: 'failed-web', target,
     sourceMetadata: { repoDir, sourceFingerprint: 'changed-source', builtAt: '2026-10-05T00:00:01Z' },
     env: buildOptions.env,
-    ensureDepsInstalledImpl: async (_dir, _label, { onDependenciesReady }) => await onDependenciesReady(),
-    runUiPostinstallImpl: () => {},
+    ensureDepsInstalledImpl: async () => {},
     expoExecImpl: async () => { throw exportFailure; },
   }), exportFailure);
   assert.equal(readFileSync(join(artifactDir, 'payload', 'chunk.js'), 'utf8'), expectedPayload, 'a failed export preserves the existing artifact');
   assert.deepEqual(readdirSync(join(root, 'artifacts', 'web')), ['target-web'], 'failed export must retire only its private inputs');
   assert.deepEqual(readdirSync(join(root, 'artifacts')), ['web']);
-});
-
-test('web artifact dependencies run the canonical UI postinstall through the dependency-ready callback', async () => {
-  const events = [];
-  const uiDir = '/tmp/happier-ui';
-  const env = { HAPPIER_STACK_TEST: 'web-artifact-postinstall' };
-
-  await ensureWebUiDependencies({
-    uiDir,
-    env,
-    ensureDepsInstalledImpl: async (dir, label, options) => {
-      events.push(['dependencies', dir, label]);
-      await options.onDependenciesReady();
-      events.push(['dependencies-ready']);
-    },
-    runUiPostinstallImpl: ({ uiDir: receivedUiDir, env: receivedEnv }) => {
-      events.push(['postinstall', receivedUiDir, receivedEnv]);
-    },
-  });
-
-  assert.deepEqual(events, [
-    ['dependencies', uiDir, 'happier-ui'],
-    ['postinstall', uiDir, env],
-    ['dependencies-ready'],
-  ]);
 });
 
 test('exportWebPayloadToArtifactPayloadDir exports via project-local staging dir and moves into payload', async () => {

@@ -3,7 +3,6 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { cp, mkdir, readdir, rename, rm } from 'node:fs/promises';
 
-import { execPnpm } from '../../../../scripts/workspaces/execPnpmCommand.mjs';
 import { buildIntoTempThenReplace } from '../utils/fs/atomic_dir_swap.mjs';
 import { ensureDepsInstalled, requireDir } from '../utils/proc/pm.mjs';
 import { withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
@@ -21,14 +20,6 @@ import { buildStackWebExportEnv } from '../utils/ui/ui_export_env.mjs';
 import { artifactPayloadDir, readArtifactManifest, readReusableArtifactManifest, writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
 import { assertWebArtifactPayload } from '../runtime/shared/web_payload.mjs';
 
-function runCanonicalUiPostinstall({ uiDir, env }) {
-  execPnpm(['run', '--silent', 'postinstall:real'], {
-    cwd: uiDir,
-    env,
-    stdio: 'inherit',
-  });
-}
-
 async function runPreparedWebExport({ dir, args, env, repoDir = join(dir, '../..') }) {
   const exportEnv = applyExpoNodeHeapEnv({ ...env, CI: '1', EXPO_UNSTABLE_WEB_MODAL: '1' });
   await runSourceBuildCommand({ repoDir, cwd: dir,
@@ -40,11 +31,11 @@ export async function ensureWebUiDependencies({
   uiDir,
   env = process.env,
   ensureDepsInstalledImpl = ensureDepsInstalled,
-  runUiPostinstallImpl = runCanonicalUiPostinstall,
 }) {
+  // Declare full web preparation before PM inspects shared UI outputs, so
+  // every phase consumes the same task/input identity and repair owner.
   await ensureDepsInstalledImpl(uiDir, 'happier-ui', {
-    env,
-    onDependenciesReady: () => runUiPostinstallImpl({ uiDir, env }),
+    env: { ...env, HAPPIER_UI_POSTINSTALL_DEPENDENCIES_ONLY: '0' },
   });
 }
 
@@ -205,7 +196,6 @@ export async function buildWebArtifact({
   forceRebuild = false,
   env = process.env,
   ensureDepsInstalledImpl = ensureDepsInstalled,
-  runUiPostinstallImpl = runCanonicalUiPostinstall,
   expoExecImpl = runPreparedWebExport,
 }) {
   void forceRebuild;
@@ -216,7 +206,7 @@ export async function buildWebArtifact({
 
   const uiDir = getComponentDir(rootDir, 'happier-ui', env);
   await requireDir('happier-ui', uiDir);
-  await ensureWebUiDependencies({ uiDir, env, ensureDepsInstalledImpl, runUiPostinstallImpl });
+  await ensureWebUiDependencies({ uiDir, env, ensureDepsInstalledImpl });
 
   await buildIntoTempThenReplace(artifactDir, async (tmpArtifactDir) => {
     const payloadDir = artifactPayloadDir(tmpArtifactDir);

@@ -657,3 +657,25 @@ test('a cancelled contender stops waiting without disturbing the active owner', 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('a satisfied queued mutation leaves without entering the exclusive action', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-json-satisfied-mutation-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const lockPath = join(root, 'mutation.lock');
+  let release, entered;
+  const held = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const holder = withJsonOwnerFileLock(async () => { entered(); await held; }, { lockPath });
+  await started;
+  let required = true, observed;
+  const waiting = new Promise(resolve => { observed = resolve; });
+  const queued = withJsonOwnerFileLock(() => assert.fail('satisfied mutation acquired exclusive action'), {
+    lockPath, shouldAcquire: () => required, onWait: () => observed(),
+  });
+  await waiting;
+  required = false;
+  release();
+  await Promise.all([holder, queued]);
+  assert.equal(await withJsonOwnerFileLock(() => 'next', { lockPath }), 'next');
+});

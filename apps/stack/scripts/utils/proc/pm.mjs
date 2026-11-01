@@ -293,7 +293,7 @@ async function repairCorruptedCliPkgrollInstallIfNeeded(cliDir, { quiet = false,
   await withDependencyRefresh({ installDir, componentDir: cliDir, env, force: true }, async ({ env: installEnv }) => {
     // A concurrent repair may have finished while this caller waited.
     if ((await readScriptEntrypointKind(pkgrollCliPath)) !== 'shell-wrapper') return;
-    await runPm(pm, repairArgs, { cwd: installDir, stdio, env: installEnv });
+    await runPm(pm, repairArgs, { cwd: installDir, stdio, env: installEnv, captureFailureDiagnostic: true });
     const monorepoRoot = coerceHappyMonorepoRootFromPath(cliDir);
     await ensureUiPostinstallOutputs(monorepoRoot ? join(monorepoRoot, 'apps', 'ui') : cliDir,
       installDir, { quiet, env, pm, force: true });
@@ -518,7 +518,7 @@ export async function ensureUiPostinstallOutputs(componentDir, installDir, { qui
         preserveLockfile: String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1',
       });
       repairArgs.push('--ignore-scripts');
-      await runPm(pm, repairArgs, { cwd: installDir, stdio, env });
+      await runPm(pm, repairArgs, { cwd: installDir, stdio, env, captureFailureDiagnostic: true });
     },
   });
 }
@@ -748,7 +748,7 @@ async function ensureComponentDependenciesInstalled(
     preserveLockfile: String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1',
   });
   const installAndPrepare = async (installEnv = env) => {
-    await runPm(pm, installArgs, { cwd: installDir, stdio, env: installEnv });
+    await runPm(pm, installArgs, { cwd: installDir, stdio, env: installEnv, captureFailureDiagnostic: true });
     if (pm.name === 'pnpm' && String(installEnv.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1') {
       await ensureServerGeneratedProviderOutputs(join(installDir, 'apps', 'server'), installDir, { quiet, env: installEnv, pm });
     }

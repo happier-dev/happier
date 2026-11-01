@@ -344,6 +344,10 @@ async function withJsonOwnerFileLockInternal(fn, options, fair) {
         ownWaiterRaw = null;
       }
       const waitSnapshot = observer.capture(readWaitSnapshot);
+      if (fair && options.shouldAcquire && !await options.shouldAcquire()) {
+        options.signal?.throwIfAborted();
+        return;
+      }
       if (sharedReaders) {
         // Both reader joins and writer decisions use the existing short ticket
         // registration lock. No reader may race a newly registered writer.

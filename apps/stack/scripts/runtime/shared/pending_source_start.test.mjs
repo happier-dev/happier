@@ -13,6 +13,27 @@ import { runNodeCapture } from '../../testkit/core/run_node_capture.mjs';
 import { withJsonOwnerFileLock } from '../../utils/proc/jsonOwnerFileLock.mjs';
 import { withDependencyRefresh } from '../../utils/proc/dependency_refresh.mjs';
 
+test('source preparation can register after a failed install so its producer can repair it', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-pending-install-retry-', registerCleanup: false });
+  const repoDir = fixture.path('repo');
+  const stackBaseDir = fixture.path('stacks', 'preparing');
+  let start;
+  t.after(async () => { await start?.dispose(); await fixture.cleanup(); });
+  for (const project of ['cli', 'ui']) {
+    await mkdir(join(repoDir, 'apps', project), { recursive: true });
+    await writeFile(join(repoDir, 'apps', project, 'package.json'), JSON.stringify({ name: `@fixture/${project}` }));
+  }
+  await mkdir(join(repoDir, 'packages'));
+  await mkdir(join(repoDir, 'node_modules'));
+  const env = sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root, repoDir });
+  await assert.rejects(withDependencyRefresh({ installDir: repoDir, force: true, env }, async () => {
+    throw Object.assign(new Error('ERR_PNPM_OUTDATED_LOCKFILE'), { code: 'ERR_PNPM_OUTDATED_LOCKFILE' });
+  }), { code: 'HAPPIER_DEPENDENCY_REFRESH_FAILED', pnpmErrorCode: 'ERR_PNPM_OUTDATED_LOCKFILE' });
+
+  start = await beginPendingSourceStart({ stackBaseDir, repoDir, env });
+  assert.deepEqual(await readPendingSourcePreparation({ stackBaseDir }), { phase: 'preparing' });
+});
+
 test('real source runner keeps its pending marker through server spawn and cleans up failed readiness', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-start-readiness-' });
   const stackName = 'readiness';

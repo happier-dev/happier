@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent, hasUsableWorkspaceLastGreen, prepareWorkspaceComponentStartup, resolveDependencyInstallRoot } from '../proc/pm.mjs';
-import { inspectDependencyRefresh, SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyConsumption } from '../proc/dependency_refresh.mjs';
+import { inspectDependencyRefresh, withDependencyConsumption } from '../proc/dependency_refresh.mjs';
 import { resolveWorkspaceToolBinDirs } from '../proc/workspace_tool_bins.mjs';
 import { run } from '../proc/proc.mjs';
 import { killProcessTree, spawnProc } from '../proc/proc.mjs';
@@ -262,7 +262,7 @@ export async function expoSpawn({
   const installDir = resolveDependencyInstallRoot(runnerDir);
   return await withDependencyConsumption({ installDir, env }, async () => {
     const readiness = await inspectDependencyRefresh({
-      installDir, componentDir: runnerDir, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE,
+      installDir, componentDir: runnerDir,
     });
     // Development serves installed bytes while source/manifest inputs move.
     // Missing imports fail their bundle; they do not withdraw Metro availability.
