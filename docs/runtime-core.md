@@ -1437,6 +1437,16 @@ controller Manage or retirement of the retained control closes it.
 Reopening releases only an actually retained drain target and does not authorize
 fresh activity reads or drain admission after retirement.
 
+For controller-free Account rows, the same root issuer qualifies the signed
+guest or private Account daemon through
+`resolveSignedManagedAccountExecutorInTx`. Its existing signed binding carries
+the exact power/delete input in `managedAdmission` and the retained guest in
+`managedAccountExecutor`. Activity/drain spends that owner fact against the
+active row, control request and intent; it does not repeat executor eligibility.
+Plain and encrypted HTTP roots carry the same control projection. Native
+controller roots retain their existing Manage admission and guest transport.
+This is an unreleased 0.3 contract; it adds no signer or stored authority.
+
 The daemon's managed-policy runtime rereads the current installation-signed controller census on controller-specific managed-row Account hints, its own Machine changes, targeted accepted Pending/Run work, Team admission changes and reconnect/recovery edges. The existing Account-feed reader classifies these wakes; unrelated Account, Pending and Run traffic does not schedule a census. Changes to an origin already held by a driver still reconcile that work. Managed controller replacement also invalidates the former Machine, so coalescing the managed Account row cannot hide retirement from its old controller. Daemon startup mounts that single subscription owner with the current Machine transport and retires it on replacement or shutdown. Replacing the retained native resource or enrollment retires the old held policy lifetime; the driver's own intent/submission progress does not. Selected idle/deadline waits remain with the native driver, not a polling loop. Automatic policy effects still pass through current Actions policy and its existing approval Artifact lifetime; installation signatures do not substitute for human Ask approval. Approval retains the same host operation and approved execution context. These development-source paths still require composed and loaded-runtime validation.
 
 Policy preparation reviews the native effect without admitting a new desired
