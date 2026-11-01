@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { chmod, lstat, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,6 +29,34 @@ async function createPayload(rootDir: string, versionId: string, contents: strin
 }
 
 describe('promoteVersionedPayload', () => {
+    it.skipIf(process.platform === 'win32')('publishes private-mode runtime code for a separate native execution user without granting writes', async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), 'happier-promote-member-readable-'));
+        try {
+            const stagedPayloadPath = await createPayload(homeDir, '1.0.0', 'first-version');
+            const scripts = join(stagedPayloadPath, 'scripts');
+            await mkdir(scripts, { mode: 0o700 });
+            await chmod(stagedPayloadPath, 0o700);
+            await writeFile(join(scripts, 'process_tree.cjs'), 'module.exports = {};\n', { mode: 0o600 });
+            await writeFile(join(scripts, 'launch'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+            const privateFileOutsidePayload = join(homeDir, 'private-owner-data');
+            await writeFile(privateFileOutsidePayload, 'not runtime code', { mode: 0o600 });
+            await symlink(privateFileOutsidePayload, join(scripts, 'external-link'));
+
+            const promotion = await promoteVersionedPayload({
+                componentId: 'happier-cli', processEnv: { ...process.env, HAPPIER_HOME_DIR: homeDir },
+                versionId: '1.0.0', stagedPayloadPath,
+            });
+
+            expect((await stat(promotion.versionPath)).mode & 0o777).toBe(0o755);
+            expect((await stat(join(promotion.versionPath, 'scripts'))).mode & 0o777).toBe(0o755);
+            expect((await stat(join(promotion.versionPath, 'scripts', 'process_tree.cjs'))).mode & 0o777).toBe(0o644);
+            expect((await stat(join(promotion.versionPath, 'scripts', 'launch'))).mode & 0o777).toBe(0o755);
+            expect((await stat(privateFileOutsidePayload)).mode & 0o777).toBe(0o600);
+        } finally {
+            await rm(homeDir, { recursive: true, force: true });
+        }
+    });
+
     it('ignores AppleDouble metadata files in the staged payload', async () => {
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-promote-versioned-payload-appledouble-'));
         const env = { ...process.env, HAPPIER_HOME_DIR: homeDir };
