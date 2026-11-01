@@ -8,11 +8,16 @@ import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publi
 import { PluginUiIconTokenV1Schema } from '../../plugins/contributions/ui/tokens.js';
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
-import { InputPathSchema, InputPredicateSchema, readInputPath } from '../../inputs/inputPredicates.js';
+import { InputPathSchema, InputPredicateSchema, InputPrimitiveSchema, createInputPredicateSchema, mapInputPredicateValues, readInputPath } from '../../inputs/inputPredicates.js';
 import { resolveValueRefPlaintextV1 } from '../../valueRefs/valueRefV1.js';
 import { createInputHintsSchemasWithStaticOptionsOnly, InputOptionValueSchema } from '../../inputs/inputFields.js';
 import { resolveDeclaredInputLeaves } from '../../plugins/actions/inputSchemaTraversal.js';
 import { MachineRecipeReferenceV1Schema } from './machineRecipeReferenceV1.js';
+import { MachineFirewallExposureV1Schema as FirewallExposure } from './machineFirewallV1.js';
+export { MachineFirewallTransitionIntentV1Schema, type MachineFirewallTransitionIntentV1,
+    MachineFirewallTransitionBindingsV1Schema, type MachineFirewallTransitionBindingsV1,
+    MachineFirewallTransitionFactsV1Schema, type MachineFirewallTransitionFactsV1,
+    MachineFirewallReviewFactsV1Schema, type MachineFirewallReviewFactsV1 } from './machineFirewallV1.js';
 export { MachineRecipeReferenceV1Schema, type MachineRecipeReferenceV1 } from './machineRecipeReferenceV1.js';
 
 const Name = z.string().regex(/^[a-z_][a-z0-9_.-]*[$]?$/i);
@@ -46,6 +51,7 @@ export const MachineRecipeImpactV1Schema = z.union([
 ]);
 export const MachineRecipeNativeCheckV1Schema = Argv.extend({
     unsatisfiedExitCodes: z.array(z.number().int()).refine((codes) => !codes.includes(0) && new Set(codes).size === codes.length),
+    stdoutJson: z.optional(InputPredicateSchema),
 }).strict();
 /** Script probes share the checked-native-command contract; script bytes stay separate. */
 export const MachineSetupScriptCheckV1Schema = MachineRecipeNativeCheckV1Schema.safeExtend({
@@ -64,16 +70,6 @@ export const MachineRecipeFileProbeV1Schema = z.discriminatedUnion('kind', [
 ]);
 const Handler = z.object({ serviceStepId: z.string().min(1), action: z.enum(['reload', 'restart']) }).strict();
 const Ownership = { owner: Name, group: Name, mode: z.number().int().min(0).max(0o7777) };
-const FirewallExposure = z.object({ requirementId: z.string().min(1), hostAddress: z.union([z.ipv4(), z.ipv6()]),
-    hostPort: z.number().int().min(1).max(65535), protocol: z.enum(['tcp', 'udp']),
-    containerPort: z.number().int().min(1).max(65535).optional(), exposure: z.enum(['public', 'privateNetwork', 'loopback']),
-    providerId: z.string().min(1).optional(), networkIdentity: z.string().min(1).optional(),
-}).strict().superRefine((value, context) => {
-    if (value.exposure === 'privateNetwork' ? !value.providerId || !value.networkIdentity
-        : value.providerId !== undefined || value.networkIdentity !== undefined) {
-        context.addIssue({ code: 'custom', message: 'Only private exposure carries its exact provider/network identity' });
-    }
-});
 const JsonObject = z.record(z.string(), z.json());
 const PackageManager = z.string().regex(/^[a-z][a-z0-9-]*$/);
 // Exact native tokens include Homebrew's comma-separated cask versions.
@@ -107,8 +103,8 @@ export const MachineRecipePackageObservationV1Schema = MachineRecipePackageIdent
 }).refine(value => value.present || value.version === undefined, { message: 'An absent package has no installed version.' });
 
 function refineFile(step: { state?: string; content?: { kind: string }; expectedContentDigest?: unknown }, context: z.RefinementCtx) {
-    if (step.state === 'absent' ? step.content !== undefined || !step.expectedContentDigest : step.content === undefined) {
-        context.addIssue({ code: 'custom', message: 'Present files require content; removal requires the exact prior content digest and no content' });
+    if (step.state === 'absent' ? step.content?.kind !== 'secretGrant' && (step.content !== undefined || !step.expectedContentDigest) : step.content === undefined) {
+        context.addIssue({ code: 'custom', message: 'Present files require content; removal requires a secret grant reference or the exact prior digest without content' });
     }
     if (step.content?.kind === 'secretGrant' && step.expectedContentDigest !== undefined) {
         context.addIssue({ code: 'custom', path: ['expectedContentDigest'], message: 'Secret grants carry references only, never a content digest' });
@@ -116,22 +112,28 @@ function refineFile(step: { state?: string; content?: { kind: string }; expected
 }
 
 /** Epoch 1 executable declarations; M-P20F extends this same canonical owner. */
-export const MachineRecipeStepV1Schema = z.discriminatedUnion('kind', [
+export const MachineRecipeUserStepV1Schema =
     z.object({ ...Step, kind: z.literal('user'), username: Name, home: Path.optional(), shell: Path.optional(), system: z.boolean().optional(), locked: z.boolean().optional(),
+        uid: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
         state: z.enum(['present', 'absent']).optional(), ownershipMarker: z.string().min(1).regex(/^[^:\r\n\0]+$/).optional(),
         supplementaryGroups: z.array(Name).optional(),
     }).strict().superRefine((step, context) => {
         if (step.state === 'absent' && !step.ownershipMarker) context.addIssue({ code: 'custom', message: 'Account removal requires exact recipe ownership' });
-    }),
+    });
+export const MachineRecipeGroupStepV1Schema =
     z.object({ ...Step, kind: z.literal('group'), name: Name, members: z.array(Name),
         state: z.enum(['present', 'absent']).optional(), existingOnly: z.literal(true).optional(),
-    }).strict(),
+    }).strict();
+export const MachineRecipeDirectoryStepV1Schema =
     z.object({ ...Step, kind: z.literal('directory'), path: Path, ...Ownership,
         preserveExistingOwnership: z.literal(true).optional(), protectedAncestors: z.literal(true).optional(),
         ownershipMarker: z.string().min(1).refine(value => !/[\r\n\0]/.test(value)).optional(),
-    }).strict(),
-    z.object({ ...Step, kind: z.literal('workspaceAccess'), path: Path, group: Name, agentUsername: Name }).strict(),
-    z.object({ ...Step, kind: z.literal('pathTraversal'), path: Path, agentUsername: Name }).strict(),
+    }).strict();
+export const MachineRecipeWorkspaceAccessStepV1Schema =
+    z.object({ ...Step, kind: z.literal('workspaceAccess'), path: Path, group: Name, agentUsername: Name }).strict();
+export const MachineRecipePathTraversalStepV1Schema =
+    z.object({ ...Step, kind: z.literal('pathTraversal'), path: Path, agentUsername: Name }).strict();
+export const MachineRecipeFileStepV1Schema =
     z.object({ ...Step, kind: z.literal('file'), path: Path, ...Ownership,
         state: z.enum(['present', 'absent']).optional(),
         content: z.discriminatedUnion('kind', [
@@ -144,10 +146,12 @@ export const MachineRecipeStepV1Schema = z.discriminatedUnion('kind', [
         expectedContentDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
         ownershipMarker: z.string().min(1).optional(), validate: z.union([z.enum(['sudoers', 'docker']), MachineRecipeFileProbeV1Schema]).optional(),
         probe: MachineRecipeFileProbeV1Schema.optional(), onChange: Handler.optional(),
-    }).strict().superRefine(refineFile),
+    }).strict().superRefine(refineFile);
+export const MachineRecipeCommandStepV1Schema =
     z.object({ ...Step, kind: z.literal('command'), ...Argv.shape,
         check: z.union([MachineRecipeNativeCheckV1Schema, KernelFact, UserManagerGroups]), remove: Argv.optional(), affects: MachineRecipeImpactV1Schema.optional(),
-    }).strict(),
+    }).strict();
+export const MachineRecipePackageStepV1Schema =
     z.object({ ...Step, kind: z.literal('package'), manager: PackageManager, state: z.enum(['present', 'absent']).optional(),
         packages: z.array(z.object({ ...PackageIdentityFields, version: PackageVersion.optional() }).strict()).min(1),
     }).strict().superRefine((step, context) => {
@@ -155,34 +159,30 @@ export const MachineRecipeStepV1Schema = z.discriminatedUnion('kind', [
             const message = packageIdentityError({ manager: step.manager, ...item });
             if (message) context.addIssue({ code: 'custom', path: ['packages', index], message });
         });
-    }),
+    });
+export const MachineRecipePackageSourceStepV1Schema =
     z.object({ ...Step, kind: z.literal('packageSource'), manager: z.literal('apt'), path: Path, keyPath: Path,
         url: z.url().startsWith('https://'), suite: z.string().regex(/^[a-z0-9][a-z0-9.-]*$/),
         components: z.array(z.string().regex(/^[a-z0-9-]+$/)).min(1), architectures: z.array(z.string().regex(/^[a-z0-9-]+$/)).min(1),
         keyUrl: z.url().startsWith('https://'), keyFingerprint: z.string().regex(/^[A-F0-9]{40}$/),
-    }).strict(),
-    z.object({ ...Step, kind: z.literal('serviceUnit'), unit: z.string().regex(/^[a-zA-Z0-9@_.-]+\.service$/), enabled: z.boolean(), running: z.boolean() }).strict(),
-    z.object({ ...Step, kind: z.literal('portRequirement'), protocol: z.enum(['tcp', 'udp']),
-        port: z.union([z.number().int().min(1).max(65535), z.object({ from: z.number().int().min(1).max(65535), to: z.number().int().min(1).max(65535) }).strict()
-            .refine(range => range.from <= range.to)]), purpose: z.string().min(1), exposure: z.enum(['public', 'privateNetwork', 'loopback']),
-        providerId: z.string().min(1).optional(), networkIdentity: z.string().min(1).optional(),
-        hostAddress: z.string().min(1).optional(), containerPort: z.number().int().min(1).max(65535).optional(),
-    }).strict().superRefine((step, context) => {
-        if (step.exposure === 'privateNetwork' ? !step.providerId || !step.networkIdentity : step.providerId !== undefined || step.networkIdentity !== undefined) {
-            context.addIssue({ code: 'custom', message: 'Only private exposure requires an exact provider and network identity' });
-        }
-    }),
-    z.object({ ...Step, kind: z.literal('sysctl'), key: z.string().regex(/^[a-z][a-z0-9_.]+$/), value: z.string().refine(value => !/[\r\n\0]/.test(value)),
-        persistence: z.enum(['runtime', 'persistent']) }).strict(),
-    z.object({ ...Step, kind: z.literal('firewall'), rules: z.string().min(1), exposures: z.array(FirewallExposure).optional() }).strict(),
-    // Host-built concrete effect only; recipes cannot declare reboot.
-    z.object({ ...Step, kind: z.literal('reboot') }).strict(),
+    }).strict();
+export const MachineRecipeServiceUnitStepV1Schema =
+    z.object({ ...Step, kind: z.literal('serviceUnit'), unit: z.string().regex(/^[a-zA-Z0-9@_.-]+\.service$/), enabled: z.boolean(), running: z.boolean() }).strict();
+export const MachineRecipeFirewallStepV1Schema =
+    z.object({ ...Step, kind: z.literal('firewall'), rules: z.string().min(1), exposures: z.array(FirewallExposure).optional() }).strict();
+// Host-built concrete effect only; recipes cannot declare reboot.
+export const MachineRecipeRebootStepV1Schema = z.object({ ...Step, kind: z.literal('reboot') }).strict();
+export const MachineRecipeStepV1Schema = z.discriminatedUnion('kind', [
+    MachineRecipeUserStepV1Schema, MachineRecipeGroupStepV1Schema, MachineRecipeDirectoryStepV1Schema,
+    MachineRecipeWorkspaceAccessStepV1Schema, MachineRecipePathTraversalStepV1Schema, MachineRecipeFileStepV1Schema,
+    MachineRecipeCommandStepV1Schema, MachineRecipePackageStepV1Schema, MachineRecipePackageSourceStepV1Schema,
+    MachineRecipeServiceUnitStepV1Schema, MachineRecipeFirewallStepV1Schema, MachineRecipeRebootStepV1Schema,
 ]);
 export type MachineRecipeStepV1 = z.infer<typeof MachineRecipeStepV1Schema>;
 
 export const MachineRecipeInputReferenceV1Schema = z.object({ kind: z.literal('input'), path: InputPathSchema }).strict();
 type InputReference = z.infer<typeof MachineRecipeInputReferenceV1Schema>;
-export const MachineRecipeTargetFactReferenceV1Schema = z.object({ kind: z.literal('targetFact'), fact: z.literal('daemon.primaryGroup') }).strict();
+export const MachineRecipeTargetFactReferenceV1Schema = z.object({ kind: z.literal('targetFact'), fact: z.enum(['daemon.primaryGroup', 'daemon.username']) }).strict();
 export type MachineRecipeTargetFactsV1 = Readonly<Partial<Record<z.infer<typeof MachineRecipeTargetFactReferenceV1Schema>['fact'], string | null>>>;
 export class MachineRecipeTargetFactUnavailableErrorV1 extends Error {
     readonly code = 'machine_recipe_target_fact_unavailable';
@@ -201,8 +201,8 @@ export const MachineRecipeConditionV1Schema = z.union([z.object({
     ifInput: z.optional(InputPredicateSchema),
 }).strict(), z.object({ input: InputPredicateSchema }).strict()]);
 const When = z.array(MachineRecipeConditionV1Schema).min(1).optional();
-const concrete = MachineRecipeStepV1Schema.options;
-const User = concrete[0], Directory = concrete[2], File = concrete[5], Command = concrete[6], Package = concrete[7];
+const User = MachineRecipeUserStepV1Schema, Directory = MachineRecipeDirectoryStepV1Schema;
+const File = MachineRecipeFileStepV1Schema, Command = MachineRecipeCommandStepV1Schema, Package = MachineRecipePackageStepV1Schema;
 const Content = File.shape.content.unwrap();
 const LiteralContent = z.object({ ...Content.options[0].shape, value: bindable(Content.options[0].shape.value) }).strict();
 const TemplateContent = z.object({ ...Content.options[2].shape, variables: TemplateReference.shape.variables }).strict();
@@ -223,7 +223,7 @@ const UserDeclaration = z.object({ ...User.shape,
 }).strict().superRefine((step, context) => {
     if (step.state === 'absent' && !step.ownershipMarker) context.addIssue({ code: 'custom', message: 'Account removal requires exact recipe ownership' });
 });
-const Group = concrete[1];
+const Group = MachineRecipeGroupStepV1Schema;
 const JournalGroupFact = MachineRecipeRequiredFactV1Schema.options[6];
 const GroupDeclaration = z.object({ ...Group.shape, name: bindable(Group.shape.name),
     requiredFacts: z.array(z.union([MachineRecipeRequiredFactV1Schema,
@@ -243,13 +243,16 @@ const FileDeclaration = z.object({ ...File.shape,
     }).strict()]).optional(),
     validate: z.union([File.shape.validate.unwrap().options[0], ProbeDeclaration]).optional(), probe: ProbeDeclaration.optional(),
 }).strict().superRefine(refineFile);
-const ServiceDeclaration = z.object({ ...concrete[9].shape, unit: bindable(concrete[9].shape.unit) }).strict();
+const ServiceDeclaration = z.object({ ...MachineRecipeServiceUnitStepV1Schema.shape,
+    unit: bindable(MachineRecipeServiceUnitStepV1Schema.shape.unit) }).strict();
 const Args = bindable(z.array(bindable(z.string().refine(value => !value.includes('\0')))));
 const KernelDeclaration = z.object({ ...KernelFact.shape, architectures: bindable(Architectures).optional() }).strict()
     .refine(fact => !['binfmt', 'binfmtPersistent'].includes(fact.capability) || fact.architectures !== undefined,
         { message: 'Emulation facts require the exact requested architectures' });
 const CommandDeclaration = z.object({ ...Command.shape, args: Args,
-    check: z.union([z.object({ ...MachineRecipeNativeCheckV1Schema.shape, args: Args }).strict(), KernelDeclaration, UserManagerGroups]),
+    check: z.union([z.object({ ...MachineRecipeNativeCheckV1Schema.shape, args: Args,
+        stdoutJson: z.optional(createInputPredicateSchema(z.union([InputPrimitiveSchema, MachineRecipeInputReferenceV1Schema, MachineRecipeTargetFactReferenceV1Schema]))),
+    }).strict(), KernelDeclaration, UserManagerGroups]),
 }).strict();
 const PackageDeclaration = z.object({ ...Package.shape,
     manager: bindable(Package.shape.manager), packages: bindable(z.array(z.union([
@@ -269,12 +272,11 @@ export const MachineRecipeCheckDeclarationV1Schema = z.discriminatedUnion('kind'
     KernelDeclaration.safeExtend({ id: Step.id })]);
 export const MachineRecipeStepDeclarationV1Schema = z.discriminatedUnion('kind', [
     UserDeclaration.safeExtend({ when: When }), GroupDeclaration.safeExtend({ when: When }),
-    DirectoryDeclaration.safeExtend({ when: When }), concrete[3].safeExtend({ when: When }),
-    concrete[4].safeExtend({ when: When }), FileDeclaration.safeExtend({ when: When }),
+    DirectoryDeclaration.safeExtend({ when: When }), MachineRecipeWorkspaceAccessStepV1Schema.safeExtend({ when: When }),
+    MachineRecipePathTraversalStepV1Schema.safeExtend({ when: When }), FileDeclaration.safeExtend({ when: When }),
     CommandDeclaration.safeExtend({ when: When }), PackageDeclaration.safeExtend({ when: When }),
-    concrete[8].safeExtend({ when: When }), ServiceDeclaration.safeExtend({ when: When }),
-    concrete[10].safeExtend({ when: When }), concrete[11].safeExtend({ when: When }),
-    concrete[12].safeExtend({ when: When }),
+    MachineRecipePackageSourceStepV1Schema.safeExtend({ when: When }), ServiceDeclaration.safeExtend({ when: When }),
+    MachineRecipeFirewallStepV1Schema.safeExtend({ when: When }),
 ]);
 export type MachineRecipeStepDeclarationV1 = z.infer<typeof MachineRecipeStepDeclarationV1Schema>;
 export type MachineRecipeCheckV1 = z.infer<typeof MachineRecipeCheckV1Schema>;
@@ -364,7 +366,9 @@ export function resolveMachineRecipeStepInputsV1(step: MachineRecipeStepDeclarat
             resolved = { ...concreteStep, args: boundArgs(step.args, inputs, targetFacts),
                 check: 'kind' in step.check ? step.check.kind === 'kernel'
                     ? { ...step.check, architectures: bind(step.check.architectures) } : step.check
-                    : { ...step.check, args: boundArgs(step.check.args, inputs, targetFacts) } };
+                    : { ...step.check, args: boundArgs(step.check.args, inputs, targetFacts),
+                        ...(step.check.stdoutJson ? { stdoutJson: mapInputPredicateValues(step.check.stdoutJson,
+                            value => InputPrimitiveSchema.parse(bind(value))) } : {}) } };
             break;
         case 'kernel':
             resolved = { ...concreteStep, ...(step.architectures !== undefined ? { architectures: bind(step.architectures) } : {}) };
@@ -430,10 +434,19 @@ export const MachineSetupStepObservationV1Schema = z.object({
 }).strict();
 export type MachineSetupStepObservationV1 = z.infer<typeof MachineSetupStepObservationV1Schema>;
 
-/** The bootstrap arm never names or writes an online desired-setup record. */
-export const MachineSetupEffectBasisV1Schema = z.discriminatedUnion('kind', [
+/** Creation-time bases never name or write an online desired-setup record. */
+export const MachineSetupBootstrapBasisV1Schema = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('bootstrap'), managedId: z.string().min(1), operationId: z.string().min(1),
         admittedInputDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+    z.object({ kind: z.literal('sshBootstrap'), operationId: z.string().min(1),
+        admittedInputDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+]);
+export type MachineSetupBootstrapBasisV1 = z.infer<typeof MachineSetupBootstrapBasisV1Schema>;
+export function isMachineSetupBootstrapBasisV1(basis: MachineSetupEffectPlanV1['basis']): basis is MachineSetupBootstrapBasisV1 {
+    return basis.kind === 'bootstrap' || basis.kind === 'sshBootstrap';
+}
+export const MachineSetupEffectBasisV1Schema = z.discriminatedUnion('kind', [
+    ...MachineSetupBootstrapBasisV1Schema.options,
     z.object({ kind: z.literal('setup'), machineId: z.string().min(1), desiredRevision: z.number().int().nonnegative(),
         selection: MachineRecipeSelectionV1Schema.optional() }).strict(),
     // Administrator policy is its own admitted Machine operation, not a
@@ -447,7 +460,8 @@ export const MachineSetupEffectBasisV1Schema = z.discriminatedUnion('kind', [
         expectedPolicy: MachineAgentIsolationPolicyV1Schema,
         review: z.object({ roots: z.array(z.object({ rootId: z.string().min(1), path: Path }).strict()),
             ancestorAcls: z.array(z.object({ path: Path, add: z.literal('x') }).strict()),
-            sessionsToReplace: z.number().int().nonnegative() }).strict().optional(),
+            sessionsToReplace: z.number().int().nonnegative(),
+            memberProvisioning: z.literal('linuxUsersV1').optional() }).strict().optional(),
     }).strict(),
     z.object({ kind: z.literal('reboot'), machineId: z.string().min(1), operationId: z.string().min(1) }).strict(),
 ]);
@@ -482,8 +496,7 @@ export const MachineSetupEffectPlanV1Schema = z.object({
 export type MachineSetupEffectPlanV1 = z.infer<typeof MachineSetupEffectPlanV1Schema>;
 
 export const MachineSetupElevatedEffectV1Schema = z.object({ kind: z.literal('setupOperation'),
-    plans: z.array(z.object({ plan: MachineSetupEffectPlanV1Schema,
-        expectedPlanDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).min(1)
+    plans: z.array(z.object({ plan: MachineSetupEffectPlanV1Schema }).strict()).min(1)
         .refine(plans => plans.length === 1 || plans.every(entry => entry.plan.basis.kind !== 'reboot'),
             { message: 'Reboot cannot share an elevated batch' }),
 }).strict();

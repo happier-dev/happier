@@ -62,13 +62,33 @@ export const StoredMachineAdminAccessObservationV1Schema = lazyZodSchema(() => z
   },
 ));
 
+/** Nonsecret native recovery material captured by the firewall owner before its first mutation. */
+const MachineFirewallRecoveryFileV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('absent') }),
+  z.strictObject({ kind: z.literal('file'), content: z.string() }),
+]));
+export const MachineFirewallRecoveryV1Schema = lazyZodSchema(() => z.strictObject({
+  rules: MachineFirewallRecoveryFileV1Schema,
+  unit: MachineFirewallRecoveryFileV1Schema,
+  table: z.nullable(z.string()),
+  boot: z.strictObject({ present: z.boolean(), enabled: z.boolean(), running: z.boolean() }),
+}));
+export type MachineFirewallRecoveryV1 = z.infer<typeof MachineFirewallRecoveryV1Schema>;
+
+/** Present only when the same native owner has verified restoration of its captured state. */
+export const MachineFirewallRestorationV1Schema = lazyZodSchema(() => z.strictObject({
+  status: z.literal('verified'), recovery: MachineFirewallRecoveryV1Schema,
+}));
+export type MachineFirewallRestorationV1 = z.infer<typeof MachineFirewallRestorationV1Schema>;
+
 export const MachineElevatedResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
   z.strictObject({ outcome: z.literal('applied'), observation: MachineAdminAccessObservationV1Schema }),
   z.strictObject({ outcome: z.literal('not_applied'), reasonCode: z.enum(['mode_none', 'not_preauthorized',
-    'denied', 'platform_unsupported', 'plan_stale', 'cancelled']) }),
+    'denied', 'platform_unsupported', 'plan_stale', 'cancelled']),
+    restoration: z.optional(MachineFirewallRestorationV1Schema) }),
   z.strictObject({ outcome: z.literal('needs_attendance'), operationId: z.string().check(z.minLength(1)),
     prompt: MachineSudoPasswordPromptV1Schema }),
-  z.strictObject({ outcome: z.literal('outcome_unknown') }),
+  z.strictObject({ outcome: z.literal('outcome_unknown'), restoration: z.optional(MachineFirewallRestorationV1Schema) }),
 ]));
 export type MachineElevatedResultV1 = z.infer<typeof MachineElevatedResultV1Schema>;
 

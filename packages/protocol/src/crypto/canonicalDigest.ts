@@ -5,6 +5,11 @@ import { encodeBase64 } from './base64.js';
 
 const textEncoder = new TextEncoder();
 
+/** Raw bytes for incumbent SHA-256 seams; no domain or length framing. */
+export function computeSha256HexDigest(value: string | Uint8Array): string {
+    return bytesToHex(sha256(typeof value === 'string' ? textEncoder.encode(value) : value));
+}
+
 export function encodeCanonicalLengthDelimited(
     parts: readonly (string | Uint8Array)[],
 ): Uint8Array {
@@ -37,5 +42,5 @@ export function computeCanonicalDomainSeparatedHexDigest(
     domain: string,
     parts: readonly (string | Uint8Array)[],
 ): string {
-    return bytesToHex(sha256(encodeCanonicalLengthDelimited([domain, ...parts])));
+    return computeSha256HexDigest(encodeCanonicalLengthDelimited([domain, ...parts]));
 }

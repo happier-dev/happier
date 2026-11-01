@@ -34,7 +34,7 @@ export type InputPath = z.infer<typeof InputPathSchema>;
 export const InputPrimitiveSchema = lazyZodSchema(() => z.union([z.string(), z.number(), z.boolean(), z.null()]));
 export type InputPrimitive = z.infer<typeof InputPrimitiveSchema>;
 
-export type InputPredicate =
+export type InputPredicateWithValue<Value> =
   | Readonly<{
       op: 'truthy';
       path: InputPath;
@@ -42,7 +42,7 @@ export type InputPredicate =
   | Readonly<{
       op: 'eq';
       path: InputPath;
-      value: InputPrimitive;
+      value: Value;
     }>
   | Readonly<{
       op: 'includes';
@@ -51,19 +51,22 @@ export type InputPredicate =
     }>
   | Readonly<{
       op: 'not';
-      predicate: InputPredicate;
+      predicate: InputPredicateWithValue<Value>;
     }>
   | Readonly<{
       op: 'and';
-      all: readonly InputPredicate[];
+      all: readonly InputPredicateWithValue<Value>[];
     }>
   | Readonly<{
       op: 'or';
-      any: readonly InputPredicate[];
+      any: readonly InputPredicateWithValue<Value>[];
     }>;
 
-export const InputPredicateSchema: z.ZodMiniType<InputPredicate> = z.lazy(() =>
-  z.union([
+export type InputPredicate = InputPredicateWithValue<InputPrimitive>;
+
+/** Recipe declarations bind eq values before using the same concrete grammar. */
+export function createInputPredicateSchema<Value>(valueSchema: z.core.$ZodType<Value, Value>): z.ZodMiniType<InputPredicateWithValue<Value>> {
+  const schema: z.ZodMiniType<InputPredicateWithValue<Value>> = z.lazy(() => z.union([
     z.strictObject({
         op: z.literal('truthy'),
         path: InputPathSchema,
@@ -71,7 +74,7 @@ export const InputPredicateSchema: z.ZodMiniType<InputPredicate> = z.lazy(() =>
     z.strictObject({
         op: z.literal('eq'),
         path: InputPathSchema,
-        value: InputPrimitiveSchema,
+        value: valueSchema,
       }),
     z.strictObject({
         op: z.literal('includes'),
@@ -80,18 +83,32 @@ export const InputPredicateSchema: z.ZodMiniType<InputPredicate> = z.lazy(() =>
       }),
     z.strictObject({
         op: z.literal('not'),
-        predicate: InputPredicateSchema,
+        predicate: schema,
       }),
     z.strictObject({
         op: z.literal('and'),
-        all: z.array(InputPredicateSchema).check(z.minLength(1)),
+        all: z.array(schema).check(z.minLength(1)),
       }),
     z.strictObject({
         op: z.literal('or'),
-        any: z.array(InputPredicateSchema).check(z.minLength(1)),
+        any: z.array(schema).check(z.minLength(1)),
       }),
-  ]),
-);
+  ]));
+  return schema;
+}
+export const InputPredicateSchema: z.ZodMiniType<InputPredicate> = createInputPredicateSchema(InputPrimitiveSchema);
+
+/** Bind declaration values without adding another predicate evaluator/parser. */
+export function mapInputPredicateValues<InputValue, OutputValue>(predicate: InputPredicateWithValue<InputValue>,
+  mapValue: (value: InputValue) => OutputValue): InputPredicateWithValue<OutputValue> {
+  switch (predicate.op) {
+    case 'eq': return { ...predicate, value: mapValue(predicate.value) };
+    case 'not': return { ...predicate, predicate: mapInputPredicateValues(predicate.predicate, mapValue) };
+    case 'and': return { ...predicate, all: predicate.all.map(entry => mapInputPredicateValues(entry, mapValue)) };
+    case 'or': return { ...predicate, any: predicate.any.map(entry => mapInputPredicateValues(entry, mapValue)) };
+    default: return predicate;
+  }
+}
 
 /**
  * Reads a bounded Action-input path through the one shared path traversal.
