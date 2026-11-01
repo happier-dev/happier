@@ -7,6 +7,23 @@ description: Ownership boundaries used by Happier plugins and agent runtimes.
 
 A plugin is an installable package with a cold manifest and optional executable daemon and client code. It is the unit of trust, projection, host-access review, and executable registration.
 
+## Built-in plugin enablement
+
+In 0.3 development builds, built-in plugins are enabled by default for both
+the Account and each Machine. Open a plugin in Plugins to change its Account
+and selected Machine switches. Both must be on for the plugin's contributions
+to be available on that Machine.
+
+Disabling a plugin keeps its data and credentials. Work already admitted can
+finish at its natural boundary; enabling both scopes makes the contributions
+available again. If an Agent plugin is disabled, a Session can report
+`plugin_disabled` and offer **Manage plugin** so you can re-enable it.
+
+The `plugins.enable` and `plugins.disable` Actions also accept an optional
+`scope` of `account` or `machine`. If omitted, the Action applies to the
+Machine. Required host-import packages remain part of the distribution even
+when their contributions are disabled.
+
 ## Manifest
 
 The manifest declares stable projected facts:

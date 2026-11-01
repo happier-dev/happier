@@ -2,6 +2,22 @@
 
 Bundled and installed plugins contribute through the same manifest, registration and projection contracts. The host owns installation, admission, currentness, invocation and cleanup; a plugin owns its integration's declarations and executable leaves. The SDK exposes that boundary without becoming another runtime or persistence owner.
 
+## Built-in plugin enablement (0.3 development source)
+
+Built-in plugins default to enabled in both Account and Machine scope. The
+bundled contribution admission owner combines those intents: a plugin is
+available on a Machine only when both are enabled. It withdraws the disabled
+plugin's contributions from admission; required host-import packages remain in
+the distribution for packaging, without making those contributions available.
+Enabling both scopes restores the contributions. Disablement retains plugin data
+and credentials, and already admitted work finishes at its natural boundary.
+
+The `plugins.enable` and `plugins.disable` Actions accept an optional `scope` of
+`account` or `machine`; omitted scope selects the Machine. Plugin administration
+exposes both switches for the selected Machine. A Session whose Agent plugin is
+disabled reports the typed `plugin_disabled` issue and offers **Manage plugin**
+for recovery. These are development-source contracts, not a 0.2 release claim.
+
 The development `ui.listExtensions` declaration uses the existing UI contribution
 catalog, manifest integrity pass and UI projection. It carries P6's canonical
 filter-field constituent and an optional neutral field-reference mark; it grants
