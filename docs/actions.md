@@ -2048,6 +2048,13 @@ headless hosts do not report those effects as completed. Move is outside this
 parity slice. These are unreleased source contracts, not package or loaded-runtime
 certification.
 
+In the development UI, inventory diagnostics use the shared surface-reason copy
+owner. **Local service scan needs attention** distinguishes missing/unreadable
+Project roots, unavailable accepted-workspace information, scan deadline
+incompleteness and process enumeration failure. A partial inventory is not a
+service Start failure; lifecycle and preview outcomes keep their own reasons.
+See the published [local service previews guide](../apps/docs/content/docs/self-hosting/local-service-previews.mdx).
+
 ### Remote hosts (development)
 
 `remote_hosts.*` is declared by the Protocol Remote host family and executes

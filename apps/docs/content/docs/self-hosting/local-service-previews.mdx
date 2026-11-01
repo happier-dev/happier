@@ -22,6 +22,13 @@ internet — which is disabled by default and remains a development feature.
 
 Private previews are the normal path and the rest of this page is mostly about them.
 
+**Local service scan needs attention** describes a discovery problem. Its detail
+identifies an unreadable or missing Project folder, unavailable open-project
+information, a partial scan, or a failure to list the Machine's processes. A
+partial scan means some services may be missing; it does not mean a service
+failed to start. Restore the named folder access or Machine prerequisite before
+refreshing discovery. Service start and preview failures have their own outcomes.
+
 In unreleased 0.3 development builds, every Home derives its route-grant signer from its
 existing master secret by default, including generic, Team/shared, dev, QA, preview and
 self-hosted Homes. Explicit signing variables remain an operator override. This signer
