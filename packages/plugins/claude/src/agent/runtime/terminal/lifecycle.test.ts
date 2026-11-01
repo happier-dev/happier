@@ -6,6 +6,14 @@ import {
 } from './lifecycle.js';
 
 describe('Claude terminal lifecycle mapping leaf', () => {
+    it('does not turn the SessionEnd → SessionStart hooks from clear into a process exit', () => {
+        for (const eventName of ['SessionEnd', 'SessionStart']) {
+            expect(mapClaudeHookEventToTerminalLifecycleObservation({
+                agentId: 'claude', eventName,
+            })).toBeNull();
+        }
+    });
+
     it('ignores hook-originated task-notification prompt submissions', () => {
         expect(mapClaudeHookEventToTerminalLifecycleObservation({
             agentId: 'claude',
