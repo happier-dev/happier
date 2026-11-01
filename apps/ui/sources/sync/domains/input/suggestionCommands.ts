@@ -11,6 +11,7 @@ import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { storage } from '../state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { t } from '@/text';
+import { resolveActionTitle } from '@/text/actionTitles';
 import { BUILT_IN_PROMPTS } from './slashCommands/builtInPrompts';
 import type { PromptInvocationSuggestionMetadata } from './slashCommands/promptInvocationSuggestion';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -50,15 +51,10 @@ function buildDefaultCommands(compaction: AgentSessionCompactionCapability | nul
     ];
 }
 
-function describeActionSlashToken(token: string, fallbackTitle: string): string {
-    if (token === '/h.review') return 'Start a code review run';
-    if (token === '/h.plan') return 'Start a planning run';
-    if (token === '/h.delegate') return 'Start a delegation run';
-    if (token === '/h.voice') return 'Start a voice agent run';
-    if (token === '/h.runs') return 'List execution runs';
-    if (token === '/h.voice.reset') return 'Reset the global voice agent';
+/** An Action's slash command reads as its localized Action title (the one title owner). */
+function describeActionSlashToken(token: string, spec: Readonly<{ id: string; title: string }>): string {
     if (token === '/pet' || token === '/h.pet') return t('commandPalette.pets.chooseSubtitle');
-    return fallbackTitle;
+    return resolveActionTitle(spec.id, spec);
 }
 
 function buildActionSlashCommands(state: any): CommandItem[] {
@@ -75,7 +71,7 @@ function buildActionSlashCommands(state: any): CommandItem[] {
             if (out.find((c) => c.command === command)) continue;
             out.push({
                 command,
-                description: describeActionSlashToken(token, spec.title),
+                description: describeActionSlashToken(token, spec),
             });
         }
     }

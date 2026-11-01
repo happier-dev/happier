@@ -117,6 +117,32 @@ describe('suggestionCommands', () => {
         expect(commands.some((c) => c.command === 'clear')).toBe(true);
     });
 
+    it('describes every Happier command in the reader\'s language', async () => {
+        // Asserted in French: English copy would pass against a description that ignores the locale.
+        const { preloadTranslationsForSettings, setPreferredLanguageFromSettings, t } = await import('@/text');
+        await preloadTranslationsForSettings('fr');
+        storage.setState({
+            sessions: { s1: { metadata: undefined } },
+            settings: { experiments: true, featureToggles: { 'execution.runs': true, 'pets.companion': true } },
+        } as any);
+        setPreferredLanguageFromSettings('fr');
+        try {
+            const { getAllCommands } = await import('./suggestionCommands');
+            const describe = (command: string) => getAllCommands('s1', { compaction: { events: true, manual: true } })
+                .find((row) => row.command === command)?.description;
+            expect(describe('h.voice.reset')).toBe(t('commandPalette.commands.resetVoiceAgentTitle'));
+            expect(describe('h.plan')).toBe(t('commandPalette.commands.startPlanRunTitle'));
+            expect(describe('h.delegate')).toBe(t('actionPresentation.titles.subagents_delegate_start'));
+            expect(describe('h.voice')).toBe(t('actionPresentation.titles.voice_agent_start'));
+            expect(describe('h.runs')).toBe(t('actionPresentation.titles.execution_run_list'));
+            expect(describe('compact')).toBe(t('agentInput.commands.compact'));
+            expect(describe('clear')).toBe(t('agentInput.commands.clear'));
+            expect(describe('h.voice.reset')).not.toBe('Reset voice agent');
+        } finally {
+            setPreferredLanguageFromSettings(null);
+        }
+    });
+
     it('omits execution-run slash commands when the execution runs feature is disabled', async () => {
         storage.setState({
             sessions: { s1: { metadata: undefined } },
