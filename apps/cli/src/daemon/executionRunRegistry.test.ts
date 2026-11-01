@@ -17,6 +17,7 @@ const filesystemBoundary = vi.hoisted(() => ({
   afterProtectedRead: null as null | ((path: unknown) => Promise<void>),
   writeFileSpy: vi.fn<(...args: Parameters<typeof import('node:fs/promises')['writeFile']>) => void>(),
   openSpy: vi.fn<(...args: Parameters<typeof import('node:fs/promises')['open']>) => void>(),
+  readdirSpy: vi.fn<(...args: Parameters<typeof import('node:fs/promises')['readdir']>) => void>(),
   watchers: new Set<import('node:fs').FSWatcher>(),
 }));
 
@@ -35,6 +36,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...actual,
+    readdir: async (...args: Parameters<typeof actual.readdir>) => {
+      filesystemBoundary.readdirSpy(...args);
+      return actual.readdir(...args);
+    },
     open: async (...args: Parameters<typeof actual.open>) => {
       filesystemBoundary.openSpy(...args);
       const handle = await actual.open(...args);
@@ -74,6 +79,7 @@ describe('executionRunRegistry', () => {
     filesystemBoundary.afterProtectedRead = null;
     filesystemBoundary.writeFileSpy.mockClear();
     filesystemBoundary.openSpy.mockClear();
+    filesystemBoundary.readdirSpy.mockClear();
     // Reload the real live configuration instead of rebuilding the entire Protocol/CLI graph.
     reloadConfiguration();
   });
@@ -184,6 +190,10 @@ describe('executionRunRegistry', () => {
   it('retains and lists state and visibility markers for long Run identities', async () => {
     const registry = await import('./executionRunRegistry');
     const runId = `run_${'x'.repeat(220)}`;
+    // An exact absent identity has no discovery consumer, even when its former
+    // basename would exceed the filesystem's per-component limit.
+    expect(await registry.readRetainedExecutionRunRecord(runId)).toBeNull();
+    expect(filesystemBoundary.readdirSpy).not.toHaveBeenCalled();
     await registry.retainExecutionRunState({ runId, callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
       intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Review',
       permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
@@ -587,6 +597,8 @@ describe('executionRunRegistry', () => {
     const priorPath = join(directory, `state-${Buffer.from(state.runId).toString('base64url')}.sealed`);
     renameSync(currentPath, priorPath);
     const priorBytes = readFileSync(priorPath, 'utf8');
+    expect(await registry.readRetainedExecutionRunRecord(state.runId))
+      .toMatchObject({ terminalEventId: 'prior-terminal', state: { runId: state.runId } });
     const [recovered] = await registry.readRetainedExecutionRunRecords();
     expect(recovered).toMatchObject({ terminalEventId: 'prior-terminal', state: { runId: state.runId } });
     expect(await registry.readRetainedExecutionRunRecord(state.runId)).toEqual(recovered);

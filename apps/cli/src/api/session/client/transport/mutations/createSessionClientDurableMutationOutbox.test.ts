@@ -712,14 +712,32 @@ describe('createRuntimeSessionClientDurableMutationOutbox', () => {
             socket,
         });
         await outbox.setSessionSyncPendingInputServerContract(connectionContract);
+        const recoveriesBeforeActivation = persistenceMocks.recover.mock.calls.length;
         await outbox.activateDelivery();
 
+        expect(persistenceMocks.recover.mock.calls.length - recoveriesBeforeActivation).toBe(1);
         expect(socket.emitWithAck.mock.calls.filter(([event]) => (
             event === SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1
         ))).toHaveLength(1);
         expect(socket.emitWithAck.mock.calls.filter(([event]) => (
             event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1
         ))).toHaveLength(3);
+        expect(persistenceMocks.save.mock.calls.at(-1)?.[1]).toEqual([]);
+
+        outbox.deactivateDelivery();
+        await expect(outbox.enqueueTranscriptMessage(createTranscriptMutation({
+            localId: 'queued-4', sidechainId: null, text: 'retained after deactivation',
+        }))).resolves.toEqual({ persisted: true, delivered: false, localId: 'queued-4' });
+        await outbox.setSessionSyncPendingInputServerContract(connectionContract);
+        const recoveriesBeforeReactivation = persistenceMocks.recover.mock.calls.length;
+        await outbox.activateDelivery();
+        expect(persistenceMocks.recover.mock.calls.length - recoveriesBeforeReactivation).toBe(1);
+        expect(socket.emitWithAck.mock.calls.filter(([event]) => (
+            event === SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1
+        ))).toHaveLength(1);
+        expect(socket.emitWithAck.mock.calls.filter(([event]) => (
+            event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1
+        ))).toHaveLength(4);
         expect(persistenceMocks.save.mock.calls.at(-1)?.[1]).toEqual([]);
         await outbox.close();
     });

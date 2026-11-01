@@ -2048,7 +2048,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     if (params.actionRequestAttributionV1) params = { ...params,
       actionRequestAttributionV1: materializeActionRequestAttributionV1(params.actionRequestAttributionV1) };
     if (params.intent === 'voice_agent') params.signal?.throwIfAborted();
-    await this.recoverRetainedRuns();
+    if (retained) await this.recoverRetainedRuns();
     this.ensurePermissionResponseTargetHandlerRegistered();
     const resolution = await this.resolveExecutionRunProfileCatalog(params.backendTarget, retained?.runId).catch((error: unknown) => {
       throw markExecutionRunStartPreparationFailure(error, 'execution_run_contribution_snapshot_unavailable');
@@ -2153,6 +2153,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       const runInteractionStore = preparedParams.getPermissionRequestStore?.() ?? null;
       const started = await startExecutionRun({
         admitStart: this.admitStart,
+        recoverRetainedRuns: retained ? undefined : this.recoverRetainedRuns.bind(this),
         params: preparedParams,
         resolveAccountSettingsSnapshot: this.resolveAccountSettingsSnapshot,
         childSelectionContext: {

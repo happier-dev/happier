@@ -350,7 +350,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
     if (!isAuthoritativeScope(sessionId)) return beforeStart(executionRunScopeMismatch());
     const disabled = ensureEnabled();
     if (disabled) return beforeStart(disabled);
-    await params.manager.recoverRetainedRuns();
+    // Request-bound recovery belongs to the manager's identity lookup.
     const parsed = ExecutionRunStartRequestSchema.safeParse(raw);
     if (!parsed.success) return beforeStart(invalidParams());
     if (
@@ -780,10 +780,10 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       const disabled = ensureEnabled();
       if (disabled) return disabled;
       if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
-      await params.manager.recoverRetainedRuns();
       const parsed = ExecutionRunEnsureOrStartRequestSchema.parse(request);
       const runId = typeof parsed.runId === 'string' ? parsed.runId.trim() : '';
       if (runId) {
+        await params.manager.recoverRetainedRuns();
         if (!getRunInAuthoritativeScope(runId, sessionId)) return executionRunNotFound();
         const ensured = await params.manager.ensure(runId, {
           resume: parsed.resume,

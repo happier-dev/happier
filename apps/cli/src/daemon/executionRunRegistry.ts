@@ -244,12 +244,14 @@ export async function readRetainedExecutionRunRecord(runId: string): Promise<Ret
     return record;
   } catch (error) { if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error; }
   const priorPath = priorRetainedStatePath(runId);
-  // Check the directory rather than trying a potentially overlong former name.
-  let entries: string[];
-  try { entries = await readdir(resolveExecutionRunMarkerDir()); }
-  catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null; throw error; }
-  if (!entries.includes(basename(priorPath))) return null;
-  const ciphertext = await readProtectedLocalStateFile(priorPath);
+  let ciphertext: string;
+  try { ciphertext = await readProtectedLocalStateFile(priorPath); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    // An absent or unrepresentable former basename needs no inventory scan.
+    if (code === 'ENOENT' || code === 'ENAMETOOLONG') return null;
+    throw error;
+  }
   const prior = createStoredReadSchema(RetainedExecutionRunRecordSchema).parse(storage.openJson({ purpose: 'execution_run_state', ciphertext }));
   if (prior.state.runId !== runId) throw new Error('Retained execution state identity mismatch');
   return prior;

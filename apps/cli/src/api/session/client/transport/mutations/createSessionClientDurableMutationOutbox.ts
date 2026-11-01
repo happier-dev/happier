@@ -115,7 +115,10 @@ type GenericSessionClientDurableMutationOutbox = Readonly<{
         mutation: RegisteredSessionStateFieldMutationV1,
         opts?: Readonly<{ signal?: AbortSignal }>,
     ): Promise<RegisteredSessionStateFieldWaitResult>;
-    setSessionSyncPendingInputServerContract(result: SessionClientConnectionContractResult): Promise<void>;
+    setSessionSyncPendingInputServerContract(
+        result: SessionClientConnectionContractResult,
+        opts?: Readonly<{ flush?: boolean }>,
+    ): Promise<void>;
     readRuntimeActivitySnapshotTail(): RuntimeActivitySnapshotTail;
     waitForRuntimeActivitySnapshotTailChange(sequence: number, signal?: AbortSignal): Promise<boolean>;
     awaitReady(): Promise<void>;
@@ -818,8 +821,8 @@ function createGenericSessionClientDurableMutationOutbox(
                 await (await resolveReopened())?.enqueueRegisteredSessionStateFieldMutationAndWaitForDelivery(mutation, opts)
                 ?? { status: 'failed' }
             ),
-            setSessionSyncPendingInputServerContract: async (result) => {
-                await (await resolveReopened())?.setSessionSyncPendingInputServerContract(result);
+            setSessionSyncPendingInputServerContract: async (result, opts) => {
+                await (await resolveReopened())?.setSessionSyncPendingInputServerContract(result, opts);
             },
             readRuntimeActivitySnapshotTail: () => reopenedHandle?.readRuntimeActivitySnapshotTail() ?? ({
                 sequence: 0,
@@ -995,9 +998,9 @@ function createGenericSessionClientDurableMutationOutbox(
             if (handleClosed) return { status: 'failed' };
             return await sharedEntry.outbox.enqueueRegisteredSessionStateFieldMutationAndWaitForDelivery(mutation, opts);
         },
-        setSessionSyncPendingInputServerContract: async (result) => {
+        setSessionSyncPendingInputServerContract: async (result, opts) => {
             if (handleClosed) return;
-            await sharedEntry.outbox.setSessionSyncPendingInputServerContract(result);
+            await sharedEntry.outbox.setSessionSyncPendingInputServerContract(result, opts);
         },
         readRuntimeActivitySnapshotTail: () => sharedEntry.outbox.readRuntimeActivitySnapshotTail(),
         waitForRuntimeActivitySnapshotTailChange: async (sequence, signal) => {
@@ -1139,6 +1142,7 @@ export function createRuntimeSessionClientDurableMutationOutbox(params: Readonly
             if (retainedSessionSyncPendingInputServerContract) {
                 await journal.setSessionSyncPendingInputServerContract(
                     retainedSessionSyncPendingInputServerContract,
+                    { flush: false },
                 );
             }
             const contractCompletedAt = performance.now();
@@ -2816,13 +2820,14 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             const settlement = await waiter.promise;
             return typeof settlement === 'string' ? { status: settlement } : settlement;
         },
-        async setSessionSyncPendingInputServerContract(result) {
+        async setSessionSyncPendingInputServerContract(result, opts) {
             await ready;
             if (closed) return;
             const previousMode = sessionSyncPendingInputServerContractResult?.mode;
             sessionSyncPendingInputServerContractResult = result;
             if (
-                previousMode !== result.mode
+                opts?.flush !== false
+                && previousMode !== result.mode
                 && (
                     supportsRuntimeActivityV2(result)
                     || result.runtimeActivity === 'legacy'

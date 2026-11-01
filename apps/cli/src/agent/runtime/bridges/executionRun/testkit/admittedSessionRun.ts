@@ -81,6 +81,7 @@ import { createExecutionRunTranscriptCustodyError } from '../executionRunTranscr
 import { randomUUID } from 'node:crypto';
 import { recordTrackedRunnerAgentSessionOpenAttestation } from '@/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
 import { prepareProjectAgentLaunch } from '@/workspaces/projectSetup/projectAgentLaunch';
+import { resolveCliVoicePromptPreparation } from '@/agent/prompts/library/resolveCliVoicePromptStackBlocks';
 import type { HostAgentNativeLaunchPreparation } from '@/plugins/runtime/invocation/services/exec';
 import { createSessionRunReportPolicyReader } from '@/api/sessionFollowCreationPreferences';
 import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
@@ -725,6 +726,11 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     resolveRunReportPolicy: createSessionRunReportPolicyReader({ serverId: attribution.serverId, serverHttpBaseUrl: origin,
       accountId, readCredentials: async () => credentials, isCurrent: () => true }),
     resolveAccountSettingsSnapshot: async () => accountSettings,
+    // This authored fixture has no prompt-library or Project entries. Bind
+    // the real Voice owner to its genuine parent and Account credentials.
+    resolveVoicePromptPreparation: async args => await resolveCliVoicePromptPreparation({ ...args, credentials,
+      serverId: attribution.serverId, sessionMetadata: parentMetadata, machineId: attribution.machineId,
+      directory, accountEntries: [], profileEntries: [], projectEntries: [] }),
     sessionInteractionHost: { session, machineId: attribution.machineId, permissionHandler: parentPermissionHandler },
     sendAcp: async (provider, body, opts) => {
       const admission = await session.enqueueAgentMessageCommitted(provider, body, {

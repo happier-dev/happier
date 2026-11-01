@@ -280,6 +280,8 @@ type StartExecutionRunArgs = Readonly<{
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
   /** Current daemon admission, evaluated in the Run's actual host process. */
   admitStart?: () => Promise<void>;
+  /** Restore request-bound identities before their existing-Run lookup. */
+  recoverRetainedRuns?: () => Promise<void>;
   createRuntime: (opts: {
     runId?: string;
     controllerOccurrenceId?: string;
@@ -355,6 +357,7 @@ export async function startExecutionRun(args: StartExecutionRunArgs): Promise<Ex
     ? deriveExecutionRunIdFromActionRequestId(actionRequestId)
     : null;
   if (requestBoundRunId) {
+    await args.recoverRetainedRuns?.();
     const existing = args.runs.get(requestBoundRunId);
     if (existing) return projectExistingExecutionRunStartResult(existing);
   }
