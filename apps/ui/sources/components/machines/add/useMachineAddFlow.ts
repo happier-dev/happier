@@ -50,7 +50,7 @@ import { cancelMachineAddFlowTasks, discardMachineAddFlowDraft, readMachineAddFl
 import { beginMachineAddWatch, startMachineAddTask, hasRunningMachineAddTask as hasRunningTask } from './machineAddTaskLifetime';
 import { getMachineAddSshSupportedAuthModes } from './machineAddSshTask';
 
-export type MachineAddDraftRow = Readonly<{ title: string; entityTitle: string | null; status: string | null; tone: 'waiting' | 'running' | 'failed' | 'arrived' }>;
+export type MachineAddDraftRow = Readonly<{ title: string; entityTitle: string | null; status: string | null; tone: 'draft' | 'waiting' | 'running' | 'failed' | 'arrived' }>;
 export type MachineAddStep = Readonly<{ id: string; label: string; state: 'done' | 'running' | 'pending' | 'failed'; elapsedMs: number | null }>;
 export type MachineAddThisComputer =
     | Readonly<{ kind: 'checking' }>
@@ -78,7 +78,7 @@ function useHomeProfile(serverId: string) {
     return React.useMemo(() => getServerProfileById(serverId), [generation, serverId]);
 }
 
-function makeDraftRow(path: MachineAddPathId | null, creating: boolean, host: string, handle: MachineAddTaskHandle | null, snapshot: SystemTaskRunState | null, arrived: boolean): MachineAddDraftRow | null {
+function makeDraftRow(path: MachineAddPathId | null, creating: boolean, host: string, handle: MachineAddTaskHandle | null, snapshot: SystemTaskRunState | null, arrived: boolean, watching: boolean): MachineAddDraftRow | null {
     if (path === null && !creating) return null;
     const entityTitle = !creating && path === 'ssh' ? host.trim() || null : null;
     const title = entityTitle ?? t('machineAdd.newMachine');
@@ -86,8 +86,9 @@ function makeDraftRow(path: MachineAddPathId | null, creating: boolean, host: st
     if (handle?.startError || (snapshot?.result && !snapshot.result.ok)) return { title, entityTitle, status: snapshot?.status === 'canceled' ? t('machineAdd.cancelled') : t('machineAdd.failed'), tone: 'failed' };
     if (handle?.starting || (snapshot && !snapshot.result)) return { title, entityTitle, status: snapshot?.currentStepId ? resolveSystemTaskStepLabel(snapshot.currentStepId) : t('machineAdd.waiting'), tone: 'running' };
     // Choosing what to create: nothing is waiting to connect yet.
-    if (creating) return { title, entityTitle, status: t('managedMachines.add.choosingCreate'), tone: 'waiting' };
-    return { title, entityTitle, status: t('machineAdd.waiting'), tone: 'waiting' };
+    if (creating) return { title, entityTitle, status: t('managedMachines.add.choosingCreate'), tone: 'draft' };
+    return watching ? { title, entityTitle, status: t('machineAdd.waiting'), tone: 'waiting' }
+        : { title, entityTitle, status: t('common.draft'), tone: 'draft' };
 }
 
 /** Rail/title projections never mount preflight, task starters, discovery or prompt modals. */
@@ -105,7 +106,8 @@ function useMachineAddProgress() {
     const arrival = useAwaitedMachineArrival({ enabled: selected.startedAtMs !== null && selected.serverId !== null,
         serverId: selected.serverId, serverUrl: profile?.serverUrl, baseline: selected.baseline, onBaselineCaptured: setBaseline });
     const machine = selected.startedAtMs !== null && arrival.status === 'arrived' ? arrival.machine : null;
-    const row = React.useMemo(() => makeDraftRow(selected.path, selected.creating, selected.host, selected.handle, snapshot, machine !== null), [selected.path, selected.creating, selected.host, selected.handle, snapshot, machine]);
+    const watching = selected.startedAtMs !== null;
+    const row = React.useMemo(() => makeDraftRow(selected.path, selected.creating, selected.host, selected.handle, snapshot, machine !== null, watching), [selected.path, selected.creating, selected.host, selected.handle, snapshot, machine, watching]);
     return { selected, profile, snapshot, machine, row };
 }
 

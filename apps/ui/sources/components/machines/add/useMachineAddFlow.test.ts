@@ -253,6 +253,21 @@ describe('machine add flow lifetime', () => {
             storage.setState(previous); vi.unstubAllGlobals();
         }
     });
+    it('keeps an idle add draft idle across rail remounts until arrival watching starts', async () => {
+        const { t } = await import('@/text');
+        await act(async () => updateMachineAddFlowDraft((draft) => ({ ...draft, path: 'anotherComputer' })));
+        const first = await renderHook(() => useMachineAddDraftRow());
+        expect(first.getCurrent()).toMatchObject({ status: t('common.draft'), tone: 'draft' });
+        await first.unmount();
+        const resumed = await renderHook(() => useMachineAddDraftRow());
+        try {
+            expect(resumed.getCurrent()).toMatchObject({ status: t('common.draft'), tone: 'draft' });
+            await act(async () => updateMachineAddFlowDraft((draft) => ({ ...draft, startedAtMs: Date.now() })));
+            expect(resumed.getCurrent()).toMatchObject({ status: t('machineAdd.waiting'), tone: 'waiting' });
+            await act(async () => updateMachineAddFlowDraft((draft) => ({ ...draft, startedAtMs: null, creating: true })));
+            expect(resumed.getCurrent()).toMatchObject({ status: t('managedMachines.add.choosingCreate'), tone: 'draft' });
+        } finally { await resumed.unmount(); }
+    });
     it('projects the retained SSH run in the rail without mounting the flow or reacting to password edits', async () => {
         const manual = createManualSystemTaskRunner('native');
         let renders = 0;
