@@ -206,7 +206,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   process.stdout.write(renderWorkerMemoryReservationRows(sample));
 }
 `);
-  return { launcher, admissionRoot };
+  const memoryOverridePath = join(checkout, 'broker-memory-observation.json');
+  const setMemoryObservation = memory => writeFile(memoryOverridePath, JSON.stringify(memory));
+  return { launcher, admissionRoot, setMemoryObservation };
 }
 
 /** Adapt only the OS launch boundary, retaining foreground IPC/tree custody. */

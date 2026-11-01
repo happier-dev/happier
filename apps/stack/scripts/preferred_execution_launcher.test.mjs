@@ -487,19 +487,48 @@ createInterface({input:process.stdin}).once('line', line => { console.log('BODY:
   return { ...fixture, workers };
 }
 
-for (const cancel of [false, true]) {
-  test(`AUTO busy-pool sweep retains one native waiter and ${cancel ? 'cancellation removes only that waiter' : 'runs the payload once after capacity recovers'}`, { skip: process.platform !== 'linux', timeout: 60_000 }, async t => {
+for (const { cancel, typecheck } of [{ cancel: false }, { cancel: true }, { cancel: false, typecheck: true }]) {
+  test(`AUTO busy-pool ${typecheck ? 'public typecheck' : 'sweep'} retains one native waiter and ${cancel ? 'cancellation removes only that waiter' : 'runs the payload once after capacity recovers'}`, { skip: process.platform !== 'linux', timeout: 60_000 }, async t => {
     const fixture = await runtimeAdmissionTransportFixture(t);
     delete fixture.invocation.env.NODE_TEST_CONTEXT;
+    const belowFloorKiB = resolveHeavyweightMemoryFloorKiB(typecheck ? 'compilation-ui' : 'validation') - 1;
     for (const worker of Object.values(fixture.workers)) {
-      await writeFile(worker.sample, '8 0.1 0.2 22000000 20 0 5242880 28311552 0 0 0 0 0 0 0 linux\n');
+      await worker.setMemoryObservation({ availableMemoryKiB: belowFloorKiB, totalMemoryKiB: 28311552 });
+      await writeFile(worker.sample, `8 0.1 ${belowFloorKiB / 28311552} 22000000 20 0 ${belowFloorKiB} 28311552 0 0 0 0 0 0 0 linux\n`);
     }
     // Equal memory pressure, distinct load: use the existing selection order.
-    await writeFile(fixture.workers.roomy.sample, '8 12 0.2 22000000 20 0 5242880 28311552 0 0 0 0 0 0 0 linux\n');
+    await writeFile(fixture.workers.roomy.sample, `8 12 ${belowFloorKiB / 28311552} 22000000 20 0 ${belowFloorKiB} 28311552 0 0 0 0 0 0 0 linux\n`);
     for (const target of fixture.config.targets) {
       await writeFile(join(target.repoDir, 'focused.test.mjs'), 'import test from "node:test"; import { appendFileSync } from "node:fs"; test("admitted payload", () => appendFileSync("payload-runs", "once\\n"));\n');
     }
-    const child = spawn('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+    if (typecheck) {
+      // The package-manager process is the boundary. Run the real public
+      // compiler runner, selector and nested admission against the worker's
+      // real broker; a small invalid project supplies an actual verdict.
+      for (const target of fixture.config.targets) {
+        const ui = join(target.repoDir, 'apps/ui');
+        await mkdir(ui, { recursive: true });
+        await writeFile(join(ui, 'tsconfig.busy.json'), JSON.stringify({
+          compilerOptions: { noEmit: true, strict: true, types: [] }, files: ['busy.ts'],
+        }));
+        await writeFile(join(ui, 'busy.ts'), 'const invalid: number = "invalid";\n');
+        await writeFile(join(ui, 'typecheck.mjs'), `
+import { installWorkspaceAdmissionProcessAdapter } from ${JSON.stringify(new URL('./testkit/core/native_admission_fixture.mjs', import.meta.url).href)};
+installWorkspaceAdmissionProcessAdapter({ launcher: ${JSON.stringify(fixture.workers[target.name].launcher)} });
+process.argv = [process.execPath, ${JSON.stringify(join(repoRoot, 'scripts/workspaces/runTypeScriptCli.mjs'))}, '--noEmit', '-p', 'tsconfig.busy.json'];
+await import(${JSON.stringify(pathToFileURL(join(repoRoot, 'scripts/workspaces/runTypeScriptCli.mjs')).href)});
+`);
+      }
+      await executable(join(fixture.binDir, 'pnpm'), `#!/bin/sh
+case "$*" in
+  *typecheck:*) exec ${JSON.stringify(process.execPath)} "$PWD/typecheck.mjs" ;;
+  *typecheck*) exec /bin/sh ../stack/bin/hstack-exec --script=typecheck:local ;;
+  *) printf '12.14.0\\n' ;;
+esac
+`);
+    }
+    const command = typecheck ? ['pnpm', 'run', 'typecheck'] : ['node', '--test', 'focused.test.mjs'];
+    const child = spawn('/bin/sh', [launcher, ...(typecheck ? ['--cwd=apps/ui'] : []), '--', ...command], fixture.invocation);
     let stdout = '', stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; });
     child.stderr.on('data', chunk => { stderr += chunk; });
@@ -539,8 +568,9 @@ for (const cancel of [false, true]) {
       await assert.rejects(access(join(fixture.config.targets[0].repoDir, 'payload-runs')), { code: 'ENOENT' });
     } else {
       await writeFile(fixture.workers.starved.sample, '8 0.1 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
-      assert.deepEqual(await exited, { code: 0, signal: null }, stderr);
-      assert.equal(await readFile(join(fixture.config.targets[0].repoDir, 'payload-runs'), 'utf8'), 'once\n');
+      assert.deepEqual(await exited, { code: typecheck ? 2 : 0, signal: null }, stderr);
+      if (typecheck) assert.match(stdout, /TS2322/, 'the queued public typecheck must produce its compiler verdict');
+      else assert.equal(await readFile(join(fixture.config.targets[0].repoDir, 'payload-runs'), 'utf8'), 'once\n');
       assert.deepEqual(await readdir(waiters), []);
       assert.deepEqual(await costs(), initialCosts);
     }
