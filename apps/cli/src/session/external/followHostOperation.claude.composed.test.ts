@@ -40,10 +40,10 @@ function createBufferedNativeTranscript() {
   };
 }
 
-it.each(['runner_http_fresh_terminal_interrupt_recovery', 'runner_http_fresh_terminal_pending_followup', 'runner_http_fresh_terminal_catalog_refresh', 'runner_transport', 'runner_transport_retired_acquisition', 'runner_http', 'runner_http_fresh', 'runner_http_fresh_publisher', 'runner_http_fresh_terminal_service', 'runner_http_fresh_terminal_e2ee', 'runner_http_fresh_terminal_concurrent_commit', 'runner_http_cancelled_acquisition', 'runner_http_retired_acquisition', 'thinking_text', 'cold_history', 'oversized_native_row', 'observer_retired', 'runner_retired', 'listener_failure'] as const)('admits a runner-carried Claude codec through real observation and scoped follow (%s)', async kind => {
+it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_terminal_interrupt_recovery', 'runner_http_fresh_terminal_pending_followup', 'runner_http_fresh_terminal_catalog_refresh', 'runner_transport', 'runner_transport_retired_acquisition', 'runner_http', 'runner_http_fresh', 'runner_http_fresh_publisher', 'runner_http_fresh_terminal_service', 'runner_http_fresh_terminal_e2ee', 'runner_http_fresh_terminal_concurrent_commit', 'runner_http_cancelled_acquisition', 'runner_http_retired_acquisition', 'thinking_text', 'cold_history', 'oversized_native_row', 'observer_retired', 'runner_retired', 'listener_failure'] as const)('admits a runner-carried Claude codec through real observation and scoped follow (%s)', async kind => {
   const interruptRecovery = kind === 'runner_http_fresh_terminal_interrupt_recovery';
   const pendingFollowup = kind === 'runner_http_fresh_terminal_pending_followup';
-  const liveAppend = interruptRecovery || pendingFollowup || kind === 'runner_http_fresh_terminal_catalog_refresh';
+  const liveAppend = interruptRecovery || pendingFollowup || kind === 'runner_http_fresh_terminal_catalog_refresh' || kind === 'runner_http_fresh_terminal_inventory_refresh';
   const replayStages = { rawLines: 0, target: 0, identityAck: 0, bind: 0, readAfter: 0, cursor: 0,
     sourceItems: 0, displayItems: 0, durableAck: 0, durableLongAck: 0, durableRecoveryAck: 0 };
   const replay = liveAppend ? createBufferedNativeTranscript() : null;
@@ -872,11 +872,20 @@ it.each(['runner_http_fresh_terminal_interrupt_recovery', 'runner_http_fresh_ter
         await vi.waitFor(() => expect(replayStages.durableAck).toBeGreaterThan(0), { timeout: 10000 });
         const firstCursor = events.filter(event => event.kind === 'data').at(-1)?.nextCursor;
         expect(firstCursor).toEqual(expect.any(String));
+        if (kind === 'runner_http_fresh_terminal_inventory_refresh') {
+          // Passive observation invokes this manager operation on Connected
+          // Account inventory pushes, including unrelated service changes.
+          await manager.releaseSessionsForCredentialInvalidation();
+        }
         await enqueueFollowup?.();
         await replayNativeHook!({ hook_event_name: 'UserPromptSubmit', prompt: followupNativePrompt });
         const userEcho = pendingFollowup ? JSON.stringify({ ...JSON.parse(replay.user),
           message: { role: 'user', content: followupNativePrompt } }) + '\n' : replay.user;
         await appendFile(nativePath, userEcho);
+        if (kind === 'runner_http_fresh_terminal_inventory_refresh') {
+          await vi.waitFor(() => expect(events.filter(event => event.kind === 'data').at(-1)?.nextCursor)
+            .not.toBe(firstCursor), { timeout: 10000 });
+        }
         await vi.waitFor(() => expect(replayStages.rawLines).toBeGreaterThanOrEqual(3), { timeout: 10000 });
         await replayNativeHook!({ hook_event_name: 'Stop', stop_hook_active: false });
         await appendFile(nativePath, replay.completion);

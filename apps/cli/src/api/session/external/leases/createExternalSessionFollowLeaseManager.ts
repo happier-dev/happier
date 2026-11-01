@@ -1637,6 +1637,15 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                     ...backgroundFollowEnabledBySessionId.keys(),
                     ...[...viewerLeasesById.values()].map((record) => record.sessionId),
                 ]);
+                // Inventory changes do not retire an admitted host operation.
+                // Its scoped listener and source retirement signal own that
+                // lifetime; dropping it here leaves the live subscriber ready
+                // with no observation demand to advance its cursor.
+                for (const record of viewerLeasesById.values()) {
+                    if (record.refreshDelivery === 'scoped_listener') {
+                        sessionIds.delete(record.sessionId);
+                    }
+                }
                 for (const sessionId of sessionIds) {
                     await releaseSessionNow(
                         sessionId,
