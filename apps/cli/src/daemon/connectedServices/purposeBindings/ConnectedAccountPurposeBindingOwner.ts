@@ -2147,6 +2147,8 @@ export function createActiveAccountSettingsConnectedAccountPurposeBindingStore(i
       await operation.verifyCurrent(signal);
       operation.assertCurrent();
       const value = ConnectedPurposeCatalogV1Schema.parse(mutate(current.record.value));
+      // Unchanged declaration reconciliation keeps the captured reference census current.
+      if (isDeepStrictEqual(value, current.record.value)) return current.record.value;
       const credentials = await credentialsForOperation(operation, signal);
       operation.assertCurrent();
       const transport = createCliConnectedAccountCatalogStore({ credentials, signal, operationContext: input.operationContext });

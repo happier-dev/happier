@@ -118,6 +118,28 @@ describe('connected purpose row mutation', () => {
     expect(server.read().record).toEqual({ key: 'purposes', value: { v: 1, bindings: [] } });
   });
 
+  it('keeps an unchanged declaration reconciliation at its captured revision without publishing another row', async () => {
+    const server = boundary('updated');
+    const store = createActiveAccountSettingsConnectedAccountPurposeBindingStore({ credentials });
+    await store.update(current => ({ ...current, bindings: [binding] }));
+    const capturedRevision = server.read().revision;
+    vi.mocked(axios.post).mockClear();
+    const unexpected = async (): Promise<never> => { throw new Error('Reconciliation must not select or materialize accounts'); };
+    const owner = createConnectedAccountPurposeBindingOwner({
+      store, selectTarget: unexpected, resolveTarget: unexpected, materializeAccount: unexpected,
+      projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected,
+    });
+    for (let index = 0; index < 3; index += 1) {
+      await owner.reconcileAuthorizedPurposes({
+        consumerScopes: [{ consumer: purpose.consumer, authorizedPurposes: [{ purpose, serviceRefs: [binding.target.account.service] }] }],
+        signal: new AbortController().signal,
+        publish: () => { expect(server.read().record.value).toEqual({ v: 1, bindings: [binding] }); },
+      });
+    }
+    expect(server.read().revision).toBe(capturedRevision);
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
   it('reconciles a startup CAS conflict against the latest row before publishing without losing another consumer binding', async () => {
     const server = boundary('concurrent-reconciliation');
     const unexpected = async (): Promise<never> => { throw new Error('Reconciliation must not select or materialize accounts'); };
