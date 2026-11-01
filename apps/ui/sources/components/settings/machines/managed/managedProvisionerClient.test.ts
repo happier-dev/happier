@@ -1,3 +1,4 @@
+import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -7,6 +8,8 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 const harness = createHomeGovernanceHarness();
+const reviewedEnrollmentIdentity = { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
+    role: 'server', adminAccessAtCreation: 'preauthorized' } satisfies ManagedMachineEnrollmentIdentityV1;
 installHomeGovernanceBoundaries(harness);
 const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
 beforeEach(async () => { await harness.reset(); resetScopedHomeActionExecutorsForTests(); });
@@ -50,7 +53,8 @@ describe('managed configurator uses the exact Home Action front door', () => {
         const client = createManagedProvisionerClient({ serverId, accountId: 'owner' }, 'srv_compute');
         expect(await client.execute('machines.managed.acquire', { selection: { kind: 'one-off', homeId: 'srv_compute',
             launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
-            controller: { machineId: 'host', installationId: 'installation' }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }))
+            controller: { machineId: 'host', installationId: 'installation' }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+            enrollmentIdentity: reviewedEnrollmentIdentity }))
             .toEqual({ kind: 'admitted', receipt: { managedId: 'waiting-managed' } });
         expect(receipts).toBe(1);
     });
@@ -79,7 +83,8 @@ describe('managed configurator uses the exact Home Action front door', () => {
         } });
         const result = await client.execute('machines.managed.acquire', { selection: { kind: 'one-off', homeId: 'srv_compute',
             launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
-            controller: { machineId: 'host', installationId: 'installation' }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+            controller: { machineId: 'host', installationId: 'installation' }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+            enrollmentIdentity: reviewedEnrollmentIdentity });
         expect(result).toMatchObject({ kind: 'approval_pending', approval: { artifactId: expect.any(String) } });
         expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
         expect(await client.execute('machines.provisioners.list', { homeId: 'srv_other' })).toEqual({ kind: 'failed', code: 'server_target_mismatch' });

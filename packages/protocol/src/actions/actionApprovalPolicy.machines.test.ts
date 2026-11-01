@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ACTION_IDS } from './actionIds.js';
+import type { ActionExecutorContext } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from './actionApprovalPolicy.js';
@@ -8,6 +9,26 @@ const corridorActionIds = ACTION_IDS.filter(id => /^machines\.(managed\.|presets
   || id.startsWith('connectedServices.authentication.'));
 
 describe('Corridor C approval defaults', () => {
+  it('retains a verified controller UI invocation default across its external transport', () => {
+    const actionId = 'machines.managed.acquire';
+    const target = { kind: 'machine', machineId: 'controller' } as const;
+    // Credential-backed host ingress has already produced this invocation
+    // authority. Transport custody does not introduce a second approval floor.
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user',
+      actionCaller: { kind: 'host' }, runtimeAccountId: 'company',
+      externalActionExecutionAuthorization: { v: 1, token: 'controller-root', binding: {
+        serverIdentityId: 'home', accountId: 'member', custodianAccountId: 'company',
+        authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+        actionId, requestId: 'controller-click', target, machineId: target.machineId,
+        installationId: 'controller-installation', requestEnvelopeDigest: '0'.repeat(64),
+      } } };
+    const args = { actionId, spec: getActionSpec(actionId), context } as const;
+    expect(resolveActionApprovalRouting(args).required).toBe(false);
+    expect(resolveActionApprovalRouting({ ...args, context: { ...context, authority: 'account_automation' } }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ ...args, settings: normalizeActionsSettingsV1({ v: 1,
+      actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }) }).required).toBe(true);
+  });
+
   it('applies a host-proved sharing reduction directly only for a present UI user, preserving Ask and automation policy', () => {
     const actionId = 'machines.access.grant.set';
     const args = { actionId, spec: getActionSpec(actionId), defaultUiConfirmation: false,

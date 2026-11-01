@@ -2,7 +2,8 @@ import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
     ManagedActivityBridgeResultV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { callSocketRpc, issueSocketRpcCallWithCancellation } from '@happier-dev/sync-client';
+import { createExternalActionMachineRpcExecution } from '@/api/externalActionExecutionAuthorization';
 import { withUserScopedRpcSocket } from '@/session/transport/rpc/withUserScopedRpcSocket';
 import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import { ManagedMachineControllerError } from './controllerErrors';
@@ -43,6 +44,7 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
     const machineId = machine.enrolledMachineId;
     let changed: false | 'activity' | 'currentness' = false;
     let failure: unknown;
+    let rpcSocket: Parameters<typeof callSocketRpc>[0]['socket'] | undefined;
     let wake: (() => void) | undefined;
     let ready!: () => void;
     let rejectReady!: (error: unknown) => void;
@@ -52,10 +54,10 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
     void connected.catch(() => {});
     let close!: () => void;
     const closed = new Promise<void>(resolve => { close = resolve; });
+    // The reconciler owns this connection through exact drain cleanup. Caller
+    // cancellation ends reads/begin, while reopen still needs the same socket.
     const lifetime = new AbortController();
-    const onAbort = () => lifetime.abort(options.signal?.reason);
-    options.signal?.addEventListener('abort', onAbort, { once: true });
-    if (options.signal?.aborted) onAbort();
+    const waitUntilConnected = (signal?: AbortSignal) => issueSocketRpcCallWithCancellation({ signal, issue: () => connected });
     const pump = withUserScopedRpcSocket({ token: input.token, serverUrl: input.serverUrl,
         connectTimeoutMs: resolveSessionControlSocketConnectTimeoutMs(), signal: lifetime.signal,
         reattachOnReconnect: true, disconnectMessage: 'Managed activity observation disconnected',
@@ -79,47 +81,54 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
         });
         try {
             await connect();
+            rpcSocket = socket;
             // Reconnect is also an invalidation, not a stale cached decision.
             changed = 'activity';
             wake?.();
             ready();
             await Promise.race([closed, disconnected]);
         } finally {
+            if (rpcSocket === socket) rpcSocket = undefined;
             socket.off('update', onUpdate);
             attemptSignal?.removeEventListener('abort', onDisconnect);
         }
     }).catch(error => { failure = error; rejectReady(error); wake?.(); });
     const request = (current: ManagedMachineV1) => ({ homeId: current.homeId, managedId: current.id,
         expectedRevision: current.intentRevision, controller: current.controller });
-    const read = async (current: ManagedMachineV1, signal?: AbortSignal) => {
+    const call = async (method: string, params: unknown, signal?: AbortSignal, signed = true) => {
+        await waitUntilConnected(signal);
+        if (failure) throw failure;
+        if (!machineId || !rpcSocket) throw new ManagedMachineControllerError('admission_unavailable');
+        return ManagedActivityBridgeResultV1Schema.parse(await callSocketRpc({ socket: rpcSocket,
+            target: { kind: 'machine', id: machineId }, method, params, content: { mode: 'plain' },
+            timeoutMs: null, ...(signal ? { signal } : {}),
+            ...(signed && externalAction ? { createExternalActionExecution: (request) => {
+                const execution = createExternalActionMachineRpcExecution({ ...externalAction, ...request });
+                if (!execution) throw new ManagedMachineControllerError('admission_unavailable');
+                return execution;
+            } } : {}),
+        }));
+    };
+    const read = async (current: ManagedMachineV1, signal = options.signal) => {
         if (!machineId) throw new ManagedMachineControllerError('admission_unavailable');
-        await connected;
+        await waitUntilConnected(signal);
         if (failure) throw failure;
         // Subscription precedes this read. An edge during the RPC remains
         // latched, preventing a lost busy→idle notification before the wait.
         changed = false;
-        return ManagedActivityBridgeResultV1Schema.parse(await callExactMachineRpc({ credentials: input.credentials,
-            serverUrl: input.serverUrl, machineId, method: MANAGED_ACTIVITY_READ_RPC_METHOD,
-            request: request(current), requireCurrentMachine: true, timeoutMs: null, reattachOnReconnect: true, signal,
-            ...(externalAction ? { externalAction } : {}),
-        }));
+        return call(MANAGED_ACTIVITY_READ_RPC_METHOD, request(current), signal);
     };
-    const drain = async (current: ManagedMachineV1, action: 'begin' | 'resume', signal?: AbortSignal) => {
+    const drain = async (current: ManagedMachineV1, action: 'begin' | 'resume', signal = options.signal) => {
         if (!machineId) throw new ManagedMachineControllerError('admission_unavailable');
-        return ManagedActivityBridgeResultV1Schema.parse(await callExactMachineRpc({ credentials: input.credentials,
-            serverUrl: input.serverUrl, machineId, method: MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
-            request: { ...request(current), action }, requireCurrentMachine: true,
-            // Cleanup may outlive cancellation/credential retirement. The
-            // guest's incumbent drain owner releases only this exact target;
-            // read and begin never borrow this ordinary custodian admission.
-            ...(action === 'begin' ? { timeoutMs: null, signal, ...(externalAction ? { externalAction } : {}) } : {}),
-        }));
+        // Release retains only this exact drain after its original Action retires.
+        return call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...request(current), action },
+            action === 'begin' ? signal : undefined, action === 'begin');
     };
     return {
         read, confirmIdle: (current, signal) => drain(current, 'begin', signal),
         reopen: current => drain(current, 'resume'),
-        waitForChange: async signal => {
-            await connected;
+        waitForChange: async (signal = options.signal) => {
+            await waitUntilConnected(signal);
             signal?.throwIfAborted();
             if (failure) throw failure;
             if (changed) { const result = changed; changed = false; return result; }
@@ -142,7 +151,6 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
         },
         dispose: async () => {
             close(); lifetime.abort();
-            options.signal?.removeEventListener('abort', onAbort);
             await pump;
         },
     };

@@ -106,7 +106,7 @@ export function isActionApprovalWaivable(spec: Pick<ActionSpec, 'approvalPolicy'
 
 function requiresDefaultApprovalFloor(
   actionId: ActionId,
-  ctx?: Pick<ActionExecutorContext, 'surface' | 'authority' | 'presentUserConfirmation'> | null,
+  ctx?: Pick<ActionExecutorContext, 'surface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'> | null,
   defaultSafety?: ActionSpec['safety'],
   input?: unknown,
   defaultUiConfirmation?: boolean,
@@ -114,8 +114,14 @@ function requiresDefaultApprovalFloor(
   const surface = resolveApprovalSurface(ctx);
   const spec = getActionSpec(actionId);
   const policy = spec.approvalPolicy;
-  const uiPolicyConfirmation = defaultUiConfirmation
-    ?? policy?.uiConfirmationForInput?.(input) ?? (policy?.uiConfirmation === 'policy');
+  // The host already proved invocation provenance (including a managed
+  // controller codec). External transport does not add another default Ask.
+  const hostInvocation = ctx?.authority === 'present_user'
+    && (!ctx.actionCaller || ctx.actionCaller.kind === 'host');
+  const uiPolicyConfirmation = surface.kind === 'non_agent' && surface.surface === 'ui'
+    && hostInvocation
+    ? defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(input) ?? (policy?.uiConfirmation === 'policy')
+    : true;
   defaultSafety ??= spec.safetyForInput?.(input) ?? spec.safety;
   if (policy?.pluginCaptureWaiver === true) return true;
   // Permission answers share the Agent default on MCP too; persisted surface
@@ -137,7 +143,7 @@ function requiresDefaultApprovalFloor(
         && (defaultSafety !== 'danger' || policy?.uiConfirmation === 'direct'))
       || ((surface.surface === 'cli' || surface.surface === 'ui') && ctx?.presentUserConfirmation?.actionId === actionId)
     )
-    && ctx?.authority === 'present_user'
+    && hostInvocation
   ) {
     return false;
   }
@@ -212,7 +218,7 @@ export function isApprovalRequiredByActionsSettings(
  */
 function resolveUnwiredApprovalDefault(
   actionId: ActionId,
-  context: Pick<ActionExecutorContext, 'surface' | 'authority' | 'presentUserConfirmation'> | null | undefined,
+  context: Pick<ActionExecutorContext, 'surface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'> | null | undefined,
   input?: unknown,
 ): boolean {
   return requiresDefaultApprovalFloor(actionId, context, undefined, input);

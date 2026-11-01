@@ -13,7 +13,7 @@ import { SOCKET_RPC_EVENTS, WorkspaceSyncSourceExecutionV1Schema, type Workspace
 import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, isApiTokenGrantTargetMemberV1, isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import { canCredentialDecideV1, DECISION_ACTION_IDS, resolveCredentialActionAdmissionV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { resolveCredentialActionAdmissionV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ManagedMachineActionIdV1Schema, managedMachineActionEndpointPathV1, ManagedControllerReportV1Schema, ManagedControllerIntentReportV1Schema, type ManagedControllerReportV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -490,10 +490,6 @@ async function readCurrentExternalActionPrincipal(
         if (!await auth.isSignedCredentialCurrent(reader, binding.accountId, binding.authentication.tokenEpoch)) return null;
         const authority = narrowCredentialAuthority('present_user', binding.sessionActionOrigin || binding.workflowActionOrigin
             || binding.authentication.kind === 'terminal' ? 'account_automation' : undefined);
-        // Installed provenance carries automation authority, not the local
-        // host Agent/MCP decision waiver. A root needs real decision authority.
-        if ((DECISION_ACTION_IDS as readonly string[]).includes(binding.actionId)
-            && !canCredentialDecideV1({ authority, grant: null })) return null;
         const base = { accountId: binding.accountId, authentication: binding.authentication,
             ...(binding.authentication.evidence ? { authenticationEvidence: binding.authentication.evidence } : {}) };
         if (binding.workflowActionOrigin) return { ...base, authority: 'account_automation', workflowActionOrigin: binding.workflowActionOrigin };
@@ -1803,10 +1799,6 @@ export async function verifyExternalActionDomainExecutionRequest(
         // export input. Home retains only its envelope digest, not the opened
         // query: it cannot independently reconstruct parent/child input equality.
         // The native signature binds the read bytes; the existing route still
-    } else if (verified.binding.actionId === 'session.targets.resolve') {
-        // Inspection has no final Session effect. A non-preparation read must
-        // not borrow the generic read-root admission below (for example messages).
-        return null;
         // owns current actor, Team and resource authorization.
         if (!isTeamCredentialUsageExportReadEffect(verified.binding.actionId, verified.effectActionId)
             || !isAccountActionHttpOperation(verified.effectActionId, proof)) return null;
@@ -1818,6 +1810,10 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (isSessionTargetPreparationHttpPurpose(verified, proof)) {
         // Specialized roots above retain their narrower native-purpose contract.
         // General Session operands prepare only the signed selector read phases.
+    } else if (verified.binding.actionId === 'session.targets.resolve') {
+        // Inspection has no final Session effect. A non-preparation read must
+        // not borrow the generic read-root admission below (for example messages).
+        return null;
     } else if (isAccountActionHttpPurpose(verified, proof)) {
         // The signature binds these exact bytes; route schemas and the domain
         // still own resource admission, while the credential policy below

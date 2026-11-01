@@ -620,6 +620,7 @@ export function registerExternalActionRoutes(
                     serverIdentityId: homeId,
                     ...provenance,
                     machineId: body.data.machineId,
+                    ...('role' in admission ? { admittedMachineRole: admission.role } : {}),
                     actionId: actionId.data,
                     requestId: body.data.envelope.requestId ?? randomUUID(),
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.data.envelope),

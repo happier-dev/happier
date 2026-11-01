@@ -1038,6 +1038,8 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     /** Requester identity remains accountId; custody is bound independently. */
     custodianAccountId: ExternalActionServerPrincipalIdV1Schema,
     installationId: ExternalActionTargetIdV1Schema,
+    /** Effective grant already decided by Home Machine admission, never an operation-selected role. */
+    admittedMachineRole: z.optional(z.enum(['use', 'manage'])),
     actionId: ExternalActionActionIdV1Schema,
     requestId: ExternalActionRequestIdV1Schema,
     requestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),

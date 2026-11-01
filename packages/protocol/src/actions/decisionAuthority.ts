@@ -148,11 +148,11 @@ export function resolveCredentialActionAdmissionV1(input: Readonly<{
   if (input.spec.id === 'session.user_action.answer' && input.hasSessionQuestionAnswerOrigin
     && !input.hasExternalCredential && !input.grant) return { ok: true };
   // Host Agent/MCP decisions reach the shared, user-waivable approval
-  // policy. External credentials retain the opt-in approve authority; changing
-  // this Action's minimum authority must not widen token or terminal access.
+  // policy, including the authenticated Home mint before a local surface is
+  // known. External credentials retain their separate opt-in approve authority.
   if (input.spec.id === 'session.permission.respond' || input.spec.id === 'approval.request.decide') {
     return canCredentialDecideV1(input)
-      || ((input.surface === 'agent' || input.surface === 'mcp') && !input.hasExternalCredential && !input.grant)
+      || (input.surface !== 'api' && !input.hasExternalCredential && !input.grant)
       ? { ok: true }
       : { ok: false, errorCode: 'present_user_required' };
   }

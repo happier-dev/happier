@@ -210,7 +210,6 @@ describe('callMachineRpc', () => {
       await writeFile(join(foreign.directory, 'foreign.txt'), 'foreign attachment');
       let ownSessionIds = new Set(['own-session']);
       let revokeDuringProtectionRead = false;
-      let revokeDuringProjectionFactsRead = false;
       const sessionStoppedAt = Date.now();
       const routes = createDaemonStorageRoutes({ target: () => identity,
         readOwnSessionIds: accountId => accountId === 'recipient' ? ownSessionIds : new Set<string>(), deps: () => ({
@@ -218,7 +217,6 @@ describe('callMachineRpc', () => {
         attributionFor: accountId => ({ serverId: identity.serverId, accountId, machineId: identity.machineId,
           installationId: identity.installationId }),
         readStorageProtectionFacts: async () => {
-          if (revokeDuringProjectionFactsRead) ownSessionIds = new Set();
           return {};
         },
         catalog: { happyHomeDir: home, activeServerDir: server, tempRoot: join(scratch, 'absent-temp'),
@@ -307,7 +305,9 @@ describe('callMachineRpc', () => {
       const recipientInvoke = async (method: string, params: unknown) => receiver.handleRequest({ method: `${identity.machineId}:${method}`, params,
         machineAdmission: { ...ingress.machineAdmission, actorAccountId: 'recipient', role: 'use' }, callerAuthority: 'present_user' });
       await recipientInvoke(RPC_METHODS.DAEMON_STORAGE_PILE_SET, { machineId: identity.machineId, clear: true });
-      revokeDuringProtectionRead = true;
+      // Withdrawal applies at the next request admission. Finite reads retain
+      // their admitted Session set instead of re-reading it during projection.
+      ownSessionIds = new Set();
       const revokedCategory = MachineStorageCategoryListResultV1Schema.parse(await recipientInvoke(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST,
         { machineId: identity.machineId, categoryId: 'sessionFolders' }));
       expect(ownSessionIds.size).toBe(0);
@@ -327,13 +327,13 @@ describe('callMachineRpc', () => {
       const ownPile = MachineStoragePileResultV1Schema.parse(await recipientInvoke(RPC_METHODS.DAEMON_STORAGE_PILE_GET,
         { machineId: identity.machineId }));
       expect(ownPile).toMatchObject({ items: [{ path: own.directory, collectedBy: { accountId: 'recipient', kind: 'person' } }] });
-      revokeDuringProjectionFactsRead = true;
+      ownSessionIds = new Set();
       const revokedDuringRead = await recipientInvoke(RPC_METHODS.DAEMON_STORAGE_PILE_GET, { machineId: identity.machineId });
       expect(ownSessionIds.size).toBe(0);
-      expect.soft(revokedDuringRead).not.toHaveProperty('items');
-      expect.soft(JSON.stringify(revokedDuringRead)).not.toContain(own.directory);
-      expect.soft(revokedDuringRead).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
-      revokeDuringProjectionFactsRead = false;
+      expect(MachineStoragePileResultV1Schema.parse(revokedDuringRead)).toMatchObject({
+        items: [], summary: { count: 0, droppedSinceLastView: [] },
+      });
+      expect(JSON.stringify(revokedDuringRead)).not.toContain(own.directory);
       ownSessionIds = new Set(['own-session']);
       const ownReview = PileReviewV1Schema.parse(await recipientInvoke(RPC_METHODS.DAEMON_STORAGE_ITEMS_CHECK,
         { machineId: identity.machineId, refs: ownPile.items.map(({ itemId, path }) => ({ itemId, path })) }));
@@ -943,9 +943,9 @@ describe('callMachineRpc', () => {
       expect(requests.map(request => [request.method, request.params.action])).toEqual([
         ['guest:managed.activity.read', undefined], ['guest:managed.admission.drain.confirm', 'begin'],
         ['guest:managed.admission.drain.confirm', 'resume'] ]);
-      expect(axiosGet.mock.calls.slice(0, 2).map(call => call[1]?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]))
-        .toEqual([authorization.token, authorization.token]);
-      expect(axiosGet.mock.calls.at(-1)?.[1]?.headers?.Authorization).toBe('Bearer owner-daemon-token');
+      // These content-free reads and reversible cleanup reuse the admitted
+      // Account socket; they need neither Machine content nor an HTTP lookup.
+      expect(axiosGet).not.toHaveBeenCalled();
     } finally { await bridge.dispose?.(); }
   });
 

@@ -6,13 +6,15 @@ import { readMachineMetadataFieldV1, type MachineMetadataFieldDefinitionV1 } fro
 const id = z.string().check(z.trim(), z.minLength(1));
 const version = z.number().check(z.int(), z.nonnegative());
 
-export const MachineAgentIsolationPolicyV1Schema = lazyZodSchema(() => z.strictObject({ enabled: z.boolean() }));
+export const MachineAgentIsolationPolicyV1Schema = lazyZodSchema(() => z.strictObject({ enabled: z.boolean(),
+  memberProvisioning: z.optional(z.literal('linuxUsersV1')) }));
 export type MachineAgentIsolationPolicyV1 = z.infer<typeof MachineAgentIsolationPolicyV1Schema>;
 export const MachineAgentIsolationPolicyV1StoredSchema = createStoredReadSchema(MachineAgentIsolationPolicyV1Schema);
 export const agentIsolationMetadataFieldV1 = {
   field: 'agentIsolation', storedSchema: MachineAgentIsolationPolicyV1StoredSchema,
   defaultValue: (): MachineAgentIsolationPolicyV1 => ({ enabled: false }),
-  equal: (left: MachineAgentIsolationPolicyV1, right: MachineAgentIsolationPolicyV1) => left.enabled === right.enabled,
+  equal: (left: MachineAgentIsolationPolicyV1, right: MachineAgentIsolationPolicyV1) => left.enabled === right.enabled
+    && left.memberProvisioning === right.memberProvisioning,
 } satisfies MachineMetadataFieldDefinitionV1<MachineAgentIsolationPolicyV1>;
 export function readMachineAgentIsolationPolicyV1(metadata: unknown) {
   return readMachineMetadataFieldV1(metadata, agentIsolationMetadataFieldV1);

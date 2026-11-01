@@ -169,7 +169,7 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
         const assertLocal = effect ? access.assertLocalAuthority : access.assertCurrent;
         const refreshSessionCustody = async () => {
             await assertLocal();
-            if (sessionIds) {
+            if (effect && sessionIds) {
                 const current = await options.readOwnSessionIds(access.accountId);
                 await assertLocal();
                 // Keep the owner's readonly view, but refresh Session custody

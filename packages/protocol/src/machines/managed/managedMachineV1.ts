@@ -10,6 +10,10 @@ import { ManagedNativeOperationReferenceV1Schema, ManagedRecoveryHintV1Schema, P
 import { DevcontainerChildProjectionV1Schema, DevcontainerNativeObservationV1Schema, deriveManagedDevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from './devcontainerV1.js';
 import { MachineEnvironmentV1Schema } from './machineEnvironmentV1.js';
 
+export { ManagedMachineEnrollmentIdentityV1Schema, resolveManagedMachineEnrollmentAdminAccessV1, matchesManagedMachineEnrollmentAdminAccessV1,
+  MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1, resolveManagedMachineEnrollmentAgentIsolationV1, matchesManagedMachineEnrollmentAgentIsolationV1,
+  type ManagedMachineEnrollmentIdentityV1 } from './enrollmentIdentityV1.js';
+
 const id = () => z.string().check(z.trim(), z.minLength(1));
 /** Setup belongs to the immutable admitted preset snapshot, independently of Join. */
 export const ManagedMachineEnvironmentSetupV1Schema = lazyDefinition(() => z.strictObject({

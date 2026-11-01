@@ -11725,7 +11725,7 @@ export async function startDaemonSessionControlRuntime(
         custodianAccountId: externalActionAccountId,
         machineId: params.machineId,
         installationId: externalActionInstallationIdentity.installationId,
-        role: ownCustodian ? 'manage' : role,
+        role: requester.authorization.binding.admittedMachineRole ?? (ownCustodian ? 'manage' : role),
         encryptionMode: apiMachine.getMachineEncryptionMode(),
       },
       verifyMachineAdmissionCurrent: requester.isCurrent,

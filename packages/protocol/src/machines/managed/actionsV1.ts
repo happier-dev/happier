@@ -1,3 +1,4 @@
+import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
 import { z } from 'zod/mini';
 import { MachineSetupSourceV1Schema } from '../setup/machineSetupSourcesV1.js';
 import { MachineSetupEffectPlanV1Schema } from '../setup/machineRecipeV1.js';
@@ -70,9 +71,9 @@ export type MachineEnvironmentReportInputV1 = z.infer<typeof MachineEnvironmentR
 // Classic roots are the actual public Action-spec consumer seam. Internal
 // fields remain one Mini tree; stored projections derive from these owners.
 export const ManagedAcquireInputV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ selection: ManagedOneOffSelectionV1Schema, agentStart: z.optional(ManagedAcquireAgentStartV1Schema),
+  z.strictObject({ selection: ManagedOneOffSelectionV1Schema, enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema, agentStart: z.optional(ManagedAcquireAgentStartV1Schema),
     reviewedFacts: z.optional(ManagedConfigurationFactsV1Schema) }),
-  z.strictObject({ selection: ManagedPresetSelectionV1Schema, controller: ManagedControllerV1Schema,
+  z.strictObject({ selection: ManagedPresetSelectionV1Schema, enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema, controller: ManagedControllerV1Schema,
     retention: RetentionV1Schema, wakeOnAcceptedMessage: mini.boolean(),
     agentStart: z.optional(ManagedAcquireAgentStartV1Schema), reviewedFacts: z.optional(ManagedConfigurationFactsV1Schema) }),
 ]));
