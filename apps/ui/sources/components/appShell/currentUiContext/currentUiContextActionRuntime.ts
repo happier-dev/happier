@@ -3,6 +3,7 @@ import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contribut
 import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import type { CurrentUiContextVoiceToolPort } from './currentUiContextVoiceToolPort';
 import type { PluginSurfaceActionInvocationSurface, PluginSurfaceHostActionBinding } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
@@ -37,6 +38,13 @@ export async function executeMountedCurrentUiContextCommand(input: Readonly<{
 export function registerCurrentUiContextActionPort(createPort: PortFactory): () => void {
     mountedPortFactory = createPort;
     return () => { if (mountedPortFactory === createPort) mountedPortFactory = null; };
+}
+
+/** Declaration discovery shares the committed AppShell projection; the executor filters caller surfaces. */
+export function listCurrentUiContextContributedActionDefinitions(
+    selection?: Parameters<NonNullable<ActionExecutorDeps['listContributedActionDefinitions']>>[0],
+): readonly ActionDefinitionSummaryV1[] {
+    return mountedPortFactory?.('ui')?.listCurrentContributedActionDefinitions?.('allSurfaces', selection) ?? [];
 }
 
 /** Typed host Actions resolve through the incumbent current record, never a second mount registry. */
@@ -94,6 +102,8 @@ export async function executeCurrentUiContextContributedAction(
     request: Parameters<NonNullable<ActionExecutorDeps['invokeContributedAction']>>[0],
     hostAction: PluginSurfaceHostActionBinding,
 ): Promise<ActionExecuteResult> {
+    const retained = hostAction.context?.contributedActionInvocation;
+    if (retained?.resume) return retained.resume(request, hostAction);
     const surface = PluginActionSurfaceV2Schema.safeParse(request.context.surface);
     const port = surface.success && surface.data !== 'plugin' ? mountedPortFactory?.(surface.data, hostAction) : null;
     const input = PluginJsonValueV2Schema.safeParse(request.input ?? null);

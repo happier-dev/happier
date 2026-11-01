@@ -239,7 +239,7 @@ vi.spyOn(actionRuntime, 'createFrontDoorActionExecute').mockImplementation((...f
         const [actionId, input, context] = args;
         shareState.calls.push({ actionId, input, context });
         return execute(...args);
-    }, { prepare: execute.prepare });
+    }, { confirmed: execute.confirmed, prepare: execute.prepare });
 });
 const profileEditModule = await import('@/components/profiles/edit');
 const realLaunchProfileEditForm = profileEditModule.LaunchProfileEditForm;

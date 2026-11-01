@@ -1,3 +1,4 @@
+import { admitPresentUserConfirmationV1 } from './executor/approvalReview.js';
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
 import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
 import { dispatchMachineControls1, dispatchMachineControls2, dispatchMachineControls3 } from './executor/machine/controls.js';
@@ -24,7 +25,7 @@ import { SESSION_TRANSCRIPT_ACTION_ID_SET, delegatesApprovalClassificationToReso
 import { resolveSessionIdFromInput, resolveExecutionRunScope, withoutExecutionRunScope, projectSessionReferenceFailure, resolveServerIdForSession, resolveServerIdForExecutionRunScope } from './executor/sessionScope.js';
 import { projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness } from './executor/approvalResults.js';
 export { buildActionExecuteResultFromRecordedApprovalExecution, classifyApprovalExecutionOriginCurrentness } from './executor/approvalResults.js';
-import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreviewSummary, resolveComputerActionSelection, readDeploymentPreparation, prepareApprovalRequest } from './executor/approvalPreparation.js';
+import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreviewSummary, projectPreparedActionOperation, resolveComputerActionSelection, readDeploymentPreparation, prepareApprovalRequest } from './executor/approvalPreparation.js';
 export { buildApprovalPreviewSummary } from './executor/approvalPreparation.js';
 import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolvePolicyApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, resolveExplicitApprovalRequestingSessionId, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
 import { resolveMachineServiceLogsApprovalLifetime } from './executor/approvalOrigins.js';
@@ -556,7 +557,7 @@ function widgetRemovalDeletesStoredContent(instance: ReturnType<typeof WidgetIns
 }
 
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
-  prepare: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionPrepareResult>;
+  prepare: (actionId: ActionId, input: unknown, context?: ActionExecutorContext, options?: import('./executor/types.js').ActionPrepareOptions) => Promise<ActionPrepareResult>;
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
   continueConfidentialApprovalRequest: (input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
   replayApprovedApprovalRequest: (args: Readonly<{
@@ -2840,6 +2841,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       isSameHome: (left, right) => isSameHome(left, right, ctx) });
     if ('ok' in scopeAdmission) return scopeAdmission;
     const { approvalScope, previewTemplateEnvironmentId, mandatoryApprovalRequired } = scopeAdmission;
+    const nativeReview = !existingAdmission && !sharedRequesterRequest
+      ? admitPresentUserConfirmationV1(actionId, admittedInput, ctx) : null;
+    const reviewAdmitted = existingAdmission?.reviewAdmitted === true || nativeReview !== null;
+    if (nativeReview) ctx = { ...ctx, presentUserApproval: nativeReview };
+    if (ctx.presentUserConfirmation?.inputDigest !== undefined) ctx = { ...ctx, presentUserConfirmation: undefined };
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     if (existingAdmission && !sameStrictJsonValue(existingAdmission.approvalScope ?? null, approvalScope ?? null)) {
       return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
@@ -2857,6 +2863,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         input: admittedInput,
         context,
         settings: context.actionsSettings,
+        reviewAdmitted,
         ...(approvalScope ? { approvalScope } : {}),
         ...(previewTemplateEnvironmentId ? { previewTemplateEnvironmentId } : {}),
         ...(mandatoryApprovalRequired ? { mandatoryApprovalRequired } : {}),
@@ -2950,6 +2957,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ctx = { ...ctx, bypassApprovals: true };
     }
     const dispatchFacts: DispatchFacts = { dispatchedPluginSessionInputLocalId: null, executionRunStartDispatched: false };
+    // The review projection consumes the classification already resolved here,
+    // rather than reclassifying contextual effects from their declaration.
+    const reviewClassification = options?.reviewOnly
+      ? { safety: contextualSafety ?? spec.safetyForInput?.(admittedInput) ?? spec.safety } : {};
+
+    if (options?.prepareOnly && options.reviewOnly && !isApprovalAction && approvalRouting.required) {
+      // This is a review projection, not an admitted effect. Its ordinary run
+      // must still enter the incumbent approval owner; it grants no bypass.
+      const reviewInput = projectNativeJsonValueForTransport(admittedInput);
+      return ready({ actionId, input: reviewInput, context: ctx, ...reviewClassification,
+        ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}) },
+      () => executeCoreTerminal(actionId, reviewInput, ctx, true, legacyMetadataLabel,
+        undefined, false, undefined, false, undefined, hostInternal));
+    }
+
 
     try {
       if (approvalRouting.required && !isApprovalAction) {
@@ -3342,7 +3364,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             : results[0].result;
         };
         return options?.prepareOnly
-          ? ready({ actionId, input: admittedInput, context: ctx }, runTargets)
+          ? ready({ actionId, input: admittedInput, context: ctx, ...reviewClassification }, runTargets)
           : await runTargets();
       }
 
@@ -3351,6 +3373,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           actionId,
           input: admittedInput,
           context: ctx,
+          ...reviewClassification,
+          ...(reviewAdmitted ? { reviewAdmitted: true as const } : {}),
           ...(hostInternal ? { hostInternal: true } : {}),
           ...(approvalScope ? { approvalScope } : {}),
           ...(previewTemplateEnvironmentId ? { previewTemplateEnvironmentId } : {}),
@@ -6641,6 +6665,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     context?: ActionExecutorContext,
     hostInternal = false,
     confirmUiDefault = false,
+    preparationOptions?: import('./executor/types.js').ActionPrepareOptions,
   ): Promise<PrivatePrepareResult> => {
     const normalizedContext = normalizeActionCallerContext(context ?? {});
     if (!normalizedContext) return settlePrepareResult(actionId, {
@@ -6728,7 +6753,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ctx,
         false,
         undefined,
-        { prepareOnly: true, hostInternal, confirmUiDefault },
+        { prepareOnly: true, hostInternal, confirmUiDefault, ...(preparationOptions?.reviewOnly ? { reviewOnly: true as const } : {}) },
       ));
     }
 
@@ -6842,7 +6867,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ctx,
       true,
       undefined,
-      { prepareOnly: true, hostInternal, confirmUiDefault },
+      { prepareOnly: true, hostInternal, confirmUiDefault, ...(preparationOptions?.reviewOnly ? { reviewOnly: true as const } : {}) },
     ));
     const observeResult = async (result: ActionExecuteResult): Promise<void> => {
       try {
@@ -6884,9 +6909,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     context?: ActionExecutorContext,
     hostInternal = false,
     confirmUiDefault = false,
+    preparationOptions?: import('./executor/types.js').ActionPrepareOptions,
   ): Promise<PrivatePrepareResult> => {
     try {
-      return await prepareInvocationCore(actionId, input, context, hostInternal, confirmUiDefault);
+      return await prepareInvocationCore(actionId, input, context, hostInternal, confirmUiDefault, preparationOptions);
     } catch (error) {
       // Preparation never enters the Run transport; only the ready invocation can do so.
       if (actionId !== 'execution.run.start') throw error;
@@ -6921,9 +6947,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     return result;
   };
 
-  const prepare = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionPrepareResult> => {
-    const prepared = await prepareInvocation(actionId, input, context);
-    return prepared.kind === 'ready' ? { kind: 'ready', invocation: prepared.invocation } : prepared;
+  const prepare = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext,
+    options?: import('./executor/types.js').ActionPrepareOptions): Promise<ActionPrepareResult> => {
+    const prepared = await prepareInvocation(actionId, input, context, false, false, options);
+    return prepared.kind === 'ready' ? { kind: 'ready', invocation: prepared.invocation,
+      ...(options?.reviewOnly ? { operation: projectPreparedActionOperation(
+        prepared.admission.actionId, prepared.admission.input, prepared.admission.context, prepared.admission) } : {}) } : prepared;
   };
   const execute = (actionId: ActionId, input: unknown, context?: ActionExecutorContext) =>
     executeInvocation(actionId, input, context);

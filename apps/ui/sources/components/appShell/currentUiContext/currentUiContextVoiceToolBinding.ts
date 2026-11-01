@@ -85,9 +85,9 @@ export function bindCurrentUiContextVoiceToolPortToAdmission(
         },
         ...(port.listCurrentContributedActionDefinitions
             ? {
-                listCurrentContributedActionDefinitions: () => isCurrent()
-                    ? port.listCurrentContributedActionDefinitions!()
-                    : [],
+                listCurrentContributedActionDefinitions: ((selection, exact) => isCurrent()
+                    ? port.listCurrentContributedActionDefinitions!(selection, exact)
+                    : []) satisfies NonNullable<CurrentUiContextVoiceToolPort['listCurrentContributedActionDefinitions']>,
             }
             : {}),
         ...(port.readCurrentContributedActionSchemas

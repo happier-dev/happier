@@ -215,10 +215,18 @@ const PluginActionConfirmationBodyV2Schema = createPluginActionConfirmationPrese
   PLUGIN_ACTION_CONFIRMATION_PRESENTATION_LIMITS_V2.bodyUtf16Units,
 );
 
+/** Statically reviewed operands; values come only from the admitted Action input. */
+export const PluginActionConfirmationInputFieldV2Schema = lazyZodSchema(() => z.strictObject({
+  path: ActionInputPathSchema,
+  title: PluginActionConfirmationTitleV2Schema,
+}));
+export type PluginActionConfirmationInputFieldV2 = z.infer<typeof PluginActionConfirmationInputFieldV2Schema>;
+
 export const PluginActionConfirmationV2Schema = lazyZodSchema(() => z.strictObject({
   title: PluginActionConfirmationTitleV2Schema,
   body: z.optional(PluginActionConfirmationBodyV2Schema),
   confirmLabel: z.optional(PluginActionConfirmationTitleV2Schema),
+  inputFields: z.optional(z.array(PluginActionConfirmationInputFieldV2Schema)),
 }));
 export type PluginActionConfirmationV2 = z.infer<typeof PluginActionConfirmationV2Schema>;
 

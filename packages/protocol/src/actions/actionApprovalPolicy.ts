@@ -1,3 +1,4 @@
+import { readScopedActionApprovalPreference } from './actionSettings.js';
 import type { ActionApprovalScopeV1 } from './actionSettings.js';
 import { ACTION_IDS } from './actionIds.js';
 import { isAutomationApprovalRequestSurface, canRequestPresentUserApprovalForActionInputV1 } from './decisionAuthority.js';
@@ -43,8 +44,10 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   spec: ActionSpec;
   input?: unknown;
   settings?: ActionsSettingsV1 | null;
-  context?: Pick<ActionExecutorContext, 'surface' | 'authority' | 'presentUserConfirmation' | 'bypassApprovals' | 'actionCaller' | 'isPluginSettingsIntentCurrent'> | null;
+  context?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'bypassApprovals' | 'actionCaller' | 'isPluginSettingsIntentCurrent'> | null;
   requiredByPolicy?: boolean;
+  reviewAdmitted?: boolean;
+  approvalScope?: ActionApprovalScopeV1;
   /** Host-proved contextual classification, resolved through the same settings/waiver owner. */
   defaultSafety?: ActionSpec['safety'];
   /** Host-proved exposure classification; Settings and execution authority still apply. */
@@ -235,7 +238,10 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     && args.context?.authority !== 'present_user' && args.context?.bypassApprovals !== true;
   const explicitComputerApproval = args.settings?.actions?.[args.actionId]?.approvalRequiredSurfaces
     .some(surface => surface === args.context?.surface) === true;
-  const requiredByPolicy = computerConsent
+  const requiredByPolicy = args.reviewAdmitted === true
+    ? args.settings != null
+      && readExplicitActionApprovalPreferenceV1(args.actionId, args.settings, args.context, args.approvalScope) === true
+    : computerConsent
     ? explicitComputerApproval
     : args.defaultConfirmation === true
     ? args.settings ? isApprovalRequiredByActionsSettings(args.actionId, args.settings, args.context,
@@ -306,4 +312,33 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     flow,
     result: args.spec.approval.result,
   };
+}
+
+export function readExplicitActionApprovalPreferenceV1(
+  actionId: ActionSettingsActionId,
+  settings: ActionsSettingsV1,
+  ctx?: Pick<ActionExecutorContext, 'surface' | 'callerSurface'> | null,
+  approvalScope?: ActionApprovalScopeV1,
+): boolean | undefined {
+  if (ctx?.callerSurface === 'foreign_session_html') {
+    const choice = settings.callerSurfacePolicies?.foreign_session_html?.[actionId];
+    return choice === undefined ? undefined : choice === 'ask_first';
+  }
+  const surface = resolveApprovalSurface(ctx);
+  const rawSurface = ctx?.surface;
+  const scoped = approvalScope ? readScopedActionApprovalPreference(settings, actionId, approvalScope) : undefined;
+  if (surface.kind !== 'ambiguous') {
+    if (scoped?.approvalRequiredSurfaces.includes(surface.surface)) return true;
+    if (scoped?.approvalWaivedSurfaces.includes(surface.surface)) return false;
+  }
+  const override: ActionSettingsOverride | undefined = settings.actions?.[actionId];
+  const required = Array.isArray(override?.approvalRequiredSurfaces) ? override.approvalRequiredSurfaces : [];
+  if (typeof rawSurface === 'string' && required.some((requiredSurface) => requiredSurface === rawSurface)) return true;
+  const builtIn = ActionIdSchema.safeParse(actionId);
+  if (builtIn.success && getActionSpec(builtIn.data).approvalPolicy?.pluginCaptureWaiver === true) return undefined;
+  const waived = Array.isArray(settings.approvalWaivedSurfaces?.[actionId])
+    ? settings.approvalWaivedSurfaces[actionId]
+    : [];
+  if (surface.kind !== 'ambiguous' && waived.includes(surface.surface)) return false;
+  return undefined;
 }

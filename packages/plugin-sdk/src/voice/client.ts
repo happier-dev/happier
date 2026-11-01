@@ -126,6 +126,13 @@ export type VoiceRealtimeConnectionCloseReason = Readonly<{
     detail?: string;
 }>;
 export type VoiceOutputInterruptionResolution = 'false_alarm' | 'confirmed';
+export type VoiceHostTextPlayback = (input: Readonly<{
+    text: string;
+    signal: AbortSignal;
+}>) => Promise<
+    | Readonly<{ status: 'completed' | 'cancelled' }>
+    | Readonly<{ status: 'unavailable'; code: 'host_text_playback_unavailable' }>
+>;
 /**
  * Host-owned audio-focus policy for one connection's provider-neutral output.
  * `suspended` keeps the connection and attempt alive while making its output

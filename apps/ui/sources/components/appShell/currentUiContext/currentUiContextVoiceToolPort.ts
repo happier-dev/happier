@@ -2,13 +2,13 @@ import * as React from 'react';
 
 import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
-import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { UiContributedActionExecuteRequestV1Schema, UiContributedActionExecuteResponseV1Schema } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
 import type { MessageActionReferenceV1 } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
 import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import type { ActionDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { AccountHomeContinuationInputV1 } from '@happier-dev/protocol/actions';
 import { voiceDictationOperation, type VoiceDictationActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { PluginJsonValueV2Schema, type PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
@@ -30,6 +30,7 @@ import {
     type PluginSurfaceHostActionBinding,
     type PluginSurfaceHostActionExecute,
     type PluginSurfaceActionInvocationSurface,
+    type DispatchPluginSurfaceActionInput,
     type PluginSurfaceActionDispatchOutcome,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import {
@@ -37,14 +38,14 @@ import {
     isPluginProjectedActionExecutable,
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
-import { resolvePluginProjectedActionPresentation } from '@/sync/domains/plugins/ui/actionPresentation';
+import { projectedActionToDefinition } from './contributedActionDefinition';
 import {
     readPluginUiContributionOrigin,
     type PluginUiContributionOriginV1,
 } from '@/sync/domains/plugins/ui/projectionUnion';
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { machinePluginActionSchemasRead } from '@/sync/ops/machineContributionRegistryProjection';
-import { getPreferredLanguage } from '@/text';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { registerCurrentUiContextActionPort } from './currentUiContextActionRuntime';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { unavailable } from './currentUiContextVoiceToolBinding';
@@ -69,10 +70,12 @@ export type CurrentUiContextVoiceInvocationOutcome =
 export type CurrentUiContextVoiceCommandInvocationInput = Readonly<{
     commandId: string;
     signal?: AbortSignal;
+    spokenActionRequest?: DispatchPluginSurfaceActionInput['spokenActionRequest'];
 }>;
 
 export type CurrentUiContextVoiceActionInvocationInput = Readonly<{
     action: PluginContributionIdentityV1;
+    spokenActionRequest?: DispatchPluginSurfaceActionInput['spokenActionRequest'];
     input?: PluginUiJsonValueV1;
     messageActionReference?: MessageActionReferenceV1;
     signal?: AbortSignal;
@@ -98,7 +101,10 @@ export type CurrentUiContextVoiceToolPort = CurrentUiContextReader & Readonly<{
     invokeVoiceDictation?: (request: Readonly<{ actionId: VoiceDictationActionId; input: Readonly<{ commandId: string }>; context: ActionExecutorContext }>) => Promise<ActionExecuteResult>;
     /** Only the ordinary typed Action may reach this admitted mounted effect. */
     invokeAccountHomeContinuation?: (request: Readonly<{ input: AccountHomeContinuationInputV1; context: ActionExecutorContext }>) => Promise<ActionExecuteResult>;
-    listCurrentContributedActionDefinitions?: () => readonly ActionDefinitionSummaryV1[];
+    listCurrentContributedActionDefinitions?: (
+        selection?: 'allSurfaces',
+        exact?: Parameters<NonNullable<ActionExecutorDeps['listContributedActionDefinitions']>>[0],
+    ) => readonly ActionDefinitionSummaryV1[];
     readCurrentContributedActionSchemas?: (
         id: string,
         signal?: AbortSignal,
@@ -128,62 +134,6 @@ function stale(): CurrentUiContextVoiceInvocationOutcome {
 
 function internalError(): CurrentUiContextVoiceInvocationOutcome {
     return { ok: false, code: 'internal_error' };
-}
-
-function actionSideEffectClass(
-    dangerLevel: PluginProjectedActionV2['dangerLevel'],
-): ActionDefinitionSummaryV1['sideEffectClass'] {
-    switch (dangerLevel) {
-        case 'safe':
-            return undefined;
-        case 'writesLocal':
-        case 'writesRemote':
-            return 'write';
-        case 'externalSideEffect':
-            return 'external';
-        case 'destructive':
-            return 'danger';
-    }
-}
-
-function projectedActionToDefinition(
-    action: PluginProjectedActionV2,
-    projection: PluginUiProjectionModel,
-): ActionDefinitionSummaryV1 {
-    const presentation = resolvePluginProjectedActionPresentation({
-        pluginId: action.pluginId,
-        presentation: action,
-        projection,
-        locale: getPreferredLanguage(),
-    });
-    const sideEffectClass = actionSideEffectClass(action.dangerLevel);
-    const approval: NonNullable<ActionDefinitionSummaryV1['approval']> = action.dangerLevel === 'safe'
-        ? { result: 'none' }
-        : { result: 'required', flow: 'blocking' };
-    return Object.freeze({
-        id: formatQualifiedPluginActionId({ pluginId: action.pluginId, localId: action.id }),
-        title: presentation.title,
-        description: presentation.description,
-        safety: action.dangerLevel === 'safe' ? 'safe' : 'danger',
-        approval,
-        placements: [],
-        slash: action.slash ?? null,
-        bindings: null,
-        examples: null,
-        surfaces: {
-            ui: action.surfaces.includes('ui'),
-            voice: action.surfaces.includes('voice'),
-            agent: action.surfaces.includes('agent'),
-            mcp: action.surfaces.includes('mcp'),
-            cli: action.surfaces.includes('cli'),
-            rpc: false,
-            api: false,
-            plugin: action.surfaces.includes('plugin'),
-        },
-        inputHints: presentation.inputHints,
-        ...(action.sessionTarget === undefined ? {} : { sessionTarget: action.sessionTarget }),
-        ...(sideEffectClass ? { sideEffectClass } : {}),
-    });
 }
 
 function isVoiceListedAction(
@@ -229,12 +179,22 @@ async function readCurrentContributedActionSchemas(
 
 function listCurrentContributedActionDefinitions(
     readProjection: () => PluginUiProjectionModel | null,
+    surface: PluginSurfaceActionInvocationSurface | 'allSurfaces' = 'voice',
+    selection?: Parameters<NonNullable<ActionExecutorDeps['listContributedActionDefinitions']>>[0],
 ): readonly ActionDefinitionSummaryV1[] {
     const projection = readProjection();
     if (!projection) return [];
     const readSnapshot = () => projection;
-    return Object.values(projection.actionsById)
-        .filter((action) => isVoiceListedAction(readSnapshot, action) !== null)
+    const identity = selection ? parseQualifiedPluginActionId(selection.id) : null;
+    const selected = identity ? createPluginUiProjectedActionResolver(projection.actionsById)(identity) : null;
+    const actions = selection ? selected ? [selected] : [] : Object.values(projection.actionsById);
+    return actions
+        .filter((action) => {
+            if (surface === 'voice') return isVoiceListedAction(readSnapshot, action) !== null;
+            if (!isPluginProjectedActionExecutable(action) || surface !== 'allSurfaces' && !action.surfaces.includes(surface)) return false;
+            const resolved = resolveCurrentAction(readSnapshot, { pluginId: action.pluginId, localId: action.id });
+            return resolved !== null && hasCurrentClientActionRegistration(resolved);
+        })
         .map((action) => projectedActionToDefinition(action, projection))
         .sort((left, right) => left.id.localeCompare(right.id));
 }
@@ -396,16 +356,14 @@ export function createCurrentUiContextVoiceToolPort(
         try {
             const outcome = await dispatchPluginSurfaceAction({
                 action: request.action,
+                ...(request.spokenActionRequest ? { spokenActionRequest: request.spokenActionRequest } : {}),
                 ...(request.input === undefined ? {} : { input: request.input }),
                 resolveContributedAction: (identity) => (
                     createPluginUiProjectedActionResolver(input.readProjection()?.actionsById)(identity)
                 ),
                 invocationSurface: input.invocationSurface ?? 'voice',
                 hostAction: {
-                    execute: input.hostAction?.execute ?? (async (...args) => {
-                        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-                        return await createDefaultActionExecutor().execute(...args);
-                    }),
+                    execute: input.hostAction?.execute ?? createFrontDoorActionExecute(),
                     context: { ...input.hostAction?.context,
                         ...(resolved.origin.serverId ? { serverId: resolved.origin.serverId } : {}),
                         ...(sessionId ? { defaultSessionId: sessionId } : {}),
@@ -530,6 +488,7 @@ export function createCurrentUiContextVoiceToolPort(
             try {
                 return await invokeProjectedAction({
                     action: resolved.command.action,
+                    ...(request.spokenActionRequest ? { spokenActionRequest: request.spokenActionRequest } : {}),
                     ...(resolved.command.input === undefined ? {} : { input: resolved.command.input }),
                     signal: mergedSignal.signal,
                 }, isCurrent, true);
@@ -603,8 +562,8 @@ export function createCurrentUiContextVoiceToolPort(
                 return { ok: true, result: await command.invoke({ signal: cancellation.signal, context: request.context }) };
             } finally { retirement.dispose(); cancellation.dispose(); }
         },
-        listCurrentContributedActionDefinitions: () => (
-            listCurrentContributedActionDefinitions(input.readProjection)
+        listCurrentContributedActionDefinitions: (selection, exact) => (
+            listCurrentContributedActionDefinitions(input.readProjection, selection ?? input.invocationSurface ?? 'voice', exact)
         ),
         readCurrentContributedActionSchemas: (id: string, signal?: AbortSignal) => (
             readCurrentContributedActionSchemas(input.readProjection, id, signal)

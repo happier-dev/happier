@@ -1,4 +1,5 @@
 import { readSpokenActionOutcomeOwner, resolveSpokenActionOutcome } from '@/voice/context/spokenActionOutcome';
+import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import {
   createVoiceToolHandlers,
@@ -137,6 +138,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
   currentToolSessionId?: string | null;
   currentToolSessionAddress?: SessionAddress | null;
   currentUiContext?: VoiceCurrentUiToolPort;
+  playHostText?: VoiceHostTextPlayback;
   voiceAgentSessions: VoiceAgentSessionsLike;
   signal?: AbortSignal;
   onOutputEvent?: (output: VoiceAgentAcceptedOutputV1) => void | Promise<void>;
@@ -183,6 +185,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
         currentServerId: params.currentToolSessionAddress?.serverId ?? null,
       }),
     ...(params.currentUiContext ? { currentUiContext: params.currentUiContext } : {}),
+    ...(params.playHostText ? { playHostText: params.playHostText } : {}),
   });
 
   let userTranscriptAccepted = false;

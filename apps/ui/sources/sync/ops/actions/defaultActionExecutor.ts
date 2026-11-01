@@ -200,6 +200,7 @@ import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 import { isActionAccountScopeChangedError } from '@/sync/domains/scope/actionAccountScopeError';
+import { bindPresentUserActionConfirmation } from './presentUserConfirmation';
 
 import { captureLazyActionAccountContext, captureApprovalSettlementAccount, withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 import { resolveRequesterSessionSpawnDisposition } from './requesterSessionSpawnPreparation';
@@ -647,6 +648,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
 
 export type UiSessionTargetPreview = SessionTargetPreviewV1;
 type UiProtocolActionExecutor = Pick<ReturnType<typeof createActionExecutor>, 'prepare' | 'execute' | 'replayApprovedApprovalRequest'> & Readonly<{
+  executeConfirmed: ReturnType<typeof createActionExecutor>['execute'];
   /** Read-only selector preparation; creates neither an effect nor an approval. */
   previewSessionTargets: (target: SessionTargetSelectorV1, context?: ActionExecutorContext) => Promise<UiSessionTargetPreview>;
 }>;
@@ -4530,6 +4532,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
   };
 
+  const executeAction = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext, confirmInFlow = false) => {
+      const resolved = resolveContext(context, input, actionId);
+      return resolved.surface !== 'plugin' && isMachineOwnedPluginAction(actionId, input)
+        ? await executeMachinePluginAtDaemon(actionId, input, resolved)
+        : await executor.execute(actionId, input, confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, resolved) : resolved);
+  };
   return {
     previewSessionTargets: async (target, context) => {
       const input = { target, actionId: 'session.message.send' };
@@ -4559,20 +4567,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
     readWidgetMovementAdmission: (ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext) =>
       readWidgetEntityMovementAdmission(widgetInputDeps, ref, surface, resolveContext(context, { ref })),
-    prepare: async (actionId, input, context) => {
+    prepare: async (actionId, input, context, options) => {
       const resolved = resolveContext(context, input, actionId);
       // The daemon owns both implicit and explicitly requested plugin review.
       // Preparation must not create an app-local approval before that owner runs.
       return resolved.surface !== 'plugin' && isMachineOwnedPluginAction(actionId, input)
         ? { kind: 'ready', invocation: { run: () => executeMachinePluginAtDaemon(actionId, input, resolved) } }
-        : await executor.prepare(actionId, input, resolved);
+        : await executor.prepare(actionId, input, resolved, options);
     },
-    execute: async (actionId, input, context) => {
-      const resolved = resolveContext(context, input, actionId);
-      return resolved.surface !== 'plugin' && isMachineOwnedPluginAction(actionId, input)
-        ? await executeMachinePluginAtDaemon(actionId, input, resolved)
-        : await executor.execute(actionId, input, resolved);
-    },
+    execute: executeAction,
+    executeConfirmed: (actionId, input, context) => executeAction(actionId, input, context, true),
     replayApprovedApprovalRequest: async (args) => await executor.replayApprovedApprovalRequest(args),
   };
 }
@@ -4580,7 +4584,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
 
 type DefaultActionExecutorOptions = Parameters<typeof buildDefaultActionExecutor>[0];
 /** UI-only projection qualifier; the captured Account owner enforces it before admission. */
-export type UiActionExecutorContext = ActionExecutorContext & Readonly<{
+export type UiActionExecutorContext = import('@/components/plugins/surfaces/pluginSurfaceActionDispatch').PluginSurfaceActionExecutorContext & Readonly<{
   expectedAccountId?: string;
   /** Exact object admitted by the enclosing UI stop/archive lifecycle. */
   archiveOperation?: SessionArchiveOperation;
@@ -4590,9 +4594,9 @@ export type UiActionExecutorContext = ActionExecutorContext & Readonly<{
 type DefaultActionExecutor = Omit<UiProtocolActionExecutor, 'execute' | 'prepare' | 'previewSessionTargets'> & Readonly<{
   previewSessionTargets: (target: SessionTargetSelectorV1, context?: UiActionExecutorContext, readInputs?: SessionFollowReadInputs) => Promise<UiSessionTargetPreview>;
   execute: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => ReturnType<ReturnType<typeof createActionExecutor>['execute']>;
-  prepare: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => ReturnType<ReturnType<typeof createActionExecutor>['prepare']>;
+  prepare: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext, options?: import('@happier-dev/protocol/actions/executor/types').ActionPrepareOptions) => ReturnType<ReturnType<typeof createActionExecutor>['prepare']>;
 }>;
-type DefaultActionExecuteContext = Pick<UiActionExecutorContext, 'expectedAccountId' | 'externalActionCredential' | 'openRoute' | 'archiveOperation' | 'defaultSessionId'> & Readonly<{
+type DefaultActionExecuteContext = Pick<UiActionExecutorContext, 'expectedAccountId' | 'externalActionCredential' | 'openRoute' | 'archiveOperation' | 'defaultSessionId' | 'contributedActionInvocation'> & Readonly<{
   archiveInput?: unknown;
   serverId: string;
   signal?: AbortSignal;
@@ -4844,7 +4848,10 @@ export async function withDefaultActionExecuteContext<TResult>(
       const settings = await readActionAdmissionSettings(account);
       account.assertCurrent();
       throwIfAborted(context.signal);
-      const result = await work(buildDefaultActionExecutor({ ...opts, archiveInvocation, ...(context.openRoute ? { openRoute: context.openRoute } : {}) }, { ...account, settings }, followReadInputs), account, settings);
+      const listContributedActionDefinitions = context.contributedActionInvocation?.listContributedActionDefinitions ?? opts?.listContributedActionDefinitions;
+      const result = await work(buildDefaultActionExecutor({ ...opts, archiveInvocation,
+        ...(listContributedActionDefinitions ? { listContributedActionDefinitions } : {}),
+        ...(context.openRoute ? { openRoute: context.openRoute } : {}) }, { ...account, settings }, followReadInputs), account, settings);
       const effectClass = executedActionId ? getActionSpec(executedActionId).sideEffectClass : undefined;
       // Return an effect's actual disposition to its captured invoker. Retirement
       // suppresses Account projection publication, but cannot rewrite an acknowledgement.
@@ -5064,6 +5071,48 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     : error instanceof ActionAdmissionHomeUnreachableError
       ? { ok: false as const, errorCode: 'server_unreachable', error: 'server_unreachable' }
       : null;
+  const executeAction = async (actionId: ActionId, input: unknown, context?: UiActionExecutorContext, confirmInFlow = false): Promise<ActionExecuteResult> => {
+    if (confirmInFlow) {
+      const parsed = getActionSpec(actionId).inputSchema.safeParse(input);
+      if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      input = parsed.data;
+    }
+    const { openRoute, archiveOperation, ...actionContext } = context ?? {};
+    const custodyFailure = opts?.filesystemActionDelivery?.actionId === actionId ? null : resolveUiFilesystemTransferCustodyFailure(actionId, input);
+    if (custodyFailure) return custodyFailure;
+    const api = await apiTokenTransport();
+    if (api) {
+      const failure = apiTokenComposerSubmissionFailure(actionId);
+      return failure ?? await executeApiTokenAction(api, actionId, input, actionContext);
+    }
+    const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
+    if (!serverId) return await (confirmInFlow ? ordinary().executeConfirmed : ordinary().execute)(actionId, input, actionContext);
+    try {
+      const native = resolveNativeManagedAction(actionId, opts);
+      const execute = (signal?: AbortSignal) => withDefaultActionExecuteContext(opts, { ...actionContext, signal, openRoute, archiveOperation, archiveInput: input, serverId }, async (executor, account) => {
+        const actionRequestId = native || confirmInFlow ? actionContext.actionRequestId ?? randomUUID() : actionContext.actionRequestId;
+        const capturedContext = {
+          ...actionContext,
+          signal,
+          serverId,
+          ...(actionRequestId ? { actionRequestId } : {}),
+          ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
+          runtimeAccountId: account.accountId,
+        };
+        account.assertCurrent();
+        throwIfAborted(signal);
+        if (!native) return await (confirmInFlow ? executor.executeConfirmed : executor.execute)(actionId, input, capturedContext);
+        return await executeManagedNativeActionWithApprovalObservation({ actionId: native,
+          requestId: actionRequestId!, serverId, accountId: account.accountId,
+          execute: () => executor.executeNativeManagedAction(native, input, capturedContext) });
+      }, actionId);
+      return await execute(actionContext.signal);
+    } catch (error) {
+      const failure = accountScopeFailure(error);
+      if (failure) return failure;
+      throw error;
+    }
+  };
   return {
     previewSessionTargets: async (target, context, readInputs) => {
       const serverId = context?.serverId;
@@ -5076,44 +5125,9 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         return { coverage: 'unavailable', addresses: [], error: failure?.errorCode ?? 'session_target_unavailable' };
       }
     },
-    execute: async (actionId, input, context) => {
-      const { openRoute, archiveOperation, ...actionContext } = context ?? {};
-      const custodyFailure = opts?.filesystemActionDelivery?.actionId === actionId ? null : resolveUiFilesystemTransferCustodyFailure(actionId, input);
-      if (custodyFailure) return custodyFailure;
-      const api = await apiTokenTransport();
-      if (api) {
-        const failure = apiTokenComposerSubmissionFailure(actionId);
-        return failure ?? await executeApiTokenAction(api, actionId, input, actionContext);
-      }
-      const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
-      if (!serverId) return await ordinary().execute(actionId, input, actionContext);
-      try {
-        const native = resolveNativeManagedAction(actionId, opts);
-        const execute = (signal?: AbortSignal) => withDefaultActionExecuteContext(opts, { ...actionContext, signal, openRoute, archiveOperation, archiveInput: input, serverId }, async (executor, account) => {
-          const actionRequestId = native ? actionContext.actionRequestId ?? randomUUID() : actionContext.actionRequestId;
-          const capturedContext = {
-            ...actionContext,
-            signal,
-            serverId,
-            ...(actionRequestId ? { actionRequestId } : {}),
-            ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
-            runtimeAccountId: account.accountId,
-          };
-          account.assertCurrent();
-          throwIfAborted(signal);
-          if (!native) return await executor.execute(actionId, input, capturedContext);
-          return await executeManagedNativeActionWithApprovalObservation({ actionId: native,
-            requestId: actionRequestId!, serverId, accountId: account.accountId,
-            execute: () => executor.executeNativeManagedAction(native, input, capturedContext) });
-        }, actionId);
-        return await execute(actionContext.signal);
-      } catch (error) {
-        const failure = accountScopeFailure(error);
-        if (failure) return failure;
-        throw error;
-      }
-    },
-    prepare: async (actionId, input, context) => {
+    execute: executeAction,
+    executeConfirmed: (actionId, input, context) => executeAction(actionId, input, context, true),
+    prepare: async (actionId, input, context, options) => {
       const { openRoute, archiveOperation, ...actionContext } = context ?? {};
       const custodyFailure = opts?.filesystemActionDelivery?.actionId === actionId ? null : resolveUiFilesystemTransferCustodyFailure(actionId, input);
       if (custodyFailure) return { kind: 'settled', result: custodyFailure };
@@ -5124,7 +5138,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
           : { kind: 'ready', invocation: { run: async () => await executeApiTokenAction(api, actionId, input, actionContext) } };
       }
       const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
-      if (!serverId) return await ordinary().prepare(actionId, input, actionContext);
+      if (!serverId) return await ordinary().prepare(actionId, input, actionContext, options);
       const account = await captureLazyActionAccountContext(serverId, context?.signal);
       const archiveInvocation = createSessionArchiveInvocation(actionId, input, archiveOperation, account.serverId, context?.defaultSessionId);
       try {
@@ -5132,7 +5146,10 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         const settings = await readActionAdmissionSettings(account);
         account.assertCurrent();
         throwIfAborted(context?.signal);
-        const executor = buildDefaultActionExecutor({ ...opts, archiveInvocation, ...(openRoute ? { openRoute } : {}) }, { ...account, settings });
+        const listContributedActionDefinitions = actionContext.contributedActionInvocation?.listContributedActionDefinitions ?? opts?.listContributedActionDefinitions;
+        const executor = buildDefaultActionExecutor({ ...opts, archiveInvocation,
+          ...(listContributedActionDefinitions ? { listContributedActionDefinitions } : {}),
+          ...(openRoute ? { openRoute } : {}) }, { ...account, settings });
         const capturedContext = {
           ...actionContext,
           serverId,
@@ -5146,7 +5163,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         const prepared = native
           ? preferenceFailure ? { kind: 'settled' as const, result: preferenceFailure }
             : { kind: 'ready' as const, invocation: { run: async () => await executor.executeNativeManagedAction(native, input, capturedContext) } }
-          : await executor.prepare(actionId, input, capturedContext);
+          : await executor.prepare(actionId, input, capturedContext, options);
         account.assertCurrent();
         account.dispose();
         if (prepared.kind === 'settled') {
@@ -5156,6 +5173,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         let result: ReturnType<typeof prepared.invocation.run> | undefined;
         return {
           kind: 'ready',
+          ...(prepared.operation ? { operation: prepared.operation } : {}),
           invocation: {
             run: () => {
               result ??= account.runPrepared(async () => {

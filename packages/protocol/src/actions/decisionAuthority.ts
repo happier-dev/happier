@@ -1,3 +1,4 @@
+import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '../auth/apiTokenGrant.js';
 import type { ActionRequiredAuthority } from './metadata.js';
 import type { ActionSpec } from './actionSpecs.js';
@@ -73,8 +74,14 @@ export function isAutomationApprovalRequestSurface(
 }
 
 /** Exact admitted operands, including their domain revision, bound by the approval owner. */
-export function computeActionInputApprovalDigestV1(actionId: ActionId, input: unknown): string {
-  return computeCanonicalDomainSeparatedDigest('action.present-user-approval.v1', [actionId, createCanonicalJsonSigningInput(input)]);
+export function computeActionInputApprovalDigestV1(actionId: ActionId, input: unknown,
+  sessionTargetsV1?: import('./sessionTargetV1.js').ActionResolvedSessionTargetsV1): string {
+  // Native schema outputs may retain optional undefined members that transport omits.
+  const parts = [actionId, createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(input))];
+  // A many-capable operand retains its selector; its already-resolved target
+  // snapshot is part of this operation, not another selection or authority.
+  if (sessionTargetsV1) parts.push(createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(sessionTargetsV1)));
+  return computeCanonicalDomainSeparatedDigest('action.present-user-approval.v1', parts);
 }
 
 /** Requestability follows the Action owner, not a second mutation allowlist. */

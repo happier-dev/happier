@@ -475,6 +475,7 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
                 },
             } as never,
             fingerprint: 'publish-1',
+            input: {},
             surface: 'ui',
             invocationSurface: 'ui',
         });

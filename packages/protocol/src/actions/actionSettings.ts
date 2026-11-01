@@ -18,11 +18,48 @@ import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlace
 
 const ActionSurfaceKeySchema = lazyZodSchema(() => z.keyof(ActionSurfaceSchema));
 export type ActionSurfaceKey = z.infer<typeof ActionSurfaceKeySchema>;
+/** Host-stamped caller class; it is not a new transport or plugin invocation surface. */
+export const ActionCallerSurfaceV1Schema = lazyZodSchema(() => z.literal('foreign_session_html'));
+export type ActionCallerSurfaceV1 = z.infer<typeof ActionCallerSurfaceV1Schema>;
+export const ActionPolicyAudienceV1Schema = lazyZodSchema(() => z.union([ActionSurfaceKeySchema, ActionCallerSurfaceV1Schema]));
+export type ActionPolicyAudienceV1 = z.infer<typeof ActionPolicyAudienceV1Schema>;
+const CallerSurfacePoliciesV1Schema = lazyZodSchema(() => z.looseObject({
+  foreign_session_html: z.optional(z.record(z.string(), z.catch(z.enum(['allowed', 'ask_first', 'off']), 'off'))),
+}));
+
+
 export const ActionApprovalScopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('machine'), machineId: z.string().check(z.minLength(1)) }),
   z.strictObject({ kind: z.literal('environment'), environmentId: z.string().check(z.minLength(1)) }),
 ]));
 export type ActionApprovalScopeV1 = z.infer<typeof ActionApprovalScopeV1Schema>;
+export const ActionScopedApprovalPreferenceV1Schema = lazyZodSchema(() => z.strictObject({
+  actionId: z.string().check(z.minLength(1)),
+  scope: ActionApprovalScopeV1Schema,
+  approvalRequiredSurfaces: z.array(ActionSurfaceKeySchema),
+  approvalWaivedSurfaces: z.array(ActionSurfaceKeySchema),
+}));
+export type ActionScopedApprovalPreferenceV1 = z.infer<typeof ActionScopedApprovalPreferenceV1Schema>;
+
+/** Identity is independent of delimiter characters in either id. */
+export function actionScopedApprovalPreferenceKey(actionId: string, scope: ActionApprovalScopeV1): string {
+  return JSON.stringify([actionId, scope.kind, scope.kind === 'machine' ? scope.machineId : scope.environmentId]);
+}
+
+function normalizeScopedApprovalRows(rows: readonly ActionScopedApprovalPreferenceV1[]): ActionScopedApprovalPreferenceV1[] {
+  const keyed = new Map<string, ActionScopedApprovalPreferenceV1>();
+  for (const row of rows) {
+    const actionId = normalizeActionSettingsActionId(row.actionId) ?? row.actionId;
+    const key = actionScopedApprovalPreferenceKey(actionId, row.scope);
+    const prior = keyed.get(key);
+    const required = [...new Set([...(prior?.approvalRequiredSurfaces ?? []), ...row.approvalRequiredSurfaces])].sort();
+    const waived = [...new Set([...(prior?.approvalWaivedSurfaces ?? []), ...row.approvalWaivedSurfaces])]
+      .filter(surface => !required.includes(surface)).sort();
+    keyed.set(key, { actionId, scope: row.scope, approvalRequiredSurfaces: required, approvalWaivedSurfaces: waived });
+  }
+  return [...keyed.values()];
+}
+
 export const ACTION_SETTINGS_OPT_IN_PLACEMENTS = ['agent_input_chips'] as const satisfies readonly ActionUiPlacement[];
 const ACTION_SETTINGS_OPT_IN_PLACEMENT_SET = new Set<ActionUiPlacement>(ACTION_SETTINGS_OPT_IN_PLACEMENTS);
 const ACTION_TOOL_EXPOSURE_MODE_KEYS = ['agent', 'mcp', 'cli'] as const satisfies readonly ActionToolExposureSurface[];
@@ -144,11 +181,15 @@ export const ActionsSettingsV1Schema = lazyZodSchema(() => z.pipe(z.looseObject(
     approvalWaivedSurfaces: z.catch(z.optional(z.record(z.string(), z.array(ActionSurfaceKeySchema))), undefined),
     /** One viewing Action waiver per plugin, never a retained source grant. */
     pluginHostCaptureApprovalWaived: z.catch(z.optional(z.array(z.string().check(z.minLength(1)))), undefined),
+    scopedApprovalPreferences: z.optional(z.array(ActionScopedApprovalPreferenceV1Schema)),
+    callerSurfacePolicies: z.catch(z.optional(CallerSurfacePoliciesV1Schema), undefined),
   }), z.transform((value) => ({
     v: 1 as const,
     actions: projectKnownActionSettings(value.actions ?? {}),
     ...(value.approvalWaivedSurfaces ? { approvalWaivedSurfaces: value.approvalWaivedSurfaces } : {}),
     ...(value.pluginHostCaptureApprovalWaived ? { pluginHostCaptureApprovalWaived: value.pluginHostCaptureApprovalWaived } : {}),
+    ...(value.scopedApprovalPreferences ? { scopedApprovalPreferences: normalizeScopedApprovalRows(value.scopedApprovalPreferences) } : {}),
+    ...(value.callerSurfacePolicies ? { callerSurfacePolicies: value.callerSurfacePolicies } : {}),
   }))));
 
 export type ActionsSettingsV1 = Readonly<{
@@ -156,6 +197,8 @@ export type ActionsSettingsV1 = Readonly<{
   actions: Record<string, ActionSettingsOverride>;
   approvalWaivedSurfaces?: Record<string, ActionSurfaceKey[]>;
   pluginHostCaptureApprovalWaived?: string[];
+  scopedApprovalPreferences?: ActionScopedApprovalPreferenceV1[];
+  callerSurfacePolicies?: z.infer<typeof CallerSurfacePoliciesV1Schema>;
 }>;
 
 const EMPTY_ACTIONS_SETTINGS_V1 = Object.freeze({
@@ -176,6 +219,8 @@ function isActionsSettingsV1Document(value: unknown): value is Readonly<{
   actions?: Record<string, unknown>;
   approvalWaivedSurfaces?: unknown;
   pluginHostCaptureApprovalWaived?: unknown;
+  scopedApprovalPreferences?: unknown;
+  callerSurfacePolicies?: unknown;
 }> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
@@ -208,8 +253,24 @@ export function tryNormalizeActionsSettingsV1(value: unknown): ActionsSettingsV1
   const pluginWaivers = ActionsSettingsV1Schema.parse({ v: 1,
     pluginHostCaptureApprovalWaived: value.pluginHostCaptureApprovalWaived,
   }).pluginHostCaptureApprovalWaived;
+  const callerSurfacePolicies = ActionsSettingsV1Schema.parse({ v: 1, callerSurfacePolicies: value.callerSurfacePolicies }).callerSurfacePolicies;
+  const scopedRows: ActionScopedApprovalPreferenceV1[] = [];
+  if (Array.isArray(value.scopedApprovalPreferences)) {
+    for (const raw of value.scopedApprovalPreferences) {
+      const row = ActionScopedApprovalPreferenceV1Schema.safeParse(raw);
+      if (row.success) scopedRows.push(row.data);
+      else if (raw && typeof raw === 'object' && typeof raw.actionId === 'string') {
+        const scope = ActionApprovalScopeV1Schema.safeParse(raw.scope);
+        if (scope.success) scopedRows.push({ actionId: raw.actionId, scope: scope.data,
+          approvalRequiredSurfaces: ActionSurfaceKeySchema.options, approvalWaivedSurfaces: [] });
+        else actions[normalizeActionSettingsActionId(raw.actionId) ?? raw.actionId] = MALFORMED_ACTION_SETTINGS_OVERRIDE;
+      }
+    }
+  }
   return { v: 1, actions, ...(waivers ? { approvalWaivedSurfaces: waivers } : {}),
-    ...(pluginWaivers ? { pluginHostCaptureApprovalWaived: pluginWaivers } : {}) };
+    ...(pluginWaivers ? { pluginHostCaptureApprovalWaived: pluginWaivers } : {}),
+    ...(callerSurfacePolicies ? { callerSurfacePolicies } : {}),
+    ...(Array.isArray(value.scopedApprovalPreferences) ? { scopedApprovalPreferences: normalizeScopedApprovalRows(scopedRows) } : {}) };
 }
 
 export function normalizeActionsSettingsV1(value: unknown): ActionsSettingsV1 {
@@ -270,4 +331,10 @@ export function isActionEnabledByActionsSettings(
   }
   if (placement && override?.disabledPlacements?.includes(placement)) return false;
   return true;
+}
+
+export function readScopedActionApprovalPreference(settings: ActionsSettingsV1, actionId: string,
+  scope: ActionApprovalScopeV1): ActionScopedApprovalPreferenceV1 | undefined {
+  const key = actionScopedApprovalPreferenceKey(actionId, scope);
+  return settings.scopedApprovalPreferences?.find(row => actionScopedApprovalPreferenceKey(row.actionId, row.scope) === key);
 }

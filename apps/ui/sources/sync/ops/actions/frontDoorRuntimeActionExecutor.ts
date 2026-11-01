@@ -1,3 +1,4 @@
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionId, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { HappyError } from '@/utils/errors/errors';
@@ -5,8 +6,8 @@ import { HappyError } from '@/utils/errors/errors';
 import { createDefaultActionExecutor, type UiActionExecutorContext } from './defaultActionExecutor';
 
 type ActionExecutorLike = Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute'> &
-  Partial<Pick<ReturnType<typeof createDefaultActionExecutor>, 'prepare'>>;
-export type FrontDoorActionExecute = ActionExecutorLike['execute'] & Pick<ReturnType<typeof createDefaultActionExecutor>, 'prepare'>;
+  Partial<Pick<ReturnType<typeof createDefaultActionExecutor>, 'prepare' | 'executeConfirmed'>>;
+export type FrontDoorActionExecute = ActionExecutorLike['execute'] & Pick<ReturnType<typeof createDefaultActionExecutor>, 'prepare'> & Readonly<{ confirmed: ActionExecutorLike['execute'] }>;
 /** The UI front door admits the full Action catalog, including setup before a runtime effect. */
 export type FrontDoorRuntimeActionExecute = (
   args: Omit<RuntimeActionExecuteArgs, 'actionId'> & Readonly<{ actionId: ActionId }>,
@@ -55,6 +56,18 @@ export function createFrontDoorActionExecute(
     return target.execute(actionId, input, context);
   };
   return Object.assign(execute, {
+    confirmed: async (...args: Parameters<ActionExecutorLike['execute']>) => {
+      const [actionId, input, context] = args;
+      // Snapshot before the lazy import or Account capture can suspend the clicked intent.
+      // Use the approval-digest owner's JSON projection, including optional native members.
+      let confirmedInput: unknown;
+      try { confirmedInput = projectNativeJsonValueForTransport(input); }
+      catch { return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' }; }
+      const target = resolve();
+      if (!target.executeConfirmed) throw new Error('The injected Action executor does not implement confirmed dispatch');
+      return target.executeConfirmed(actionId, confirmedInput, context);
+    },
+
     prepare: async (...args: Parameters<ReturnType<typeof createDefaultActionExecutor>['prepare']>) => {
       const target = resolve();
       return target.prepare ? target.prepare(...args) : {

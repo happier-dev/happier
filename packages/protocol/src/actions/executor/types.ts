@@ -1,3 +1,4 @@
+import type { QualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import type { DeploymentTransportActionIdV1, DeploymentActionInputV1, DeploymentActionOutputV1 } from '../../deployments/deploymentActionsV1.js';
 import type { SessionFollowActionIdV1 } from '../../sessions/follow/actions.js';
 import type { SessionPendingNextOutput } from '../specs/session/pendingNext.js';
@@ -344,6 +345,23 @@ export type ActionPreparedInvocation = Readonly<{
   run: () => Promise<ActionExecuteResult>;
 }>;
 
+export type ActionPrepareOptions = Readonly<{
+  /** Inspect the normalized review before creating approval custody. Running still admits ordinary review. */
+  reviewOnly?: true;
+}>;
+
+/** Host-local operation presentation; normalizedInput is never a provider/tool-result projection. */
+export type ActionPreparedOperation = Readonly<{
+  actionId: ActionId;
+  normalizedInput: unknown;
+  inputDigest: string;
+  summary: string;
+  safety?: import('../safetyVocabulary.js').ActionSafety;
+  irreversible: boolean;
+  canConfirmInFlow: boolean;
+  sessionTargetsV1?: import('../sessionTargetV1.js').ActionResolvedSessionTargetsV1;
+}>;
+
 /**
  * Exact host-local routing identity for a Session Action dependency.
  *
@@ -364,7 +382,7 @@ export type ActionSessionReferenceResolution =
   | Readonly<{ kind: 'incomplete' }>;
 
 export type ActionPrepareResult =
-  | Readonly<{ kind: 'ready'; invocation: ActionPreparedInvocation }>
+  | Readonly<{ kind: 'ready'; invocation: ActionPreparedInvocation; operation?: ActionPreparedOperation }>
   | Readonly<{ kind: 'settled'; result: ActionExecuteResult }>;
 
 export type RuntimeActionExecutionFamily =
@@ -712,7 +730,16 @@ export type ActionExecutorContext = Readonly<{
    * Action input, and only suppresses the default duplicate confirmation for
    * the same Action id. Persisted explicit approval requirements still win.
    */
-  presentUserConfirmation?: Readonly<{ actionId: ActionId }>;
+  presentUserConfirmation?: Readonly<{
+    actionId: ActionId;
+    /** Bound by the invoking host at its designed confirmation, never Action input. */
+    inputDigest?: string;
+    requestId?: string;
+    accountId?: string;
+    /** Canonical Home identity when available; local profile identity otherwise. */
+    serverId?: string;
+    target?: ExternalActionTargetV1 | null;
+  }>;
 
   /**
    * Verified public-API credential provenance, stamped only after bearer
@@ -825,6 +852,7 @@ export type ActionExecutorContext = Readonly<{
    * Invocation surface (UI / voice / MCP / CLI). Used for fail-closed per-surface gating.
    */
   surface?: keyof ActionSurfaces | null;
+  callerSurface?: import('../actionSettings.js').ActionCallerSurfaceV1;
 
   /**
    * Host-stamped authority for the currently active admitted Session turn.
@@ -873,7 +901,7 @@ export type ActionExecutorContext = Readonly<{
    * input or inferred from a persisted decision alone; requester identity stays intact.
    */
   presentUserApproval?: Readonly<{
-    artifactId: string;
+    artifactId?: string;
     actionId: ActionId;
     requestId: string;
     inputDigest: string;
@@ -1243,7 +1271,7 @@ export type ActionExecutorDeps = Readonly<{
    * caller owns currentness; ActionExecutor only composes these definitions
    * with the static host catalog. Listings carry no schemas.
    */
-  listContributedActionDefinitions?: () => readonly ActionDefinitionSummaryV1[];
+  listContributedActionDefinitions?: (selection?: Readonly<{ id: QualifiedPluginActionId }>) => readonly ActionDefinitionSummaryV1[];
 
   /**
    * Reads one listed contributed Action's declared schemas on demand for

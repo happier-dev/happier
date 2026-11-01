@@ -553,6 +553,7 @@ export type PluginActionPresentUserGateResolution<TAction> =
 
 export type PluginActionCurrentIntentRequest<TAction> = Readonly<{
   action: TAction;
+  input: unknown;
   fingerprint: string;
   /** Declared Action capability surface. */
   surface: string;
@@ -781,6 +782,7 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
       try {
         intent = await requestCurrentIntent({
           action: initial.action,
+          input: args.input,
           fingerprint,
           surface: args.surface,
           invocationSurface: args.invocationSurface,

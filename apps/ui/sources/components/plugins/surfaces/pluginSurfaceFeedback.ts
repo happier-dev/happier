@@ -1,3 +1,4 @@
+import { formatApprovalFieldValues, getApprovalFieldValues, projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import type {
     InteractionTransientRequesterV1,
@@ -129,6 +130,38 @@ export type PluginSurfaceFeedbackHandlers = Readonly<{
     dispose: () => void;
 }>;
 
+/** One localized disclosure for tap and spoken read-back, from the prepared operands. */
+export async function preparePluginActionConfirmation(input: Readonly<{
+    pluginUiProjection?: PluginUiProjectionModel | null;
+    isCurrent: () => boolean;
+}>, request: Pick<PluginActionCurrentIntentRequest<PluginProjectedActionV2>, 'action' | 'input' | 'signal'>) {
+    if (!input.isCurrent() || request.signal?.aborted) return null;
+    const readConfirmationText = createConfirmationTextResolver(request.action.pluginId, input.pluginUiProjection);
+    // A non-safe Action always declares its own wording. An Action asked
+    // about only because of the person's Ask-first setting may not, so it
+    // is presented by its own title and description.
+    const confirmation = request.action.confirmation ?? {
+        title: request.action.title,
+        ...(request.action.description ? { body: request.action.description } : {}),
+    };
+    const title = readConfirmationText(confirmation.title);
+    const confirmLabel = request.action.confirmVerb
+        ? readConfirmationText(request.action.confirmVerb)
+        : 'confirmLabel' in confirmation && confirmation.confirmLabel
+        ? readConfirmationText(confirmation.confirmLabel)
+        : t('approvals.approve');
+    const body = confirmation.body ? readConfirmationText(confirmation.body) : title;
+    const fields = request.action.confirmation?.inputFields ?? [];
+    const reviewedInput = fields.length ? projectTargetActionApprovalInput(request.input,
+        request.action.inputHints?.fields.filter(field => field.widget === 'secret').map(field => field.path) ?? []) : null;
+    const operands = fields.flatMap(field => {
+        const value = reviewedInput ? formatApprovalFieldValues(getApprovalFieldValues(reviewedInput.input, field.path)) : null;
+        return value === null ? [] : [`${readConfirmationText(field.title)}: ${value}`];
+    });
+    const message = operands.length ? `${body}\n\n${operands.join('\n')}` : body;
+    return { title, message, confirmLabel };
+}
+
 export function createPluginActionCurrentIntentHandler(input: Readonly<{
     requester: InteractionTransientRequesterV1;
     signal?: AbortSignal;
@@ -154,29 +187,13 @@ export function createPluginActionCurrentIntentHandler(input: Readonly<{
                 code: 'plugin_action_generation_retired',
             });
         }
-        const readConfirmationText = createConfirmationTextResolver(
-            request.action.pluginId,
-            input.pluginUiProjection,
-        );
-        // A non-safe Action always declares its own wording. An Action asked
-        // about only because of the person's Ask-first setting may not, so it
-        // is presented by its own title and description.
-        const confirmation = request.action.confirmation ?? {
-            title: request.action.title,
-            ...(request.action.description ? { body: request.action.description } : {}),
-        };
-        const title = readConfirmationText(confirmation.title);
-        const confirmLabel = request.action.confirmVerb
-            ? readConfirmationText(request.action.confirmVerb)
-            : 'confirmLabel' in confirmation && confirmation.confirmLabel
-            ? readConfirmationText(confirmation.confirmLabel)
-            : t('approvals.approve');
+        const presentation = await preparePluginActionConfirmation(input, request);
+        if (!presentation) return { status: 'unavailable', code: 'plugin_action_generation_retired' };
+        const { title, message, confirmLabel } = presentation;
         const outcome = await interactions.confirm({
             kind: 'confirmation',
             title,
-            message: confirmation.body
-                ? readConfirmationText(confirmation.body)
-                : title,
+            message,
         }, {
             ...(request.signal ? { signal: request.signal } : {}),
             presentationContext: {

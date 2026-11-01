@@ -10,6 +10,8 @@ export type PreparedCoreAdmission = Readonly<{
     actionId: ActionId;
     input: unknown;
     context: ActionExecutorContext;
+    safety?: ActionSpec['safety'];
+    reviewAdmitted?: true;
     /** Private parent-child admission survives preparation; never caller-authored or persisted. */
     hostInternal?: true;
     approvalScope?: ActionApprovalScopeV1;
@@ -32,6 +34,8 @@ export type ActionHomeEquivalence = (left: string | null | undefined, right: str
 
 export type CoreOptions = Readonly<{
       prepareOnly?: boolean;
+      /** Host-local review projection, not approval or permission to dispatch. */
+      reviewOnly?: true;
       /** Only public execute offers the host's transient UI default confirmation. */
       confirmUiDefault?: boolean;
       prepared?: PreparedCoreAdmission;

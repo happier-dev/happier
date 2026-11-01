@@ -1,4 +1,6 @@
-import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
+import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
+import { isPresentUserHostInvocation } from '../invocationAuthority.js';
+import type { ActionPreparedOperation, ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { type ApprovalRequestV1 } from '../../approvals/approvalRequestV1.js';
 import { getActionSpec, type ActionSpec } from '../actionSpecs.js';
 import { readRecord } from '../../inputs/inputRecords.js';
@@ -78,6 +80,24 @@ function projectApprovalReviewInput(spec: ActionSpec, input: unknown): unknown {
   if (!review?.projectInput) return spec.projectObservationInput?.(input) ?? input;
   const projected = review.projectInput(input);
   return review.inputSchema ? review.inputSchema.parse(projected) : projected;
+}
+
+/** Project from the same normalized operand that admission and dispatch consume. */
+export function projectPreparedActionOperation(actionId: ActionId, input: unknown,
+  context: ActionExecutorContext, classification: Pick<ActionPreparedOperation, 'safety'>): ActionPreparedOperation {
+  const spec = getActionSpec(actionId);
+  const normalizedInput = projectNativeJsonValueForTransport(input);
+  const capturedTargets = context.sessionTargetsV1;
+  const sessionTargetsV1 = capturedTargets ? { ...capturedTargets,
+    targets: capturedTargets.targets.map(target => ({ ...target })),
+    ...(capturedTargets.operands ? { operands: capturedTargets.operands.map(operand => ({ ...operand,
+      target: { ...operand.target } })) } : {}) } : undefined;
+  return { actionId, normalizedInput,
+    inputDigest: computeActionInputApprovalDigestV1(actionId, normalizedInput, sessionTargetsV1),
+    summary: buildApprovalPreviewSummary(spec, normalizedInput),
+    ...(classification.safety ? { safety: classification.safety } : {}), irreversible: spec.irreversible === true,
+    canConfirmInFlow: isPresentUserHostInvocation(context),
+    ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}) };
 }
 
 export async function resolveComputerActionSelection(

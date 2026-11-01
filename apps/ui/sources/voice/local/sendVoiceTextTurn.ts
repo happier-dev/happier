@@ -457,8 +457,29 @@ export async function sendVoiceTextTurn(params: {
           }
           await speakAssistantReply(assistantText, turnIndex, assistantEntryId);
         },
+        // The Action owner resumes its captured invocation after host playback.
+        // A model follow-up is never responsible for delivering confirmation.
+        playHostText: async ({ text, signal }) => {
+          if (signal.aborted || !params.playbackController.isEpochCurrent(playbackEpoch)) return { status: 'cancelled' };
+          clearReplyTtsGuard();
+          let readBackStarted = false;
+          try {
+            await speakAssistantText({
+              sessionId, text, settings, networkTimeoutMs, registerPlaybackStopper,
+              onSpeaking: () => {
+                readBackStarted = true;
+                seedReplyTtsGuard(text, null);
+                voiceConversationRuntimeMachine.transitionToSpeaking({ controlSessionId: sessionId });
+              },
+            });
+            return { status: readBackStarted && !signal.aborted
+              && params.playbackController.isEpochCurrent(playbackEpoch) ? 'completed' : 'cancelled' };
+          } finally {
+            clearReplyTtsGuard();
+          }
+        },
         onToolResults: async ({ toolResults }) => {
-          appendSyntheticToolResultNotes(toolResults as ReadonlyArray<LocalVoiceAgentToolResultEntry>);
+          appendSyntheticToolResultNotes(toolResults);
         },
       });
       if (agentTurnResult.disposition === 'tool_round_limit_reached') {

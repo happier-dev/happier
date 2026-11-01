@@ -37,8 +37,7 @@ export function scopedHomeActionExecutor(
         ...ordinaryOptions,
     };
     const ordinary = createFrontDoorActionExecute(createDefaultActionExecutor(executorOptions));
-    const execute: typeof ordinary = Object.assign(async (...args: Parameters<typeof ordinary>) => {
-        const [actionId, input, context] = args;
+    const forInvocation = (actionId: Parameters<typeof ordinary>[0], context: Parameters<typeof ordinary>[2]) => {
         // Only host-owned page controls lend their ephemeral page-follow values
         // and mount signal. Settings Ask must retain that exact invocation,
         // including when a native surface supplies this shared scoped executor.
@@ -46,10 +45,15 @@ export function scopedHomeActionExecutor(
             && context.actionCaller?.kind === 'host' && context.widgetAreaContext && context.signal) {
             return createFrontDoorActionExecute(createDefaultActionExecutor({ ...executorOptions,
                 hostActionApprovalLifetime: { actionId, signal: context.signal, surface: 'ui' },
-            }))(actionId, input, context);
+            }));
         }
-        return ordinary(...args);
-    }, { prepare: ordinary.prepare });
+        return ordinary;
+    };
+    const execute: typeof ordinary = Object.assign((...args: Parameters<typeof ordinary>) =>
+        forInvocation(args[0], args[2])(...args), {
+        confirmed: (...args: Parameters<typeof ordinary>) => forInvocation(args[0], args[2]).confirmed(...args),
+        prepare: ordinary.prepare,
+    });
     if (!options) executorsByScope.set(key, execute);
     return execute;
 }

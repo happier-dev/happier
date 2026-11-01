@@ -1,5 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, createMachineFixture, createSessionFixture, createSessionMessagesFixture } from '@/dev/testkit';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { t } from '@/text';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
@@ -74,6 +77,7 @@ const sessionMetadata = createSessionMetadataHttpBoundary(() => storage.getState
 let account: Awaited<ReturnType<typeof serveAccountHomes>>;
 let disconnect: (() => Promise<void>) | undefined;
 const events: string[] = [];
+const approvalArtifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
 let directPendingEntered = createDeferred<void>();
 type TurnReply = { assistantText: string; actions: VoiceAssistantAction[] };
 let turnReplies: (index: number) => TurnReply = () => ({ assistantText: 'Done.', actions: [] });
@@ -203,6 +207,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
   beforeEach(async () => {
     conversationModeState.current = 'agent';
     events.length = 0;
+    approvalArtifacts.clear();
     directPendingEntered = createDeferred<void>();
     turnIndex = 0;
     rejectStart = false;
@@ -226,6 +231,9 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       // This Home has no target Session: do not serve the active Home's seed
       // through another Home's real scoped fetch.
       if (request.home === 'other') return undefined;
+      const artifactResponse = approvalArtifacts.handle(request.path + request.url.search, { method: request.method,
+        ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
+      if (artifactResponse) return artifactResponse;
       const machine = createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' });
       if (request.path === '/v1/machines/read-batch' && request.method === 'POST') return createMachineReadBatchResponseFixture(
         request.body, id => id === machine.id ? machine : null);
@@ -272,6 +280,66 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
   });
 
   afterEach(async () => { await voiceAgentSessions.stop(VOICE_AGENT_GLOBAL_SESSION_ID); await disconnect?.(); disconnect = undefined; await account?.dispose(); });
+
+  it.each(['setting', 'existing-request', 'refused-setting'] as const)(
+    'executes the spoken %s without a model confirmation round and speaks only the owner outcome', async path => {
+      const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
+      const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
+      const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+      const serverId = account.homes.voice!.id;
+      const handlers = createVoiceToolHandlers({ resolveSessionId: () => 's1', currentServerId: serverId });
+      const input = { anchor: 'voiceConversations.verbosity', value: path === 'refused-setting' ? 'unsupported' : 'balanced' };
+      const controller = new AbortController();
+      let pending: Promise<string> | undefined;
+      let artifactId: string | undefined;
+      if (path === 'existing-request') {
+        const created = createDeferred<void>();
+        approvalArtifacts.afterNextCreate(async () => { created.resolve(); });
+        pending = handlers.settings_set!(input, { effectId: 'existing-settings-request', signal: controller.signal });
+        await created.promise;
+        artifactId = approvalArtifacts.list()[0]?.id;
+        expect(artifactId).toBeDefined();
+        expect(ApprovalRequestSchema.parse(JSON.parse(approvalArtifacts.readPlainBody(artifactId!)!)).status).toBe('open');
+      }
+      setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+        status: 'connected', mode: 'listening', canStop: true });
+      const action = path !== 'existing-request'
+        ? { t: 'settings_set', args: input }
+        : { t: 'approval_request_decide', args: { artifactId: artifactId!, decision: 'approve' } };
+      // The provider claims success and NEVER repeats an Action with a binding.
+      // Completion must depend on the real owner, not on this provider prose.
+      turnReplies = index => index === 0
+        ? { assistantText: 'Replies is now set to Balanced.', actions: [action] }
+        : { assistantText: 'Unverified provider success claim.', actions: [] };
+      const base = buildAccountSettings();
+      const local = readLocalConversationVoiceSettings(base.voice);
+      const settings = settingsParse({ ...base, ...normalizeVoiceSettingsLocalDelta({ voice: { ...base.voice,
+        canApproveRequests: true, providers: { ...base.voice.providers, local_conversation: { schemaVersion: 1,
+          config: { ...local, tts: { ...local.tts, provider: 'device', autoSpeakReplies: true },
+            streaming: { ...local.streaming, enabled: true, ttsEnabled: true } } } } } }) });
+      const spoken: string[] = [];
+      await speech.speak.withImplementation((text, options) => {
+        spoken.push(text); options.onStart?.(); options.onDone?.();
+      }, async () => {
+        try {
+          await sendVoiceTextTurn({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, settings,
+            userText: path !== 'existing-request' ? 'In Voice settings change Replies from Short to Balanced.' : 'Approve this exact request.',
+            playbackController: createVoicePlaybackController(), voiceAgentSessions, signal: controller.signal });
+          expect(JSON.parse(await handlers.settings_get!({ anchor: input.anchor }))).toMatchObject({ ok: true, value: path === 'refused-setting' ? 'short' : 'balanced' });
+          expect(spoken).not.toContain('Replies is now set to Balanced.');
+          expect(spoken).not.toContain('Unverified provider success claim.');
+          if (path === 'refused-setting') expect(spoken).not.toContain(t('common.done'));
+          else expect(spoken).toContain(path === 'setting' ? t('common.done') : t('approvals.status.executed'));
+          if (artifactId) {
+            expect(ApprovalRequestSchema.parse(JSON.parse(approvalArtifacts.readPlainBody(artifactId)!)))
+              .toMatchObject({ status: 'executed', decision: { decidedVia: 'voice' }, execution: { ok: true } });
+            await pending;
+          } else expect(approvalArtifacts.list()).toEqual([]);
+        } finally {
+          controller.abort(); resetVoiceSessionStoreForTests(); await pending?.catch(() => undefined);
+        }
+      });
+    });
 
   it('submits direct coding-session voice turns through durable immediate delivery', async () => {
     conversationModeState.current = 'direct_session';

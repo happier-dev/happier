@@ -53,7 +53,7 @@ describe('openExternalSessionCandidate', () => {
         boundary.ensure.mockResolvedValueOnce({ ok: true, sessionId: 'continued', created: true });
         const frontDoor = createFrontDoorActionExecute();
         // Observe invocation without substituting policy, admission or dispatch.
-        const execute = Object.assign(vi.fn(frontDoor), { prepare: frontDoor.prepare });
+        const execute = Object.assign(vi.fn(frontDoor), { confirmed: frontDoor.confirmed, prepare: frontDoor.prepare });
         const params = input();
         expect(await openExternalSessionCandidate({ ...params,
             candidate: { ...params.candidate, cwd: ' /repo/native cwd ', details: { cwd: '/legacy/should-not-win' } },

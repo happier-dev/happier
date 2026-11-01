@@ -1182,6 +1182,11 @@ That signed Account approval origin retains `account_automation`; neither the
 carrier's UI ingress nor its Home signature turns the Voice model into a human.
 The server preserves the authenticated lowering ceiling on both direct Account
 origination and re-entry through an already-signed root.
+
+Local and capable realtime callers supply the same host-playback capability;
+the dispatcher resumes the captured Action immediately after that playback completes,
+without requiring a second model tool call. Local settings writes and approval decisions
+report the owner's saved-value or decision result instead of model-authored completion prose.
 An attempt ID does not upgrade authority: terminal credentials retain automation
 authority on UI, can request policy-required approval, and cannot decide it. The
 approval UI preserves `present_user_required` and directs the person to an Account

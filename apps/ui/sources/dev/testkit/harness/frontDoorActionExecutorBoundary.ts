@@ -16,6 +16,9 @@ export function createFrontDoorActionExecuteForVitest(
         const execute: FrontDoor.FrontDoorActionExecute = Object.assign(
             async (...args: Parameters<FrontDoor.FrontDoorActionExecute>) => (await resolve())(...args),
             {
+                confirmed: (...args: Parameters<FrontDoor.FrontDoorActionExecute['confirmed']>) => resolved
+                    ? resolved.confirmed(...args)
+                    : resolve().then(execute => execute.confirmed(...args)),
                 prepare: async (...args: Parameters<FrontDoor.FrontDoorActionExecute['prepare']>) => (await resolve()).prepare(...args),
             },
         );
