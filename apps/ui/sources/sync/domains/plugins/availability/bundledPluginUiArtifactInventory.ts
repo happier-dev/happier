@@ -12,9 +12,17 @@ export type PluginHostBundledUiDeclaration = Readonly<{
     /** Canonical package custody locator from the app dependency inventory. */
     packageName: string;
     displayName: string;
+    /** Demand index from the canonical declaration projector; schemas stay lazy. */
+    hasMachineProvisioners?: boolean;
     entriesById: PluginDeclaredUiEntriesV1;
     /** Validated authored facts retained by the existing bundled declaration producer. */
     normalizedManifest?: PluginPortableReleaseManifestV1;
+    /** Discovery-only Account descriptors; never supplied to an invocation. */
+    presentationManifest?: PluginPortableReleaseManifestV1;
+    /** Exact build-owned declaration, acquired only for this plugin's demand. */
+    loadDeclaration?: () => Promise<PluginHostBundledUiDeclaration>;
+    /** Declaration suppliers needed when this plugin's contribution points are opened. */
+    targetedPluginIds?: readonly string[];
     /** Exact compiler output, including portable Account activation exports. */
     artifactGraphs?: readonly PluginUiArtifactsManifestEntryV2[];
     /** Static requirements remain known before a Machine publishes its runtime catalog. */

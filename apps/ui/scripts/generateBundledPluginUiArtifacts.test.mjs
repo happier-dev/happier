@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { runInNewContext } from 'node:vm';
 
@@ -25,10 +25,50 @@ import {
 const execFileAsync = promisify(execFile);
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
-function readEmittedPluginUiInventory(output) {
+test('cold declaration inventory defers full manifests and loads only the demanded plugin in a compiled bundle', async () => {
+  const fixture = await createFixture();
+  try {
+    await addSecondPlugin(fixture.repoRoot);
+    const secondManifest = join(fixture.repoRoot, 'packages/plugins/second/.happier-plugin/plugin.json');
+    await writeFile(secondManifest, JSON.stringify({ schemaVersion: 2, id: 'happier.second', version: '0.0.0',
+      displayName: 'Second', runtime: { apiVersion: 1 }, contributes: {} }));
+    const result = await generateBundledPluginUiArtifacts({ repoRoot: fixture.repoRoot });
+    const output = await readFile(result.outputPath, 'utf8');
+    const inventory = readEmittedPluginUiInventory(output);
+    assert.equal(inventory.BUNDLED_PLUGIN_UI_APP_DECLARATIONS.length, 2);
+    for (const declaration of inventory.BUNDLED_PLUGIN_UI_APP_DECLARATIONS) {
+      assert.equal(Object.hasOwn(declaration, 'normalizedManifest'), false,
+        'the initial module must carry discovery facts without full manifests');
+      assert.equal(typeof declaration.loadDeclaration, 'function');
+    }
+    const { build } = await import('esbuild');
+    const outdir = join(fixture.repoRoot, 'compiled');
+    const built = await build({ entryPoints: [result.outputPath], outdir, bundle: true, splitting: true,
+      format: 'esm', platform: 'neutral', outExtension: { '.js': '.mjs' }, metafile: true,
+      plugins: [{ name: 'packaged-assets', setup(build) {
+        build.onResolve({ filter: /\.bundle$/ }, args => ({ path: args.path, namespace: 'asset' }));
+        build.onLoad({ filter: /.*/, namespace: 'asset' }, () => ({ contents: 'export default 1', loader: 'js' }));
+      } }] });
+    const { pathToFileURL } = await import('node:url');
+    const compiled = await import(pathToFileURL(join(outdir, 'generatedBundledPluginUiArtifacts.mjs')).href);
+    const first = compiled.BUNDLED_PLUGIN_UI_APP_DECLARATIONS.find(row => row.pluginId === 'happier.fixture');
+    const declaration = await first.loadDeclaration();
+    assert.equal(declaration.normalizedManifest.id, 'happier.fixture');
+    assert.ok(Object.keys(declaration.entriesById).length > 0);
+    const compiledEntry = await readFile(join(outdir, 'generatedBundledPluginUiArtifacts.mjs'), 'utf8');
+    assert.doesNotMatch(compiledEntry, /normalizedManifest/);
+    const chunks = Object.values(built.metafile.outputs).filter(output => Object.keys(output.inputs)
+      .some(input => /[/\\]declarations[/\\][a-f0-9]+[/\\]declaration\.js$/.test(input)));
+    assert.equal(chunks.length, 2, 'each plugin has one independent declaration chunk');
+    assert.ok(chunks.every(output => Object.keys(output.inputs)
+      .filter(input => /[/\\]declaration\.js$/.test(input)).length === 1));
+  } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
+});
+
+function readEmittedPluginUiInventory(output, requireAsset = () => 1) {
   // Native assets are the external boundary; the generated data stays real.
-  return runInNewContext(`${output.replaceAll('export const ', 'const ')}\n({ BUNDLED_PLUGIN_UI_APP_DECLARATIONS, BUNDLED_PLUGIN_UI_APP_ARTIFACTS });`, {
-    require: () => 1, Uint8Array,
+  return runInNewContext(`${output.replaceAll('export const ', 'const ').replaceAll('import(', 'loadDeclarationModule(')}\n({ BUNDLED_PLUGIN_UI_APP_DECLARATIONS, BUNDLED_PLUGIN_UI_APP_ARTIFACTS, BUNDLED_PLUGIN_PACKAGED_RESOURCES: typeof BUNDLED_PLUGIN_PACKAGED_RESOURCES === 'undefined' ? [] : BUNDLED_PLUGIN_PACKAGED_RESOURCES });`, {
+    require: requireAsset, Uint8Array, loadDeclarationModule: specifier => import(pathToFileURL(specifier).href),
   });
 }
 
@@ -148,7 +188,7 @@ test('conditional portable source exports publish executable graphs through sour
     const inventory = readEmittedPluginUiInventory(await readFile(result.outputPath, 'utf8'));
     assert.equal(inventory.BUNDLED_PLUGIN_UI_APP_ARTIFACTS.length, 1,
       'a conditional portable source must reach the compiler rather than publish metadata alone');
-    const declaration = inventory.BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0];
+    const declaration = inventory.BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0].loadDeclaration();
     assert.equal(declaration.artifactGraphs.length, 1);
   } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
 });
@@ -194,7 +234,7 @@ test('the UI prebuild owns one universal exact app-preseed registry from canonic
     const emitted = readEmittedPluginUiInventory(output);
     assert.equal(emitted.BUNDLED_PLUGIN_UI_APP_DECLARATIONS.length, 1);
     assert.ok(emitted.BUNDLED_PLUGIN_UI_APP_ARTIFACTS.every(row => !Object.hasOwn(row, 'uiDeclaration')));
-    const declaration = JSON.parse(JSON.stringify(emitted.BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0]));
+    const declaration = JSON.parse(JSON.stringify(await emitted.BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0].loadDeclaration()));
     assert.equal(declaration.pluginId, 'happier.fixture');
     assert.equal(declaration.packageName, '@happier-dev/plugins-fixture');
     assert.equal(declaration.normalizedManifest.id, manifest.id);
@@ -270,7 +310,7 @@ test('semantic declaration publication refuses non-JSON schema data without repa
       pluginManifests: { fixture: manifest } });
     assert.deepEqual(supportedBytes.pluginFailures, []);
     const output = await readFile(supportedBytes.outputPath, 'utf8');
-    const declaration = JSON.parse(output.match(/const BUNDLED_PLUGIN_UI_APP_DECLARATION_0 = (.+);/)[1]);
+    const declaration = await readEmittedPluginUiInventory(output).BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0].loadDeclaration();
     assert.deepEqual(declaration.normalizedManifest.contributes.pluginContributionPoints[0]
       .protocols[0].surfaces.detail.inputSchema, { not: { type: 'null' } });
 
@@ -494,8 +534,8 @@ test('invalid plugin bytes retain semantic declarations while healthy byte sourc
     }
     await rm(join(fixture.artifactRoot, 'ui-artifacts.json'));
     const noMetadata = await generateBundledPluginUiArtifacts({ repoRoot: fixture.repoRoot });
-    const declaration = readEmittedPluginUiInventory(await readFile(noMetadata.outputPath, 'utf8'))
-      .BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0];
+    const declaration = await readEmittedPluginUiInventory(await readFile(noMetadata.outputPath, 'utf8'))
+      .BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0].loadDeclaration();
     assert.equal(declaration.pluginId, 'happier.fixture');
     assert.equal(declaration.artifactGraphs.length, 0);
   } finally {

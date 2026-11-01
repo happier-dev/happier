@@ -1,4 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import * as availability from '@happier-dev/protocol/plugins/availability';
 import * as canonicalJson from '@happier-dev/protocol/crypto/canonicalJson';
 import * as uiProjection from '@/sync/domains/plugins/ui/projection';
@@ -258,6 +260,74 @@ describe('Plugin Account Availability reader', () => {
         store.clear();
         expect(notify).toHaveBeenCalledTimes(4);
         unsubscribe();
+    });
+
+    it('loads only the demanded bundled declaration, retains discovery, and fences Account replacement', async () => {
+        const loaded: string[] = [];
+        const graph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: 'account-actions', tier: 'reactNative',
+            entry: 'react-native/account-actions/entry.cjs.bundle', digest: artifactDigest,
+            files: [{ relativePath: 'react-native/account-actions/entry.cjs.bundle', digest: artifactDigest, byteSize: 1 }],
+            builtWith: { bundler: 'esbuild', version: '1.0.0' }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0' });
+        const bundles = ['com.acme.first', 'com.acme.second'].map(pluginId => {
+            const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: pluginId,
+                version: '1.0.0', displayName: pluginId, runtime: { apiVersion: 1 }, contributes: {
+                    actions: [{ id: 'read', title: 'Read', surfaces: ['ui'], scopes: ['global'], placementBindings: [], dangerLevel: 'safe',
+                        execution: { target: 'account', account: { artifactId: graph.artifactId, exportName: 'activate' } },
+                        inputSchema: { type: 'object', additionalProperties: false } }],
+                    ui: { renderers: [{ id: 'body', kind: 'reactNative', artifact: 'body' }],
+                        views: [{ id: 'page', container: 'appPage', target: { kind: 'app' }, renderer: 'body', title: pluginId }] },
+                } });
+            const declaration = { pluginId, pluginVersion: manifest.version, packageName: `@acme/${pluginId}`,
+                displayName: pluginId, normalizedManifest: manifest, artifactGraphs: [graph], entriesById: projectPluginPortableUiDeclarationsV1(manifest) };
+            return { pluginId, pluginVersion: manifest.version, packageName: declaration.packageName,
+                displayName: pluginId, entriesById: declaration.entriesById, artifactGraphs: [graph],
+                presentationManifest: { ...manifest, contributes: { ...manifest.contributes,
+                    actions: manifest.contributes.actions.map(({ inputSchema: _schema, ...action }) => action) } },
+                loadDeclaration: async () => { loaded.push(pluginId); return declaration; } };
+        });
+        const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: bundles });
+        const empty = snapshot({ intentReads: [], materializations: [], snapshots: [] });
+        store.replace({ scope, snapshot: empty });
+        const reader = store.bind(scope);
+        expect(Object.keys(reader.readAccountUiProjection()?.surfacePlacementsById ?? {})).toHaveLength(2);
+        expect(loaded).toEqual([]);
+        expect(reader.readCurrentArtifact({ pluginId: 'com.acme.first', contributionId: 'read', tier: 'reactNative', platform: 'web' }))
+            .toMatchObject({ kind: 'available', artifact: { digest: artifactDigest } });
+        expect(loaded).toEqual([]);
+        await Promise.all([reader.ensureCurrentAccountExecution('com.acme.first'), reader.ensureCurrentAccountExecution('com.acme.first')]);
+        expect(loaded).toEqual(['com.acme.first']);
+        expect(reader.readCurrentAccountExecution('com.acme.first').kind).toBe('available');
+        expect(reader.readCurrentAccountExecution('com.acme.second').kind).toBe('unavailable');
+        store.replace({ scope: { ...scope, accountId: 'other' }, snapshot: empty });
+        expect((await reader.ensureCurrentAccountExecution('com.acme.second')).kind).toBe('unavailable');
+        expect(loaded).toEqual(['com.acme.first']);
+    });
+
+    it('loads only provisioner declarations for fresh Account discovery and honors disabled selections', async () => {
+        const loaded: string[] = [];
+        const bundles = ['machine-vercel', 'vercel-ai-gateway'].map(name => {
+            const manifest = PluginPortableReleaseManifestV1Schema.parse(JSON.parse(readFileSync(
+                resolve('../../apps/cli/assets/bundled-plugin-manifests', `${name}.json`), 'utf8')));
+            const declaration = { pluginId: manifest.id, pluginVersion: manifest.version,
+                packageName: `@happier-dev/plugins-${name}`, displayName: manifest.id,
+                normalizedManifest: manifest, entriesById: projectPluginPortableUiDeclarationsV1(manifest) };
+            return { ...declaration, normalizedManifest: undefined, presentationManifest: manifest,
+                loadDeclaration: async () => { loaded.push(manifest.id); return declaration; } };
+        });
+        const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: bundles });
+        expect(await store.bind(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' }))
+            .toEqual({ kind: 'unavailable', code: 'account_availability_not_loaded' });
+        store.replace({ scope, snapshot: snapshot({ intentReads: [], materializations: [], snapshots: [] }) });
+        const selected = await store.bind(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
+        expect(selected.kind === 'available' ? selected.declarations.map(selection => selection.manifest.id) : selected).toEqual(['happier.machine.vercel']);
+        expect(loaded).toEqual(['happier.machine.vercel']);
+        store.replace({ scope, snapshot: snapshot({ materializations: [], snapshots: [], intentReads: [{
+            pluginId: 'happier.machine.vercel', response: { ...intentRead(), release: null, uiArtifacts: [], packageAssets: [],
+                intent: { ...intentRead().intent!, pluginId: 'happier.machine.vercel', enabled: false } },
+        }] }) });
+        expect(await store.bind(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' }))
+            .toEqual({ kind: 'available', declarations: [] });
+        expect(loaded).toEqual(['happier.machine.vercel']);
     });
 
     it('acquires app-owned bundled declarations only on first publication and updates pre-bound readers', () => {

@@ -42,7 +42,7 @@ export type { PluginHostBundledUiDeclaration } from './bundledPluginUiArtifactIn
 
 export type PluginAccountExecutionAdmission = PluginAccountExecutionSelectionV1 | Readonly<{
     kind: 'unavailable';
-    code: 'account_availability_not_loaded' | 'account_availability_scope_mismatch';
+    code: 'account_availability_not_loaded' | 'account_availability_scope_mismatch' | 'plugin_ui_declaration_pending';
 }>;
 
 export type PluginAccountAvailabilitySnapshot = Readonly<{
@@ -413,8 +413,16 @@ export type PluginAccountAvailabilityReader = Readonly<{
     /** Account custody projects into the existing executable registration owner. */
     readAccountUiProjection: () => PluginUiProjectionModel | null;
     readCurrentAccountExecution: (pluginId: string) => PluginAccountExecutionAdmission;
+    /** Acquires immutable code facts, then re-reads current Account admission. */
+    ensureCurrentAccountExecution: (pluginId: string) => Promise<PluginAccountExecutionAdmission>;
+    /** Exact target plus its declared suppliers; never a whole-inventory load. */
+    ensureAccountTargetDeclarations: (pluginId: string) => Promise<void>;
     /** Current enabled declarations, including descriptive Machine-placed sources. */
     readCurrentAccountExecutionDeclarations: () => readonly Extract<PluginAccountExecutionSelectionV1, { kind: 'available' }>[];
+    /** Demand-load exact bundled declarations for an opened contribution family. */
+    ensureCurrentAccountExecutionDeclarations: (selection: Readonly<{ family: 'machineProvisioners' }>) => Promise<
+        Readonly<{ kind: 'available'; declarations: readonly Extract<PluginAccountExecutionSelectionV1, { kind: 'available' }>[] }>
+        | Extract<PluginAccountExecutionAdmission, { kind: 'unavailable' }>>;
     /**
      * Current expected Artifact identity only. This is intentionally not a
      * byte-source selector: URLs, cache state, source priority, and transport
@@ -1145,7 +1153,7 @@ function readCurrentArtifactAdmission(
         if (bundled) {
             const artifacts = (bundled.artifactGraphsByContributionId.get(slot.contributionId) ?? [])
                 .filter(graph => graph.tier === slot.tier);
-            const execution = readAccountExecutionSelection(state, scope, slot.pluginId);
+            const execution = readAccountExecutionSelection(state, scope, slot.pluginId, true);
             const accountAction = execution.kind === 'available' ? execution.manifest.contributes.actions?.find(action =>
                 action.id === slot.contributionId && action.execution.target === 'account') : undefined;
             if (execution.kind === 'available' && accountAction?.execution.target === 'account') {
@@ -1225,6 +1233,7 @@ type BundledAccountExecution = NonNullable<Parameters<typeof resolvePluginAccoun
 
 type PreparedBundledUiDeclaration = PluginHostBundledUiDeclaration & Readonly<{
     accountExecution: BundledAccountExecution | null;
+    accountPresentation: BundledAccountExecution | null;
     accountActionArtifactGraphs: readonly PluginUiArtifactsManifestEntryV2[];
     artifactGraphsByContributionId: ReadonlyMap<string, readonly PluginUiArtifactsManifestEntryV2[]>;
 }>;
@@ -1237,6 +1246,7 @@ function prepareBundledUiDeclarations(bundles: readonly PluginHostBundledUiDecla
         const declaration = freezeDeepDeclaration(bundle);
         const sourceManifest = declaration.normalizedManifest?.id === declaration.pluginId
             && declaration.normalizedManifest.version === declaration.pluginVersion ? declaration.normalizedManifest : null;
+        const presentationManifest = sourceManifest ?? declaration.presentationManifest ?? null;
         // Serialized compiler output cannot carry the decoder's process-local
         // schema preparation. Initialize only those point schemas once here.
         const contributes = sourceManifest ? preparePluginContributionPointDeclarationsV1(sourceManifest.contributes) : null;
@@ -1259,6 +1269,7 @@ function prepareBundledUiDeclarations(bundles: readonly PluginHostBundledUiDecla
             artifactGraphsByContributionId,
             ...(manifest ? { normalizedManifest: manifest } : {}),
             accountExecution: manifest ? createPluginAccountBundledSelectionV1({ packageName: declaration.packageName, manifest }) : null,
+            accountPresentation: presentationManifest ? createPluginAccountBundledSelectionV1({ packageName: declaration.packageName, manifest: presentationManifest }) : null,
         });
     }));
 }
@@ -1267,6 +1278,7 @@ function readAccountExecutionSelection(
     state: AvailabilityProjectionState | null,
     scope: ServerAccountScope,
     pluginId: string,
+    presentation = false,
 ): PluginAccountExecutionAdmission {
     const snapshot = readProjectionForScope(state, scope);
     if (!snapshot) return Object.freeze({ kind: 'unavailable', code: state
@@ -1276,22 +1288,26 @@ function readAccountExecutionSelection(
     if (reads.length > 1) return Object.freeze({ kind: 'unavailable', code: 'plugin_release_unavailable' });
     const bundles = state!.bundledUiByPluginId.get(pluginId) ?? [];
     const bundle = bundles.length === 1 ? bundles[0] : undefined;
-    const bundled = bundle?.accountExecution;
-    return resolvePluginAccountExecutionSelectionV1({ pluginId, intentRead: reads[0]?.response ?? null,
+    const bundled = presentation ? bundle?.accountPresentation : bundle?.accountExecution;
+    const selected = resolvePluginAccountExecutionSelectionV1({ pluginId, intentRead: reads[0]?.response ?? null,
         ...(bundled ? { bundled } : {}),
     });
+    return selected.kind === 'unavailable' && selected.code === 'plugin_account_execution_unavailable'
+        && !presentation && bundle?.loadDeclaration && !bundle.accountExecution
+        ? Object.freeze({ kind: 'unavailable', code: 'plugin_ui_declaration_pending' }) : selected;
 }
 
 function readAccountExecutionSelections(
     state: AvailabilityProjectionState | null,
     scope: ServerAccountScope,
     hostBundledUi: readonly PreparedBundledUiDeclaration[],
+    presentation = false,
 ): readonly Extract<PluginAccountExecutionSelectionV1, { kind: 'available' }>[] {
     const snapshot = readProjectionForScope(state, scope);
     if (!snapshot) return Object.freeze([]);
     const pluginIds = new Set([...snapshot.intentReads.map(row => row.pluginId), ...hostBundledUi.map(row => row.pluginId)]);
     return Object.freeze([...pluginIds].sort().flatMap(pluginId => {
-        const selected = readAccountExecutionSelection(state, scope, pluginId);
+        const selected = readAccountExecutionSelection(state, scope, pluginId, presentation);
         return selected.kind === 'available' ? [selected] : [];
     }));
 }
@@ -1700,7 +1716,7 @@ function deriveAccountUiProjection(input: Readonly<{
 }>, state: AvailabilityProjectionState, previous?: AvailabilityAccountUiProjection): AvailabilityAccountUiProjection {
     const bundles = (input.hostBundledUi ?? []).filter(bundle =>
         readCurrentHostBundle(state, input.scope, input.hostBundledUi ?? [], bundle.pluginId));
-    const selections = readAccountExecutionSelections(state, input.scope, input.hostBundledUi ?? []);
+    const selections = readAccountExecutionSelections(state, input.scope, input.hostBundledUi ?? [], true);
     if (previous?.bundles?.length === bundles.length
         && bundles.every((bundle, index) => bundle === previous?.bundles![index])
         && sameStrictJsonValue(previous?.selections, selections)) {
@@ -1745,7 +1761,9 @@ function deriveAccountUiProjection(input: Readonly<{
                 placementBindings: action.placementBindings, dangerLevel: action.dangerLevel,
                 ...(action.confirmation ? { confirmation: action.confirmation } : {}),
                 ...(action.confirmationWhen ? { confirmationWhen: action.confirmationWhen } : {}),
-                available: compatible, hostAccountOrigin, accountActionDeclaration: action,
+                available: compatible, hostAccountOrigin,
+                ...(selected.release || state.bundledUiByPluginId.get(manifest.id)?.[0]?.accountExecution
+                    ? { accountActionDeclaration: action } : {}),
                 authorization: { generation: { targetGeneration: custodyId, desiredGeneration: custodyId, appliedGeneration: null },
                     resourceSelections: optionalAccess.map(request => ({ id: request.id, required: true })), scopedGrants: [],
                     serviceAvailability: [...requiredAccess, ...optionalAccess].map(request => ({ id: request.id, required: true,
@@ -1817,12 +1835,35 @@ function createBoundReader(input: Readonly<{
     hostBundledUi?: readonly PreparedBundledUiDeclaration[];
     readDerivedProjection: () => AvailabilityDerivedProjection | null;
     readObservationSnapshot: (pluginId?: string) => object | null;
+    ensureBundledDeclaration: (pluginId: string) => Promise<void>;
+    ensureTargetDeclarations: (pluginId: string) => Promise<void>;
 }>): PluginAccountAvailabilityReader {
     return Object.freeze({
         getObservationSnapshot: input.readObservationSnapshot,
         readUiProjectionInputs: () => input.readDerivedProjection()?.uiInputs ?? null,
         readCurrentAccountExecution: (pluginId: string) => readAccountExecutionSelection(input.readState(), input.scope, pluginId),
+        ensureCurrentAccountExecution: async (pluginId: string) => {
+            const current = readAccountExecutionSelection(input.readState(), input.scope, pluginId);
+            if (current.kind === 'unavailable' && current.code === 'plugin_ui_declaration_pending') await input.ensureBundledDeclaration(pluginId);
+            return readAccountExecutionSelection(input.readState(), input.scope, pluginId);
+        },
+        ensureAccountTargetDeclarations: async (pluginId: string) => {
+            if (readProjectionForScope(input.readState(), input.scope)) await input.ensureTargetDeclarations(pluginId);
+        },
         readCurrentAccountExecutionDeclarations: () => readAccountExecutionSelections(input.readState(), input.scope, input.hostBundledUi ?? []),
+        ensureCurrentAccountExecutionDeclarations: async ({ family }) => {
+            const state = input.readState();
+            if (!readProjectionForScope(state, input.scope)) return { kind: 'unavailable',
+                code: state ? 'account_availability_scope_mismatch' : 'account_availability_not_loaded' };
+            const candidates = readAccountExecutionSelections(input.readState(), input.scope, input.hostBundledUi ?? [], true)
+                .filter(selection => (selection.manifest.contributes[family]?.length ?? 0) > 0
+                    || selection.release === null && input.hostBundledUi?.some(bundle =>
+                        bundle.pluginId === selection.manifest.id && bundle.hasMachineProvisioners === true));
+            await Promise.all(candidates.map(selection => input.ensureBundledDeclaration(selection.manifest.id)));
+            if (!readProjectionForScope(input.readState(), input.scope)) return { kind: 'unavailable', code: 'account_availability_scope_mismatch' };
+            return { kind: 'available', declarations: readAccountExecutionSelections(input.readState(), input.scope, input.hostBundledUi ?? [])
+                .filter(selection => (selection.manifest.contributes[family]?.length ?? 0) > 0) };
+        },
         readAccountUiProjection: () => input.readDerivedProjection()?.accountUi.model ?? null,
         readCurrentArtifact: (slot, executionOrigin, daemonProjectionSelection) => readCurrentArtifactAdmission(
             input.readState(),
@@ -1932,7 +1973,7 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
         return pluginId === undefined ? observations.all
             : (observations.byPluginId.get(pluginId) ?? observations.empty).token;
     };
-    const publish = (next: PluginAccountAvailabilityStoredProjection) => {
+    const publish = (next: PluginAccountAvailabilityStoredProjection, declarationsChanged = false) => {
         if (loadHostBundledUi) {
             const acquired = prepareBundledUiDeclarations(loadHostBundledUi());
             const indexed = indexAvailabilityRows(acquired, bundle => bundle.pluginId);
@@ -1941,7 +1982,7 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
             loadHostBundledUi = undefined;
         }
         const sameScope = state !== null && areServerAccountScopesEqual(state.scope, next.scope);
-        if (sameScope && state!.snapshot.availabilityCursor === next.snapshot.availabilityCursor
+        if (!declarationsChanged && sameScope && state!.snapshot.availabilityCursor === next.snapshot.availabilityCursor
             && state!.snapshot.inventoryComplete === next.snapshot.inventoryComplete
             && state!.snapshot.intentReads === next.snapshot.intentReads
             && state!.snapshot.materializations === next.snapshot.materializations
@@ -1989,6 +2030,35 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
     const subscribe = (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
+    };
+    const declarationLoads = new Map<string, Promise<void>>();
+    const ensureBundledDeclaration = (pluginId: string): Promise<void> => {
+        const candidates = bundledUiByPluginId.get(pluginId);
+        const bundle = candidates?.length === 1 ? candidates[0] : undefined;
+        if (!bundle?.loadDeclaration || bundle.normalizedManifest) return Promise.resolve();
+        const pending = declarationLoads.get(pluginId);
+        if (pending) return pending;
+        const operation = Promise.resolve().then(() => bundle.loadDeclaration!()).then(declaration => {
+            if (declaration.pluginId !== bundle.pluginId || declaration.pluginVersion !== bundle.pluginVersion
+                || declaration.packageName !== bundle.packageName || declaration.normalizedManifest?.id !== bundle.pluginId
+                || declaration.normalizedManifest.version !== bundle.pluginVersion) {
+                throw Object.assign(new Error('Bundled Plugin UI declaration identity mismatch'), { code: 'plugin_ui_declaration_invalid' });
+            }
+            const prepared = prepareBundledUiDeclarations([declaration])[0]!;
+            hostBundledUi = Object.freeze(hostBundledUi.map(current => current === bundle ? prepared : current));
+            bundledUiByPluginId = indexAvailabilityRows(hostBundledUi, current => current.pluginId);
+            if (state && publish(state, true)) notify();
+        }).finally(() => { declarationLoads.delete(pluginId); });
+        declarationLoads.set(pluginId, operation);
+        return operation;
+    };
+    const ensureTargetDeclarations = async (pluginId: string) => {
+        await Promise.all(hostBundledUi.filter(bundle => bundle.pluginId === pluginId || bundle.targetedPluginIds?.includes(pluginId))
+            .map(bundle => {
+                const current = state && readAccountExecutionSelection(state, state.scope, bundle.pluginId);
+                return current?.kind === 'unavailable' && current.code === 'plugin_ui_declaration_pending'
+                    ? ensureBundledDeclaration(bundle.pluginId) : Promise.resolve();
+            }));
     };
     return Object.freeze({
         replace: (input) => {
@@ -2082,6 +2152,8 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
                 readState: () => state,
                 subscribe,
                 get hostBundledUi() { return hostBundledUi; },
+                ensureBundledDeclaration,
+                ensureTargetDeclarations,
                 readDerivedProjection: () => state && areServerAccountScopesEqual(state.scope, scoped) ? derived : null,
                 readObservationSnapshot: (pluginId) => state && areServerAccountScopesEqual(state.scope, scoped)
                     ? getObservationSnapshot(pluginId) : null,
