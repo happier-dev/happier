@@ -47,7 +47,7 @@ class NativeEmailCommandError extends Error {
       present_user_required:
         'Use the selected Home\u2019s stored interactive login. API tokens cannot change email or passwords.',
       invalid_arguments: NATIVE_EMAIL_USAGE,
-      authentication_failed: 'Sign-in failed. Check the email and password, then try again.',
+      authentication_failed: 'Sign-in failed. Check your sign-in details and the selected Home, then try again.',
       cancelled: 'The email operation was cancelled before any change began.',
       'account-disabled': 'This Account is disabled. Contact a Home administrator.',
       'method_not_available': 'Email/password is not available for this operation on the selected Home.',
