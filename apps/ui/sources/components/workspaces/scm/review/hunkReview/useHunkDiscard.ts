@@ -63,8 +63,8 @@ export function useHunkDiscard(
     [scope.machineId, scope.rootPath, scope.serverId],
   );
   const readCurrentTextFor = React.useCallback(
-    (path: string) => async () => {
-      const read = await workspaceReadFile(target, path);
+    (path: string, fileTarget = target) => async () => {
+      const read = await workspaceReadFile(fileTarget, path);
       if (!read.success) throw new Error(read.error);
       return decodeUtf8(read.content);
     },
@@ -147,8 +147,14 @@ export function useHunkDiscard(
             }
           : { source: { kind: 'workingTree' as const } };
       const range = describeDiffHunkRange(rangeOfReviewUnit(hunkTarget));
+      const fileTarget = {
+        ...target,
+        rootPath: hunkTarget.source.kind === 'captured'
+          ? hunkTarget.source.comparison.repository.rootPath
+          : hunkTarget.source.root,
+      };
       const result = await discardChange({
-        target,
+        target: fileTarget,
         entry: {
           kind: 'comparison',
           path: hunkTarget.path,
@@ -162,7 +168,7 @@ export function useHunkDiscard(
           ...messagesFor(hunkTarget.path),
           discarded: t('hunkReview.noticeDiscardedAt', { range }),
         },
-        readCurrentText: readCurrentTextFor(hunkTarget.path),
+        readCurrentText: readCurrentTextFor(hunkTarget.path, fileTarget),
         refresh,
         sessionTarget,
       });

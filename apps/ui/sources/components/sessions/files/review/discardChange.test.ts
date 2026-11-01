@@ -59,25 +59,27 @@ describe('comparison Discard and guarded Undo', () => {
     const sessions = V2SessionListResponseSchema.parse({ sessions: [], hasNext: false, nextCursor: null });
     homes.answer(serverId, '/v2/sessions', { body: sessions });
     homes.answer(serverId, '/v2/sessions/active', { body: sessions });
-    const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://discard-review.test',
-      serverIdentityId: 'srv_discard_review', accountId: 'review-account', machineId: 'm1',
-      actionId: 'daemon.filesystem.writeFile', tokenEpoch: 0,
-      execute: (input, context) => {
-        expect(context.invocation).toMatchObject({ surface: 'ui', authority: 'present_user', caller: { kind: 'host' } });
-        rpc.requests.push({ payload: input });
-        const response = rpc.responses.shift();
-        if (response instanceof Error) throw response;
-        return response;
-      },
-    });
-    homes.answer(serverId, '/v1/machines', { body: [boundary.machine] });
-    homes.answer(serverId, 'GET /v1/machines/m1', { body: { machine: boundary.machine } });
-    for (const path of ['/v1/actions/daemon.filesystem.writeFile/execution-authorization', '/v1/actions/daemon.filesystem.writeFile']) {
-      homes.answer(serverId, path, { select: async (_input, request) => {
-        const response = await boundary.handle(new URL(request.url), request.init);
-        if (!response) throw new Error(`Unhandled Undo HTTP boundary: ${request.url}`);
-        return { status: response.status, body: await response.json() };
-      } });
+    for (const actionId of ['daemon.filesystem.writeFile', 'daemon.filesystem.readFile'] as const) {
+      const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://discard-review.test',
+        serverIdentityId: 'srv_discard_review', accountId: 'review-account', machineId: 'm1',
+        actionId, tokenEpoch: 0,
+        execute: (input, context) => {
+          expect(context.invocation).toMatchObject({ surface: 'ui', authority: 'present_user', caller: { kind: 'host' } });
+          rpc.requests.push({ payload: input });
+          const response = rpc.responses.shift();
+          if (response instanceof Error) throw response;
+          return response;
+        },
+      });
+      homes.answer(serverId, '/v1/machines', { body: [boundary.machine] });
+      homes.answer(serverId, 'GET /v1/machines/m1', { body: { machine: boundary.machine } });
+      for (const path of [`/v1/actions/${actionId}/execution-authorization`, `/v1/actions/${actionId}`]) {
+        homes.answer(serverId, path, { select: async (_input, request) => {
+          const response = await boundary.handle(new URL(request.url), request.init);
+          if (!response) throw new Error(`Unhandled Undo HTTP boundary: ${request.url}`);
+          return { status: response.status, body: await response.json() };
+        } });
+      }
     }
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
     await restoreConnectionToActiveServer({ token: homes.findByServerUrl('https://discard-review.test')!.token! });
@@ -118,6 +120,54 @@ describe('comparison Discard and guarded Undo', () => {
         against: expect.objectContaining({ comparisonId: 'c'.repeat(64), sessionId: 'review-session' }),
       })] }),
     })]));
+  });
+
+  it('uses a captured repository root for Restore and its guarded Undo from a nested Session cwd', async () => {
+    const { useFileChangesActions } = await import('@/components/workspaces/files/file/changes/useFileChangesActions');
+    const { ScmComparisonSchema } = await import('@happier-dev/protocol/scm');
+    const params = input();
+    const comparison = ScmComparisonSchema.parse({ id: 'c'.repeat(64),
+      source: { kind: 'turnCheckpoint', turnId: 'turn-1' }, repository: { rootPath: '/repo' },
+      endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } });
+    const hook = await renderHook(() => useFileChangesActions({ ...params,
+      target: { ...params.target, rootPath: '/repo/nested' }, filePath: 'nested/a.txt',
+      selector: { kind: 'turnCheckpoint', turnId: 'turn-1' }, comparison, changed: true,
+      hasUnsavedEdits: () => false, onReplacedUnsavedEdits: () => {}, confirmUnsaved: { title: 'Replace' },
+    }));
+    rpc.responses.push({ success: true, entries: [{ path: 'nested/a.txt', status: 'restored',
+      hashBefore: beforeHash, hashAfter: afterHash, previous: { inlineBase64: '77u/bmV3DQo=' } }] },
+      { success: true, hash: beforeHash });
+    await act(async () => { await hook.getCurrent().changes.restoreBeforeTurn!(); });
+    const result = hook.getCurrent().result;
+    if (!result?.ok || !result.undo) throw new Error('Restore must retain Undo');
+    expect(await result.undo()).toEqual({ success: true });
+    expect(rpc.requests).toEqual(expect.arrayContaining([expect.objectContaining({ payload: expect.objectContaining({
+      path: '/repo/nested/a.txt', expectedHash: afterHash, content: '77u/bmV3DQo=',
+    }) })]));
+  });
+
+  it('reads and undoes a captured selected hunk at the repository root from a nested Session cwd', async () => {
+    const { ScmComparisonSchema } = await import('@happier-dev/protocol/scm');
+    const { buildReviewUnits } = await import('@happier-dev/protocol/scm/comparisonOccurrences');
+    const comparison = ScmComparisonSchema.parse({ id: 'c'.repeat(64),
+      source: { kind: 'turnCheckpoint', turnId: 'turn-1' }, repository: { rootPath: '/repo' },
+      endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } });
+    const unit = buildReviewUnits('nested/a.txt', 'combined', '@@ -1 +1 @@\n-old\n+new\n')[0]!;
+    const hook = await renderHook(() => useHunkDiscard({ scope: { machineId: 'm1', serverId, rootPath: '/repo/nested' },
+      sessionId: null, machineName: 'Machine', unreachable: false, refresh: () => {} }));
+    rpc.responses.push({ success: true, entries: [{ path: 'nested/a.txt', status: 'reverted', hashBefore: beforeHash, hashAfter: afterHash,
+      inverseEdits: [{ startUtf16: 1, deleteLength: 3, insertText: 'old', originalText: 'new' }] }] },
+      { success: true, content: '77u/b2xkDQo=' }, { success: true, hash: beforeHash });
+    await act(async () => { await hook.getCurrent().discard({ path: 'nested/a.txt', changeKey: unit.key,
+      source: { kind: 'captured', comparison }, unit }); });
+    const undo = readPresentationNotice()?.undo;
+    if (!undo) throw new Error('Selected Discard must retain Undo');
+    expect(await undo.run()).toEqual({ success: true });
+    const fileRequests = rpc.requests.filter((request): request is { payload: { path: string; content?: string; expectedHash?: string } } =>
+      Boolean(request && typeof request === 'object' && 'payload' in request && request.payload
+        && typeof request.payload === 'object' && 'path' in request.payload));
+    expect(fileRequests.map(request => request.payload.path)).toEqual(['/repo/nested/a.txt', '/repo/nested/a.txt']);
+    expect(fileRequests[1]?.payload).toMatchObject({ expectedHash: afterHash, content: '77u/bmV3DQo=' });
   });
 
   it('publishes sticky Undo and restores exact inverse bytes guarded by the post-discard hash', async () => {
