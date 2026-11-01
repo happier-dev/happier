@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { isOriginalAccountExecutionAction, isOriginalTerminalExecutionAction } from './externalActionExecutionAuthorization';
 
 describe('paired terminal Action admission', () => {
-    it('admits input-placed Provider Machine roots without granting ordinary Account roots', () => {
+    it('admits catalog Account roots and input-placed Provider Machine roots', () => {
         expect(isOriginalAccountExecutionAction('providers.connections.describe')).toBe(true);
         expect(isOriginalAccountExecutionAction('providers.defaults.set')).toBe(true);
-        expect(isOriginalAccountExecutionAction('providers.connections.create_custom')).toBe(false);
-        expect(isOriginalAccountExecutionAction('teams.list')).toBe(false);
+        expect(isOriginalAccountExecutionAction('providers.connections.create_custom')).toBe(true);
+        expect(isOriginalAccountExecutionAction('teams.list')).toBe(true);
         expect(isOriginalAccountExecutionAction('scm.hostingRepository.resolveAddress')).toBe(true);
     });
     it.each(['session.fork', 'session.message.send', 'session.board.item.upsert'])(

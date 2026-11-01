@@ -134,7 +134,7 @@ export function isOriginalAccountExecutionAction(actionId: string,
     // that the receiving daemon resolves after schema admission.
     const placements = spec.executionPlacements ?? [spec.executionPlacement];
     return isPluginProvenanceOnlyActionId(parsed.data)
-        || placements.includes('machine') || isInstalledSessionClientAction(spec, origin)
+        || placements.includes('account') || placements.includes('machine') || isInstalledSessionClientAction(spec, origin)
         || spec.executionPlacement === 'session'
             && spec.surfaces[readExternalActionSessionProposalSurface(origin) ?? 'api'] === true
             && resolveCredentialActionAdmissionV1({ spec, authority: 'account_automation', grant: null,

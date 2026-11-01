@@ -577,7 +577,11 @@ acquired privately after admission and never become Action input.
 
 Specs also own host-only `approvalPolicy` and `originalExecution` metadata.
 Approval settings consume the declared confirmation defaults, while server
-original-root ingress consumes supported execution placements. Home cannot open
+original-root ingress accepts catalog Account, Machine and client placements by
+default, while an explicit `accountRoot: 'separate'` declaration keeps a separate
+entry point. Signed-root validity, credential policy, surface and target admission
+remain at their existing owners. Session roots retain their declared surface and
+authority requirements. Home cannot open
 encrypted operands: the receiving daemon still resolves the exact placement
 from schema-admitted input. Native-purpose metadata selects the existing strict
 transport checks; it does not grant authority or relax their target binding.
