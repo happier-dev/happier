@@ -24,11 +24,7 @@ export type ArtifactPublicAudienceV1 = z.output<typeof ArtifactPublicAudienceV1R
 export const ArtifactHeaderMetadataV1Schema = lazyZodSchema(() => z.record(z.string(), StrictJsonValueSchema));
 
 const subject = z.strictObject({ artifactId: z.string().check(z.minLength(1)) });
-const htmlPreview = {
-  previewUrl: z.optional(z.string().check(z.url())),
-  previewError: z.optional(z.literal('artifact_html_preview_unavailable')),
-};
-const acknowledgement = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { revision: ArtifactRevisionV1Schema, ...htmlPreview }));
+const acknowledgement = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { revision: ArtifactRevisionV1Schema }));
 export const ArtifactPublicLinkCreateInputV1Schema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, lazyZodSchema(() => z.pick(StoredContentPublicShareCreateRequestV1Schema, {
   expiresAt: true, maxUses: true, isConsentRequired: true,
 })).shape));
@@ -119,7 +115,7 @@ export const ArtifactActionInputSchemasV1 = {
 } as const;
 export const ArtifactActionOutputSchemasV1 = {
   'artifact.create': acknowledgement,
-  'artifact.get': z.strictObject({ artifact: z.nullable(ArtifactDocumentV1Schema), ...htmlPreview }),
+  'artifact.get': z.strictObject({ artifact: z.nullable(ArtifactDocumentV1Schema) }),
   'artifact.export': lazyZodSchema(() => z.union([
     z.strictObject({ ...subject.shape, path: z.string().check(z.minLength(1)), sizeBytes: z.number().check(z.int(), z.nonnegative()) }),
     z.strictObject({ exported: z.literal(true), fileName: z.string().check(z.minLength(1)) }),

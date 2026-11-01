@@ -43,16 +43,29 @@ export async function readLocalServicePublicStatus(input: Readonly<{
     if (admission.kind !== 'admitted') return denied('machine_not_authorized');
 
     const snapshot = input.getStatus(request);
+    const previewAuthorizations = new Map<string, Promise<boolean>>();
+    const sessionAuthorizations = new Map<string, Promise<boolean>>();
     // Machine custody does not confer Session access or another starter's current service binding.
     const authorized = await Promise.all(snapshot.exposures.map(async exposure => {
         if (exposure.serviceTarget) {
             const preview = input.resolvePreview(exposure.previewId);
-            return Boolean(preview && preview.machineId === exposure.machineId
-                && preview.sessionId === exposure.sessionId
-                && isDeepStrictEqual(preview.serviceTarget, exposure.serviceTarget)
-                && await input.authorizePreview(preview));
+            if (!preview || preview.machineId !== exposure.machineId || preview.sessionId !== exposure.sessionId
+                || !isDeepStrictEqual(preview.serviceTarget, exposure.serviceTarget)) return false;
+            // Share admission only after each link matches its current canonical preview binding.
+            let authorization = previewAuthorizations.get(preview.previewId);
+            if (!authorization) {
+                authorization = input.authorizePreview(preview);
+                previewAuthorizations.set(preview.previewId, authorization);
+            }
+            return authorization;
         }
-        return Boolean(exposure.sessionId && await input.authorizeSession(exposure.sessionId));
+        if (!exposure.sessionId) return false;
+        let authorization = sessionAuthorizations.get(exposure.sessionId);
+        if (!authorization) {
+            authorization = input.authorizeSession(exposure.sessionId);
+            sessionAuthorizations.set(exposure.sessionId, authorization);
+        }
+        return authorization;
     }));
     const exposures = snapshot.exposures.filter((_, index) => authorized[index]);
     const exposureIds = new Set(exposures.map(exposure => exposure.exposureId));

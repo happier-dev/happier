@@ -105,10 +105,13 @@ export function registerPeerTcpTunnelLoopbackRoutes(
     const openTunnel = options.openTunnel ?? openPeerTcpTunnel;
     const maxActiveTunnels = Math.max(1, Math.floor(options.maxActiveTunnels ?? 8));
     const activeTunnels = new Map<string, ActivePeerTcpTunnel>();
-    const releaseTunnel = (tunnelId: string): void => {
+    const releaseTunnel = (tunnelId: string, kind: 'flow.closed' | 'flow.aborted' = 'flow.closed', reasonCode?: string): void => {
         const tunnel = activeTunnels.get(tunnelId);
         if (!tunnel) return;
         activeTunnels.delete(tunnelId);
+        observeTunnel({ tunnelId, kind, routeKind: tunnel.routeKind,
+            ...(tunnel.flowKind ? { flowKind: tunnel.flowKind } : {}),
+            ...(reasonCode ? { reasonCode } : {}) });
         if (tunnel.openStreamTimeout) clearTimeout(tunnel.openStreamTimeout);
         if (tunnel.onPreviewAbort) tunnel.previewApplication?.signal.removeEventListener('abort', tunnel.onPreviewAbort);
         tunnel.pendingControl?.close();
@@ -300,7 +303,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                         }
                         await entry.substreamMux.close();
                         sessions.delete(tunnelId);
-                        releaseTunnel(tunnelId);
+                        releaseTunnel(tunnelId, decoded.frame.kind === 'abort' ? 'flow.aborted' : 'flow.closed', decoded.frame.reasonCode);
                         return;
                     }
 
@@ -403,23 +406,13 @@ export function registerPeerTcpTunnelLoopbackRoutes(
             : setTimeout(() => {
                 const activeTunnel = activeTunnels.get(result.response.tunnelId);
                 if (!activeTunnel || activeTunnel.openStreamTimeout !== openStreamTimeout) return;
-                if (activeTunnel.openStreamTimeout) {
-                    clearTimeout(activeTunnel.openStreamTimeout);
-                }
-                releaseTunnel(result.response.tunnelId);
+                releaseTunnel(result.response.tunnelId, 'flow.aborted', 'tunnel_open_timeout');
                 void dispatchDaemonVoiceInferenceSttTerminal({
                     consumer: options.voiceBinaryTerminalConsumer,
                     substreamIds: [],
                     reasonCode: 'tunnel_open_timeout',
                     voiceMediaApplicationAuthority: activeTunnel.voiceMediaApplicationAuthority,
                 }).catch(() => undefined);
-                observeTunnel({
-                    tunnelId: result.response.tunnelId,
-                    kind: 'flow.aborted',
-                    reasonCode: 'tunnel_open_timeout',
-                    routeKind: activeTunnel.routeKind,
-                    ...(activeTunnel.flowKind ? { flowKind: activeTunnel.flowKind } : {}),
-                });
             }, openStreamTimeoutMs);
         openStreamTimeout?.unref?.();
         const activeTunnel: ActivePeerTcpTunnel = {
@@ -427,6 +420,12 @@ export function registerPeerTcpTunnelLoopbackRoutes(
             ...(openStreamTimeout ? { openStreamTimeout } : {}),
         };
         activeTunnels.set(result.response.tunnelId, activeTunnel);
+        observeTunnel({
+            tunnelId: result.response.tunnelId,
+            kind: 'flow.ready',
+            routeKind: result.routeKind,
+            ...(result.flowKind ? { flowKind: result.flowKind } : {}),
+        });
         if (result.previewApplication) {
             const controlSocket = request.raw.socket;
             const onControlClose = () => {
@@ -447,17 +446,11 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                     controlSocket.setTimeout(0);
                 }
             });
-            activeTunnel.onPreviewAbort = () => releaseTunnel(result.response.tunnelId);
+            activeTunnel.onPreviewAbort = () => releaseTunnel(result.response.tunnelId, 'flow.aborted');
             result.previewApplication.signal.addEventListener('abort', activeTunnel.onPreviewAbort, { once: true });
             if (result.previewApplication.signal.aborted) activeTunnel.onPreviewAbort();
             if (controlSocket.destroyed) onControlClose();
         }
-        observeTunnel({
-            tunnelId: result.response.tunnelId,
-            kind: 'flow.ready',
-            routeKind: result.routeKind,
-            ...(result.flowKind ? { flowKind: result.flowKind } : {}),
-        });
         return result.response;
     };
     app.post(PEER_TCP_TUNNEL_OPEN_PATH_V2, handleOpen);

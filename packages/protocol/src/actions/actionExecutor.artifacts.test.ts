@@ -380,22 +380,6 @@ describe('ordinary Artifact Actions', () => {
     expect(resolveActionApprovalRouting({ actionId, spec, context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
     expect(resolveActionApprovalRouting({ actionId, spec, context: { surface: 'ui', authority: 'present_user' } }).required).toBe(false);
   });
-  it.each(['artifact.create', 'artifact.update', 'artifact.publish_from_file', 'artifact.get'] as const)('returns %s private HTML preview only to the caller, not shared observations', async actionId => {
-    const artifactId = '11111111-1111-4111-8111-111111111111';
-    const revision = { headerVersion: 1, bodyVersion: 1 };
-    const previewUrl = 'https://isolated.example/a/document#d=PRIVATE_HTML_SENTINEL';
-    const artifact = { artifactId, header: { kind: 'html' }, body: '<p>HTML</p>', revision, ownerAccountId: 'owner', access: 'owner', publicAudience: 'unknown', seq: 1, createdAt: 1, updatedAt: 1 };
-    const output = actionId === 'artifact.get' ? { artifact, previewUrl } : { artifactId, revision, previewUrl };
-    const input = actionId === 'artifact.create' ? { artifactId, header: artifact.header, body: artifact.body }
-      : actionId === 'artifact.update' ? { artifactId, header: artifact.header, body: artifact.body, expectedRevision: revision }
-      : actionId === 'artifact.get' ? { artifactId } : { path: 'document.html' };
-    const observeActionExecution = vi.fn(async () => {});
-    const executor = createActionExecutor({ artifactAction: async request => request.actionId === 'artifact.get' && actionId !== 'artifact.get'
-      ? { artifact } : output, isActionApprovalRequired: () => false,
-      interceptActionExecution: async ({ input }) => ({ status: 'continue', input }), observeActionExecution });
-    expect(await executor.execute(actionId, input, { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' } })).toEqual({ ok: true, result: output });
-    expect(JSON.stringify(observeActionExecution.mock.calls)).not.toContain('PRIVATE_HTML_SENTINEL');
-  });
   it('keeps public-link material out of Action inputs and requires approval by default', () => {
     for (const id of ['artifact.public_link.create', 'artifact.public_link.list', 'artifact.public_link.revoke'] as const) {
       expect(ActionIdSchema.safeParse(id).success).toBe(true);

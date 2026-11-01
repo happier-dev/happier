@@ -3,6 +3,7 @@ import {
     createDirectRouteGrantSigningInputV2,
     createEphemeralPeerRouteProofHandleV2,
     createSpeechTranscriptionApplicationAuthorityDigestV1,
+    createPeerMediationObservabilityFlowStore,
     decodePeerTcpTunnelBinaryFrameV2,
     encodePeerTcpTunnelBinaryFrameV2,
     PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
@@ -21,6 +22,9 @@ import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '
 
 import { createPeerMediationLoopbackApp } from '../loopback/server';
 import { createDeferred } from '@/testkit/async/deferred';
+import { createDaemonPeerMediationDirectFlowObserver } from '../observability/events';
+
+const tunnelFlowScope = { kind: 'machine', accountId: 'account_1', machineId: 'machine_1' } as const;
 
 type RegisterRoutesModule = typeof import('./registerRoutes');
 
@@ -207,9 +211,13 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
                 },
                 async delete() { return { data: { ok: true } }; },
             } } });
+        const flows = createPeerMediationObservabilityFlowStore({ nowMs: loopbackOptions.nowMs });
         const app = createPeerMediationLoopbackApp(loopbackOptions);
         mod.registerPeerTcpTunnelLoopbackRoutes(app, {
             nowMs: loopbackOptions.nowMs, trustRoots: routeTrustRoots, maxActiveTunnels: 1,
+            observability: createDaemonPeerMediationDirectFlowObserver({
+                ...loopbackOptions.expected, nowMs: loopbackOptions.nowMs, observability: { emit: event => { flows.publish(event); } },
+            }),
             expected: { accountId: 'account_1', machineId: 'machine_1', endpointFingerprint: 'endpoint_1', irohEndpointId: 'b'.repeat(64) },
             acquirePreviewApplication: previewRoutes.acquireNativeApplication,
         });
@@ -239,6 +247,7 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
             // Native WS rejection/cancellation drops this held control socket before attachment.
             pending.socket.destroy();
             await vi.waitFor(() => expect(registrations[0]?.destroyed).toBe(true));
+            expect(flows.snapshot(tunnelFlowScope).flows.find(flow => flow.flow.flowId === 'pending_preview')?.lifecycleState).toBe('closed');
             const attached = await open('attached_preview');
             expect(attached.status).toBe(200); // No abandoned adapter may occupy the sole admission slot.
             ws = new WebSocket(origin.replace('http:', 'ws:') + '/peer-mediation/v1/tunnel/stream?tunnelId=attached_preview');
@@ -248,6 +257,11 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
             expect(registrations[1]?.destroyed).toBe(false);
             registrations[1]!.destroy();
             await vi.waitFor(() => expect(ws?.readyState).toBe(WebSocket.CLOSED));
+            expect(flows.snapshot(tunnelFlowScope).flows.find(flow => flow.flow.flowId === 'attached_preview')?.lifecycleState).toBe('aborted');
+            for (const flowId of ['pending_preview', 'attached_preview']) {
+                expect(flows.delta(tunnelFlowScope).events.filter(event => event.flow.flowId === flowId
+                    && (event.kind === 'flow.closed' || event.kind === 'flow.aborted'))).toHaveLength(1);
+            }
             // No application substream/frame or guest request was sent before revoke.
         } finally {
             ws?.terminate();
@@ -323,8 +337,6 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
     it.each(['close', 'abort', 'socket_loss'] as const)(
         'releases every real signed mux child and tunnel admission on %s',
         async (terminal) => {
-            const mod = await loadRegisterRoutesModule();
-            if (!mod) throw new Error('expected direct tunnel route module');
             const sockets: Socket[] = [];
             const destination = createServer((socket) => {
                 sockets.push(socket);
@@ -333,14 +345,9 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
             await new Promise<void>((resolve) => destination.listen(0, '127.0.0.1', resolve));
             const address = destination.address();
             if (!address || typeof address === 'string') throw new Error('expected TCP address');
-            const app = createPeerMediationLoopbackApp(loopbackOptions);
-            mod.registerPeerTcpTunnelLoopbackRoutes(app, {
-                nowMs: loopbackOptions.nowMs,
-                expected: {
-                    accountId: 'account_1', machineId: 'machine_1', endpointFingerprint: 'endpoint_1',
-                },
-                trustRoots: routeTrustRoots,
-            });
+            const flows = createPeerMediationObservabilityFlowStore({ nowMs: loopbackOptions.nowMs });
+            const app = createPeerMediationLoopbackApp({ ...loopbackOptions, trustRoots: routeTrustRoots,
+                tunnel: {}, observability: { emit: event => { flows.publish(event); } } });
             const signedOpen = createSignedDirectOpen({
                 grantId: `grant_${terminal}`, tunnelId: 'tun_real', destinationPort: address.port,
             });
@@ -375,6 +382,11 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
                     header: { version: 2, kind: terminal, tunnelId: 'tun_real', payloadLength: 0, reasonCode: 'consumer_closed', ...(terminal === 'close' ? { halfClose: false } : {}) },
                 }));
                 await vi.waitFor(() => expect(sockets.every((socket) => socket.destroyed)).toBe(true));
+                const terminalKind = terminal === 'abort' ? 'flow.aborted' : 'flow.closed';
+                await vi.waitFor(() => expect(flows.snapshot(tunnelFlowScope).flows[0]?.lifecycleState)
+                    .toBe(terminal === 'abort' ? 'aborted' : 'closed'));
+                expect(flows.delta(tunnelFlowScope).events.filter(event => event.kind === 'flow.closed' || event.kind === 'flow.aborted'))
+                    .toMatchObject([{ kind: terminalKind }]);
                 await vi.waitFor(async () => {
                     const next = await app.inject({
                         method: 'POST', url: '/peer-mediation/v2/tunnel/open',
@@ -390,6 +402,23 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
             }
         },
     );
+
+    it.each(['timeout', 'shutdown'] as const)('settles a direct reservation once through the real flow fold on %s', async terminal => {
+        const flows = createPeerMediationObservabilityFlowStore({ nowMs: loopbackOptions.nowMs });
+        const app = createPeerMediationLoopbackApp({ ...loopbackOptions, trustRoots: routeTrustRoots,
+            tunnel: { openStreamTimeoutMs: terminal === 'timeout' ? 10 : undefined },
+            observability: { emit: event => { flows.publish(event); } } });
+        try {
+            expect((await app.inject({ method: 'POST', url: '/peer-mediation/v2/tunnel/open',
+                payload: createSignedDirectOpen({ grantId: `grant_${terminal}`, tunnelId: `tun_${terminal}` }) })).statusCode).toBe(200);
+            expect(flows.snapshot(tunnelFlowScope).flows[0]?.lifecycleState).toBe('ready');
+            if (terminal === 'shutdown') await app.close();
+            await vi.waitFor(() => expect(flows.snapshot(tunnelFlowScope).flows[0]?.lifecycleState).toBe(terminal === 'timeout' ? 'aborted' : 'closed'));
+        } finally {
+            await app.close();
+        }
+        expect(flows.delta(tunnelFlowScope).events.filter(event => event.kind === 'flow.closed' || event.kind === 'flow.aborted')).toHaveLength(1);
+    });
 
     it('uses current Home signing roots for each tunnel open and fails closed when authority is unavailable', async () => {
         const mod = await loadRegisterRoutesModule();

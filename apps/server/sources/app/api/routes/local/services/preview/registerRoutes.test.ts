@@ -14,7 +14,7 @@ import { startSocket } from '@/app/api/socket';
 import { createLocalServicePreviewRuntime } from '@/app/local/services/preview/runtime';
 import { createLocalServicePublicRuntime } from '@/app/local/services/public/runtime';
 import { createLocalServicePublicRateLimitChecker } from '@/app/local/services/public/rateLimits';
-import { LocalServicePublicExposureV1Schema } from '@happier-dev/protocol/local/services/public/v1';
+import { DaemonLocalServicePublicPreviewStatusResponseV1Schema, LocalServicePublicExposureV1Schema } from '@happier-dev/protocol/local/services/public/v1';
 import type { OpenLocalServicePreviewTunnel } from '@/app/local/services/preview/httpAdapter';
 import { createLocalServiceRouteRuntimes, registerLocalServiceRoutes } from '../registerRoutes';
 import type { SessionAccessProjectionRow } from '@/app/session/access/sessionAccess';
@@ -152,6 +152,94 @@ describe('local service preview routes', () => {
             actorId: 'user_1', sessionAuthorized: true, dnsTlsValid: true, rateLimitProfileId: 'default' }))
             .toEqual({ ok: false, reasonCode: 'public_origin_unavailable' });
         expect(runtimes.public.getSnapshot({ machineId: preview.machineId, previewId: preview.previewId }).exposures).toEqual([]);
+    });
+
+    it('admits each distinct Service or Session once per machine-wide public status request while filtering denied links', async () => {
+        const account = { id: 'user_1', status: 'active', encryptionMode: 'plain' };
+        machineFindUnique.mockResolvedValue({ id: 'machine_1', kind: 'persistent', accountId: account.id,
+            installationId: 'installation_1', active: true, revokedAt: null, replacedByMachineId: null,
+            metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
+            metadata: encodePlainMachineStoredContent(MachinePublishedMetadataV1Schema.parse({ host: 'machine', platform: 'linux',
+                happyCliVersion: '0.3', homeDir: '/home/user', happyHomeDir: '/home/user/.happier' })),
+            dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'), account,
+            accountGrants: [], teamGrants: [], groupGrants: [] });
+        const resource: LocalServicePreviewResourceV1 = { ...preview, sessionId: undefined,
+            owner: { kind: 'user', id: 'user_1' }, serviceTarget: { kind: 'managed_service', machineId: 'machine_1',
+                managedServiceId: 'instance_1', cwd: '/workspace/app',
+                declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest', name: 'web' } } } };
+        const deniedResource: LocalServicePreviewResourceV1 = { ...resource, previewId: 'preview_denied',
+            serviceTarget: { ...resource.serviceTarget!, managedServiceId: 'instance_denied' } };
+        const mismatchedResource: LocalServicePreviewResourceV1 = { ...resource,
+            serviceTarget: { ...resource.serviceTarget!, cwd: '/different/workspace' } };
+        const sessionResource: LocalServicePreviewResourceV1 = { ...preview, previewId: 'preview_session' };
+        sessionFindUnique.mockResolvedValue(sharedSession);
+        const admittedTargets: string[] = [];
+        let deniedServiceAvailable = false;
+        const socket = { id: 'custodian_socket', data: { clientType: 'machine-scoped', userId: 'user_1', machineId: 'machine_1',
+            verifiedMachineInstallationId: 'installation_1', accountStoredContentCompatibility: {
+                supportsCurrentProtocol: true, supportsPluginDataProtocol: false, supportsSessionAccessWitnessProtocol: false,
+                supportsMachinePoolChangeProtocol: false, supportsSavedSecretResourceChangeProtocol: false,
+                outcome: 'accepted', declaration: { v: 1, protocolVersion: 2 }, upgradeRequired: null } },
+            timeout: () => ({ emitWithAck: async (_event: string, raw: unknown) => {
+                const request = raw as { params: { target: { managedServiceId: string } } };
+                const id = request.params.target.managedServiceId;
+                admittedTargets.push(id);
+                const candidate = id === 'instance_denied' ? deniedResource : resource;
+                return id === 'instance_denied' && !deniedServiceAvailable ? { v: 1, kind: 'refused', reasonCode: 'service_unavailable' }
+                    : { v: 1, kind: 'admitted', instanceId: id, serviceTarget: candidate.serviceTarget,
+                        starterAccountId: 'user_1', endpoint: candidate.target };
+            } }) };
+        const room = { timeout: () => room, fetchSockets: async () => [socket], emit() {}, disconnectSockets() {} };
+        // Socket.IO acknowledgements and Prisma are the only replaced system boundaries.
+        const io = { in: () => room, to: () => room, sockets: { adapter: { rooms: new Map() }, sockets: new Map() } } as unknown as Server;
+        eventRouter.setIo(io, { forwardRpc: request => forwardRpcCall({ ...request, io }) });
+        const env = { ...peerMediationGrantSigningEnv(), HANDY_MASTER_SECRET: 'secret', HAPPIER_PUBLIC_SERVER_URL: 'https://app.happier.test',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: 'true',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: 'preview.happier.test',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: 'true',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: 'public',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: '60000',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__DNS_TLS_REQUIRED: '0',
+            [FEATURE_ENV_KEYS.localServicesPublicPreviewAllowTestAuditSink]: '1',
+            [FEATURE_ENV_KEYS.localServicesPublicPreviewRateLimitProfileIds]: 'default',
+            [FEATURE_ENV_KEYS.localServicesPublicPreviewAllowTestRateLimitChecker]: '1',
+            [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: '1',
+            [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: '5173',
+            [FEATURE_ENV_KEYS.machinesTunnelDirectPeerEnabled]: '1' };
+        const runtimes = createLocalServiceRouteRuntimes(env);
+        const closeHooks: Array<() => Promise<void>> = [];
+        const app = Object.assign(createFakeRouteApp(), { addHook(_name: string, hook: () => Promise<void>) { closeHooks.push(hook); } });
+        registerLocalServiceRoutes(app as never, { env, runtimes });
+        try {
+            for (const candidate of [resource, deniedResource, sessionResource]) {
+                expect(runtimes.preview.registerPreview({ resource: candidate, accountId: 'user_1' }).ok).toBe(true);
+            }
+            const links = [resource, resource, resource, sessionResource, sessionResource, sessionResource,
+                deniedResource, deniedResource, mismatchedResource].map(candidate => {
+                const result = runtimes.public.createExposure({ preview: candidate, requestedMode: 'public', requestedTtlMs: 60_000,
+                    actorId: 'user_1', sessionAuthorized: true, dnsTlsValid: true, rateLimitProfileId: 'default' });
+                if (!result.ok) throw new Error(result.reasonCode);
+                return result.exposure;
+            });
+            const handler = getRouteHandler(app, 'POST', '/v1/local-services/public/status');
+            for (let requestIndex = 0; requestIndex < 2; requestIndex++) {
+                deniedServiceAvailable = requestIndex === 1;
+                admittedTargets.length = 0;
+                sessionFindUnique.mockClear();
+                const reply = createReplyStub();
+                await handler({ userId: 'user_1', body: { machineId: 'machine_1' } }, reply);
+                expect(reply.statusCode).toBe(200);
+                const response = DaemonLocalServicePublicPreviewStatusResponseV1Schema.parse(reply.send.mock.calls[0]?.[0]);
+                const expectedLinks = links.slice(0, deniedServiceAvailable ? 8 : 6);
+                expect(response.snapshot.exposures).toHaveLength(expectedLinks.length);
+                expect(response.snapshot.exposures).toEqual(expect.arrayContaining(expectedLinks));
+                expect(admittedTargets.sort()).toEqual(['instance_1', 'instance_denied']);
+                expect(sessionFindUnique).toHaveBeenCalledTimes(1);
+            }
+        } finally {
+            for (const hook of closeHooks) await hook();
+            eventRouter.clearIo();
+        }
     });
 
     it('admits a shared current Machine viewer only against the actual current service and retires its registration', async () => {
