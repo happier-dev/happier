@@ -1,3 +1,10 @@
+import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { createWorkflowActionExecutor } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
+import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
+import { createWorkflowRunActionOwner } from '../../../../../../cli/src/session/actions/workflowRunActions';
+import { createWorkflowRunStorageTestkit } from '../../../../../../cli/src/daemon/workflows/workflowRunStorage.testkit';
+import { createUnavailableActionTransportDeps } from '../../../../../../cli/src/testkit/actionTransportDeps';
 import Fastify from "fastify";
 import axios from 'axios';
 import * as sqliteStorage from '@/storage/prisma';
@@ -631,11 +638,12 @@ describe("external Action execution authorization", () => {
         fixture: Awaited<ReturnType<typeof createFixture>>,
         actionId: string = ACTION_ID,
         envelope: ExternalActionRequestEnvelopeV1 = fixture.envelope,
+        credentialToken: string = fixture.pat.token,
     ) {
         const response = await app.inject({
             method: "POST",
             url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
-            headers: { authorization: `Bearer ${fixture.pat.token}` },
+            headers: { authorization: `Bearer ${credentialToken}` },
             payload: { v: 1, machineId: fixture.machine.id, envelope },
         });
         expect(response.statusCode).toBe(200);
@@ -8702,7 +8710,7 @@ describe("external Action execution authorization", () => {
         try {
             const authorization = await mint(app, fixture);
             const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(ACTION_ID);
-            const body = { v: 1 } as const;
+            const body = { v: 1, admittedMachineRole: authorization.binding.admittedMachineRole } as const;
             const unsigned = await app.inject({ method: "POST", url: path, payload: body });
             expect(unsigned.statusCode).toBe(401);
             const headers = machineHeaders({
@@ -8747,7 +8755,7 @@ describe("external Action execution authorization", () => {
                 }),
                 payload: invalidBody,
             });
-            expect(invalid.statusCode).toBe(400);
+            expect(invalid.statusCode).toBe(401);
 
             await db.machine.update({ where: { id: fixture.machine.id }, data: { revokedAt: new Date() } });
             const revokedMachine = await app.inject({ method: "POST", url: path, headers, payload: body });
@@ -8755,6 +8763,96 @@ describe("external Action execution authorization", () => {
         } finally {
             await app.close();
         }
+    });
+
+    it.each(['cli', 'ui'] as const)('replays an explicit %s Workflow approval against its retained Home root once', async surface => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const homeId = await getOrCreateServerIdentityId();
+        const serverId = 'retained-approval-home';
+        const machineId = fixture.machine.id;
+        const runId = crypto.randomUUID();
+        const directory = '/home/controller/project';
+        const target = { kind: 'machine' as const, machineId, project: { machineId, directory } };
+        const sourceInput = { serverId: { kind: 'literal', value: homeId },
+            requestKey: { kind: 'literal', value: runId }, name: { kind: 'literal', value: 'Reviewed Source' },
+            audience: { kind: 'literal', value: [] }, repository: { kind: 'literal', value: {
+                provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                repository: { nameWithOwner: 'happier-dev/happier' }, protocol: 'https',
+            } } };
+        const actionArgs = { runId, source: { kind: 'inline', definition: { version: 1, defaults: {}, inputs: [],
+            blocks: ['first', 'second'].map(id => ({ kind: 'action', id, actionId: 'projects.sources.create', input: sourceInput })) } } };
+        const input = { actionId: 'workflow.run.start', actionArgs, summary: 'Start reviewed Workflow', createdBy: { surface: 'cli' } };
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, artifactsRoutes);
+        try {
+            const serverHttpBaseUrl = await app.listen({ port: 0, host: '127.0.0.1' });
+            const authorization = await mint(app, fixture, 'approval.request.create', {
+                v: 1, requestId: crypto.randomUUID(), target, input,
+            }, token);
+            await runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
+                const credentials = { token, encryption: null };
+                const artifacts = createCliApprovalsArtifactStore({ credentials, serverId });
+                const current = createDaemonApprovalExecutionOriginCurrentness({ accountId: fixture.account.id, machineId, serverId,
+                    resolveCurrentMachineExecutionOriginContext: async () => ({ machineId, serverIdentityId: homeId }),
+                    resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: serverHttpBaseUrl }),
+                    isAccountCurrent: async () => (await fetchAccountProfile({ token })).id === fixture.account.id,
+                    listAccountApiTokens: async () => ({ tokens: [] }), externalActionMachinePublicKey: fixture.keyPair.publicKey,
+                    verifyExternalExecutionAuthorization: args => verifyExternalActionExecutionAuthorizationCurrent({ ...args,
+                        privateKey: fixture.keyPair.secretKey, installationId: fixture.machine.installationId!, serverHttpBaseUrl }),
+                });
+                const unexpected = (): never => { throw new Error('Unexpected saved-definition storage access'); };
+                // Opaque Run/definition storage and workspace preparation are system boundaries;
+                // Home auth, signatures, approval persistence/CAS and Workflow admission stay real.
+                const definitions = createWorkflowDefinitionActions({ artifactStore: { read: unexpected, list: unexpected,
+                    create: unexpected, update: unexpected, delete: unexpected }, encodeListCursor: unexpected,
+                    assertDefinitionWriteAllowed: unexpected });
+                const storage = createWorkflowRunStorageTestkit({ runId, machineId, accountId: fixture.account.id, origin: { kind: 'direct' } });
+                const runs = createWorkflowRunActionOwner({ storage, definitions, resolveAccountId: async () => fixture.account.id,
+                    resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+                    resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
+                        readActionContract: async actionId => {
+                            const parsed = ActionIdSchema.safeParse(actionId);
+                            return parsed.success ? freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(parsed.data))) : null;
+                        },
+                    } }),
+                    prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: { machineId, directory, checkoutRootPath: directory } } }),
+                });
+                const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...artifacts,
+                    isApprovalExecutionOriginCurrent: current,
+                    workflowAction: createWorkflowActionExecutor({ definitions, runs, isWorkflowFeatureEnabled: async () => true }),
+                });
+                expect(await executor.execute('approval.request.create', input, {
+                    surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' }, serverId, serverIdentityId: homeId,
+                    runtimeAccountId: fixture.account.id, defaultSessionMachineId: machineId,
+                    actionRequestId: authorization.binding.requestId, externalActionTarget: target,
+                    externalActionExecutionAuthorization: authorization,
+                    signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ ...args,
+                        authorizationToken: args.authorization.token, privateKey: fixture.keyPair.secretKey }),
+                })).toMatchObject({ ok: true });
+                const pending = await artifacts.approvalsList({ serverId });
+                const artifactId = pending.items[0]?.artifactId;
+                if (!artifactId) throw new Error('Expected stored Workflow approval');
+                const request = ApprovalRequestV2Schema.parse(await artifacts.approvalsGet({ artifactId, serverId }));
+                expect(request.executionOriginV1.target).toEqual(target);
+                const reasons: string[] = [];
+                expect(await current({ origin: request.executionOriginV1, request, reportStale: reason => reasons.push(reason) }),
+                    JSON.stringify(reasons)).toBe(true);
+                const decide = () => executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
+                    surface, authority: 'present_user', actionCaller: { kind: 'host' }, serverId,
+                    serverIdentityId: homeId, runtimeAccountId: fixture.account.id,
+                });
+                expect(await decide()).toMatchObject({ ok: true });
+                const executed = ApprovalRequestV2Schema.parse(await artifacts.approvalsGet({ artifactId, serverId }));
+                expect(executed.execution?.ok, executed.execution?.errorCode).toBe(true);
+                expect(executed.status).toBe('executed');
+                expect(storage.acceptedEnvelope()).not.toBeNull();
+                expect(storage.calls.filter(call => call.operation === 'admit')).toHaveLength(1);
+                await decide();
+                expect(storage.calls.filter(call => call.operation === 'admit')).toHaveLength(1);
+                await db.account.update({ where: { id: fixture.account.id }, data: { tokenEpoch: { increment: 1 } } });
+                expect(await current({ origin: request.executionOriginV1, request })).toBe(false);
+            });
+        } finally { await app.close(); }
     });
 
     it("rejects a deferred authorization after grant narrowing without undoing an already executed effect", async () => {

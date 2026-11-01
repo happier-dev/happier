@@ -208,7 +208,10 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
         const target = origin.target;
         if (!await phase('external_authorization', () => input.verifyExternalExecutionAuthorization!({
           authorization: externalAuthorization,
-          effectActionId: origin.actionId,
+          // Account currentness verifies the retained root; the installation
+          // signature above binds its exact approved effect. PAT currentness
+          // also enforces the captured grant against that resolved effect.
+          effectActionId: 'authentication' in binding ? binding.actionId : origin.actionId,
           target,
           // Generic retained publications keep their incumbent local caller
           // exemption. Only an addressed original can prove this Home purpose.

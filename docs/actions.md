@@ -53,6 +53,17 @@ separate from Account-only cleanup. A manual Session launch refused before
 dispatch ends its local attempt and returns the mounted composer to its existing
 failure surface, preserving the draft for another Send.
 
+A signed external Action spends one Home verification per target at ingress, the
+same decision whether it arrived over RPC or the local HTTP route. Effect sites
+then consume local cancellation and the installation pin, so admitted work
+finishes and withdrawal applies at the next signed request. Approval replay is a
+new admission: its requester preparation and signed effect each verify once, then
+replay work stays local. For an Account request, Home verifies the retained root
+Action while the installation signature binds the approved effect, input and
+target. PAT replay also checks the resolved effect against the captured grant.
+A forwarded child keeps its receiving Machine's proof, and
+open-ended terminal access keeps `verifyMachineAuthorityCurrent`.
+
 The unreleased Files & Editor work adds workspace replace preview/apply and SCM
 blame intents through this same catalog. Preview and blame are safe reads;
 replace is a danger Action with the normal agent approval default. A present
