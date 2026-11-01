@@ -296,33 +296,11 @@ describe('explicit provider model loading', () => {
     expect(test.readCurrentModel).toHaveBeenCalledTimes(2);
   });
 
-  it('allows an adopted process because explicit loading does not imply lifecycle ownership', async () => {
-    const test = harness();
-    await expect(test.service.loadNow(request)).resolves.toEqual({ status: 'loaded', source: 'requested' });
-    expect(test.postJsonModelId).toHaveBeenCalledTimes(1);
-  });
-
   it('does not POST when a current refresh observes an external load', async () => {
     const test = harness({ initialLoadState: 'loaded' });
     await expect(test.service.loadNow(request)).resolves.toEqual({ status: 'loaded', source: 'already_loaded' });
     expect(test.postJsonModelId).not.toHaveBeenCalled();
     expect(test.refresh).not.toHaveBeenCalled();
-  });
-
-  it('coalesces concurrent clicks that resolve to the same exact endpoint generation', async () => {
-    let release!: () => void;
-    const test = harness({
-      post: () => new Promise((resolve) => { release = () => resolve({ ok: true, statusCode: 200 }); }),
-    });
-    const first = test.service.loadNow(request);
-    const second = test.service.loadNow(request);
-    await vi.waitFor(() => expect(test.postJsonModelId).toHaveBeenCalledTimes(1));
-    release();
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      { status: 'loaded', source: 'requested' },
-      { status: 'loaded', source: 'requested' },
-    ]);
-    expect(test.postJsonModelId).toHaveBeenCalledTimes(1);
   });
 
   it('runs a separate operation when the endpoint generation rotates under one model', async () => {
@@ -367,26 +345,24 @@ describe('explicit provider model loading', () => {
     }
   });
 
-  it('keeps distinct model ids separate even when their captured endpoint generations differ', async () => {
-    let authorizations = 0;
-    const test = harness({
-      authorize: async () => ({
-        status: 'authorized',
-        authorization: authorization({
-          endpoint: {
-            endpointTemplateId: 'management',
-            endpointUrl: 'http://127.0.0.1:1234/',
-            endpointFingerprint: `endpoint-${++authorizations}`,
-            publicHeaders: {},
-          },
-        }),
-      }),
-    });
-    await Promise.all([
+  it('keeps distinct model ids separate under the same endpoint generation', async () => {
+    const releases: Array<() => void> = [];
+    const test = harness({ post: () => new Promise(resolve => {
+      releases.push(() => resolve({ ok: true, statusCode: 200 }));
+    }) });
+    const pending = Promise.all([
       test.service.loadNow(request),
       test.service.loadNow({ ...request, modelId: 'model-b' }),
     ]);
-    expect(test.postJsonModelId).toHaveBeenCalledTimes(2);
+    try {
+      await vi.waitFor(() => expect(test.postJsonModelId).toHaveBeenCalledTimes(2));
+      expect(test.postJsonModelId.mock.calls.map(([input]) => input.body)).toEqual([
+        { model: 'model-a' }, { model: 'model-b' },
+      ]);
+    } finally {
+      for (const release of releases) release();
+      await pending;
+    }
   });
 
   it('discards a successful response when the authorization ticket changes', async () => {

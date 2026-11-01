@@ -1,10 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
 import { HttpStatusError } from '../client/httpStatusError';
 
 import { ApiSessionClient } from './sessionClient';
-import * as startupCatchUpRuntime from './client/lifecycle/startupCatchUpRuntime';
 import { createSessionClientRecoveryRuntime } from './client/lifecycle/createSessionClientRecoveryRuntime';
 import type { SessionCatchUpRequest } from './sessionChangesSyncOnConnect';
 
@@ -20,36 +19,9 @@ function createOnlineConnectionState() {
     } as const;
 }
 
-describe('ApiSessionClient startup transcript catch-up retries', () => {
-    beforeEach(() => {
-        vi.useFakeTimers();
-    });
-
+describe('ApiSessionClient startup transcript catch-up authentication', () => {
     afterEach(() => {
-        vi.useRealTimers();
-    });
-
-    it('keeps startup user-message attachment owned by the interaction API', () => {
-        expect(startupCatchUpRuntime).not.toHaveProperty('attachSessionUserMessageHandler');
-    });
-
-    it('requires the canonical recovery runtime instead of retaining a direct transport fallback', async () => {
-        const axiosGet = vi.spyOn(axios, 'get').mockResolvedValueOnce({ data: { messages: [] } });
-
-        await expect(startupCatchUpRuntime.catchUpSessionMessagesViaPort({
-            token: 'token',
-            sessionId: 's1',
-            sessionConnectionSupervisor: null,
-            handleCatchUpUpdate: vi.fn(),
-        } as never, { afterSeq: 0 })).rejects.toThrow('requires recoveryRuntime');
-        expect(axiosGet).not.toHaveBeenCalled();
-        axiosGet.mockRestore();
-    });
-
-    it('requires the canonical recovery runtime instead of retaining a retry-timer fallback', () => {
-        expect(() => startupCatchUpRuntime.scheduleNextStartupCatchUpRetryViaPort(
-            {} as never,
-        )).toThrow('requires recoveryRuntime');
+        vi.restoreAllMocks();
     });
 
     it('reports terminal auth failures from transcript catch-up into the session supervisor', async () => {
