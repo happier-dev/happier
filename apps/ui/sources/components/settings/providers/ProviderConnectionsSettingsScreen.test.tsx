@@ -39,8 +39,9 @@ import {
     createCustomProviderDraft,
 } from '@/providers/authoring/state';
 
-function providerErrorState(screen: Awaited<ReturnType<typeof renderScreen>>) {
-    return screen.findAll((node) => node.props.testID?.startsWith('provider-error:') && 'kind' in node.props)[0];
+function providerErrorState(screen: Awaited<ReturnType<typeof renderScreen>>, code?: string) {
+    return screen.findAll((node) => (code ? node.props.testID === `provider-error:${code}`
+        : node.props.testID?.startsWith('provider-error:')) && 'kind' in node.props)[0];
 }
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -931,8 +932,9 @@ describe('ProviderConnectionsSettingsScreen', () => {
 
         await React.act(async () => { await findConnectAction(screen, 'Ollama')?.props.onPress?.(); });
 
-        await waitForHomeGovernance(() => expect(providerErrorState(screen)?.props.title).toBe('settingsProviders.errors.mutationOutcomeUnknownTitle'));
-        const review = providerErrorState(screen)?.props.action;
+        const unknownMutationState = () => providerErrorState(screen, 'provider_rpc_mutation_outcome_unknown');
+        await waitForHomeGovernance(() => expect(unknownMutationState()?.props.title).toBe('settingsProviders.errors.mutationOutcomeUnknownTitle'));
+        const review = unknownMutationState()?.props.action;
         expect(review?.label).toBe('settingsProviders.errors.actions.reviewCurrentState');
         expect(review).toBeDefined();
         const readsBeforeReview = providerHarness.state.requests.filter(

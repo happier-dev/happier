@@ -19,6 +19,10 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 
 const route = vi.hoisted(() => ({ params: {} as Record<string, string> }));
 
+// Static imports reach transport consumers before the account harness is configured.
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+
 installSettingsViewCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');

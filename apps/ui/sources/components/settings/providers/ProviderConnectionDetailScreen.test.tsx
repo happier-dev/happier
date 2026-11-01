@@ -580,7 +580,10 @@ describe('ProviderConnectionDetailScreen', () => {
                 status: request.machineId === 'machine-b' ? hubStatus : 'not_checked', reachability: 'not_checked',
             } } }],
         }));
-        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId={saved.id} />);
+        const detail = () => <DetailNavigationBoundary>
+            <ProviderConnectionDetailScreen connectionId={saved.id} />
+        </DetailNavigationBoundary>;
+        const screen = await renderScreen(detail());
         await waitForHomeGovernance(() => {
             const snapshot = {
                 header: findComposite(screen, 'provider-connection-header', 'meta')?.props.meta,
@@ -621,8 +624,8 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(screen.findAll(node => typeof node.props.onChangePlacement === 'function'
             && typeof node.props.onChangeHelperModels === 'function')[0]?.props.reachability).toBe('not_checked');
         if (status === 'running') {
-            // The existing successful-write refresh must include the saved hub,
-            // not only the different machine selected for inspection.
+            // A display-only Account write retains the Machine's checked facts
+            // (df1130f827); the next presentation reacquires the chosen hub.
             account.home.answer(account.serverId, `POST ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
                 select: input => {
                     const mutation = ProviderConnectionsRowMutationV1Schema.parse(input);
@@ -646,6 +649,17 @@ describe('ProviderConnectionDetailScreen', () => {
                     errors: presentedTitles(screen), name: nameField()?.props,
                     rpc: providerHarness.state.requests.map(request => ({ method: request.method, machineId: request.machineId })) };
                 expect(snapshot, JSON.stringify(snapshot)).toMatchObject({ title: 'Renamed subscriptions' });
+            });
+            const retainedMeta = findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string; text: string }>;
+            expect(retainedMeta.find(row => row.key === 'gateway-status')?.text)
+                .toBe('settingsProvidersCollection.gateway.statusRunningOn(machine=Linux box)');
+            state.focused = false;
+            await screen.update(detail());
+            state.focused = true;
+            await screen.update(detail());
+            await waitForHomeGovernance(() => {
+                const refreshedMeta = findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string; text: string }>;
+                expect(refreshedMeta.find(row => row.key === 'gateway-status')).toBeUndefined();
             });
             await waitForHomeGovernance(() => {
                 const refreshedMeta = findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string; text: string }>;

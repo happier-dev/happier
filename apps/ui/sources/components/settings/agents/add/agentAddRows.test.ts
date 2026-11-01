@@ -139,8 +139,8 @@ describe('buildAgentAddRows', () => {
       catalogEntries: [], definitions: [] }).rows;
     const linux: AgentAddMachine = { machineId: 'linux', name: 'Linux', platform: 'linux', arch: 'x86_64', offline: false };
     const rows = build([linux]);
-    expect(rows.find(row => row.summary.itemId === 'goose')?.status).toMatchObject({ kind: 'cantRun',
-      machineName: 'Linux', fit: { kind: 'cant_run', reason: 'archive_type_unsupported' } });
+    // The 2026-10-31 bzip2 owner ruling makes the captured goose archive runnable.
+    expect(rows.find(row => row.summary.itemId === 'goose')?.status).toBeNull();
     expect(rows.find(row => row.summary.itemId === 'junie')?.status).toBeNull();
     expect(rows.find(row => row.summary.itemId === 'claude-acp')?.status).toBeNull();
     expect(build([{ ...linux, arch: null }]).find(row => row.summary.itemId === 'junie')?.status).toEqual({ kind: 'unknown' });
@@ -200,7 +200,7 @@ describe('buildAgentAddRows', () => {
     expect(rows.map((row) => row.status?.kind ?? null)).toEqual([
       'builtIn',
       'added',
-      'cantRun',
+      null,
     ]);
     expect(rows[0]?.status).toMatchObject({
       kind: 'builtIn',

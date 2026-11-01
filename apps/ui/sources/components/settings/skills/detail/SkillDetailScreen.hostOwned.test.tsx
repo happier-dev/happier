@@ -8,20 +8,14 @@ import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactSt
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createSkillsSurfaceItem } from '@/dev/testkit/harness/skillsSurfaceHarness';
-import {
-  MACHINE_PLAIN_DATA_KEY_MARKER,
-  encodePlainMachineStoredContent,
-} from '@happier-dev/protocol';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
-  ExternalActionMachineBootstrapV1Schema,
   ExternalActionRequestEnvelopeV1Schema,
   ExternalActionResponseEnvelopeV1Schema,
 } from '@happier-dev/protocol/actions/externalActionApi';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import type { SkillListItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { SkillReadResultV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillReadV1';
-import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } =
@@ -86,28 +80,8 @@ async function pluginSkillHome(origin: string, skill: Partial<SkillListItemV1> =
     activeAt: Date.now(),
   });
   const published = {
-    ...machine,
-    ...ExternalActionMachineBootstrapV1Schema.parse({
-      id: machine.id,
-      kind: 'persistent',
-      active: true,
-      installationId: 'plugin-installation',
-      revokedAt: null,
-      replacedByMachineId: null,
-      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-      runnerContentKeyBinding: null,
-      access: {
-        custodian: {
-          accountId: 'artifact-account',
-          displayName: 'Plugin custodian',
-        },
-        role: 'manage',
-        resourceMode: 'plain',
-        accessState: 'ready',
-      },
-    }),
-    metadata: encodePlainMachineStoredContent(machine.metadata),
-    daemonState: encodePlainMachineStoredContent(machine.daemonState),
+    ...createPlainMachineRowFixture({ id: machine.id, accountId: 'artifact-account', machine }),
+    installationId: 'plugin-installation',
   };
   const catalog = createPromptLibraryCatalogBoundary();
   const item = createSkillsSurfaceItem(PLUGIN_SKILL_ID, {
@@ -140,7 +114,7 @@ async function pluginSkillHome(origin: string, skill: Partial<SkillListItemV1> =
         return Response.json({ snapshots: [] });
       if (path === '/v1/machines/read-batch' && init?.method === 'POST')
         return createMachineReadBatchResponseFixture(init.body, (id) => (id === machine.id
-          ? { ...createPlainMachineRowFixture({ id, accountId: 'artifact-account', machine }), installationId: 'plugin-installation' }
+          ? published
           : null));
       if (path.startsWith('/v1/machines')) return Response.json([published]);
       if (
@@ -247,9 +221,9 @@ async function pluginSkillHome(origin: string, skill: Partial<SkillListItemV1> =
     profileScope: scope,
     isDataReady: true,
     artifactsLoaded: true,
-    machines: { [machine.id]: machine },
-    machineListByServerId: { [scope.serverId]: [machine] },
   });
+  storage.getState().applyMachines([createMachineFixture({ ...machine, access: published.access })], true,
+    { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
   teardown = async () => {
     stop();
     await fixture.dispose();
