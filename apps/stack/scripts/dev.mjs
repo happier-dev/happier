@@ -17,7 +17,7 @@ import { assertServerComponentDirMatches, assertServerPrismaProviderMatches } fr
 import { getExpoStatePaths, isStateProcessRunning } from './utils/expo/expo.mjs';
 import {
   captureStackRuntimeStopSnapshot,
-  finalizeStackRuntimeStop,
+  finalizeStackRuntimeOwnerShutdown,
   readStackRuntimeStateFile,
   recordStackRuntimeServerPids,
   recordStackRuntimeStart,
@@ -1242,11 +1242,9 @@ async function main() {
       }
     }
     if (runtimeStatePath && expectedStopState) {
-      await finalizeStackRuntimeStop(runtimeStatePath, {
-        expected: expectedStopState,
+      await finalizeStackRuntimeOwnerShutdown(runtimeStatePath, expectedStopState, {
         preserveDaemon: preserveDaemonOnShutdown,
         cleanupResults,
-        requireNoStopRequest: true,
       }).catch(() => {});
     }
   };

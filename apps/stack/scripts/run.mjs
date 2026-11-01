@@ -26,7 +26,7 @@ import {
 } from './utils/stack/startup.mjs';
 import {
   captureStackRuntimeStopSnapshot,
-  finalizeStackRuntimeStop,
+  finalizeStackRuntimeOwnerShutdown,
   readStackRuntimeStateFile,
   recordStackRuntimeServerActivation,
   recordStackRuntimeServerPids,
@@ -1229,11 +1229,9 @@ async function main() {
 
     if (!sourceRemoteController?.isSuperseded) await maybeResetTailscaleServe();
     if (runtimeStatePath && expectedStopState) {
-      await finalizeStackRuntimeStop(runtimeStatePath, {
-        expected: expectedStopState,
+      await finalizeStackRuntimeOwnerShutdown(runtimeStatePath, expectedStopState, {
         preserveDaemon: preserveDaemonOnShutdown,
         cleanupResults,
-        requireNoStopRequest: true,
       }).catch(() => {});
     }
   };
@@ -1416,14 +1414,16 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
     process.off('SIGTERM', onSignal);
     const shutdownRequest = controller?.isSuperseded ? null : (await readStackRuntimeStateFile(context.runtimeStatePath))?.stopRequest;
     const preserveDaemonOnShutdown = controller?.isSuperseded || shutdownRequest?.preserveDaemon === true;
+    const expected = controller?.isSuperseded ? null : await captureStackRuntimeStopSnapshot(context.runtimeStatePath);
     try {
       if (localCli && !preserveDaemonOnShutdown) await stopLocalDaemon({ cliBin: join(localCli.cliDir, 'bin/happier.mjs'),
         cliNodeEntrypoint: localCli.nodeEntrypoint, cliCommand: localCli.command, cliCommandArgs: localCli.args,
         cliHomeDir, internalServerUrl, runtimeStatePath: context.runtimeStatePath, env,
         stackName: context.stackName, cliIdentity: 'default' });
     } finally { await controller?.close({ preserveDaemon: preserveDaemonOnShutdown }); }
-    const expected = controller?.isSuperseded ? null : await captureStackRuntimeStopSnapshot(context.runtimeStatePath);
-    if (expected) await finalizeStackRuntimeStop(context.runtimeStatePath, { expected, preserveDaemon: preserveDaemonOnShutdown, cleanupResults: [] });
+    if (expected) await finalizeStackRuntimeOwnerShutdown(context.runtimeStatePath, expected, {
+      preserveDaemon: preserveDaemonOnShutdown, cleanupResults: [],
+    });
   }
 }
 

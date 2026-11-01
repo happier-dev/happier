@@ -1108,9 +1108,14 @@ export async function finalizeStackRuntimeStop(statePath, input = {}) {
   });
 }
 
-export async function deleteStackRuntimeStateIfOwnedBy(statePath, expected) {
+export async function finalizeStackRuntimeOwnerShutdown(statePath, expected, {
+  preserveDaemon = false,
+  cleanupResults = null,
+} = {}) {
   if (!normalizeRuntimePid(expected?.ownerPid)) return false;
   if (!normalizeStackRuntimeOwnerStartedAt(expected?.startedAt)) return false;
-  const result = await finalizeStackRuntimeStop(statePath, { expected, requireNoStopRequest: true });
+  const result = await finalizeStackRuntimeStop(statePath, {
+    expected, preserveDaemon, cleanupResults, requireNoStopRequest: true,
+  });
   return result.finalized === true;
 }

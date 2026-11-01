@@ -33,7 +33,7 @@ import { pruneStackRunnerLogs } from '../utils/stack/runner_log_retention.mjs';
 import { resolveVerifiedStackServerEndpoint, resolveVerifiedStackUiEndpoint } from '../utils/stack/verified_endpoints.mjs';
 import { resolveExpoTailscaleEnabled } from '../utils/dev/expo_dev_tailscale.mjs';
 import {
-  deleteStackRuntimeStateIfOwnedBy,
+  finalizeStackRuntimeOwnerShutdown,
   getStackRuntimeProcessInstanceFingerprint,
   getStackRuntimeProcessEntries,
   getStackRuntimeStatePath,
@@ -463,7 +463,7 @@ export async function terminateSpawnedRunnerForBootFailure(
     expectedRuntimeState = null,
     preserveRuntimeState = false,
     killProcessTreeImpl = killProcessTree,
-    deleteStackRuntimeStateIfOwnedByImpl = deleteStackRuntimeStateIfOwnedBy,
+    finalizeStackRuntimeOwnerShutdownImpl = finalizeStackRuntimeOwnerShutdown,
   } = {},
 ) {
   const termination = await killProcessTreeImpl(child, 'SIGTERM');
@@ -474,7 +474,7 @@ export async function terminateSpawnedRunnerForBootFailure(
     && child?.pid
     && Number(expectedRuntimeState?.ownerPid) === Number(child.pid)
   ) {
-    await deleteStackRuntimeStateIfOwnedByImpl(runtimeStatePath, expectedRuntimeState);
+    await finalizeStackRuntimeOwnerShutdownImpl(runtimeStatePath, expectedRuntimeState);
   }
   return termination;
 }
@@ -1314,7 +1314,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             const portOccupied = Number.isFinite(port) && port > 0 ? !(await isTcpPortFree(port, { host: '127.0.0.1' }).catch(() => true)) : false;
 
             if (!anyAlive && !portOccupied) {
-              await deleteStackRuntimeStateIfOwnedBy(runtimeStatePath, expectedRuntimeState);
+              await finalizeStackRuntimeOwnerShutdown(runtimeStatePath, expectedRuntimeState);
             } else if (!wantsJson) {
               console.warn(
                 `[stack] ${stackName}: preserving ${runtimeStatePath} after runner exit (child processes still alive). ` +

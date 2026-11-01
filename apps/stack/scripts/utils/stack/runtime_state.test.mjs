@@ -7,6 +7,45 @@ import { spawnTestProcess } from '../../testkit/core/spawn_test_process.mjs';
 
 import * as runtimeStateModule from './runtime_state.mjs';
 
+test('owner shutdown preserves daemon custody and leaves external cleanup to its transaction', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-overlapping-preserved-stop-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  await recordStackRuntimeStart(statePath, {
+    stackName: 'overlapping-stop', ownerPid: 701, processes: { daemonPid: 703, daemonPids: [703] },
+    sourceRuntimeIdentities: { daemon: { selected: 'retained-source', loaded: 'retained-source' } },
+    placement: { daemon: 'nl3', server: 'nl3' },
+    remoteTargets: { nl3: { services: { daemon: true, server: true },
+      status: 'stopped', serviceStatus: { daemon: 'stopped', server: 'stopped' } } },
+  });
+  const result = await withStackRuntimeStopTransaction(statePath, { preserveDaemon: true }, async transaction => {
+    // The remote controller closes while external cleanup is outside its
+    // mutation lock. Only that external transaction may consume its stop.
+    const shutdownSnapshot = await captureStackRuntimeStopSnapshot(statePath);
+    assert.equal(await finalizeStackRuntimeOwnerShutdown(statePath, shutdownSnapshot, {
+      preserveDaemon: true, cleanupResults: [],
+    }), false);
+    assert.equal((await readStackRuntimeStateFile(statePath)).ownerPid, 701);
+    return await transaction.finalize({ cleanupResults: [] });
+  });
+  assert.equal(result.finalized, true);
+  const retained = await readStackRuntimeStateFile(statePath);
+  assert.equal(retained.ownerPid, null);
+  assert.equal(retained.stopRequest, null);
+  assert.equal(retained.remoteTargets.nl3.services.daemon, true);
+  assert.equal(retained.sourceRuntimeIdentities.daemon.loaded, 'retained-source');
+  await recordStackRuntimeStart(statePath, {
+    stackName: 'overlapping-stop', ownerPid: 701,
+    processes: { daemonPid: 703, daemonPids: [703] },
+  });
+  const ownerSnapshot = await captureStackRuntimeStopSnapshot(statePath);
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(statePath, ownerSnapshot, {
+    preserveDaemon: true, cleanupResults: [],
+  }), true);
+  assert.equal((await readStackRuntimeStateFile(statePath))?.processes?.daemonPid, 703,
+    'the shared owner-shutdown boundary must support native daemon preservation');
+});
+
 test('publication component updates derive the aggregate phase without losing neighboring outcomes', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-publication-status-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -45,7 +84,7 @@ import {
   recordStackRuntimeStopRequest,
   recordStackRuntimeUpdate,
   captureStackRuntimeStopSnapshot,
-  deleteStackRuntimeStateIfOwnedBy,
+  finalizeStackRuntimeOwnerShutdown,
   finalizeStackRuntimeStop,
   resolveTrustedStackRuntimeServerPort,
   withStackRuntimeStartClaim,
@@ -327,7 +366,7 @@ test('owner identity deletion cannot erase a canonical stop request', async (t) 
   const runtime = await recordStackRuntimeStart(statePath, { stackName: 'owned-delete-stop-fence', ownerPid: process.pid, ports: {} });
   await recordStackRuntimeStopRequest(statePath, { requestedBy: 'canonical stop', preserveDaemon: false });
 
-  assert.equal(await deleteStackRuntimeStateIfOwnedBy(statePath, runtime), false);
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(statePath, runtime), false);
   assert.equal((await readStackRuntimeStateFile(statePath)).stopRequest?.requestedBy, 'canonical stop');
 });
 
@@ -547,7 +586,7 @@ test('stop finalization fails closed for missing or malformed snapshot and curre
   }
 });
 
-test('deleteStackRuntimeStateIfOwnedBy requires the caller snapshot and rejects a same-pid successor', async (t) => {
+test('finalizeStackRuntimeOwnerShutdown requires the caller snapshot and rejects a same-pid successor', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-owned-delete-incarnation-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
 
@@ -561,9 +600,9 @@ test('deleteStackRuntimeStateIfOwnedBy requires the caller snapshot and rejects 
   const successorStartedAt = new Date(Date.parse(predecessor.startedAt) + 1).toISOString();
   await recordStackRuntimeUpdate(staleStatePath, { startedAt: successorStartedAt });
 
-  assert.equal(await deleteStackRuntimeStateIfOwnedBy(staleStatePath, process.pid), false, 'PID-only overload must fail closed');
-  assert.equal(await deleteStackRuntimeStateIfOwnedBy(staleStatePath, predecessorSnapshot), false);
-  assert.equal(await deleteStackRuntimeStateIfOwnedBy(staleStatePath, {
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(staleStatePath, process.pid), false, 'PID-only overload must fail closed');
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(staleStatePath, predecessorSnapshot), false);
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(staleStatePath, {
     ownerPid: predecessor.ownerPid,
     startedAt: predecessor.startedAt,
   }), false);
@@ -571,16 +610,16 @@ test('deleteStackRuntimeStateIfOwnedBy requires the caller snapshot and rejects 
 
   const missingStartedAt = { ...predecessorSnapshot };
   delete missingStartedAt.startedAt;
-  assert.equal(await deleteStackRuntimeStateIfOwnedBy(staleStatePath, missingStartedAt), false);
-  assert.equal(await deleteStackRuntimeStateIfOwnedBy(staleStatePath, {
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(staleStatePath, missingStartedAt), false);
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(staleStatePath, {
     ...predecessorSnapshot,
     startedAt: 'not-a-timestamp',
   }), false);
-  assert.equal(await deleteStackRuntimeStateIfOwnedBy(staleStatePath, {
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(staleStatePath, {
     ownerPid: 'not-a-pid',
     startedAt: successorStartedAt,
   }), false);
-  assert.equal(await deleteStackRuntimeStateIfOwnedBy(staleStatePath, {
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(staleStatePath, {
     ownerPid: process.pid + 1,
     startedAt: successorStartedAt,
   }), false);
@@ -588,7 +627,7 @@ test('deleteStackRuntimeStateIfOwnedBy requires the caller snapshot and rejects 
   const validStatePath = join(dir, 'valid.json');
   await recordStackRuntimeStart(validStatePath, { stackName: 'valid', ownerPid: process.pid, ports: {} });
   const validSnapshot = await captureStackRuntimeStopSnapshot(validStatePath);
-  assert.equal(await deleteStackRuntimeStateIfOwnedBy(validStatePath, validSnapshot), true);
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(validStatePath, validSnapshot), true);
   assert.equal(await readStackRuntimeStateFile(validStatePath), null);
 
   const validIdentityPath = join(dir, 'valid-identity.json');
@@ -597,7 +636,7 @@ test('deleteStackRuntimeStateIfOwnedBy requires the caller snapshot and rejects 
     ownerPid: process.pid,
     ports: {},
   });
-  assert.equal(await deleteStackRuntimeStateIfOwnedBy(validIdentityPath, {
+  assert.equal(await finalizeStackRuntimeOwnerShutdown(validIdentityPath, {
     ownerPid: validRuntime.ownerPid,
     startedAt: validRuntime.startedAt,
   }), true);

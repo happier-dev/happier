@@ -149,7 +149,7 @@ test('boot-failure cleanup awaits the canonical process-tree owner', async () =>
       calls.push(['tree-kill', target.pid, signal]);
       return { ok: true, signal };
     },
-    deleteStackRuntimeStateIfOwnedByImpl: async (_path, expected) => {
+    finalizeStackRuntimeOwnerShutdownImpl: async (_path, expected) => {
       calls.push(['state-delete', expected]);
       return { deleted: true };
     },
@@ -162,7 +162,7 @@ test('boot-failure cleanup awaits the canonical process-tree owner', async () =>
   await stackEnvRunner.terminateSpawnedRunnerForBootFailure(child, {
     runtimeStatePath: 'C:\\stack\\stack.runtime.json',
     killProcessTreeImpl: async () => ({ ok: true }),
-    deleteStackRuntimeStateIfOwnedByImpl: async () => { calls.push(['state-delete']); },
+    finalizeStackRuntimeOwnerShutdownImpl: async () => { calls.push(['state-delete']); },
   });
   assert.deepEqual(calls, [], 'missing pre-existing identity must not delete runtime state');
 
@@ -170,7 +170,7 @@ test('boot-failure cleanup awaits the canonical process-tree owner', async () =>
   const unconfirmed = await stackEnvRunner.terminateSpawnedRunnerForBootFailure(child, {
     runtimeStatePath: 'C:\\stack\\stack.runtime.json',
     killProcessTreeImpl: async () => ({ ok: false, reason: 'tree_unconfirmed' }),
-    deleteStackRuntimeStateIfOwnedByImpl: async () => { calls.push(['state-delete']); },
+    finalizeStackRuntimeOwnerShutdownImpl: async () => { calls.push(['state-delete']); },
   });
   assert.deepEqual(unconfirmed, { ok: false, reason: 'tree_unconfirmed' });
   assert.deepEqual(calls, []);
