@@ -1,6 +1,7 @@
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { CreateAgentInvocationServices } from '@/plugins/runtime/invocation/services/types';
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
+import { projectNativeCatalogModels } from './nativeCatalogModels';
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { CapabilitiesInvokeResponse } from '@/capabilities/types';
@@ -533,10 +534,7 @@ export async function invokeCliPreflightMethod(
                     ok: true,
                     result: {
                         agentId,
-                        availableModels: [
-                            { id: 'default', name: 'Default' },
-                            ...result.models.filter((model) => model.id !== 'default'),
-                        ],
+                        availableModels: projectNativeCatalogModels(result.models, modelConfig),
                         supportsFreeform: modelConfig?.supportsSelection === true && modelConfig.supportsFreeform === true,
                         source: result.source,
                         observedAt: result.observedAt,
@@ -572,10 +570,7 @@ export async function invokeCliPreflightMethod(
                         ok: true,
                         result: {
                             agentId,
-                            availableModels: [
-                                { id: 'default', name: 'Default' },
-                                ...result.models.filter((model) => model.id !== 'default'),
-                            ],
+                            availableModels: projectNativeCatalogModels(result.models, modelConfig),
                             supportsFreeform: modelConfig?.supportsSelection === true && modelConfig.supportsFreeform === true,
                             source: result.source,
                         observedAt: result.observedAt,

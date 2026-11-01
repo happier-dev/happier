@@ -930,6 +930,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "name": "Opus 4.7"
       },
       {
+        "contextWindowTokens": 200000,
         "description": "Highest-capability Claude model for the hardest coding and reasoning tasks.",
         "extendedContextModelId": "claude-opus-4-6[1m]",
         "id": "claude-opus-4-6",
@@ -962,6 +963,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "name": "Opus 4.6"
       },
       {
+        "contextWindowTokens": 200000,
         "description": "Balanced Claude model for everyday coding, editing, and analysis.",
         "extendedContextModelId": "claude-sonnet-4-6[1m]",
         "id": "claude-sonnet-4-6",

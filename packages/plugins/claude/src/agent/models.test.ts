@@ -60,6 +60,12 @@ describe('CLAUDE_STATIC_MODELS ultracode option', () => {
 });
 
 describe('CLAUDE_STATIC_MODELS extended-context variant declaration', () => {
+    it('publishes the standard context of opt-in models independently of their 1M variant', () => {
+        for (const id of ['claude-sonnet-4-6', 'claude-opus-4-6']) {
+            expect(model(id).contextWindowTokens, id).toBe(200_000);
+        }
+    });
+
     it('declares the [1m] variant only for opt-in 1M models', () => {
         expect(model('claude-sonnet-4-6').extendedContextModelId).toBe('claude-sonnet-4-6[1m]');
         expect(model('claude-opus-4-6').extendedContextModelId).toBe('claude-opus-4-6[1m]');

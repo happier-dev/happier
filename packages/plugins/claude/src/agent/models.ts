@@ -4,8 +4,15 @@ import {
 } from '@happier-dev/plugin-sdk/agents';
 
 import { ANTHROPIC_STATIC_MODELS } from '../provider/catalog.js';
+import { CLAUDE_DEFAULT_CONTEXT_WINDOW_TOKENS } from './contextWindow.js';
 
-export const CLAUDE_STATIC_MODELS: readonly AgentModelDescriptor[] = ANTHROPIC_STATIC_MODELS;
+export const CLAUDE_STATIC_MODELS: readonly AgentModelDescriptor[] = ANTHROPIC_STATIC_MODELS.map((model) => (
+    // Claude Code's standard window is independent of the Provider API's 1M
+    // capacity; the declared variant is the native opt-in for these models.
+    model.extendedContextModelId
+        ? { ...model, contextWindowTokens: CLAUDE_DEFAULT_CONTEXT_WINDOW_TOKENS }
+        : model
+));
 
 export const CLAUDE_AGENT_MODEL_CONFIG: AgentModelConfig = Object.freeze({
     supportsSelection: true,

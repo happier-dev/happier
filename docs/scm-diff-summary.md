@@ -705,6 +705,12 @@ classifier; collapse changes presentation only. Missing hosted patches leave
 binary status unknown (`null`), rather than proving a binary or clean file.
 Unavailable layers may retain usable supplied diff bytes.
 
+In 0.3 development source, native catalog observations retain the Agent's declared
+context window, constrained further by a smaller reported Provider window. Claude
+Code's standard opt-in-context models publish the existing 200k native window;
+their separate `[1m]` variants do not enlarge the standard model's input budget.
+This distinction applies to both selected Connected Accounts and local native
+credentials. Models without a declared or reported size retain unknown capacity.
 The host enumerates evidence before model admission. For initial generation and
 review narration, when the selected offered model reports a context window, the progressive owner plans occurrence groups
 and textual fragments before admission, charging rendered UTF-8 bytes
