@@ -3,7 +3,7 @@
   "machineDocker.page.state.waiting": "作成待ち",
   "machineDocker.lifetime.unavailable": "現在の設定では、このサンドボックスで Happier の実行を維持できません。",
   "machineDocker.presentation.kind": "サンドボックス",
-  "machineDocker.presentation.description": "コーディングと開発のための隔離されたマシン。",
+  "machineDocker.presentation.description": "専用の Docker を備えた隔離されたマシン。",
   "machineDocker.presentation.ready": "インストール済み",
   "machineDocker.presentation.unavailable": "未インストール",
   "machineDocker.presentation.docker_sandbox_version_unqualified": "Docker バージョン非対応",

@@ -3,7 +3,7 @@
   "machineDocker.page.state.waiting": "Esperant per crear",
   "machineDocker.lifetime.unavailable": "Aquest entorn aïllat no pot mantenir Happier en execució amb la configuració actual.",
   "machineDocker.presentation.kind": "sandbox",
-  "machineDocker.presentation.description": "Una màquina aïllada per programar i desenvolupar.",
+  "machineDocker.presentation.description": "Una màquina aïllada amb el seu propi Docker.",
   "machineDocker.presentation.ready": "Instal·lat",
   "machineDocker.presentation.unavailable": "No instal·lat",
   "machineDocker.presentation.docker_sandbox_version_unqualified": "Versió de Docker no compatible",

@@ -3,7 +3,7 @@
   "machineDocker.page.state.waiting": "Wartet auf Erstellung",
   "machineDocker.lifetime.unavailable": "Diese Sandbox kann Happier mit der aktuellen Einrichtung nicht am Laufen halten.",
   "machineDocker.presentation.kind": "Sandbox",
-  "machineDocker.presentation.description": "Eine isolierte Maschine zum Programmieren und Entwickeln.",
+  "machineDocker.presentation.description": "Eine isolierte Maschine mit eigenem Docker.",
   "machineDocker.presentation.ready": "Installiert",
   "machineDocker.presentation.unavailable": "Nicht installiert",
   "machineDocker.presentation.docker_sandbox_version_unqualified": "Docker-Version nicht unterstützt",

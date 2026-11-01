@@ -3,7 +3,7 @@
   "machineDocker.page.state.waiting": "Waiting to create",
   "machineDocker.lifetime.unavailable": "This sandbox can't keep Happier running with the current setup.",
   "machineDocker.presentation.kind": "sandbox",
-  "machineDocker.presentation.description": "An isolated machine for coding and development.",
+  "machineDocker.presentation.description": "An isolated machine with its own Docker.",
   "machineDocker.presentation.ready": "Installed",
   "machineDocker.presentation.unavailable": "Not installed",
   "machineDocker.presentation.docker_sandbox_version_unqualified": "Docker version unsupported",

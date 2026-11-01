@@ -3,7 +3,7 @@
   "machineDocker.page.state.waiting": "Esperando para crear",
   "machineDocker.lifetime.unavailable": "Este entorno aislado no puede mantener Happier en ejecución con la configuración actual.",
   "machineDocker.presentation.kind": "sandbox",
-  "machineDocker.presentation.description": "Una máquina aislada para programar y desarrollar.",
+  "machineDocker.presentation.description": "Una máquina aislada con su propio Docker.",
   "machineDocker.presentation.ready": "Instalado",
   "machineDocker.presentation.unavailable": "No instalado",
   "machineDocker.presentation.docker_sandbox_version_unqualified": "Versión de Docker no compatible",

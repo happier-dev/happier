@@ -3,7 +3,7 @@
   "machineDocker.page.state.waiting": "Oczekiwanie na utworzenie",
   "machineDocker.lifetime.unavailable": "Ta piaskownica nie może utrzymać działania Happier przy obecnej konfiguracji.",
   "machineDocker.presentation.kind": "piaskownica",
-  "machineDocker.presentation.description": "Izolowana maszyna do programowania i tworzenia aplikacji.",
+  "machineDocker.presentation.description": "Izolowana maszyna z własnym Dockerem.",
   "machineDocker.presentation.ready": "Zainstalowano",
   "machineDocker.presentation.unavailable": "Nie zainstalowano",
   "machineDocker.presentation.docker_sandbox_version_unqualified": "Nieobsługiwana wersja Docker",

@@ -3,7 +3,7 @@
   "machineDocker.page.state.waiting": "等待建立",
   "machineDocker.lifetime.unavailable": "在目前設定下，此沙盒無法讓 Happier 持續執行。",
   "machineDocker.presentation.kind": "沙盒",
-  "machineDocker.presentation.description": "用於程式設計和開發的隔離機器。",
+  "machineDocker.presentation.description": "自帶 Docker 的隔離機器。",
   "machineDocker.presentation.ready": "已安裝",
   "machineDocker.presentation.unavailable": "未安裝",
   "machineDocker.presentation.docker_sandbox_version_unqualified": "Docker 版本不受支援",

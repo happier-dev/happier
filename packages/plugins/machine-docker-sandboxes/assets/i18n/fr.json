@@ -3,7 +3,7 @@
   "machineDocker.page.state.waiting": "En attente de création",
   "machineDocker.lifetime.unavailable": "Ce bac à sable ne peut pas maintenir Happier en cours d’exécution avec la configuration actuelle.",
   "machineDocker.presentation.kind": "sandbox",
-  "machineDocker.presentation.description": "Une machine isolée pour le code et le développement.",
+  "machineDocker.presentation.description": "Une machine isolée avec son propre Docker.",
   "machineDocker.presentation.ready": "Installé",
   "machineDocker.presentation.unavailable": "Non installé",
   "machineDocker.presentation.docker_sandbox_version_unqualified": "Version de Docker non prise en charge",

@@ -3,7 +3,7 @@
   "machineDocker.page.state.waiting": "Ожидает создания",
   "machineDocker.lifetime.unavailable": "Эта песочница не может поддерживать работу Happier при текущей настройке.",
   "machineDocker.presentation.kind": "песочница",
-  "machineDocker.presentation.description": "Изолированная машина для программирования и разработки.",
+  "machineDocker.presentation.description": "Изолированная машина со своим Docker.",
   "machineDocker.presentation.ready": "Установлено",
   "machineDocker.presentation.unavailable": "Не установлено",
   "machineDocker.presentation.docker_sandbox_version_unqualified": "Версия Docker не поддерживается",
