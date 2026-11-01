@@ -5,6 +5,7 @@ import { useSessionScreenTestIdsEnabled } from '../../shell/sessionScreenTestIds
 export type SessionRightPanelTerminalViewProps = Readonly<{
     sessionId: string;
     scopeId: string;
+    active?: boolean;
 }>;
 
 export const SessionRightPanelTerminalView = React.memo(function SessionRightPanelTerminalView(
@@ -13,6 +14,7 @@ export const SessionRightPanelTerminalView = React.memo(function SessionRightPan
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
     return (
         <SessionEmbeddedTerminalPane
+            active={props.active}
             sessionId={props.sessionId}
             scopeId={props.scopeId}
             currentDockLocation="sidebar"

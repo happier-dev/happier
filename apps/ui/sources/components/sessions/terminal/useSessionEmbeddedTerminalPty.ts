@@ -9,6 +9,7 @@ import type { SessionTerminalMode } from './sessionTerminalMode';
 export function useSessionEmbeddedTerminalPty(params: Readonly<{
     sessionId: string;
     terminalKey: string;
+    active?: boolean;
     terminalMode: SessionTerminalMode;
     terminalRef: React.MutableRefObject<EmbeddedTerminalRendererHandle | null>;
 }>) {
@@ -22,6 +23,7 @@ export function useSessionEmbeddedTerminalPty(params: Readonly<{
     );
 
     return useMachineTerminalSession({
+        active: params.active,
         machineId: machineTarget?.machineId ?? null,
         cwd: params.terminalMode === 'workspace_shell' ? machineTarget?.basePath ?? null : null,
         launch,

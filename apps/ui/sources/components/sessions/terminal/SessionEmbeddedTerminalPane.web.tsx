@@ -21,6 +21,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 
 export type SessionEmbeddedTerminalPaneProps = Readonly<{
     sessionId: string;
+    /** Whether this retained pane currently demands a terminal reader. Defaults to true. */
+    active?: boolean;
     scopeId: string;
     currentDockLocation: EmbeddedTerminalDockLocation;
     onRequestClose?: () => void;
@@ -54,6 +56,7 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
     );
 
     const controller = useSessionEmbeddedTerminalPty({
+        active: props.active,
         sessionId: props.sessionId,
         terminalKey,
         terminalMode,

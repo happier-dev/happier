@@ -75,6 +75,14 @@ What to expect:
 - Returning to a session restores that session’s terminal state.
 - A different session does **not** automatically inherit another session’s terminal state.
 
+<Callout type="info">
+  In the current development build (unreleased), hidden terminal panels pause
+  output reads and reconnect to the existing terminal when opened again. Closing
+  a session terminal panel leaves the underlying terminal running. If connecting
+  stalls, choose **Retry** in the terminal panel to reconnect without restarting
+  the terminal session.
+</Callout>
+
 ## Mobile behavior
 
 On mobile/native clients, Happier renders the terminal through an embedded WebView terminal surface.

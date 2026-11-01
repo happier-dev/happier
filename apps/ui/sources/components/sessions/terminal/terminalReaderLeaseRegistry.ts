@@ -1,55 +1,93 @@
-type TerminalReaderListener = () => void;
+import type { EmbeddedTerminalPaneStatus } from '@/components/terminal/embedded/types';
 
-const terminalReaderOwners = new Map<string, symbol>();
-const terminalReaderListeners = new Map<string, Set<TerminalReaderListener>>();
+export type TerminalReaderConnection = Readonly<{
+    status: EmbeddedTerminalPaneStatus;
+    error: string | null;
+}>;
 
-function notifyTerminalReaderListeners(terminalKey: string): void {
-    const listeners = terminalReaderListeners.get(terminalKey);
-    if (!listeners || listeners.size === 0) {
-        return;
+const idleConnection: TerminalReaderConnection = { status: 'idle', error: null };
+type TerminalReaderEntry = {
+    owner: symbol | null;
+    reconnect: ((restart: boolean) => void) | null;
+    connection: TerminalReaderConnection;
+    listeners: Set<() => void>;
+    availabilityListeners: Set<() => void>;
+};
+const terminalReaders = new Map<string, TerminalReaderEntry>();
+
+function entryFor(terminalKey: string): TerminalReaderEntry {
+    let entry = terminalReaders.get(terminalKey);
+    if (!entry) {
+        entry = { owner: null, reconnect: null, connection: idleConnection, listeners: new Set(), availabilityListeners: new Set() };
+        terminalReaders.set(terminalKey, entry);
     }
-    for (const listener of listeners) {
-        listener();
+    return entry;
+}
+
+function discardUnusedEntry(terminalKey: string, entry: TerminalReaderEntry): void {
+    if (!entry.owner && entry.listeners.size === 0 && entry.availabilityListeners.size === 0) {
+        terminalReaders.delete(terminalKey);
     }
 }
 
-export function claimTerminalReaderLease(terminalKey: string, ownerToken: symbol): boolean {
-    const currentOwner = terminalReaderOwners.get(terminalKey);
-    if (currentOwner && currentOwner !== ownerToken) {
-        return false;
-    }
-    terminalReaderOwners.set(terminalKey, ownerToken);
+export function claimTerminalReaderLease(terminalKey: string, ownerToken: symbol, reconnect: (restart: boolean) => void): boolean {
+    const entry = entryFor(terminalKey);
+    if (entry.owner && entry.owner !== ownerToken) return false;
+    entry.owner = ownerToken;
+    entry.reconnect = reconnect;
     return true;
 }
 
 export function releaseTerminalReaderLease(terminalKey: string, ownerToken: symbol): void {
-    if (terminalReaderOwners.get(terminalKey) !== ownerToken) {
-        return;
+    const entry = terminalReaders.get(terminalKey);
+    if (!entry || entry.owner !== ownerToken) return;
+    entry.owner = null;
+    entry.reconnect = null;
+    // Failures and exits are shared outcomes, not invitations for mounted followers
+    // to repeatedly reconnect each other. A new open or explicit retry can try again.
+    if (entry.connection.status !== 'error' && entry.connection.status !== 'exited') {
+        for (const listener of entry.availabilityListeners) listener();
     }
-    terminalReaderOwners.delete(terminalKey);
-    notifyTerminalReaderListeners(terminalKey);
+    discardUnusedEntry(terminalKey, entry);
 }
 
 export function hasTerminalReaderLease(terminalKey: string, ownerToken: symbol): boolean {
-    return terminalReaderOwners.get(terminalKey) === ownerToken;
+    return terminalReaders.get(terminalKey)?.owner === ownerToken;
 }
 
-export function subscribeTerminalReaderLeaseAvailability(terminalKey: string, listener: TerminalReaderListener): () => void {
-    const existing = terminalReaderListeners.get(terminalKey);
-    const listeners = existing ?? new Set<TerminalReaderListener>();
-    listeners.add(listener);
-    if (!existing) {
-        terminalReaderListeners.set(terminalKey, listeners);
-    }
+export function reconnectTerminalReader(terminalKey: string, restart: boolean): boolean {
+    const reconnect = terminalReaders.get(terminalKey)?.reconnect;
+    if (!reconnect) return false;
+    reconnect(restart);
+    return true;
+}
 
+export function readTerminalReaderConnection(terminalKey: string): TerminalReaderConnection {
+    return terminalReaders.get(terminalKey)?.connection ?? idleConnection;
+}
+
+export function publishTerminalReaderConnection(terminalKey: string, ownerToken: symbol, connection: TerminalReaderConnection): void {
+    const entry = terminalReaders.get(terminalKey);
+    if (!entry || entry.owner !== ownerToken) return;
+    if (entry.connection.status === connection.status && entry.connection.error === connection.error) return;
+    entry.connection = connection;
+    for (const listener of entry.listeners) listener();
+}
+
+export function subscribeTerminalReaderConnection(terminalKey: string, listener: () => void): () => void {
+    const entry = entryFor(terminalKey);
+    entry.listeners.add(listener);
     return () => {
-        const current = terminalReaderListeners.get(terminalKey);
-        if (!current) {
-            return;
-        }
-        current.delete(listener);
-        if (current.size === 0) {
-            terminalReaderListeners.delete(terminalKey);
-        }
+        entry.listeners.delete(listener);
+        discardUnusedEntry(terminalKey, entry);
+    };
+}
+
+export function subscribeTerminalReaderLeaseAvailability(terminalKey: string, listener: () => void): () => void {
+    const entry = entryFor(terminalKey);
+    entry.availabilityListeners.add(listener);
+    return () => {
+        entry.availabilityListeners.delete(listener);
+        discardUnusedEntry(terminalKey, entry);
     };
 }

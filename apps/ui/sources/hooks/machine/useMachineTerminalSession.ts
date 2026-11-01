@@ -13,6 +13,10 @@ import {
 import {
     claimTerminalReaderLease,
     hasTerminalReaderLease,
+    publishTerminalReaderConnection,
+    readTerminalReaderConnection,
+    reconnectTerminalReader,
+    subscribeTerminalReaderConnection,
     releaseTerminalReaderLease,
     subscribeTerminalReaderLeaseAvailability,
 } from '@/components/sessions/terminal/terminalReaderLeaseRegistry';
@@ -27,9 +31,11 @@ import {
 } from '@/sync/ops/machineTerminal';
 import { delay } from '@/utils/timing/time';
 
-export type TerminalStatus = 'idle' | 'connecting' | 'connected' | 'error' | 'exited';
+import type { EmbeddedTerminalPaneStatus as TerminalStatus } from '@/components/terminal/embedded/types';
+export type { EmbeddedTerminalPaneStatus as TerminalStatus } from '@/components/terminal/embedded/types';
 
 export function useMachineTerminalSession(params: Readonly<{
+    active?: boolean;
     machineId: string | null;
     cwd: string | null;
     launch?: DaemonTerminalLaunchIntent | null;
@@ -45,16 +51,23 @@ export function useMachineTerminalSession(params: Readonly<{
         [params.terminalKey],
     );
 
-    const [status, setStatus] = React.useState<TerminalStatus>('idle');
-    const [error, setError] = React.useState<string | null>(null);
+    const active = params.active !== false;
+    const ownerToken = React.useMemo(() => Symbol(params.terminalKey), [params.terminalKey]);
+    const subscribeConnection = React.useCallback(
+        (listener: () => void) => subscribeTerminalReaderConnection(params.terminalKey, listener),
+        [params.terminalKey],
+    );
+    const readConnection = React.useCallback(() => readTerminalReaderConnection(params.terminalKey), [params.terminalKey]);
+    const { status, error } = React.useSyncExternalStore(subscribeConnection, readConnection, readConnection);
+    const publishConnection = React.useCallback((status: TerminalStatus, error: string | null = null) => {
+        publishTerminalReaderConnection(params.terminalKey, ownerToken, { status, error });
+    }, [ownerToken, params.terminalKey]);
 
     const [connectionNonce, bumpConnectionNonce] = React.useReducer((x: number) => x + 1, 0);
     const restartRequestedRef = React.useRef(false);
     const autoRetryAttemptRef = React.useRef(0);
     const autoRetryTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const clearNonceRef = React.useRef(0);
-    const terminalReaderOwnerTokenRef = React.useRef(Symbol(params.terminalKey));
-    const ignoreNextLeaseAvailabilityRef = React.useRef(false);
 
     const terminalIdRef = React.useRef<string | null>(initialSurfaceState.terminalId);
     const cursorRef = React.useRef(initialSurfaceState.cursor);
@@ -103,95 +116,69 @@ export function useMachineTerminalSession(params: Readonly<{
             autoRetryTimeoutRef.current = null;
             bumpConnectionNonce();
         }, resolveTerminalAutoRetryDelayMs(nextAttempt));
-        setError(null);
-        setStatus('connecting');
+        publishConnection('connecting');
         return true;
-    }, []);
+    }, [publishConnection]);
 
-    const requestRestart = React.useCallback(() => {
+    const reconnect = React.useCallback((restart: boolean) => {
         resetAutoRetryState();
-        restartRequestedRef.current = true;
-        clearTerminalOutput();
-        syncDetectedUrl(null);
+        restartRequestedRef.current = restart;
+        if (restart) {
+            clearTerminalOutput();
+            syncDetectedUrl(null);
+        }
         bumpConnectionNonce();
     }, [clearTerminalOutput, resetAutoRetryState, syncDetectedUrl]);
 
+    const requestRestart = React.useCallback(() => {
+        if (!reconnectTerminalReader(params.terminalKey, true)) reconnect(true);
+    }, [params.terminalKey, reconnect]);
+
     const retryConnect = React.useCallback(() => {
-        resetAutoRetryState();
-        restartRequestedRef.current = false;
-        bumpConnectionNonce();
-    }, [resetAutoRetryState]);
+        if (!reconnectTerminalReader(params.terminalKey, false)) reconnect(false);
+    }, [params.terminalKey, reconnect]);
 
     React.useEffect(() => {
-        return () => {
-            safeTimeoutClear(autoRetryTimeoutRef.current);
-            autoRetryTimeoutRef.current = null;
-        };
-    }, []);
-
-    React.useEffect(() => {
-        terminalReaderOwnerTokenRef.current = Symbol(params.terminalKey);
-    }, [params.terminalKey]);
-
-    React.useEffect(() => {
+        if (!active || !initialTerminalSize) return;
         return subscribeTerminalReaderLeaseAvailability(params.terminalKey, () => {
-            if (ignoreNextLeaseAvailabilityRef.current) {
-                ignoreNextLeaseAvailabilityRef.current = false;
-                return;
-            }
-            if (!hasTerminalReaderLease(params.terminalKey, terminalReaderOwnerTokenRef.current)) {
-                bumpConnectionNonce();
-            }
+            if (!hasTerminalReaderLease(params.terminalKey, ownerToken)) bumpConnectionNonce();
         });
-    }, [params.terminalKey]);
+    }, [active, initialTerminalSize, ownerToken, params.terminalKey]);
 
     React.useEffect(() => {
         return () => {
-            releaseTerminalReaderLease(params.terminalKey, terminalReaderOwnerTokenRef.current);
+            resetAutoRetryState();
+            releaseTerminalReaderLease(params.terminalKey, ownerToken);
         };
-    }, [params.terminalKey]);
+    }, [active, ownerToken, params.terminalKey, resetAutoRetryState]);
 
     React.useEffect(() => {
         let canceled = false;
-        let readerLeaseReleased = false;
-
-        const releaseReaderLease = () => {
-            if (readerLeaseReleased) {
-                return;
-            }
-            readerLeaseReleased = true;
-            ignoreNextLeaseAvailabilityRef.current = true;
-            releaseTerminalReaderLease(params.terminalKey, terminalReaderOwnerTokenRef.current);
-        };
 
         const failTerminalSession = (errorCode: string) => {
-            releaseReaderLease();
-            setStatus('error');
-            setError(errorCode);
+            publishConnection('error', errorCode);
+            releaseTerminalReaderLease(params.terminalKey, ownerToken);
         };
 
         const exitTerminalSession = () => {
-            releaseReaderLease();
-            setStatus('exited');
-            setError(null);
+            publishConnection('exited');
+            releaseTerminalReaderLease(params.terminalKey, ownerToken);
         };
 
         const start = async () => {
+            if (!active || !initialTerminalSize) return;
             const previousTerminalId = terminalIdRef.current;
             const previousCursor = cursorRef.current;
             const cachedSurfaceState = readTerminalSurfaceState(params.terminalKey) ?? createEmptyTerminalSurfaceState();
 
-            if (!claimTerminalReaderLease(params.terminalKey, terminalReaderOwnerTokenRef.current)) {
+            if (!claimTerminalReaderLease(params.terminalKey, ownerToken, reconnect)) {
                 terminalIdRef.current = cachedSurfaceState.terminalId;
                 cursorRef.current = cachedSurfaceState.cursor;
-                setError(null);
-                setStatus(cachedSurfaceState.terminalId ? 'connected' : 'connecting');
                 hydrateTerminalRendererIfNeeded();
                 return;
             }
 
-            setError(null);
-            setStatus('connecting');
+            publishConnection('connecting');
 
             if (!params.machineId || (!params.cwd && !params.launch)) {
                 failTerminalSession('terminal_missing_machine_target');
@@ -203,10 +190,6 @@ export function useMachineTerminalSession(params: Readonly<{
             }
             if (params.machineReachable === false) {
                 failTerminalSession('terminal_machine_unreachable');
-                return;
-            }
-            if (!initialTerminalSize) {
-                setStatus('connecting');
                 return;
             }
 
@@ -226,10 +209,11 @@ export function useMachineTerminalSession(params: Readonly<{
                     rows: terminalSize.rows,
                     initialCommand: params.initialCommand ?? undefined,
                 };
-            const ensured = restartRequestedRef.current
+            const restartRequested = restartRequestedRef.current;
+            restartRequestedRef.current = false;
+            const ensured = restartRequested
                 ? await machineTerminalRestart(params.machineId, request)
                 : await machineTerminalEnsure(params.machineId, request);
-            restartRequestedRef.current = false;
 
             if (canceled) return;
             if (!ensured.ok) {
@@ -266,7 +250,7 @@ export function useMachineTerminalSession(params: Readonly<{
                 });
                 hydrateTerminalRendererIfNeeded();
             }
-            setStatus('connected');
+            publishConnection('connected');
 
             let idleCount = 0;
             while (!canceled) {
@@ -346,6 +330,10 @@ export function useMachineTerminalSession(params: Readonly<{
             canceled = true;
         };
     }, [
+        active,
+        ownerToken,
+        publishConnection,
+        reconnect,
         connectionNonce,
         hydrateTerminalRendererIfNeeded,
         initialTerminalSize,

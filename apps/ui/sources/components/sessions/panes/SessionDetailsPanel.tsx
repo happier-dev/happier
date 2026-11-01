@@ -363,6 +363,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             if (isTerminalResource(tab.resource)) {
                 return (
                     <SessionEmbeddedTerminalPane
+                        active={tab.key === effectiveActiveKey && (props.presentation === 'screen' || details?.isOpen === true)}
                         sessionId={props.sessionId}
                         scopeId={props.scopeId}
                         currentDockLocation="details"

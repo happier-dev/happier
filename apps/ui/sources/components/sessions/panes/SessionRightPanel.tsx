@@ -21,7 +21,7 @@ import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } fr
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveSessionHeaderActionTargetPx } from '@/components/sessions/actions/sessionHeaderIconMetrics';
 
-import { usePaneActionRail } from '@/components/appShell/panes/PaneActionRailContext';
+import { usePaneActionRail, usePaneActionRailRightPaneHiddenByDetails } from '@/components/appShell/panes/PaneActionRailContext';
 import { getSessionRightPanelTabs, type SessionRightTabId as RightTabId } from './sessionRightPanelTabs';
 import { useSessionRunningAgentCount } from './useSessionRunningAgentCount';
 
@@ -80,6 +80,9 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
     });
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
     const externalRail = usePaneActionRail();
+    const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
+    const terminalActive = props.presentation === 'screen'
+        || (scopeState?.right.isOpen === true && !rightPaneHiddenByDetails);
     const hideHeader = externalRail && props.presentation !== 'screen';
     const terminalTabAvailable = terminalAvailability.sidebarTabAvailable;
     const closeButtonAtStart = props.presentation === 'screen' && Platform.OS !== 'web';
@@ -184,7 +187,7 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
                             testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-terminal')}
                         >
                             <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.text.secondary} />}>
-                                <SessionTerminalSurface sessionId={props.sessionId} scopeId={props.scopeId} />
+                                <SessionTerminalSurface sessionId={props.sessionId} scopeId={props.scopeId} active={terminalActive && activeTab === 'terminal'} />
                             </React.Suspense>
                         </RightTabSurface>
                     )}
@@ -227,8 +230,8 @@ const PaneLoadingFallback = React.memo((props: Readonly<{ color: string }>) => {
  * What an inactive tab is allowed to keep doing.
  *
  * `'live'` is the historical behaviour: the surface stays mounted and keeps working off every store
- * update it subscribes to. That is correct for a surface that owns something running — the embedded
- * terminal has to stay attached to its session whether or not you are looking at it.
+ * update it subscribes to. Stateful surfaces such as the terminal retain their renderer and suspend
+ * their own reader demand through the active prop while hidden.
  *
  * `'suspended'` keeps the surface mounted but stops it rendering (`FrozenSubtree`). Its state, and
  * therefore its scroll position and hydrated content, survive; only the work stops. Choose it for a

@@ -375,6 +375,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
                 minHeight: 0,
                 minWidth: 0,
                 overflow: 'hidden',
+                isolation: 'isolate',
             }}
         />
     );

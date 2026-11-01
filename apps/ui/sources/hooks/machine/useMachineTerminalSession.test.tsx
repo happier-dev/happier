@@ -1,286 +1,155 @@
-import * as React from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderHook } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
+import type { EmbeddedTerminalRendererHandle } from '@/components/sessions/terminal/embeddedTerminalRendererHandle';
+import type { machineTerminalEnsure, machineTerminalStreamRead } from '@/sync/ops/machineTerminal';
 
 import { useMachineTerminalSession } from './useMachineTerminalSession';
 
-const machineTerminalEnsureMock = vi.hoisted(() => vi.fn());
-const machineTerminalRestartMock = vi.hoisted(() => vi.fn());
-const machineTerminalStreamReadMock = vi.hoisted(() => vi.fn());
-const machineTerminalCloseMock = vi.hoisted(() => vi.fn());
-const clearTerminalOutputMock = vi.hoisted(() => vi.fn());
-const hydrateTerminalRendererIfNeededMock = vi.hoisted(() => vi.fn());
-const replaceSurfaceStateMock = vi.hoisted(() => vi.fn());
-const setDetectedUrlMock = vi.hoisted(() => vi.fn());
-const syncDetectedUrlMock = vi.hoisted(() => vi.fn());
-const updateSurfaceStateMock = vi.hoisted(() => vi.fn());
-const writeTerminalOutputMock = vi.hoisted(() => vi.fn());
-const onInputMock = vi.hoisted(() => vi.fn());
-const onResizeMock = vi.hoisted(() => vi.fn());
-const onReadyMock = vi.hoisted(() => vi.fn());
-const initialTerminalSize = vi.hoisted(() => ({
-    cols: 80,
-    rows: 24,
+// The daemon RPC transport is the boundary; the reader, cache and renderer projection stay real.
+const rpc = vi.hoisted(() => ({
+    ensure: vi.fn<typeof machineTerminalEnsure>(),
+    restart: vi.fn<typeof machineTerminalEnsure>(),
+    read: vi.fn<typeof machineTerminalStreamRead>(),
+    close: vi.fn(),
+    input: vi.fn(),
+    resize: vi.fn(),
 }));
-const latestTerminalSizeRef = vi.hoisted(() => ({
-    current: initialTerminalSize,
-}));
-const terminalReaderLeaseState = vi.hoisted(() => ({
-    ownerByKey: new Map<string, symbol>(),
-}));
-
-vi.mock('@/components/sessions/terminal/terminalSurfaceStateCache', () => ({
-    createEmptyTerminalSurfaceState: () => ({
-        terminalId: null,
-        cursor: 0,
-        output: '',
-        detectedUrl: null,
-    }),
-    readTerminalSurfaceState: () => null,
-}));
-
-vi.mock('@/components/sessions/terminal/useEmbeddedTerminalTransportHandlers', () => ({
-    useEmbeddedTerminalTransportHandlers: () => ({
-        initialTerminalSize,
-        latestTerminalSizeRef,
-        onInput: onInputMock,
-        onResize: onResizeMock,
-        onReady: onReadyMock,
-    }),
-}));
-
-vi.mock('@/components/sessions/terminal/useTerminalSurfaceState', () => ({
-    useTerminalSurfaceState: () => ({
-        detectedUrl: null,
-        clearTerminalOutput: clearTerminalOutputMock,
-        hydrateTerminalRendererIfNeeded: hydrateTerminalRendererIfNeededMock,
-        replaceSurfaceState: replaceSurfaceStateMock,
-        setDetectedUrl: setDetectedUrlMock,
-        syncDetectedUrl: syncDetectedUrlMock,
-        updateSurfaceState: updateSurfaceStateMock,
-        writeTerminalOutput: writeTerminalOutputMock,
-    }),
-}));
-
 vi.mock('@/sync/ops/machineTerminal', () => ({
-    machineTerminalEnsure: (...args: unknown[]) => machineTerminalEnsureMock(...args),
-    machineTerminalRestart: (...args: unknown[]) => machineTerminalRestartMock(...args),
-    machineTerminalStreamRead: (...args: unknown[]) => machineTerminalStreamReadMock(...args),
-    machineTerminalClose: (...args: unknown[]) => machineTerminalCloseMock(...args),
+    machineTerminalEnsure: rpc.ensure,
+    machineTerminalRestart: rpc.restart,
+    machineTerminalStreamRead: rpc.read,
+    machineTerminalClose: rpc.close,
+    machineTerminalInput: rpc.input,
+    machineTerminalResize: rpc.resize,
 }));
 
-vi.mock('@/components/sessions/terminal/terminalReaderLeaseRegistry', () => ({
-    claimTerminalReaderLease: (terminalKey: string, ownerToken: symbol) => {
-        const currentOwner = terminalReaderLeaseState.ownerByKey.get(terminalKey);
-        if (currentOwner && currentOwner !== ownerToken) {
-            return false;
-        }
-        terminalReaderLeaseState.ownerByKey.set(terminalKey, ownerToken);
-        return true;
-    },
-    hasTerminalReaderLease: (terminalKey: string, ownerToken: symbol) =>
-        terminalReaderLeaseState.ownerByKey.get(terminalKey) === ownerToken,
-    releaseTerminalReaderLease: (terminalKey: string, ownerToken: symbol) => {
-        if (terminalReaderLeaseState.ownerByKey.get(terminalKey) === ownerToken) {
-            terminalReaderLeaseState.ownerByKey.delete(terminalKey);
-        }
-    },
-    subscribeTerminalReaderLeaseAvailability: () => () => {},
-}));
-
-vi.mock('@/utils/timing/time', () => ({
-    delay: vi.fn(async () => undefined),
-}));
+type EnsureResult = Awaited<ReturnType<typeof machineTerminalEnsure>>;
+let nextKey = 0;
+function terminalArgs() {
+    return {
+        machineId: 'machine-1',
+        cwd: '/repo',
+        terminalKey: `terminal-lifecycle-${++nextKey}`,
+        terminalRef: { current: null as EmbeddedTerminalRendererHandle | null },
+    };
+}
+async function ready(hook: { getCurrent: () => { onReady: (cols: number, rows: number) => void } }) {
+    await act(async () => hook.getCurrent().onReady(80, 24));
+    await flushHookEffects();
+}
 
 describe('useMachineTerminalSession', () => {
     beforeEach(() => {
-        machineTerminalEnsureMock.mockReset();
-        machineTerminalRestartMock.mockReset();
-        machineTerminalStreamReadMock.mockReset();
-        machineTerminalCloseMock.mockReset();
-        terminalReaderLeaseState.ownerByKey.clear();
-        clearTerminalOutputMock.mockReset();
-        hydrateTerminalRendererIfNeededMock.mockReset();
-        replaceSurfaceStateMock.mockReset();
-        setDetectedUrlMock.mockReset();
-        syncDetectedUrlMock.mockReset();
-        updateSurfaceStateMock.mockReset();
-        writeTerminalOutputMock.mockReset();
-        onInputMock.mockReset();
-        onResizeMock.mockReset();
-        onReadyMock.mockReset();
-
-        machineTerminalEnsureMock.mockResolvedValue({
-            ok: true,
-            terminalId: 'terminal-1',
-            reused: false,
-        });
-        machineTerminalRestartMock.mockResolvedValue({
-            ok: true,
-            terminalId: 'terminal-2',
-            reused: false,
-        });
-        machineTerminalStreamReadMock.mockResolvedValue({
-            ok: true,
-            terminalId: 'terminal-1',
-            events: [],
-            nextCursor: 0,
-            done: true,
-        });
-    });
-
-    afterEach(() => {
-        vi.restoreAllMocks();
+        vi.clearAllMocks();
+        rpc.ensure.mockReset().mockResolvedValue({ ok: true, terminalId: 'terminal-1', reused: true });
+        rpc.restart.mockReset().mockResolvedValue({ ok: true, terminalId: 'terminal-2', reused: false });
+        // A pending network long-poll keeps the real reader alive without artificial timers.
+        rpc.read.mockReset().mockImplementation(() => new Promise(() => {}));
     });
 
     it('keeps the stable terminal key on a typed session-attach request', async () => {
-        const terminalRef = { current: null };
+        const args = terminalArgs();
         const launch = { kind: 'session_attach', sessionId: 'session-1' } as const;
-        const hook = await renderHook(() => useMachineTerminalSession({
-            machineId: 'machine-1',
-            cwd: null,
-            launch,
-            machineReachable: true,
-            machineRpcTargetAvailable: true,
-            terminalKey: 'session:session-1:attached',
-            terminalRef,
-        }));
-        await flushHookEffects();
-
-        expect(machineTerminalEnsureMock).toHaveBeenCalledWith('machine-1', expect.objectContaining({
-            terminalKey: 'session:session-1:attached',
-            launch: { kind: 'session_attach', sessionId: 'session-1' },
-        }));
-
+        const hook = await renderHook(() => useMachineTerminalSession({ ...args, cwd: null, launch }));
+        await ready(hook);
+        expect(rpc.ensure).toHaveBeenCalledWith('machine-1', expect.objectContaining({ terminalKey: args.terminalKey, launch }));
         await hook.unmount();
     });
 
-    it('releases the reader lease after an early validation error so another pane can connect', async () => {
-        const terminalRef = { current: null };
-        const failed = await renderHook(() => useMachineTerminalSession({
-            machineId: null,
-            cwd: '/repo',
-            machineReachable: true,
-            machineRpcTargetAvailable: true,
-            terminalKey: 'terminal-key-validation',
-            terminalRef,
-        }));
+    it('shares the live connection and failure state with every pane without duplicating the reader', async () => {
+        const ensure = createDeferred<EnsureResult>();
+        const read = createDeferred<Awaited<ReturnType<typeof machineTerminalStreamRead>>>();
+        rpc.ensure.mockReturnValueOnce(ensure.promise);
+        rpc.read.mockReturnValueOnce(read.promise);
+        const args = terminalArgs();
+        const owner = await renderHook(() => useMachineTerminalSession(args));
+        await ready(owner);
+        const followerArgs = { ...args, terminalRef: { current: null } };
+        const follower = await renderHook(() => useMachineTerminalSession(followerArgs));
+        await ready(follower);
+        await act(async () => ensure.resolve({ ok: true, terminalId: 'terminal-1', reused: false }));
         await flushHookEffects();
-
-        expect(failed.getCurrent().error).toBe('terminal_missing_machine_target');
-
-        const next = await renderHook(() => useMachineTerminalSession({
-            machineId: 'machine-1',
-            cwd: '/repo',
-            machineReachable: true,
-            machineRpcTargetAvailable: true,
-            terminalKey: 'terminal-key-validation',
-            terminalRef,
-        }));
+        expect([owner.getCurrent().status, follower.getCurrent().status]).toEqual(['connected', 'connected']);
+        expect(rpc.ensure).toHaveBeenCalledTimes(1);
+        expect(rpc.read).toHaveBeenCalledTimes(1);
+        await act(async () => read.resolve({ ok: false, errorCode: 'terminal_spawn_failed', error: 'Terminal failed' }));
         await flushHookEffects();
-
-        expect(machineTerminalEnsureMock).toHaveBeenCalledTimes(1);
-
-        await failed.unmount();
-        await next.unmount();
+        expect([owner.getCurrent().error, follower.getCurrent().error]).toEqual(['terminal_spawn_failed', 'terminal_spawn_failed']);
+        expect(rpc.ensure).toHaveBeenCalledTimes(1);
+        await owner.unmount();
+        await follower.unmount();
     });
 
-    it('releases the reader lease after a fatal RPC failure so another pane can retry', async () => {
-        const terminalRef = { current: null };
-        machineTerminalEnsureMock.mockRejectedValueOnce(new Error('rpc exploded'));
+    it('does not let an unready renderer block another ready pane', async () => {
+        const args = terminalArgs();
+        const hidden = await renderHook(() => useMachineTerminalSession(args));
+        const visibleArgs = { ...args, terminalRef: { current: null } };
+        const visible = await renderHook(() => useMachineTerminalSession(visibleArgs));
+        await ready(visible);
+        expect(visible.getCurrent().status).toBe('connected');
+        expect(rpc.ensure).toHaveBeenCalledTimes(1);
+        await hidden.unmount();
+        await visible.unmount();
+    });
 
-        const failed = await renderHook(() => useMachineTerminalSession({
-            machineId: 'machine-1',
-            cwd: '/repo',
-            machineReachable: true,
-            machineRpcTargetAvailable: true,
-            terminalKey: 'terminal-key-rpc-error',
-            terminalRef,
-        }));
+    it('lets a follower retry a stalled owner and ignores the superseded response', async () => {
+        const stalled = createDeferred<EnsureResult>();
+        rpc.ensure.mockReturnValueOnce(stalled.promise);
+        const args = terminalArgs();
+        const owner = await renderHook(() => useMachineTerminalSession(args));
+        await ready(owner);
+        const followerArgs = { ...args, terminalRef: { current: null } };
+        const follower = await renderHook(() => useMachineTerminalSession(followerArgs));
+        await ready(follower);
+        await act(async () => follower.getCurrent().retryConnect());
         await flushHookEffects();
-
-        expect(failed.getCurrent().error).toBe('rpc exploded');
-
-        const next = await renderHook(() => useMachineTerminalSession({
-            machineId: 'machine-1',
-            cwd: '/repo',
-            machineReachable: true,
-            machineRpcTargetAvailable: true,
-            terminalKey: 'terminal-key-rpc-error',
-            terminalRef,
-        }));
+        expect(follower.getCurrent().status).toBe('connected');
+        expect(rpc.ensure).toHaveBeenCalledTimes(2);
+        await act(async () => stalled.resolve({ ok: false, errorCode: 'terminal_disabled', error: 'Obsolete failure' }));
         await flushHookEffects();
+        expect([owner.getCurrent().status, follower.getCurrent().status]).toEqual(['connected', 'connected']);
+        expect(rpc.restart).not.toHaveBeenCalled();
+        await owner.unmount();
+        await follower.unmount();
+    });
 
-        expect(machineTerminalEnsureMock).toHaveBeenCalledTimes(2);
-
-        await failed.unmount();
-        await next.unmount();
+    it('releases an inactive reader and resumes from cached output without closing the PTY', async () => {
+        const args = terminalArgs();
+        const read = createDeferred<Awaited<ReturnType<typeof machineTerminalStreamRead>>>();
+        rpc.read.mockReturnValueOnce(read.promise);
+        const hook = await renderHook(({ active }) => useMachineTerminalSession({ ...args, active }), { initialProps: { active: true } });
+        await ready(hook);
+        await hook.rerender({ active: false });
+        await act(async () => read.resolve({ ok: true, terminalId: 'terminal-1', nextCursor: 4, events: [{ t: 'data', data: 'late' }], done: false }));
+        await flushHookEffects();
+        expect(rpc.read).toHaveBeenCalledTimes(1);
+        const visibleArgs = { ...args, terminalRef: { current: null } };
+        const visible = await renderHook(() => useMachineTerminalSession(visibleArgs));
+        await ready(visible);
+        expect(visible.getCurrent().status).toBe('connected');
+        expect(rpc.ensure).toHaveBeenCalledTimes(2);
+        expect(rpc.close).not.toHaveBeenCalled();
+        expect(rpc.restart).not.toHaveBeenCalled();
+        await hook.unmount();
+        await visible.unmount();
     });
 
     it.each([
-        {
-            name: 'the stream finishes with done',
-            firstReadResult: {
-                ok: true,
-                terminalId: 'terminal-1',
-                events: [],
-                nextCursor: 0,
-                done: true,
-            },
-        },
-        {
-            name: 'the stream emits exit',
-            firstReadResult: {
-                ok: true,
-                terminalId: 'terminal-1',
-                events: [{ t: 'exit', exitCode: 0 }],
-                nextCursor: 0,
-                done: false,
-            },
-        },
-        {
-            name: 'the stream fails with a non-recoverable error',
-            firstReadResult: {
-                ok: false,
-                errorCode: 'terminal_session_missing',
-            },
-        },
-    ])('releases the reader lease after $name so another pane can reconnect', async ({ firstReadResult }) => {
-        const terminalRef = { current: null };
-        machineTerminalStreamReadMock
-            .mockResolvedValueOnce(firstReadResult)
-            .mockResolvedValue({
-                ok: true,
-                terminalId: 'terminal-2',
-                events: [],
-                nextCursor: 0,
-                done: true,
-            });
-
-        const finished = await renderHook(() => useMachineTerminalSession({
-            machineId: 'machine-1',
-            cwd: '/repo',
-            machineReachable: true,
-            machineRpcTargetAvailable: true,
-            terminalKey: 'terminal-key-stream-release',
-            terminalRef,
-        }));
-        await flushHookEffects();
-
-        const next = await renderHook(() => useMachineTerminalSession({
-            machineId: 'machine-1',
-            cwd: '/repo',
-            machineReachable: true,
-            machineRpcTargetAvailable: true,
-            terminalKey: 'terminal-key-stream-release',
-            terminalRef,
-        }));
-        await flushHookEffects();
-
-        expect(machineTerminalEnsureMock).toHaveBeenCalledTimes(2);
-
-        await finished.unmount();
+        { name: 'validation failure', machineId: null, failure: null, error: 'terminal_missing_machine_target' },
+        { name: 'RPC failure', machineId: 'machine-1', failure: new Error('rpc exploded'), error: 'rpc exploded' },
+    ])('allows a newly opened pane to recover after $name', async ({ machineId, failure, error }) => {
+        const args = terminalArgs();
+        if (failure) rpc.ensure.mockRejectedValueOnce(failure);
+        const failed = await renderHook(() => useMachineTerminalSession({ ...args, machineId }));
+        await ready(failed);
+        expect(failed.getCurrent().error).toBe(error);
+        const nextArgs = { ...args, terminalRef: { current: null } };
+        const next = await renderHook(() => useMachineTerminalSession(nextArgs));
+        await ready(next);
+        expect(next.getCurrent().status).toBe('connected');
+        await failed.unmount();
         await next.unmount();
     });
 });

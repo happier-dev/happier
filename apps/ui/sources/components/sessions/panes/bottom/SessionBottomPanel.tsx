@@ -22,6 +22,7 @@ export const SessionBottomPanel = React.memo((props: Readonly<{ sessionId: strin
                     style={{ flex: 1, minHeight: 0, minWidth: 0 }}
                 >
                     <SessionEmbeddedTerminalPane
+                        active={pane.scopeState?.bottom?.isOpen === true}
                         sessionId={props.sessionId}
                         scopeId={props.scopeId}
                         currentDockLocation="bottom"

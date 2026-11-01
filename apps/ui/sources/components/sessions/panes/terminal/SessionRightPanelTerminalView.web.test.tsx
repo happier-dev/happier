@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
+import type { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -19,9 +20,21 @@ const terminalHandleInstances: Array<{
     focus: ReturnType<typeof vi.fn>;
 }> = [];
 
+let terminalPlatform: 'web' | 'native' = 'web';
 let shouldTriggerResizeAfterReady = false;
 let terminalRendererVersion = 0;
 let activeScreen: RenderScreenResult | null = null;
+let paneDispatch: ReturnType<typeof useAppPaneContext>['dispatch'];
+let paneModule: typeof import('@/components/appShell/panes/AppPaneProvider');
+
+function PaneControlBoundary(props: Readonly<{ children: React.ReactNode }>) {
+    paneDispatch = paneModule.useAppPaneContext().dispatch;
+    return props.children;
+}
+
+function withPaneProvider(element: React.ReactElement) {
+    return <paneModule.AppPaneProvider><PaneControlBoundary>{element}</PaneControlBoundary></paneModule.AppPaneProvider>;
+}
 let sessionState: any = { metadata: { machineId: 'machine-1', path: '/tmp' } };
 let projectState: any = null;
 
@@ -48,10 +61,12 @@ installSessionDetailsPanelCommonModuleMocks({
 });
 
 async function renderAndFlush(element: React.ReactElement): Promise<RenderScreenResult> {
-    const screen = await renderScreen(element);
-    activeScreen = screen;
+    paneModule = await import('@/components/appShell/panes/AppPaneProvider');
+    const screen = await renderScreen(withPaneProvider(element));
+    const wrappedScreen = { ...screen, update: (next: React.ReactElement) => screen.update(withPaneProvider(next)) };
+    activeScreen = wrappedScreen;
     await flushHookEffects();
-    return screen;
+    return wrappedScreen;
 }
 
 async function loadSessionRightPanelTerminalViewWeb() {
@@ -118,37 +133,12 @@ vi.mock('@/components/terminal/xterm/XtermTerminalView.web', () => ({
     }),
 }));
 
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-    useSessionMachineReachability: () => ({ machineReachable: true, machineRpcTargetAvailable: true }),
-}));
-
 vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'phone',
 }));
 
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        scopeId: 'session:s1',
-        scopeState: {
-            right: { isOpen: true, activeTabId: 'terminal', tabState: {} },
-            details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
-            bottom: { isOpen: false, activeTabId: null, tabState: {} },
-        },
-        openRight: vi.fn(),
-        closeRight: vi.fn(),
-        setRightTab: vi.fn(),
-        setRightTabState: vi.fn(),
-        openBottom: vi.fn(),
-        closeBottom: vi.fn(),
-        setBottomTab: vi.fn(),
-        setBottomTabState: vi.fn(),
-        openDetailsTab: vi.fn(),
-        setDetailsTabState: vi.fn(),
-        pinDetailsTab: vi.fn(),
-        closeDetails: vi.fn(),
-        closeDetailsTab: vi.fn(),
-        setActiveDetailsTab: vi.fn(),
-    }),
+vi.mock('@/components/terminal/xterm/webview/XtermWebViewSurface.native', async () => ({
+    XtermWebViewSurface: (await import('@/components/terminal/xterm/XtermTerminalView.web')).XtermTerminalView,
 }));
 
 vi.mock('@/sync/ops/machineTerminal', () => ({
@@ -191,6 +181,16 @@ vi.mock('@/utils/url/openExternalUrl', () => ({
 describe('SessionRightPanelTerminalView.web', () => {
     beforeEach(() => {
         vi.resetModules();
+        // Vitest does not resolve Metro's native suffixes. Select the real platform modules here;
+        // both still execute the real PTY controller through the renderer and RPC boundaries below.
+        vi.doMock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', async () => terminalPlatform === 'native'
+            ? await import('@/components/sessions/terminal/SessionEmbeddedTerminalPane.native')
+            : await import('@/components/sessions/terminal/SessionEmbeddedTerminalPane.web'));
+        vi.doMock('@/components/terminal/embedded/EmbeddedTerminalPane', async () => terminalPlatform === 'native'
+            ? await import('@/components/terminal/embedded/EmbeddedTerminalPane.native')
+            : await import('@/components/terminal/embedded/EmbeddedTerminalPane.web'));
+
+        terminalPlatform = 'web';
         shouldTriggerResizeAfterReady = false;
         terminalRendererVersion = 0;
         activeScreen = null;
@@ -235,6 +235,126 @@ describe('SessionRightPanelTerminalView.web', () => {
             activeScreen = null;
         }
         terminalHandleInstances.length = 0;
+    });
+
+    it('releases bottom-panel demand on close while retaining its renderer for reopening', async () => {
+        const blockedRead = createDeferred<{
+            ok: true; terminalId: string; events: []; nextCursor: number; done: boolean;
+        }>();
+        machineTerminalStreamReadSpy.mockImplementation(() => blockedRead.promise);
+        const { SessionBottomPanel } = await import('../bottom/SessionBottomPanel');
+        const screen = await renderAndFlush(<SessionBottomPanel sessionId="s1" scopeId="session:s1" />);
+        try {
+            await act(async () => paneDispatch({ type: 'openBottom', scopeId: 'session:s1', tabId: 'terminal' }));
+            await flushHookEffects();
+            expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(1);
+            expect(terminalHandleInstances).toHaveLength(1);
+
+            await act(async () => paneDispatch({ type: 'closeBottom', scopeId: 'session:s1' }));
+            await flushHookEffects();
+            blockedRead.resolve({ ok: true, terminalId: 't1', events: [], nextCursor: 0, done: false });
+            await flushHookEffects();
+            expect(machineTerminalStreamReadSpy).toHaveBeenCalledTimes(1);
+            expect(terminalHandleInstances).toHaveLength(1);
+            machineTerminalStreamReadSpy.mockResolvedValue({ ok: true, terminalId: 't1', events: [], nextCursor: 0, done: true });
+
+            await act(async () => paneDispatch({ type: 'openBottom', scopeId: 'session:s1', tabId: 'terminal' }));
+            await flushHookEffects();
+            expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
+            expect(terminalHandleInstances).toHaveLength(1);
+            expect(machineTerminalRestartSpy).not.toHaveBeenCalled();
+        } finally {
+            blockedRead.resolve({ ok: true, terminalId: 't1', events: [], nextCursor: 0, done: true });
+        }
+    });
+
+    it('pauses an inactive retained details terminal and resumes when its tab is selected', async () => {
+        const { SessionDetailsPanel } = await import('../SessionDetailsPanel');
+        const blockedRead = createDeferred<{
+            ok: true; terminalId: string; events: []; nextCursor: number; done: boolean;
+        }>();
+        machineTerminalStreamReadSpy.mockImplementation(() => blockedRead.promise);
+        await renderAndFlush(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
+        try {
+            await act(async () => paneDispatch({
+                type: 'openDetailsTab', scopeId: 'session:s1', openAs: 'pinned',
+                tab: { key: 'terminal:embedded', kind: 'terminal', title: 'Terminal', resource: { kind: 'terminal' } },
+            }));
+            await flushHookEffects();
+            expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(1);
+            await act(async () => paneDispatch({
+                type: 'openDetailsTab', scopeId: 'session:s1', openAs: 'pinned',
+                tab: { key: 'other', kind: 'other', title: 'Other', resource: { kind: 'other' } },
+            }));
+            blockedRead.resolve({ ok: true, terminalId: 't1', events: [], nextCursor: 0, done: false });
+            await flushHookEffects();
+            expect(machineTerminalStreamReadSpy).toHaveBeenCalledTimes(1);
+            expect(terminalHandleInstances).toHaveLength(1);
+            machineTerminalStreamReadSpy.mockResolvedValue({ ok: true, terminalId: 't1', events: [], nextCursor: 0, done: true });
+            await act(async () => paneDispatch({ type: 'setActiveDetailsTab', scopeId: 'session:s1', tabKey: 'terminal:embedded' }));
+            await flushHookEffects();
+            expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
+            expect(terminalHandleInstances).toHaveLength(1);
+        } finally {
+            blockedRead.resolve({ ok: true, terminalId: 't1', events: [], nextCursor: 0, done: true });
+        }
+    });
+
+    it.each(['web', 'native'] as const)('pauses retained %s terminal readers while inactive and resumes the same renderer and cursor', async (platform) => {
+        terminalPlatform = platform;
+        const blockedRead = createDeferred<{
+            ok: true;
+            terminalId: string;
+            events: [];
+            nextCursor: number;
+            done: boolean;
+        }>();
+        machineTerminalStreamReadSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                terminalId: 't1',
+                events: [{ t: 'data', data: 'retained-output' }],
+                nextCursor: 15,
+                done: false,
+            })
+            .mockImplementationOnce(() => blockedRead.promise)
+            .mockResolvedValueOnce({
+                ok: true,
+                terminalId: 't1',
+                events: [{ t: 'data', data: 'resumed-output' }],
+                nextCursor: 29,
+                done: true,
+            });
+        const TerminalView = platform === 'native'
+            ? (await import('./SessionRightPanelTerminalView.native')).SessionRightPanelTerminalView
+            : await loadSessionRightPanelTerminalViewWeb();
+        const screen = await renderAndFlush(<TerminalView sessionId="s1" scopeId="session:s1" active={false} />);
+        try {
+            expect(machineTerminalEnsureSpy).not.toHaveBeenCalled();
+            expect(machineTerminalStreamReadSpy).not.toHaveBeenCalled();
+
+            await screen.update(<TerminalView sessionId="s1" scopeId="session:s1" active />);
+            await flushHookEffects();
+            expect(terminalHandleInstances).toHaveLength(1);
+            const renderer = terminalHandleInstances[0]!;
+            expect(renderer.write).toHaveBeenCalledWith('retained-output');
+            const clearCountBeforeHiding = renderer.clear.mock.calls.length;
+
+            await screen.update(<TerminalView sessionId="s1" scopeId="session:s1" active={false} />);
+            await flushHookEffects();
+            expect(machineTerminalStreamReadSpy).toHaveBeenCalledTimes(2);
+            expect(renderer.clear).toHaveBeenCalledTimes(clearCountBeforeHiding);
+
+            await screen.update(<TerminalView sessionId="s1" scopeId="session:s1" active />);
+            await flushHookEffects();
+            expect(terminalHandleInstances).toHaveLength(1);
+            expect(machineTerminalStreamReadSpy.mock.calls[2]?.[1]?.cursor).toBe(15);
+            expect(renderer.write).toHaveBeenCalledWith('resumed-output');
+            expect(renderer.clear).toHaveBeenCalledTimes(clearCountBeforeHiding);
+            expect(machineTerminalRestartSpy).not.toHaveBeenCalled();
+        } finally {
+            blockedRead.resolve({ ok: true, terminalId: 't1', events: [], nextCursor: 15, done: true });
+        }
     });
 
     it('restarts the PTY when the user presses restart', async () => {
@@ -364,23 +484,32 @@ describe('SessionRightPanelTerminalView.web', () => {
     });
 
     it('retries automatically when initial ensure hits rpc method unavailable', async () => {
+        const blockedRead = createDeferred<{
+            ok: true; terminalId: string; events: []; nextCursor: number; done: boolean;
+        }>();
         machineTerminalEnsureSpy
             .mockRejectedValueOnce(createRpcCallError({
                 error: 'RPC method not available',
                 errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
             }))
             .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: false });
-
+        machineTerminalStreamReadSpy.mockImplementation(() => blockedRead.promise);
         const SessionRightPanelTerminalViewWeb = await loadSessionRightPanelTerminalViewWeb();
-
         const screen = await renderAndFlush(<SessionRightPanelTerminalViewWeb sessionId="s1" scopeId="session:s1" />);
-
-        await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 350));
-        });
-        await flushHookEffects();
-
-        expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
+        try {
+            await act(async () => {
+                await new Promise((resolve) => setTimeout(resolve, 350));
+            });
+            await flushHookEffects();
+            expect(machineTerminalStreamReadSpy).toHaveBeenCalled();
+            const { readTerminalReaderConnection } = await import('@/components/sessions/terminal/terminalReaderLeaseRegistry');
+            expect(readTerminalReaderConnection('session:s1:terminal')).toEqual({ status: 'connected', error: null });
+            expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
+        } finally {
+            await act(async () => {
+                blockedRead.resolve({ ok: true, terminalId: 't1', events: [], nextCursor: 0, done: true });
+            });
+        }
     });
 
     it('preserves the stream cursor when auto-retrying after a transient read error', async () => {
@@ -421,7 +550,10 @@ describe('SessionRightPanelTerminalView.web', () => {
 
         const thirdReadArgs = machineTerminalStreamReadSpy.mock.calls[2]?.[1];
         expect(thirdReadArgs?.cursor).toBe(5);
-        expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
+        expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('world');
+        const { readTerminalReaderConnection } = await import('@/components/sessions/terminal/terminalReaderLeaseRegistry');
+        expect(readTerminalReaderConnection('session:s1:terminal')).toEqual({ status: 'exited', error: null });
+        expect(screen.findByTestId('session-rightpanel-terminal-retry')).not.toBeNull();
     });
 
     it('preserves the stream cursor when auto-retrying after a stream read timeout', async () => {
@@ -457,8 +589,11 @@ describe('SessionRightPanelTerminalView.web', () => {
         await flushHookEffects();
 
         expect(machineTerminalStreamReadSpy.mock.calls[2]?.[1]?.cursor).toBe(5);
+        expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('world');
 
-        expect(screen.findByTestId('session-rightpanel-terminal-retry')).toBeNull();
+        const { readTerminalReaderConnection } = await import('@/components/sessions/terminal/terminalReaderLeaseRegistry');
+        expect(readTerminalReaderConnection('session:s1:terminal')).toEqual({ status: 'exited', error: null });
+        expect(screen.findByTestId('session-rightpanel-terminal-retry')).not.toBeNull();
     });
 
     it('hydrates the transcript and cursor across terminal surface remounts', async () => {

@@ -48,6 +48,7 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
     );
 
     const controller = useSessionEmbeddedTerminalPty({
+        active: props.active,
         sessionId: props.sessionId,
         terminalKey,
         terminalMode,

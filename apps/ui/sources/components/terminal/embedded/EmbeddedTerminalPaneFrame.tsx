@@ -157,7 +157,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                         <Text style={styles.overlayTitle}>{overlayTitle}</Text>
                         <Text style={styles.overlayBody}>{overlayBody}</Text>
 
-                        {props.controller.status === 'error' ? (
+                        {props.controller.status !== 'idle' ? (
                             <Pressable testID={testId('retry')} onPress={props.controller.retryConnect} style={styles.overlayRetry}>
                                 <Text style={styles.overlayRetryLabel}>{t('common.retry')}</Text>
                             </Pressable>

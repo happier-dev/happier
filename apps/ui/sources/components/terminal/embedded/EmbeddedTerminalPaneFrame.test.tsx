@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installEmbeddedTerminalPaneCommonModuleMocks } from './embeddedTerminalPaneTestHelpers';
 
@@ -56,10 +57,6 @@ vi.mock('@/utils/url/openExternalUrl', () => ({
     openExternalUrl: vi.fn(),
 }));
 
-vi.mock('@/components/sessions/terminal/terminalErrorCopy', () => ({
-    resolveTerminalErrorCopy: () => null,
-}));
-
 import { EmbeddedTerminalPaneFrame } from './EmbeddedTerminalPaneFrame';
 import { embeddedTerminalPaneStyles } from './embeddedTerminalPaneStyles';
 import type { EmbeddedTerminalPaneController } from './types';
@@ -104,6 +101,23 @@ describe('EmbeddedTerminalPaneFrame', () => {
         expect(overlay).toBeTruthy();
         expect(overlay?.parent?.props.style).toBe(embeddedTerminalPaneStyles.terminalSurface);
         expect(screen.findByTestId('provider-auth-terminal-close')).toBeTruthy();
+    });
+
+    it('offers retry while connecting so a stalled attachment can be superseded', async () => {
+        const retryConnect = vi.fn();
+        const controller: EmbeddedTerminalPaneController = {
+            status: 'connecting', error: null, detectedUrl: null,
+            onInput: () => {}, onResize: () => {}, onReady: () => {},
+            clearTerminal: () => {}, requestRestart: () => {}, retryConnect,
+            dismissDetectedUrl: () => {},
+        };
+        const screen = await renderScreen(React.createElement(EmbeddedTerminalPaneFrame, {
+            title: 'Terminal', controller, surface: React.createElement('TerminalSurface'), testIdPrefix: 'terminal',
+        }));
+        const retry = screen.findByTestId('terminal-retry');
+        expect(retry).toBeTruthy();
+        await act(async () => retry!.props.onPress());
+        expect(retryConnect).toHaveBeenCalledTimes(1);
     });
 
     it('reserves bottom space for the native keyboard inside the terminal surface', async () => {
