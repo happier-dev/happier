@@ -153,13 +153,9 @@ async function materializeArtifactGraph(destination, files, reuseContent) {
 
 export function listBundledPluginUiArtifactExports(packageJson) {
   return packageJson?.exports && typeof packageJson.exports === 'object'
-    ? Object.entries(packageJson.exports).filter(([key, target]) => (
-      key.startsWith('./happier-plugin-ui/')
-      // Portable authored entries are direct source declarations. Conditional
-      // platform modules (e.g. voice) retain their ordinary Metro source path;
-      // they are not the universal app-preseed artifact compiler's inputs.
-      && (key.endsWith('/entry.cjs.bundle') || typeof target === 'string')
-    )).map(([key]) => key) : [];
+    // The SDK compiler owns manifest references and conditional export
+    // resolution, including authored happier-source Account entries.
+    ? Object.keys(packageJson.exports).filter(key => key.startsWith('./happier-plugin-ui/')) : [];
 }
 
 export async function collectBundledPluginUiArtifactSources(repoRoot, initialPluginFailures = [], artifactRoots, pluginManifests = {}, artifactOutputDirs = {}, artifactStoreDir) {

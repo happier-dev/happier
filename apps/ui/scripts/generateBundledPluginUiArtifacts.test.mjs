@@ -1,3 +1,5 @@
+// Preparation imports authored SDK TypeScript, as the source child does.
+import '../../../packages/cli-common/registerSourceRuntime.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -15,6 +17,7 @@ import {
 
 import {
   generateBundledPluginUiArtifacts,
+  listBundledPluginUiArtifactExports,
   resolveBundledPluginUiArtifactsInputPaths,
   resolveBundledPluginUiArtifactsOutputPath,
 } from './generateBundledPluginUiArtifacts.mjs';
@@ -120,6 +123,35 @@ async function addFixtureBrand(fixture) {
   await writeFile(join(pluginRoot, '.happier-plugin/plugin.json'), JSON.stringify(manifest));
   return { bytes, manifest };
 }
+
+test('conditional portable source exports publish executable graphs through source preparation', async () => {
+  const fixture = await createFixture();
+  try {
+    const root = join(fixture.repoRoot, 'packages/plugins/fixture');
+    const packageJson = { name: '@happier-dev/plugins-fixture', version: '0.0.0', exports: {
+      './happier-plugin-ui/fixture-card': {
+        'happier-source': './src/card.ts', default: './dist/card.js',
+      },
+    } };
+    await writeFile(join(root, 'package.json'), JSON.stringify(packageJson));
+    await mkdir(join(root, 'src'), { recursive: true });
+    await writeFile(join(root, 'src/card.ts'), 'export function renderSurface() { return null; }');
+    const manifest = JSON.parse(await readFile(join(root, '.happier-plugin/plugin.json'), 'utf8'));
+    const { prepareSourcePluginUiArtifacts } = await import('./prepareSourcePluginUiArtifacts.mjs');
+    const result = await prepareSourcePluginUiArtifacts({ repoRoot: fixture.repoRoot,
+      outputDir: join(fixture.repoRoot, 'source-preparation'),
+      // The source host uses the same package membership decision.
+      plugins: [{ directory: 'fixture', manifest,
+        uiArtifacts: listBundledPluginUiArtifactExports(packageJson).length > 0 }],
+    });
+    assert.deepEqual(result.pluginFailures, []);
+    const inventory = readEmittedPluginUiInventory(await readFile(result.outputPath, 'utf8'));
+    assert.equal(inventory.BUNDLED_PLUGIN_UI_APP_ARTIFACTS.length, 1,
+      'a conditional portable source must reach the compiler rather than publish metadata alone');
+    const declaration = inventory.BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0];
+    assert.equal(declaration.artifactGraphs.length, 1);
+  } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
+});
 
 test('the UI prebuild owns one universal exact app-preseed registry from canonical artifact manifests', async () => {
   const fixture = await createFixture();
