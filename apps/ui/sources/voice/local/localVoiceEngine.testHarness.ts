@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { waitForTestEvent } from '@/dev/testkit';
+import { settingsParse } from '@/sync/domains/settings/settings';
 import { captureMachinePresenceObservation as observeLocalVoiceFixturePresence } from '@/sync/domains/machines/reachability/machineReachability';
 import type { Socket } from 'socket.io-client';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
@@ -37,6 +38,7 @@ import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessio
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoringMemoryHttp';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -215,6 +217,7 @@ export function emitAudioStreamEvent<Name extends keyof HappierAudioStreamNative
 const baseVoice = voiceSettingsParse({ providerId: 'local_conversation', welcome: { enabled: false } });
 export const BASE_SETTINGS = {
     experiments: true,
+    featureToggles: { voice: true, 'voice.agent': true, 'voice.daemonInference': true, 'execution.runs': true },
     lastUsedAgent: 'codex',
     recentMachinePaths: [{ machineId: 'machine-1', path: '/Users/test/.happier' }],
     voice: {
@@ -284,12 +287,18 @@ export async function getStorage() {
                     : { voice: settings.voice };
                 const normalizedSettings = { ...settings, ...normalizeVoiceSettingsLocalDelta(voiceDelta, current) };
                 normalized.settings = normalizedSettings;
+                const version = typeof patch.settingsVersion === 'number' ? patch.settingsVersion : (storage.getState().settingsVersion ?? 0) + 1;
+                normalized.settingsVersion = version;
+                // Binding activates this Account's persisted projection. Seed
+                // the same served document through its real projection writer.
+                storage.getState().applySettings(settingsParse(normalizedSettings), version);
                 // The HTTP owner stores a serialized envelope, not this client
                 // object. Publish authored fixture settings through its public
-                // replacement port at the actual projection's known version.
+                // replacement port with the new document's version, so retained
+                // Account readers cannot reuse the preceding fixture document.
                 activeAccountHomes?.replaceAccountSettings('voice', {
                     settings: normalizedSettings,
-                    version: typeof patch.settingsVersion === 'number' ? patch.settingsVersion : storage.getState().settingsVersion ?? 1,
+                    version,
                 });
             }
             if (patch.sessions && typeof patch.sessions === 'object') {
@@ -621,7 +630,7 @@ async function createLocalVoiceAccountHarness() {
     const { storage } = await import('@/sync/domains/state/storage');
     let metadataHttp = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
     return {
-        async setup(serverIdentityId?: string) {
+        async setup(serverIdentityId = 'srv_local_voice_actions') {
             await connection?.dispose();
             metadataHttp = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
             const authoringMemoryHttp = createAuthoringMemoryHttpBoundary();
@@ -643,6 +652,9 @@ async function createLocalVoiceAccountHarness() {
                         if (overridden !== undefined) return overridden;
                     }
                     const { path } = request;
+                    if (path === managedMachineActionEndpointPathV1('machines.managed.list')) {
+                        return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
+                    }
                     const input = request.url;
                     const init = { method: request.method, headers: request.headers, signal: request.signal,
                         ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) };

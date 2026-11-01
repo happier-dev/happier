@@ -5,6 +5,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { captureDocPassageV1 } from '@happier-dev/protocol/artifacts/artifactPassageV1';
 import { describeApprovalActionFields } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { DocReadResultV1Schema } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { AccountNoticeArtifactBodyV1Schema, AccountNoticeArtifactHeaderV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
@@ -137,7 +138,8 @@ describe('Voice Action reference catalog', () => {
     expect(JSON.parse(await handlers.settings_get!(input))).toMatchObject({ ok: true, value: 1000 });
     expect(ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(ask.id) ?? 'null')))
       .toMatchObject({ status: 'open', actionId: 'settings.set', requestedSurface: 'voice',
-        executionOriginV1: { authority: 'account_automation' } });
+        executionOriginV1: { authority: resolveInvocationAuthority({ credential: 'account', surface: 'voice',
+          actionId: 'settings.set', voiceCanApproveRequests: decisionPath !== 'voice-disabled' }) } });
     // Discover the actual Account Ask through the same tools available to the
     // Voice agent; native Session updates are not its source of truth.
     const queue = JSON.parse(await handlers.approval_request_list!({ status: 'open' }));
@@ -184,7 +186,7 @@ describe('Voice Action reference catalog', () => {
         artifactId: ask.id, decision: 'approve',
       }, { surface: 'ui', serverId, authority: 'present_user', actionCaller: { kind: 'host' } });
     expect(decided).toMatchObject({ ok: true });
-    expect(JSON.parse(await pending)).toMatchObject({ ok: true, value: 1100 });
+    expect(JSON.parse(await pending)).toMatchObject({ ok: true, kind: 'approval_request_created', artifactId: ask.id, actionId: 'settings.set' });
     expect(JSON.parse(await handlers.settings_get!(input))).toMatchObject({ ok: true, value: 1100 });
     expect(content.v.favoriteMachines).toEqual(['keep-neighbor']);
     expect(version).toBe(2);
@@ -319,7 +321,9 @@ describe('Voice Action reference catalog', () => {
       expect(network.messages).toHaveLength(before);
       const request = ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(pending.result.artifactId) ?? 'null'));
       expect(request).toMatchObject({ actionId, actionArgs: input, status: 'open', requestedSurface: 'voice',
-        preview: { actionId, actionArgs: input }, executionOriginV1: { surface: 'voice', authority: 'account_automation' } });
+        preview: { actionId, actionArgs: input }, executionOriginV1: { surface: 'voice', authority: resolveInvocationAuthority({
+          credential: 'account', surface: 'voice', actionId, voiceCanApproveRequests: settingsDefaults.voice.canApproveRequests,
+        }) } });
       const presentation = describeApprovalActionFields(request);
       expect(presentation.unrepresentable).toBeNull();
       expect(presentation.rows).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'target', value: JSON.stringify(target) })]));

@@ -382,9 +382,12 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     const proposal = JSON.parse(await tools.answerUserActionRequest({ decision: 'reject', currentSessionOnly: true }, {
       serverId: currentToolSessionAddress.serverId, effectId: 'question-answer-proposal',
     }));
-    expect(proposal).toMatchObject({ ok: true, kind: 'approval_request_created', artifactId: expect.any(String) });
+    expect(proposal, JSON.stringify(proposal)).toMatchObject({ ok: true, kind: 'approval_request_created', artifactId: expect.any(String) });
+    storage.__setState({ settings: { ...storage.getState().settings,
+      voice: { ...storage.getState().settings.voice, canApproveRequests: false } } });
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const executor = createDefaultActionExecutor();
+    expect(storage.getState().settings.voice.canApproveRequests).toBe(false);
     expect(await executor.execute('approval.request.decide', { artifactId: proposal.artifactId, decision: 'approve' }, {
       surface: 'voice', serverId: currentToolSessionAddress.serverId,
     })).toMatchObject({ ok: false, errorCode: 'present_user_required' });

@@ -110,6 +110,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     const binding = await voiceSessionBindingManager.ensureBound({ adapterId: 'local_conversation',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, requestedTargetSessionId: 's1' });
     expect(binding?.targetSessionAddress).toEqual({ serverId: localVoiceHomeId, sessionId: 's1' });
+    expect(readLocalConversationVoiceSettings(storage.getState().settings.voice).streaming.enabled).toBe(true);
   }
 
   function run(userText = 'do it', options: Partial<Parameters<typeof runVoiceAgentTurnWithTools>[0]> = {}) {
@@ -273,7 +274,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     const result = await run('send it');
     expect(targetPendingRequests()).toEqual([]);
     expect(result.toolResultBatches[0]?.[0]).toMatchObject({ t: 'sendSessionMessage',
-      result: { ok: false, errorCode: 'not_found' } });
+      result: { ok: false, errorCode: 'admission_unavailable' } });
   });
 
   it('speaks only the outcome-informed follow-up when a requested send fails before dispatch', async () => {
@@ -284,7 +285,7 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     const result = await run('send it', { onAssistantTurn: async ({ assistantText }) => {
       // The non-streaming TTS consumer awaits this callback before continuing.
       expect(parseVoiceToolResultsFollowUp(wireTurns.at(-1)?.message)).toMatchObject({
-        toolResults: [expect.objectContaining({ t: 'sendSessionMessage', result: expect.objectContaining({ ok: false, errorCode: 'not_found' }) })],
+        toolResults: [expect.objectContaining({ t: 'sendSessionMessage', result: expect.objectContaining({ ok: false, errorCode: 'admission_unavailable' }) })],
       });
       expect(targetPendingRequests()).toEqual([]);
       spoken.push(assistantText);

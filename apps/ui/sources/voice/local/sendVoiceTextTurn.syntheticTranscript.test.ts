@@ -14,6 +14,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { writeVoiceConversationScopeMetadata } from '@/voice/persistence/voiceConversationScopeMetadata';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
@@ -61,7 +62,8 @@ installDisconnectedServerSocketBoundary(socket => {
     if (method === RPC_METHODS.SPAWN_HAPPY_SESSION || method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) {
       const resume = SessionResumeRequestV1Schema.parse(payload.params);
       expect(payload.method.slice(0, payload.method.indexOf(':'))).toBe('machine-1');
-      expect(resume).toMatchObject({ type: 'resume-session', sessionId: 'carrier-s1', directory: '/workspace/s1' });
+      expect(resume).toMatchObject({ type: 'resume-session',
+        sessionId: conversationModeState.current === 'direct_session' ? 's1' : 'carrier-s1', directory: '/workspace/s1' });
       return { ok: true, result: { type: 'success', sessionId: resume.sessionId } };
     }
     return { ok: true, result: await retainedAgent.dispatch(method, payload.params) };
@@ -216,8 +218,11 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     retainedAgent = await createRetainedVoiceAgentRpcBoundary({ handleOtherRpc: answerVoiceAgentRpc });
     account = await serveAccountHomes({ homes: [
       { key: 'other', serverUrl: 'https://transcript-other.test', accountId: 'account-b' },
-      { key: 'voice', serverUrl: 'https://transcript-voice.test', accountId: 'account-a', currentAccount: true, settings: buildAccountSettings() },
+      { key: 'voice', serverUrl: 'https://transcript-voice.test', serverIdentityId: 'srv_transcript_voice', accountId: 'account-a', currentAccount: true, settings: buildAccountSettings() },
     ], route: createSessionReadBatchHttpBoundary(request => {
+      if (request.path === managedMachineActionEndpointPathV1('machines.managed.list')) {
+        return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
+      }
       if (request.path === '/v1/account/profile') return request.accountId
         ? Response.json({ ...profileDefaults, id: request.accountId })
         : Response.json({}, { status: 401 });

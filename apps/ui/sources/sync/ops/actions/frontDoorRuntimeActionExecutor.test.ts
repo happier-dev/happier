@@ -9,6 +9,7 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createPlainV2SessionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { LocalServiceInventorySnapshotV1Schema, DaemonLocalServiceInventorySnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -35,6 +36,48 @@ const { runTeamAction } = await import('@/sync/ops/teams/teamActionClient');
 describe('composed UI Action front-door adapters', () => {
     beforeEach(async () => { await homes.reset(); clipboard.mockReset(); daemonRpc.mockReset(); });
     afterEach(() => standardCleanup());
+
+    it('keeps the prepared Voice target through the full-context confirmed handoff when the primary Session changes', async () => {
+        const serverId = await homes.addHome({ name: 'Prepared target Home', serverUrl: 'https://prepared-voice-target.test',
+            serverIdentityId: 'srv_prepared_voice_target', accountId: 'alice', currentAccount: true });
+        homes.answer(serverId, 'GET /v2/sessions/original', { body: {
+            session: createPlainV2SessionRecordFixture({ id: 'original' }),
+        } });
+        homes.answer(serverId, 'GET /v2/account/settings', { body: {
+            version: 1, content: { t: 'plain', v: { voice: { canApproveRequests: true } } },
+        } });
+        const { resolveVoiceActionSessionReference } = await import('@/voice/tools/actionImpl/resolveVoiceActionSessionReference');
+        const delivered: string[] = [];
+        const execute = createFrontDoorActionExecute(undefined, {
+            // The production Voice adapter preserves exact qualified references
+            // without fabricating an admitted corpus or mocking resolution.
+            resolveSessionReference: ({ sessionId, sessionTitle, context, signal }) =>
+                resolveVoiceActionSessionReference({ sessionId, sessionTitle, serverId: context.serverId, signal }),
+            // The Session message transport is external; target resolution,
+            // captured Account authority, preparation and confirmation stay real.
+            sessionSendMessage: async ({ sessionId }) => {
+                delivered.push(sessionId);
+                return { status: 'accepted', localId: `message-${sessionId}` };
+            },
+        });
+        const context = { surface: 'voice', serverId, defaultSessionId: 'original',
+            actionRequestId: 'read-back-original' } as const;
+        const prepared = await execute.prepare('session.message.send', {
+            sessionId: { selector: 'self' }, message: 'The exact operation I reviewed.',
+        }, context, { reviewOnly: true });
+        expect(prepared, JSON.stringify(prepared)).toMatchObject({ kind: 'ready', operation: { sessionTargetsV1: {
+            targets: [{ serverId, sessionId: 'original' }],
+        } } });
+        if (prepared.kind !== 'ready' || !prepared.operation) throw new Error('Expected prepared target snapshot');
+        expect(delivered).toEqual([]);
+        const result = await execute.confirmed(prepared.operation.actionId, prepared.operation.normalizedInput, {
+            ...context, defaultSessionId: 'replacement',
+            sessionTargetsV1: prepared.operation.sessionTargetsV1,
+        });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+        expect(delivered).toEqual(['original']);
+        expect(homes.artifacts(serverId).list()).toEqual([]);
+    });
 
     it('preserves a declined shared-policy confirmation as a typed failure without a webhook effect', async () => {
         const transport = vi.fn(async () => ({ kind: 'discarded', revision: 4 }));
