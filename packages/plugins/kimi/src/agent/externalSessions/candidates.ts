@@ -25,7 +25,7 @@ export async function listKimiCandidates(store: KimiStore, request: AgentExterna
   const control = createExternalSessionContentSearchControl({ signal: request.signal,
     deadlineAtMs: request.scanDeadlineAtMs ?? request.deadlineAtMs });
   let index = previous ? inventory.sessions.findIndex(session => session.id === previous.after) + 1 : 0;
-  if (previous && index === 0) throw new KimiStoreError('source_invalid');
+  if (previous && previous.after !== '' && index === 0) throw new KimiStoreError('source_invalid');
   let after = typeof previous?.after === 'string' ? previous.after : '';
   const cursor = () => encode({ v: 1, identity, generation, after, partial, readable, unsupported });
   const result = (more: boolean): AgentExternalSessionsListCandidatesResult => ({ candidates, nextCursor: more ? cursor() : null,
@@ -43,9 +43,9 @@ export async function listKimiCandidates(store: KimiStore, request: AgentExterna
     };
     if (content) {
       try {
-        // Full replay is the native semantic unit: later undo/compaction can
-        // invalidate an early match. Commit it before yielding to the caller.
-        const projection = await readKimiTranscript(session, request.signal);
+        // A later undo/compaction can invalidate an early hit. An interrupted
+        // replay publishes nothing and retries this Session from native bytes.
+        const projection = await readKimiTranscript(session, request.signal, control);
         const searched = await searchExternalSessionContent({ query, control, isScanComplete: () => true,
           decode: async matchText => ({ partial: projection.partial, records: projection.items.map(item => {
             const data = item.raw.role === 'agent' && record(item.raw.content) && record(item.raw.content.data) ? item.raw.content.data : null;

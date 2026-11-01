@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import type { AgentExternalSessionTranscriptItem } from '@happier-dev/plugin-sdk/sessions/external';
 import { createExternalSessionUnsupportedTranscriptItem } from '@happier-dev/plugin-sdk/sessions/file-stores';
+import type { ExternalSessionContentSearchControl } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { admittedPath, fingerprint, KimiStoreError, record, type KimiSession } from './source.js';
 
 type Entry = {
@@ -15,12 +16,14 @@ const bookkeeping = new Set(['forked', 'turn.prompt', 'turn.steer', 'turn.cancel
   'tools.set_active_tools', 'tools.update_store', 'usage.record', 'goal.create', 'goal.update', 'goal.clear']);
 
 /** Kimi Code 0.18.0 / protocol 1.4. Mirrors the vendor's full transcript, not its folded model context. */
-export async function readKimiTranscript(session: KimiSession, signal: AbortSignal): Promise<Readonly<{
+export async function readKimiTranscript(session: KimiSession, signal: AbortSignal,
+  control?: ExternalSessionContentSearchControl): Promise<Readonly<{
   items: AgentExternalSessionTranscriptItem[]; partial: boolean; identity: string;
 }>> {
   signal.throwIfAborted();
   const path = await admittedPath(session.directory, session.wirePath);
   const before = await stat(path);
+  control?.checkWork();
   const raw = await readFile(path, { encoding: 'utf8', signal });
   const after = await stat(path);
   if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
@@ -57,6 +60,7 @@ export async function readKimiTranscript(session: KimiSession, signal: AbortSign
   };
   for (let line = 0; line < lines.length; line++) {
     signal.throwIfAborted();
+    control?.checkWork();
     const input = lines[line]!.trim();
     if (!input) continue;
     const id = `wire:${line + 1}`;
@@ -170,6 +174,8 @@ export async function readKimiTranscript(session: KimiSession, signal: AbortSign
   if (!metadata) throw new KimiStoreError('unsupported');
   const items: AgentExternalSessionTranscriptItem[] = [];
   for (const entry of entries) {
+    signal.throwIfAborted();
+    control?.checkWork();
     if (entry.origin === 'injection') continue;
     if (entry.unsupported) {
       items.push(createExternalSessionUnsupportedTranscriptItem({ agentId: 'kimi', id: entry.id, createdAtMs: entry.time }));

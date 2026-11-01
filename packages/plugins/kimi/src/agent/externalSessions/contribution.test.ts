@@ -12,7 +12,7 @@ import { kimiAnswer, kimiMetadata, kimiUser, kimiWire, writeKimiFixture } from '
 const { createPluginTestkit } = await import('@happier-dev/plugin-sdk/testing');
 
 const dirs: string[] = [];
-afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(dirs.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
+afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await Promise.all(dirs.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 const unavailable = async (): Promise<never> => { throw new Error('Read-only history must not start a process or vendor server'); };
 const invocation = (): AgentExternalSessionsInvocation => ({ signal: new AbortController().signal,
   exec: { run: unavailable, spawn: unavailable, agentCli: { checkReadiness: unavailable },
@@ -119,6 +119,26 @@ describe('registered Kimi Code protocol 1.4 history reader', () => {
       await appendFile(files.wirePath, kimiWire([{ type: 'context.future_splice', start: 0 }]));
       expect(await reader.listCandidates({ ...request, searchTarget: 'content', searchTerm: 'ancient visible history' }))
         .toMatchObject({ ok: true, value: { contentCoverage: 'partial' } });
+    } finally { await runtime.dispose(); }
+  });
+
+  it('yields within one valid multi-record replay and retries it without publishing an undone hit', async () => {
+    const { reader, request, runtime, files } = await setup();
+    try {
+      await writeFile(files.wirePath, kimiWire([kimiMetadata,
+        ...Array.from({ length: 2000 }, (_, index) => kimiUser(`ordinary ${index}`)),
+        kimiUser('deadline needle abandoned'), { type: 'context.undo', count: 1 }, kimiUser('deadline needle retained')]));
+      // The clock is the system boundary. Parsing, replay, undo and matching
+      // remain real; a read deadline must interrupt inside this one Session.
+      let clock = 0;
+      vi.spyOn(Date, 'now').mockImplementation(() => ++clock);
+      const first = await reader.listCandidates({ ...request, searchTarget: 'content', searchTerm: 'deadline needle', scanDeadlineAtMs: 20 });
+      expect(first).toMatchObject({ ok: true, value: { candidates: [], contentCoverage: 'partial', nextCursor: expect.any(String) } });
+      if (!first.ok || !first.value.nextCursor) throw new Error('Expected interrupted native replay');
+      const next = await reader.listCandidates({ ...request, searchTarget: 'content', searchTerm: 'deadline needle', cursor: first.value.nextCursor });
+      expect(next).toMatchObject({ ok: true, value: { contentCoverage: 'complete', nextCursor: null, candidates: [
+        { match: { snippet: 'deadline needle retained', messageIndex: 2000 } },
+      ] } });
     } finally { await runtime.dispose(); }
   });
 
