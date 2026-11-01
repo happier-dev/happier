@@ -51,10 +51,10 @@ export const MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD = 'managed.admission.dra
 
 /** Exact retained-row correlation; requester authority comes from signed Machine ingress. */
 export const ManagedActivityReadRequestV1Schema = lazyDefinition(() => z.strictObject({
-  homeId: id(), managedId: id(), expectedRevision: revision(), controller: ManagedControllerV1Schema,
+  homeId: id(), managedId: id(), expectedRevision: revision(), controller: z.optional(ManagedControllerV1Schema),
 }));
 export const ManagedAdmissionDrainConfirmRequestV1Schema = lazyDefinition(() => z.strictObject({
-  homeId: id(), managedId: id(), expectedRevision: revision(), controller: ManagedControllerV1Schema,
+  homeId: id(), managedId: id(), expectedRevision: revision(), controller: z.optional(ManagedControllerV1Schema),
   action: z.enum(['begin', 'resume']),
 }));
 export const ManagedActivityBridgeResultV1Schema = lazyDefinition(() => z.union([

@@ -630,21 +630,28 @@ export async function readCurrentManagedGuestActivityInTx(reader: Tx,
         || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId) return null;
     try {
         if (!await verifyCurrentExternalActionPrincipalInTx(reader, binding)) return null;
-        const controller = await resolveExternalActionExecutionMachineAdmissionInTx(reader, {
-            actorAccountId: binding.accountId, machineId: binding.machineId, actionId: binding.actionId,
-        });
-        if (controller.kind !== 'admitted' || controller.custodianAccountId !== binding.custodianAccountId
-            || controller.installationId !== binding.installationId) return null;
+        if (!binding.managedAccountExecutor) {
+            const controller = await resolveExternalActionExecutionMachineAdmissionInTx(reader, {
+                actorAccountId: binding.accountId, machineId: binding.machineId, actionId: binding.actionId,
+            });
+            if (controller.kind !== 'admitted' || controller.custodianAccountId !== binding.custodianAccountId
+                || controller.installationId !== binding.installationId) return null;
+        }
         const enrolled = await reader.managedMachine.findUnique({ where: { enrolledMachineId: machineId } });
         if (!enrolled || enrolled.homeId !== binding.serverIdentityId || enrolled.custodianAccountId !== binding.custodianAccountId) return null;
         const currentTarget = target ?? { homeId: enrolled.homeId, managedId: enrolled.id, expectedRevision: enrolled.intentRevision,
-            controller: { machineId: binding.machineId, installationId: binding.installationId } };
+            ...(enrolled.controllerMachineId === null ? {} : {
+                controller: { machineId: binding.machineId, installationId: binding.installationId } }) };
         const row = await requireCurrentManagedMachineInTx(reader, { ...currentTarget,
             expectedIntentRevision: currentTarget.expectedRevision, requestId: binding.requestId });
         const admission = readManagedAdmissionState(row.admittedInput).currentAdmission;
+        const accountExecutor = row.controllerMachineId === null && row.custodianAccountId === binding.accountId
+            && binding.managedAccountExecutor?.enrolledMachineId === row.enrolledMachineId
+            && binding.managedAdmission?.actionId === binding.actionId && admission?.kind === 'control'
+            && sameManagedInput(binding.managedAdmission.input, admission.request.input);
         if (row.id !== enrolled.id || row.enrolledMachineId !== machineId || row.allocation !== 'bound'
             || !row.resource || row.desiredWhen !== 'after-idle'
-            || row.controllerMachineId !== binding.machineId || row.controllerInstallationId !== binding.installationId
+            || !(accountExecutor || row.controllerMachineId === binding.machineId && row.controllerInstallationId === binding.installationId)
             || admission?.kind !== 'control' || admission.request.action !== binding.actionId
             || admission.request.action !== 'machines.managed.power.set' && admission.request.action !== 'machines.managed.delete'
             || admission.request.requestId !== binding.requestId
@@ -1860,6 +1867,8 @@ function matchesExternalActionAuthorizationBinding(binding: ExternalActionExecut
         || binding.idempotencyKey !== supplied.idempotencyKey
         || binding.accountEncryptionMode !== supplied.accountEncryptionMode
         || !sameManagedInput(binding.managedContinuation, supplied.managedContinuation)
+        || !sameManagedInput(binding.managedAdmission, supplied.managedAdmission)
+        || !sameManagedInput(binding.managedAccountExecutor, supplied.managedAccountExecutor)
         || !sameManagedInput(binding.handoffAdmission, supplied.handoffAdmission)
         || !sameManagedInput(binding.handoffContinuation, supplied.handoffContinuation)
         || !sameManagedInput(binding.handoffPreflight, supplied.handoffPreflight)

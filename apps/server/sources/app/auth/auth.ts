@@ -118,8 +118,8 @@ export type VerifiedApiTokenPrincipal = Readonly<{
 }>;
 
 export type ExternalActionExecutionAuthorizationMintInput =
-    | Omit<Extract<ExternalActionExecutionAuthorizationBindingV1, { authentication: unknown }>, 'custodianAccountId' | 'installationId'>
-    | Omit<Extract<ExternalActionExecutionAuthorizationBindingV1, { credentialId: string }>, 'custodianAccountId' | 'installationId'>;
+    | Omit<Extract<ExternalActionExecutionAuthorizationBindingV1, { authentication: unknown }>, 'custodianAccountId' | 'installationId' | 'managedAccountExecutor'>
+    | Omit<Extract<ExternalActionExecutionAuthorizationBindingV1, { credentialId: string }>, 'custodianAccountId' | 'installationId' | 'managedAccountExecutor'>;
 
 export type VerifiedAuthToken = Readonly<{
     userId: string;
@@ -551,8 +551,32 @@ class AuthModule {
             ? context.input as Readonly<Record<string, unknown>> : null;
         const automationId = input.actionId === 'workflow.trigger.run_now' && typeof inputRecord?.automationId === 'string'
             ? inputRecord.automationId : undefined;
+        let managedAdmission = input.managedAdmission;
+        let managedAccountExecutor: ExternalActionExecutionAuthorizationBindingV1['managedAccountExecutor'];
+        if (input.actionId === 'machines.managed.power.set' || input.actionId === 'machines.managed.delete') {
+            const { ExternalActionManagedControlAdmissionV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+            const { qualifyExternalActionManagedAccountExecutorInTx } = await import('./externalActionManagedAdmission');
+            const { ManagedMachineError, sameManagedInput } = await import('@/app/machines/managed/managedRows');
+            try {
+                const projection = context.input === undefined ? managedAdmission
+                    : ExternalActionManagedControlAdmissionV1Schema.parse({ actionId: input.actionId, input: context.input });
+                if (projection !== undefined) {
+                    const control = ExternalActionManagedControlAdmissionV1Schema.parse(projection);
+                    if (managedAdmission && !sameManagedInput(managedAdmission, control)) throw new ApiTokenOperationError('credential_scope_denied');
+                    managedAdmission = control;
+                    if (control.input.when === 'after-idle') {
+                        managedAccountExecutor = await qualifyExternalActionManagedAccountExecutorInTx(db, input, control);
+                    }
+                }
+            } catch (error) {
+                if (error instanceof ManagedMachineError) throw new ApiTokenOperationError('credential_scope_denied');
+                throw error;
+            }
+        }
         const supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({
             ...input, custodianAccountId: machine.accountId, installationId: machine.installationId,
+            ...(managedAdmission ? { managedAdmission } : {}),
+            ...(managedAccountExecutor ? { managedAccountExecutor } : {}),
             ...(automationId ? { automationId } : {}),
             accountEncryptionMode: accountMode.encryptionMode,
         });

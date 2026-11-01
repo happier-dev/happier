@@ -229,10 +229,10 @@ export function buildMachineInstallationProofPayloadBytes(
                         homeId: normalized.rpcAdmission.managedTarget.homeId,
                         managedId: normalized.rpcAdmission.managedTarget.managedId,
                         expectedRevision: normalized.rpcAdmission.managedTarget.expectedRevision,
-                        controller: {
+                        ...(normalized.rpcAdmission.managedTarget.controller ? { controller: {
                             machineId: normalized.rpcAdmission.managedTarget.controller.machineId,
                             installationId: normalized.rpcAdmission.managedTarget.controller.installationId,
-                        },
+                        } } : {}),
                     },
                 } : {}),
                 ...(normalized.rpcAdmission.managedIdleDecision ? {

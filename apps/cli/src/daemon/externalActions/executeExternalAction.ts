@@ -1,3 +1,4 @@
+import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { isPluginError } from '@happier-dev/plugin-sdk';
@@ -395,15 +396,15 @@ export async function executeExternalAction(input: Readonly<{
       || executionAuthorization?.success && executionAuthorization.data.binding.idempotencyKey !== envelope.data.idempotencyKey) {
       throw new TypeError('Manual retry identity mismatch');
     }
-    if (envelope.data.managedAdmission) {
-      if (actionId.data !== 'machines.managed.acquire') throw new TypeError('Wrong managed admission Action');
-      const { agentStart, ...compute } = ManagedAcquireInputV1Schema.parse(decodedInput);
-      if (Boolean(agentStart) !== envelope.data.managedAdmission.continuationPresent
-        || !sameStrictJsonValue(ManagedAdmissionComputeInputV1Schema.parse(compute), envelope.data.managedAdmission.input)) {
-        throw new TypeError('Managed admission input mismatch');
-      }
-    } else if (actionId.data === 'machines.managed.acquire' && envelope.data.v === 2) {
+    const managedAdmission = projectExternalActionManagedAdmissionV1(actionId.data, decodedInput);
+    if (envelope.data.managedAdmission && !sameStrictJsonValue(managedAdmission, envelope.data.managedAdmission)) {
+      throw new TypeError('Managed admission input mismatch');
+    } else if (managedAdmission && envelope.data.v === 2 && !envelope.data.managedAdmission) {
       throw new TypeError('Missing managed admission projection');
+    }
+    const recoveryAdmission = executionAuthorization?.success ? executionAuthorization.data.binding.managedAdmission : undefined;
+    if (recoveryAdmission && !sameStrictJsonValue(managedAdmission, recoveryAdmission)) {
+      throw new TypeError('Managed recovery input mismatch');
     }
     if (envelope.data.sessionSpawnAdmission && (actionId.data !== 'session.spawn_new'
       || !sameStrictJsonValue(projectApiTokenSessionSpawnAdmissionV1(decodedInput), envelope.data.sessionSpawnAdmission))) {

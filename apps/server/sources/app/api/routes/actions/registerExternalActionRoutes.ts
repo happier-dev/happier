@@ -1,3 +1,4 @@
+import { readExternalActionManagedControlAdmission } from '@/app/auth/externalActionManagedAdmission';
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { timeWebLatencyPhase, withWebLatencyTrace } from '@/utils/webLatencyTrace';
@@ -566,6 +567,9 @@ export function registerExternalActionRoutes(
                 pendingResetStartAdmission = projectExternalActionPendingResetStartEnvelopeAdmissionV1({
                     actionId: actionId.data, envelope: body.data.envelope, target });
             } catch { return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId); }
+            let managedAdmission: ExternalActionExecutionAuthorizationBindingV1['managedAdmission'];
+            try { managedAdmission = readExternalActionManagedControlAdmission(actionId.data, body.data.envelope); }
+            catch { return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId); }
             let handoffAdmission: ExternalActionExecutionAuthorizationBindingV1['handoffAdmission'];
             if (body.data.envelope.handoffAdmission) {
                 if (!isOriginalAccountHandoffAction(actionId.data) && !(actionId.data === 'session.spawn_new' && handoffContinuation)) {
@@ -622,6 +626,7 @@ export function registerExternalActionRoutes(
                     ...(body.data.envelope.idempotencyKey === undefined ? {} : { idempotencyKey: body.data.envelope.idempotencyKey }),
                     target,
                     ...(pendingResetStartAdmission ? { pendingResetStartAdmission } : {}),
+                    ...(managedAdmission ? { managedAdmission } : {}),
                     ...(handoffAdmission ? { handoffAdmission } : {}),
                     ...(handoffPreflight ? { handoffPreflight: handoffPreflight.binding.handoffPreflight,
                         sessionActionOrigin: handoffPreflight.binding.sessionActionOrigin,
@@ -640,7 +645,7 @@ export function registerExternalActionRoutes(
                     ? mintInput.authentication.kind === 'account'
                         ? { ...mintInput, authentication: mintInput.authentication }
                         : { ...mintInput, authentication: mintInput.authentication }
-                    : mintInput, { input: body.data.envelope.v === 1 ? body.data.envelope.input : body.data.envelope.sessionSpawnAdmission,
+                    : mintInput, { input: body.data.envelope.v === 1 ? body.data.envelope.input : body.data.envelope.sessionSpawnAdmission ?? managedAdmission?.input,
                     resolveCurrentSessionMachine: app.resolveCurrentSessionMachine });
                 const managedFiniteWake = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, authorization.binding.actionId)
                     ? await inTx(tx => readCurrentManagedFiniteWakeCustodyInTx(tx, { actionOrigin: authorization })) : null;

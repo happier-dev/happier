@@ -26,8 +26,8 @@ export function registerManagedActivityRpcHandlers(params: ManagedActivityRpcOwn
     const sameTarget = (target: ManagedActivityReadRequestV1) => drainedTarget !== null
         && drainedTarget.homeId === target.homeId && drainedTarget.managedId === target.managedId
         && drainedTarget.expectedRevision === target.expectedRevision
-        && drainedTarget.controller.machineId === target.controller.machineId
-        && drainedTarget.controller.installationId === target.controller.installationId;
+        && drainedTarget.controller?.machineId === target.controller?.machineId
+        && drainedTarget.controller?.installationId === target.controller?.installationId;
     const release = (target: ManagedActivityReadRequestV1) => {
         if (!sameTarget(target)) return;
         drainedTarget = null;

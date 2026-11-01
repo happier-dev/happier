@@ -1,3 +1,4 @@
+import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { Prisma } from "@prisma/client";
 import * as z from "zod/mini";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -14,7 +15,7 @@ import type { PluginJsonSchemaV2 } from "@happier-dev/protocol/plugins/contribut
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
 import { pluginJsonValuesEqual } from "@happier-dev/protocol/plugins/actions/protocol-composable-schema";
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from "@/app/changes/markAccountChanged";
-import { resolveCurrentMachineRecipientAccountIdsInTx, resolveMachineAccessInTx } from "@/app/machines/machineAccess";
+import { resolveCurrentMachineRecipientAccountIdsInTx, resolveMachineAccessInTx, resolveEffectiveMachineRoleInTx } from "@/app/machines/machineAccess";
 import { readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { resolveCurrentClaimablePluginMachineMaterializationsTx } from "@/app/plugins/availability/operations";
@@ -25,6 +26,23 @@ import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
 export type StoredManagedMachine = Prisma.ManagedMachineGetPayload<Record<string, never>>;
+/** The persisted pair is absent for Account-controlled cloud resources. */
+export function readManagedController(row: Readonly<{ controllerMachineId: string | null; controllerInstallationId: string | null }>): ManagedControllerV1 | undefined {
+    return row.controllerMachineId && row.controllerInstallationId
+        ? { machineId: row.controllerMachineId, installationId: row.controllerInstallationId } : undefined;
+}
+
+/** Vendor control belongs to custody when no actual controller was selected. */
+export function resolveManagedMachineRole(row: Pick<StoredManagedMachine, 'custodianAccountId' | 'controllerMachineId'>,
+    actorAccountId: string, controllerRole: 'manage' | 'use' | null = null): 'manage' | 'use' | null {
+    return row.controllerMachineId === null ? row.custodianAccountId === actorAccountId ? 'manage' : null : controllerRole;
+}
+export async function resolveManagedMachineRoleInTx(tx: Tx, row: Pick<StoredManagedMachine, 'custodianAccountId' | 'controllerMachineId'>, actorAccountId: string) {
+    const role = row.controllerMachineId ? await resolveEffectiveMachineRoleInTx(tx, { actorAccountId, machineId: row.controllerMachineId }) : null;
+    return resolveManagedMachineRole(row, actorAccountId, role);
+}
+
+
 export type ManagedDeclaration = Pick<MachineProvisionerContributionV1, "resourceKind" | "actions" | "schemaVersion" | "launchSchema" | "resourceSchema" | "billing" | "retention" | "reconciliation" | "credentialPurposeRequirements"> & Readonly<{
     acquireCredentialRequests: readonly PluginActionConnectedAccountUseRequestV2[];
 }>;
@@ -80,9 +98,10 @@ export function readManagedCurrentRequestId(row: Pick<StoredManagedMachine, "adm
 
 /** Home identity and controller lifecycle are rechecked inside each row mutation. */
 export async function requireManagedControllerInTx(tx: Tx, input: Readonly<{
-    homeId: string; custodianAccountId: string; controller: { machineId: string; installationId: string };
+    homeId: string; custodianAccountId: string; controller?: { machineId: string; installationId: string };
 }>): Promise<void> {
     if (await readCurrentServerIdentityId(process.env, tx) !== input.homeId) throw new ManagedMachineError("permission_denied");
+    if (!input.controller) return;
     const machine = await tx.machine.findUnique({ where: { id: input.controller.machineId } });
     if (!machine || machine.accountId !== input.custodianAccountId) throw new ManagedMachineError("permission_denied");
     if (classifyMachineAvailabilityState(machine) !== "available" || machine.installationId !== input.controller.installationId) {
@@ -337,14 +356,18 @@ function readStoredManagedDevcontainerChild(row: StoredManagedMachine): Devconta
 
 export async function requireCurrentManagedMachineInTx(tx: Tx, input: Readonly<{
     homeId: string; managedId: string; expectedIntentRevision: number; requestId: string;
-    controller: { machineId: string; installationId: string };
+    controller?: { machineId: string; installationId: string };
 }>, options: Readonly<{ requestAuthority?: "creation" | "intent"; allowCanceledResourceReport?: boolean; allowInactiveCurrentIntent?: boolean }> = {}): Promise<StoredManagedMachine> {
     const row = await readManagedMachineInTx(tx, input);
     await requireManagedControllerInTx(tx, { ...input, custodianAccountId: row.custodianAccountId });
-    if (row.controllerMachineId !== input.controller.machineId || row.controllerInstallationId !== input.controller.installationId) {
+    const creation = options.requestAuthority === "creation" || options.allowCanceledResourceReport === true;
+    const currentAdmission = !creation && !row.controllerMachineId && input.controller
+        ? readManagedAdmissionState(row.admittedInput).currentAdmission : undefined;
+    const controller = readManagedController(row)
+        ?? (currentAdmission?.kind === 'policy' ? currentAdmission.request.controller : undefined);
+    if (!sameManagedInput(controller, input.controller)) {
         throw new ManagedMachineError("controller_retired");
     }
-    const creation = options.requestAuthority === "creation" || options.allowCanceledResourceReport === true;
     if ((creation ? row.admittedActionRequestId : readManagedCurrentRequestId(row)) !== input.requestId) throw new ManagedMachineError("request_conflict");
     const retiredCreation = row.creationState !== "active" || row.archivedAt !== null;
     if (!options.allowCanceledResourceReport && !options.allowInactiveCurrentIntent && retiredCreation) throw new ManagedMachineError("enrollment_retired");

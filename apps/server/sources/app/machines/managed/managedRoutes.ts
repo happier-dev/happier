@@ -13,7 +13,7 @@ import { inReadSnapshot, inTx } from "@/storage/inTx";
 import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
 import { admitManagedAcquire } from "./managedAcquire";
 import { submitManagedAcquire, reportManagedAcquire, createManagedBootstrapCredential, requireManagedEnrollmentInTx, admitManagedControl, submitManagedIntent, reportManagedIntent, admitManagedPolicy, prepareManagedPolicy, requireManagedPolicyPurposeInTx } from "./managedMutations";
-import { ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, projectManagedMachineInTx, projectManagedMachinesInTx, requireManagedControllerInTx, sameManagedInput, readManagedCurrentRequestId, readManagedAdmissionState } from "./managedRows";
+import { ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, projectManagedMachineInTx, projectManagedMachinesInTx, requireManagedControllerInTx, sameManagedInput, readManagedController, resolveManagedMachineRoleInTx, readManagedCurrentRequestId, readManagedAdmissionState } from "./managedRows";
 import { getManagedMachine, listManagedMachines, cancelManagedCreation } from "./managedRead";
 import { readManagedWakeTargets } from './managedWake';
 import { markPendingActivationFailed } from '@/app/session/pending/pendingMessageService';
@@ -189,11 +189,11 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             || admission.encryptionMode !== context.encryptionMode || admission.role !== context.role) throw new ManagedMachineError('permission_denied');
         const row = await readManagedMachineInTx(tx, managedTarget);
         if (row.custodianAccountId !== context.custodianAccountId || row.enrolledMachineId !== context.machineId
-            || row.intentRevision !== managedTarget.expectedRevision || row.controllerMachineId !== managedTarget.controller.machineId
-            || row.controllerInstallationId !== managedTarget.controller.installationId || row.creationState !== 'active'
+            || row.intentRevision !== managedTarget.expectedRevision || !sameManagedInput(readManagedController(row), managedTarget.controller)
+            || row.creationState !== 'active'
             || row.archivedAt !== null) return { current: false };
         await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId, controller: managedTarget.controller });
-        if (await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: context.actorAccountId, machineId: row.controllerMachineId }) !== 'manage') throw new ManagedMachineError('permission_denied');
+        if (await resolveManagedMachineRoleInTx(tx, row, context.actorAccountId) !== 'manage') throw new ManagedMachineError('permission_denied');
         return { current: true };
     })));
     app.post("/v1/machines/managed/controller/admit-control", { preHandler: app.authenticate, schema: { body: ManagedControlAdmissionInputV1Schema } }, async (request, reply) => respond(reply, async () => {

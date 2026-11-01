@@ -7,7 +7,6 @@ import { ACCOUNT_SCOPED_BLOB_V1_PREFIX_BYTES, ACCOUNT_SCOPED_SECRETBOX_NONCE_BYT
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { StrictJsonValueSchema, sameStrictJsonValue } from '../json/strictJsonValue.js';
-import { ManagedAcquireInputV1Schema, ManagedAdmissionComputeInputV1Schema } from '../machines/managed/actionsV1.js';
 import type { ActionExecuteResult } from './actionExecutionResult.js';
 import {
   ExternalActionActionIdV1Schema, ExternalActionRequestIdV1Schema,
@@ -24,6 +23,7 @@ import {
   projectExternalActionPendingResetStartAdmissionV1,
   projectExternalActionPendingResetStartSessionDigestV1,
   projectExternalActionRunNowIdempotencyKeyV1,
+  projectExternalActionManagedAdmissionV1,
   type ExternalActionRequestEnvelopeV2, type ExternalActionResponseEnvelopeV2,
   type PreparedExternalActionResponseEnvelope,
 } from './externalActionApi.js';
@@ -108,11 +108,7 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   const idempotencyKey = projectExternalActionRunNowIdempotencyKeyV1(payload.actionId, payload.input);
   // Every encrypted producer needs the same Home-readable compute projection.
   // Agent instructions remain exclusively inside the sealed Action input.
-  const managedAdmission = payload.actionId === 'machines.managed.acquire' ? (() => {
-    const { agentStart, ...compute } = ManagedAcquireInputV1Schema.parse(payload.input);
-    return { actionId: 'machines.managed.acquire' as const,
-      input: ManagedAdmissionComputeInputV1Schema.parse(compute), continuationPresent: agentStart !== undefined };
-  })() : undefined;
+  const managedAdmission = projectExternalActionManagedAdmissionV1(payload.actionId, payload.input);
   const envelope: ExternalActionRequestEnvelopeV2 = { v: 2, requestId: payload.requestId, target: payload.target,
     ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     payload: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ ...params, kind, payload }) },
@@ -135,7 +131,7 @@ export function openExternalActionRequestV2(params: Readonly<{
   /** Host-local phase witness; never part of the transport response or opened content. */
   onFailure?: (failure: Readonly<{
     phase: 'envelope_parse' | 'envelope_binding' | 'ciphertext_open' | 'plaintext_parse'
-      | 'plaintext_binding' | 'reset_admission' | 'plaintext_limit';
+      | 'plaintext_binding' | 'reset_admission' | 'managed_admission' | 'plaintext_limit';
     error?: unknown;
   }>) => void;
 }>): Readonly<{ input: z.infer<typeof StrictJsonValueSchema> }> | null {
@@ -163,6 +159,11 @@ export function openExternalActionRequestV2(params: Readonly<{
     if (!decoded.success) return refused(decoded.error);
     phase = 'plaintext_binding';
     if (!matches(decoded.data, params.binding)) return refused();
+    phase = 'managed_admission';
+    const managedAdmission = projectExternalActionManagedAdmissionV1(decoded.data.actionId, decoded.data.input);
+    if ((managedAdmission && managedAdmission.actionId !== 'machines.managed.acquire'
+      || envelope.managedAdmission && envelope.managedAdmission.actionId !== 'machines.managed.acquire')
+      && !sameStrictJsonValue(managedAdmission, envelope.managedAdmission)) return refused();
     phase = 'reset_admission';
     if (decoded.data.actionId === 'session.pending.resetStart.set') {
       const admission = projectExternalActionPendingResetStartAdmissionV1(decoded.data.input);

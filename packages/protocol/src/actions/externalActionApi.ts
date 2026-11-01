@@ -7,7 +7,7 @@ import { z } from 'zod/mini';
 import { ApiTokenGrantV1Schema, ApiTokenSessionSpawnAdmissionV1Schema } from '../auth/apiTokenGrant.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { ActionRequiredAuthoritySchema } from './metadata.js';
-import { ManagedAdmissionComputeInputV1Schema } from '../machines/managed/actionsV1.js';
+import { ManagedAdmissionComputeInputV1Schema, ManagedAcquireInputV1Schema, ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema } from '../machines/managed/actionsV1.js';
 import { ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.js';
 import { AccountEncryptionModeSchema, type AccountEncryptionMode } from '../features/payload/capabilities/encryptionCapabilities.js';
 import { WorkflowProjectTargetV1Schema } from '../workflows/workflowWorkspaceV1.js';
@@ -672,12 +672,34 @@ export function isExternalActionResolvedTargetAllowedV1(input: Readonly<{
  * absent: each ingress verifies credentials and stamps authority, provenance,
  * cancellation, and placement after this parser succeeds.
  */
-export const ExternalActionManagedAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+export const ExternalActionManagedControlAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
+  z.strictObject({ actionId: z.literal('machines.managed.power.set'), input: ManagedPowerInputV1Schema }),
+  z.strictObject({ actionId: z.literal('machines.managed.delete'), input: ManagedDeleteInputV1Schema }),
+]));
+export type ExternalActionManagedControlAdmissionV1 = z.infer<typeof ExternalActionManagedControlAdmissionV1Schema>;
+const ExternalActionManagedAcquireAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   actionId: z.literal('machines.managed.acquire'),
   input: ManagedAdmissionComputeInputV1Schema,
   continuationPresent: z.boolean(),
 }));
+
+export const ExternalActionManagedAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
+  ExternalActionManagedAcquireAdmissionV1Schema,
+  ...ExternalActionManagedControlAdmissionV1Schema.def.options,
+]));
 export type ExternalActionManagedAdmissionV1 = z.infer<typeof ExternalActionManagedAdmissionV1Schema>;
+
+/** Managed recovery exposes only the exact resource/revision needed for Home admission. */
+export function projectExternalActionManagedAdmissionV1(actionId: string, input: unknown): ExternalActionManagedAdmissionV1 | undefined {
+  if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete') {
+    return ExternalActionManagedControlAdmissionV1Schema.parse({ actionId, input });
+  }
+  if (actionId === 'machines.managed.acquire') {
+    const { agentStart, ...compute } = ManagedAcquireInputV1Schema.parse(input);
+    return { actionId, input: ManagedAdmissionComputeInputV1Schema.parse(compute), continuationPresent: agentStart !== undefined };
+  }
+  return undefined;
+}
 
 /** Closed routing hints; only the authenticated Home can turn them into custody authority. */
 export const ExternalActionHandoffAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
@@ -1017,6 +1039,9 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     idempotencyKey: z.optional(AutomationManualIdempotencyKeyV1Schema),
     target: ExternalActionTargetV1Schema,
     managedContinuation: z.optional(ExternalActionManagedContinuationV1Schema),
+    managedAdmission: z.optional(ExternalActionManagedControlAdmissionV1Schema),
+    /** Issuer-qualified private Account executor, scoped by the signed control admission. */
+    managedAccountExecutor: z.optional(z.strictObject({ enrolledMachineId: ExternalActionTargetIdV1Schema })),
     handoffAdmission: z.optional(ExternalActionHandoffBindingV1Schema),
     handoffContinuation: z.optional(ExternalActionHandoffContinuationV1Schema),
     handoffPreflight: z.optional(z.strictObject({
@@ -1043,6 +1068,15 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   if (value.pendingResetStartAdmission && (value.actionId !== 'session.pending.resetStart.set'
     || value.target.kind === 'session' && projectExternalActionPendingResetStartSessionDigestV1(value.target.sessionId) !== value.pendingResetStartAdmission.sessionDigest)) {
     context.addIssue({ code: 'custom', path: ['pendingResetStartAdmission'], message: 'Reset admission binds only its exact Session set input' });
+  }
+  if (value.managedAdmission && (value.managedAdmission.actionId !== value.actionId
+    || value.managedAdmission.input.homeId !== value.serverIdentityId
+    || value.target.kind !== 'machine' || value.target.machineId !== value.machineId)) {
+    context.addIssue({ code: 'custom', path: ['managedAdmission'], message: 'Managed recovery binds its exact Home, Action and controller.' });
+  }
+  if (value.managedAccountExecutor && (!value.managedAdmission
+    || value.managedAdmission.actionId !== 'machines.managed.power.set' && value.managedAdmission.actionId !== 'machines.managed.delete')) {
+    context.addIssue({ code: 'custom', path: ['managedAccountExecutor'], message: 'Account executor binds an exact managed control admission.' });
   }
   if (value.workflowActionOrigin && (value.sessionActionOrigin || value.managedContinuation || value.handoffAdmission
     || value.workflowActionOrigin.requestId !== value.requestId

@@ -1,3 +1,4 @@
+import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createServer, type Server } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { Buffer } from 'node:buffer';
@@ -80,6 +81,7 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   passiveReadDelayMs?: number;
   invalidEncryptionResponse?: boolean;
   inventoryUnavailable?: boolean;
+  scopedControllerMismatch?: 'parent' | 'installation' | 'resource' | 'account-owned';
 } = {}) {
   const seed = new Uint8Array(32).fill(19);
   const publicKey = ed25519.getPublicKey(seed);
@@ -157,11 +159,15 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
     if (request.url?.endsWith('/execution-authorization')) {
       events.push('home-authorized');
       const prepared = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      const managedAdmission = actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete'
+        ? prepared.envelope.v === 1 ? projectExternalActionManagedAdmissionV1(actionId, prepared.envelope.input)
+          : prepared.envelope.managedAdmission : undefined;
       const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'exact-home-root', binding: {
         accountId: 'bob', authentication: { kind: options.authenticationKind ?? 'account', tokenEpoch: 7 }, accountEncryptionMode: mode,
         serverIdentityId: homeIdentityId, custodianAccountId: options.custodianAccountId ?? 'alice', machineId: 'alice-machine',
         installationId: 'alice-installation', actionId, requestId: 'request-1',
         target: prepared.envelope.target!, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(prepared.envelope),
+        ...(managedAdmission ? { managedAdmission } : {}),
       } };
       if (options.finiteWake) authorization.managedFiniteWake = {
         target: ManagedWakeTargetV1Schema.parse({ homeId: homeIdentityId, managedId: 'managed-guest',
@@ -267,6 +273,19 @@ async function privateAccountDaemon(serverApiUrl: string, events: string[]) {
 }
 
 describe('ordinary CLI requester Account custody on the existing Action carrier', () => {
+  it.each(['plain', 'e2ee'] as const)('forwards exact Account power admission without selecting a native recovery controller (%s)', async mode => {
+    const events: string[] = [];
+    const target = await home(mode, events, { custodianAccountId: 'bob', originalOwnAction: 'machines.managed.power.set',
+      scopedControllerMismatch: 'account-owned' });
+    const input = { homeId: homeIdentityId, managedId: 'retained-machine', intent: 'stop', when: 'after-idle' };
+    const result = await dispatchOriginalAccountAction({ actionId: 'machines.managed.power.set', input, requestId: 'request-1',
+      target: { kind: 'machine', machineId: 'alice-machine' }, credentials: { token: token(), encryption: mode === 'plain' ? null
+        : { type: 'legacy', secret: new Uint8Array(32).fill(23) } }, serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId });
+    expect(result).toMatchObject({ ok: false, errorCode: 'fixture_receipt' });
+    expect(events).toEqual(['home-authorized', 'dispatch']);
+    const delivered = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+    expect(delivered.executionAuthorization?.binding.managedAdmission).toEqual({ actionId: 'machines.managed.power.set', input });
+  });
   it.each(['localServices.launcher.start', 'localServices.actions.stopManaged', 'localServices.actions.restartManaged',
     'projects.service.relocate', 'projects.open', 'projects.worker.status', 'projects.worker.copy.retire',
     'machines.processes.list', 'machines.vitals.get', 'machines.guard.get', 'machines.work.summary.get'] as const)(
