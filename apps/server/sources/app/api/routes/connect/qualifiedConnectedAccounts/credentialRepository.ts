@@ -2024,6 +2024,7 @@ async function readQualifiedCredentialHealthMutationInTx(
     current: NonNullable<Awaited<ReturnType<typeof readCurrentByQualifiedRef>>>;
     metadata: Prisma.InputJsonValue;
     credentialRevision: string;
+    previousHealth: ConnectedServiceCredentialHealthV1 | null | undefined;
 }>> {
     const accountModeResult =
         await readEffectiveAccountEncryptionMode(
@@ -2109,7 +2110,25 @@ async function readQualifiedCredentialHealthMutationInTx(
             configurationRevision: current.configurationRevision,
         };
     }
-    return { status: "change_required", current, metadata, credentialRevision: projection.credentialRevision };
+    return { status: "change_required", current, metadata, credentialRevision: projection.credentialRevision,
+        previousHealth: projection.health };
+}
+
+const CREDENTIAL_HEALTH_CLOCK_FIELDS = new Set<keyof ConnectedServiceCredentialHealthV1>([
+    'lastRefreshAttemptAt', 'lastRefreshSuccessAt', 'lastRefreshFailureAt', 'lastRuntimeAuthFailureAt',
+]);
+
+function isSamePresentedCredentialHealth(
+    previous: ConnectedServiceCredentialHealthV1 | null | undefined,
+    next: ConnectedServiceCredentialHealthV1,
+): boolean {
+    if (!previous) return false;
+    const keys = new Set([...Object.keys(previous), ...Object.keys(next)] as (keyof ConnectedServiceCredentialHealthV1)[]);
+    for (const key of keys) {
+        if (CREDENTIAL_HEALTH_CLOCK_FIELDS.has(key)) continue;
+        if (previous[key] !== next[key]) return false;
+    }
+    return true;
 }
 
 export async function mutateQualifiedConnectedServiceCredentialHealth(
@@ -2168,12 +2187,16 @@ export async function mutateQualifiedConnectedServiceCredentialHealth(
             };
         }
         await recheckAdmission();
-        await recordConnectedServiceAccountProfileChange({
-            tx,
-            accountId: canonical.accountId,
-            service: canonical.ref.service,
-            reason: 'credential-health',
-        });
+        // Refresh clocks are persisted for the next read; only a change in presented health
+        // (status, reconnect, failure kind, provider error) is worth waking every client.
+        if (!isSamePresentedCredentialHealth(admitted.previousHealth, canonical.health)) {
+            await recordConnectedServiceAccountProfileChange({
+                tx,
+                accountId: canonical.accountId,
+                service: canonical.ref.service,
+                reason: 'credential-health',
+            });
+        }
         return {
             status: "written",
             credentialRevision: admitted.credentialRevision,

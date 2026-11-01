@@ -916,7 +916,8 @@ describe("qualified Connected Account credential repository", () => {
             // Equal known health must still remove additive stored fields.
             expect(JSON.stringify(canonical.row.metadata)).not.toMatch(/future|must-not-echo/);
             expect(canonical.row.updatedAt.getTime()).toBeGreaterThan(beforeNormalization.row.updatedAt.getTime());
-            expect(canonical.change.cursor).toBeGreaterThan(beforeNormalization.change.cursor);
+            // Normalization rewrites the row but presents no new health, so no client is woken.
+            expect(canonical.change.cursor).toBe(beforeNormalization.change.cursor);
 
             const unchanged = await submit(patch);
             expect(unchanged.statusCode).toBe(200);
@@ -940,7 +941,8 @@ describe("qualified Connected Account credential repository", () => {
             };
             expect((await submit(timestampedHealth)).statusCode).toBe(200);
             const afterTimestamp = await readState();
-            expect(afterTimestamp.change.cursor).toBeGreaterThan(afterChange.change.cursor);
+            // A refresh clock is persisted for the next read without publishing an Account change.
+            expect(afterTimestamp.change.cursor).toBe(afterChange.change.cursor);
             expect(afterTimestamp.row.updatedAt.getTime()).toBeGreaterThan(afterChange.row.updatedAt.getTime());
 
             const staleCredential = await submit({ ...timestampedHealth, expectedCredentialRevision: "csr_aaaaaaaaaaaaaaaaaaaaaa" });
