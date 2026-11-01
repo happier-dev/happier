@@ -221,6 +221,50 @@ describe('apiSocket reachability supervision', () => {
         expect(reconnectedSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps a known outage presented as disconnected across automatic retry attempts', async () => {
+        const reachability = {
+            listener: (_state: any): void => {},
+        };
+        vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')>();
+            return {
+                ...actual,
+                subscribeServerReachabilityState: (_serverUrl: string, listener: (state: any) => void) => {
+                    reachability.listener = listener;
+                    return () => {};
+                },
+                startServerReachabilitySupervisor: vi.fn(async () => {}),
+            };
+        });
+
+        const { apiSocket } = await import('./apiSocket');
+        const encryption = { getSessionEncryption: () => null } as unknown as Encryption;
+        apiSocket.initialize({ endpoint: 'https://api.example.test', token: 'token-a' }, encryption);
+
+        const statuses: string[] = [];
+        apiSocket.onStatusChange((status) => statuses.push(status));
+        const state = (phase: string, attempt: number) => ({
+            phase,
+            reason: 'server_unreachable',
+            attempt,
+            nextRetryAt: null,
+            lastConnectedAt: null,
+            lastDisconnectedAt: null,
+            lastErrorMessage: null,
+        });
+
+        reachability.listener(state('connecting', 0));
+        reachability.listener(state('offline', 1));
+        reachability.listener(state('connecting', 1));
+        reachability.listener(state('offline', 2));
+        reachability.listener(state('connecting', 2));
+        expect(statuses).toEqual(['disconnected', 'connecting', 'disconnected']);
+
+        // An explicit retry restarts supervision from attempt zero and is allowed to show progress.
+        reachability.listener(state('connecting', 0));
+        expect(statuses).toEqual(['disconnected', 'connecting', 'disconnected', 'connecting']);
+    });
+
     it('delays socket.connect() until reachability is online', async () => {
         vi.useFakeTimers();
         vi.spyOn(Math, 'random').mockReturnValue(0);

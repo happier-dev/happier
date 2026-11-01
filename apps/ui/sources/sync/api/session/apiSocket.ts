@@ -25,6 +25,7 @@ import {
     subscribeServerReachabilityState,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
+import { isRetryOfKnownFailure } from '@/sync/runtime/connectivity/isRetryOfKnownFailure';
 import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { raceSocketIoAckTimeout } from '@/sync/runtime/socketIoAckTimeout';
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
@@ -652,7 +653,12 @@ class ApiSocket {
         this.applySocketConnectionState(supervisor.getState());
     }
 
+    private isFailurePresented(): boolean {
+        return this.currentStatus === 'disconnected' || this.currentStatus === 'error';
+    }
+
     private applySocketConnectionState(state: ManagedConnectionState): void {
+        if (isRetryOfKnownFailure(state, this.isFailurePresented())) return;
         if (state.phase === 'online') this.updateStatus('connected');
         else if (state.phase === 'connecting') this.updateStatus('connecting');
         else this.updateStatus(state.phase === 'auth_failed' ? 'error' : 'disconnected');
@@ -740,7 +746,7 @@ class ApiSocket {
         }
         switch (state.phase) {
             case 'connecting':
-                this.updateStatus('connecting');
+                if (!isRetryOfKnownFailure(state, this.isFailurePresented())) this.updateStatus('connecting');
                 return;
             case 'auth_failed':
                 this.updateStatus('error');

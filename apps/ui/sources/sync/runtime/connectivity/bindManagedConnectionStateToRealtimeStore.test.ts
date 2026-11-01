@@ -111,4 +111,27 @@ describe('bindManagedConnectionStateToRealtimeStore', () => {
 
         expect(onOnline).toHaveBeenCalledTimes(1);
     });
+    it('does not re-present a known outage as connecting on each automatic retry attempt', () => {
+        const bound = createBoundStore();
+
+        bound.publish('offline', { reason: 'server_unreachable', attempt: 1, nextRetryAt: 1_000 });
+        // The retry timer fired: the target is still known unreachable, so nothing new is claimed.
+        bound.publish('connecting', { reason: 'server_unreachable', attempt: 1 });
+        bound.publish('offline', { reason: 'server_unreachable', attempt: 2, nextRetryAt: 2_000 });
+        bound.publish('connecting', { reason: 'server_unreachable', attempt: 2 });
+        bound.publish('online', { attempt: 2 });
+
+        expect(bound.statuses).toEqual(['offline', 'offline', 'online']);
+        expect(bound.snapshots[1]).toMatchObject({ attempt: 2, nextRetryAt: 2_000 });
+    });
+
+    it('presents connecting for an explicit retry that restarts from attempt zero', () => {
+        const bound = createBoundStore();
+
+        bound.publish('offline', { reason: 'server_unreachable', attempt: 4, nextRetryAt: 1_000 });
+        bound.publish('shutting_down');
+        bound.publish('connecting', { attempt: 0 });
+
+        expect(bound.statuses).toEqual(['offline', 'offline', 'connecting']);
+    });
 });

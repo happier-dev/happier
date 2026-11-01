@@ -3,6 +3,7 @@ import type { ManagedConnectionState } from '@happier-dev/connection-supervisor'
 import type { EndpointConnectivitySnapshot, EndpointConnectivityStatus } from '@/sync/store/domains/realtime';
 import type { PauseController } from '@/utils/timing/pauseController';
 
+import { isRetryOfKnownFailure } from './isRetryOfKnownFailure';
 import { sanitizeEndpointErrorMessage } from './sanitizeEndpointErrorMessage';
 
 export type ManagedConnectionStateSubscription = (
@@ -78,6 +79,10 @@ export function bindManagedConnectionStateToRealtimeStore(params: Readonly<{
             } catch {
                 // ignore listener failures; store updates must continue
             }
+        }
+
+        if (isRetryOfKnownFailure(state, publishedStatus === 'offline')) {
+            return;
         }
 
         const snapshot = mapManagedConnectionStateToEndpointConnectivitySnapshot(state, publishedStatus);
