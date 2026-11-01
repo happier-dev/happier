@@ -31,11 +31,11 @@ describe('managed-services canonical projections', () => {
   });
 
   it('does not project host-private request-auth capability-file authority', () => {
-    expect(Object.keys(managedServices)).not.toEqual(expect.arrayContaining([
+    for (const name of [
       'ConnectedAccountRequestAuthCapabilityDocumentV2',
       'parseConnectedAccountRequestAuthCapabilityDocument',
       'readConnectedAccountRequestAuthCapabilityFile',
       'resolveConnectedAccountRequestAuthCapabilityPath',
-    ]));
+    ]) expect(managedServices).not.toHaveProperty(name);
   });
 });
