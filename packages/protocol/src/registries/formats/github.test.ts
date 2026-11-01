@@ -45,10 +45,11 @@ describe('GitHub registry producer and pinned strict consumer',()=>{
     expect(consumed.op).toBe('read');if(consumed.op!=='read')throw new Error('read required');
     if(consumed.item.payload.kind!=='skill')throw new Error('skill required');
     const pointer={sourceId:source.id,itemId:'',version:consumed.item.summary.version!};head=next;
+    const admittedReads=reads.length;
     expect(SkillLockV1Schema.parse({provenance:{kind:'registry',registry:{sourceId:pointer.sourceId,itemId:pointer.itemId,
       format:source.format,sourceUrl:source.url,ref:consumed.item.payload.skill.ref,importedAt:1}},updatePolicy:'manual'}).provenance.kind).toBe('registry');
     expect(await host.filesForPointer(pointer)).toEqual(files);
-    expect(reads.filter(url=>url.includes('/commits/')).at(-1)).toContain('/'+commit);
+    expect(reads.slice(admittedReads).filter(url=>url.includes('/commits/'))).toEqual([]);
     expect(RegistryFetchResponseV1Schema.safeParse({...initial,extra:true}).success).toBe(false);
   });
   it.each(['120000','160000'])('refuses a %s entry without reading its bytes',async(mode)=>{

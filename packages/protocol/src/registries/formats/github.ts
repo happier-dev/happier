@@ -26,10 +26,12 @@ async function readCommit(ctx: RegistryFetchContextV1, source: RegistrySourceV1,
   const repo = readGitHubRepositoryV1(source.url);
   if (!repo) throw new RegistryFetchErrorV1({state:'invalid_source'});
   const base = `https://api.github.com/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}`;
+  // A complete Git object id already resolves an immutable revision. Checking it
+  // through the mutable commit API spends its budget without changing the pin.
+  if (version !== undefined && /^[a-f0-9]{40}$/i.test(version)) return { repo, commit: version, base };
   const commitResult=z.object({sha:z.string().check(z.minLength(1))}).safeParse(requireHttp(await ctx.http.getJson(`${base}/commits/${encodeURIComponent(version ?? source.ref ?? repo.ref ?? 'HEAD')}`, {source:credentials})));
   if(!commitResult.success)throw new RegistryFetchErrorV1({state:'invalid_source'});
   const commit=commitResult.data.sha;
-  if (version !== undefined && /^[a-f0-9]{40}$/i.test(version) && commit !== version) throw new RegistryFetchErrorV1({state:'invalid_source'});
   return {repo, commit, base};
 }
 async function readCommittedTree(ctx: RegistryFetchContextV1, resolved: Awaited<ReturnType<typeof readCommit>>, credentials: RegistrySourceV1) {
