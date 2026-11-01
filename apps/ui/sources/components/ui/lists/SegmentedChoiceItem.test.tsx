@@ -230,3 +230,31 @@ describe('SegmentedChoiceItem', () => {
         expect(screen.findByTestId('strategy:select')?.props.accessibilityLabel).toBe('Strategy, Balance');
     });
 });
+
+
+describe('localized stacked choices', () => {
+    it('refreshes the overflow label with the active locale', async () => {
+        const { act } = await import('react-test-renderer');
+        const { SegmentedChoiceItem } = await import('./SegmentedChoiceItem');
+        const { t, getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings } = await import('@/text');
+        const original = getPreferredLanguage();
+        await preloadTranslations('fr');
+        setPreferredLanguageFromSettings('en');
+        try {
+            const screen = await renderScreen(
+                <SegmentedChoiceItem title="Choice" options={OPTIONS} value="hints" onChange={() => {}} />,
+            );
+            const layOutRow = () => act(async () => {
+                for (const node of screen.root.findAll(candidate => typeof candidate.type === 'string' && typeof candidate.props.onLayout === 'function')) {
+                    const captions = node.findAll(child => String(child.type) === 'Text');
+                    node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: captions.length === 1 ? 110 : 300, height: 32 } } });
+                }
+            });
+            await layOutRow();
+            await layOutRow();
+            expect(screen.findAll(node => node.props.overflow?.label === t('common.more')).length).toBeGreaterThan(0);
+            await act(async () => { setPreferredLanguageFromSettings('fr'); });
+            expect(screen.findAll(node => node.props.overflow?.label === t('common.more')).length).toBeGreaterThan(0);
+        } finally { await act(async () => { setPreferredLanguageFromSettings(original); }); }
+    });
+});

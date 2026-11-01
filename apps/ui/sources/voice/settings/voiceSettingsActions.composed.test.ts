@@ -36,6 +36,20 @@ async function pressTtsSample(screen: Awaited<ReturnType<typeof renderScreen>>) 
 }
 
 describe('Voice declarations through the default Settings Action and Account persistence', () => {
+    it('reads History through the default Settings Action without mounting Privacy', async () => {
+        const account = await createVoiceSettingsAccountTestHarness(settingsParse({ voice: { providerId: 'local_conversation' } }));
+        onTestFinished(account.dispose);
+        const request = account.request.getMockImplementation()!;
+        account.request.mockImplementation(async (input, init) => new URL(String(input)).pathname === '/v2/sessions/lookup-by-tags'
+            ? Response.json({ sessions: [] }) : request(input, init));
+        const result = await createDefaultActionExecutor().execute('settings.invoke', { anchor: 'voicePrivacy.voiceHistory' }, {
+            surface: 'ui', authority: 'present_user', serverId: account.scope.serverId, expectedAccountId: account.scope.accountId,
+            presentUserConfirmation: { actionId: 'settings.invoke' },
+        });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'completed', value: { rows: [] } } });
+        expect(account.writes).toHaveLength(0);
+    });
+
     it('persists the person-controlled Voice approval preference without replacing unrelated values', async () => {
         const account = await createVoiceSettingsAccountTestHarness(settingsParse({ actionsSettingsV1: {
             v: 1, actions: {}, approvalWaivedSurfaces: { 'settings.set': ['voice'] },

@@ -7,15 +7,16 @@ import { VOICE_PRIVACY_SETTINGS } from '@/voice/settings/voiceSettingsDeclaratio
 import { Switch } from '@/components/ui/forms/Switch';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
-import { t } from '@/text';
+import { t, usePreferredLanguage } from '@/text';
 
 export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (next: VoiceSettings) => void }) {
+  const language = usePreferredLanguage();
   const privacy = props.voice.privacy;
   const currentUiContextModeOptions = React.useMemo(() => [
     { id: 'off' as const, label: t('settingsVoice.pages.privacy.screenNever') },
     { id: 'on_demand' as const, label: t('settingsVoice.pages.privacy.screenWhenAsked') },
     { id: 'automatic' as const, label: t('settingsVoice.pages.privacy.screenAlways') },
-  ], []);
+  ], [language]);
 
   const setPrivacy = (patch: Partial<VoiceSettings['privacy']>) => {
     props.setVoice({

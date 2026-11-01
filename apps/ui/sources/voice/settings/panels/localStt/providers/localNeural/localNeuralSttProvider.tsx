@@ -21,10 +21,10 @@ const LocalNeuralProviderSettings: LocalSttProviderSpec['Settings'] = (props) =>
 
 export const localNeuralSttProviderSpec: LocalSttProviderSpec = {
   id: 'local_neural',
-  title: t('settingsVoice.local.localNeuralStt.provider.title'),
-  subtitle: t('settingsVoice.local.localNeuralStt.provider.subtitle'),
+  get title() { return t('settingsVoice.local.localNeuralStt.provider.title'); },
+  get subtitle() { return t('settingsVoice.local.localNeuralStt.provider.subtitle'); },
   iconName: 'sparkle',
-  detail: t('settingsVoice.local.localNeuralStt.provider.detail'),
+  get detail() { return t('settingsVoice.local.localNeuralStt.provider.detail'); },
   Settings: LocalNeuralProviderSettings,
   resolvePreferredExecution: (requestedExecution) => resolveLocalNeuralExecutionPolicy({ requestedExecution }).preferredExecution,
 };

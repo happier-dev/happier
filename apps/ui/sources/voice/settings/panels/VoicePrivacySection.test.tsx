@@ -21,6 +21,23 @@ afterEach(() => {
 });
 
 describe('VoicePrivacySection', () => {
+  it('refreshes mounted option labels when the language changes', async () => {
+    const { act } = await import('react-test-renderer');
+    const { t, getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings } = await import('@/text');
+    const { VoicePrivacySection } = await import('./VoicePrivacySection');
+    const original = getPreferredLanguage();
+    await preloadTranslations('fr');
+    setPreferredLanguageFromSettings('en');
+    try {
+      const screen = await renderScreen(<VoicePrivacySection voice={voiceSettingsDefaults} setVoice={vi.fn()} />);
+      await act(async () => { setPreferredLanguageFromSettings('fr'); });
+      for (const [id, key] of [["off", "screenNever"], ["on_demand", "screenWhenAsked"], ["automatic", "screenAlways"]] as const) {
+        expect(screen.findByTestId(`settings.voice.privacy.currentUiContextMode:${id}`)?.props.accessibilityLabel).toBe(t(`settingsVoice.pages.privacy.${key}`));
+      }
+    } finally { await act(async () => { setPreferredLanguageFromSettings(original); }); }
+  });
+
+
   it('names every privacy switch and updates the canonical privacy setting', async () => {
     const setVoice = vi.fn();
     const { VoicePrivacySection } = await import('./VoicePrivacySection');

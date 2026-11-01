@@ -76,6 +76,7 @@ export function LocalNeuralTtsSettings(props: {
                 setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsAssetId}
             />
 
+            <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsVoiceId}>
             <SettingAnchor settings={[VOICE_CONVERSATIONS_SETTINGS.settings.ttsVoiceId,
                 VOICE_CONVERSATIONS_SETTINGS.settings.ttsCatalog, VOICE_CONVERSATIONS_SETTINGS.settings.ttsCatalogRetry]}>
             <DropdownMenu
@@ -106,6 +107,7 @@ export function LocalNeuralTtsSettings(props: {
                     setOpenMenu(null);
                 }}
             />
+            </SettingAnchor>
             </SettingAnchor>
 
             <LocalNeuralTtsSpeedItem

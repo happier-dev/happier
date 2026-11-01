@@ -42,6 +42,10 @@ const { t, getPreferredLanguage, setPreferredLanguageFromSettings } = await impo
 const { Alert } = await import('react-native');
 const initialLanguage = getPreferredLanguage();
 
+const searchParams = vi.hoisted(() => ({ value: {} as Record<string, string> }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ params: () => searchParams.value }).module);
+const { LocalNeuralTtsSettings: WebSettings } = await import('./LocalNeuralTtsSettings.web');
+
 const previewConfig = { model: 'kokoro' as const, assetId: null, voiceId: 'af_heart', speed: 1, execution: 'device' as const };
 function startActionPreview() {
   const voice = voiceSettingsParse({ providerId: 'local_conversation' });
@@ -100,6 +104,14 @@ describe('LocalNeuralTtsSettings (native)', () => {
     account = null;
   });
   afterAll(async () => { await boundary.disposeAudioSession(); setPreferredLanguageFromSettings(initialLanguage); });
+
+  it.each([['web', WebSettings], ['native', LocalNeuralTtsSettings]] as const)('reveals the requested voice selector on %s', async (_platform, Settings) => {
+    searchParams.value = { setting: 'voiceConversations.ttsVoiceId' };
+    const screen = await renderScreen(<Settings cfgKokoro={previewConfig} setKokoro={vi.fn()} networkTimeoutMs={1000} />);
+    expect(screen.findAll(node => typeof node.type === 'string' && node.props.nativeID === 'setting-voiceConversations.ttsVoiceId')).toHaveLength(1);
+    expect(screen.findByTestId('setting-reveal.voiceConversations.ttsVoiceId')).not.toBeNull();
+    searchParams.value = {};
+  });
 
   it('honors disabled Settings Action admission for a native picker preview press', async () => {
     const { menu, sampleButton } = await mountPreviewPicker();

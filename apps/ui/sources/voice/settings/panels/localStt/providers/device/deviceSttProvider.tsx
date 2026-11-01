@@ -8,9 +8,9 @@ const DeviceSttSettings: LocalSttProviderSpec['Settings'] = () => null;
 
 export const deviceSttProviderSpec: LocalSttProviderSpec = {
   id: 'device',
-  title: t('settingsVoice.local.deviceStt'),
-  subtitle: t('settingsVoice.local.deviceSttSubtitle'),
+  get title() { return t('settingsVoice.local.deviceStt'); },
+  get subtitle() { return t('settingsVoice.local.deviceSttSubtitle'); },
   iconName: 'microphone',
-  detail: t('settingsVoice.local.deviceSttDetail'),
+  get detail() { return t('settingsVoice.local.deviceSttDetail'); },
   Settings: DeviceSttSettings,
 };

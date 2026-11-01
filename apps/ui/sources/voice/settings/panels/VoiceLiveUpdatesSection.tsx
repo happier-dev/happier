@@ -6,7 +6,7 @@ import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui
 import { Switch } from '@/components/ui/forms/Switch';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
-import { t } from '@/text';
+import { t, usePreferredLanguage } from '@/text';
 import { VOICE_PRIVACY_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 
 type VoiceUpdates = VoiceSettings['ui']['updates'];
@@ -20,6 +20,7 @@ export function VoiceLiveUpdatesSection(props: Readonly<{
   voice: VoiceSettings;
   setVoice: (next: VoiceSettings) => void;
 }>) {
+  const language = usePreferredLanguage();
   const updates = props.voice.ui.updates;
   const setUpdates = (patch: Partial<VoiceUpdates>) => {
     props.setVoice({ ...props.voice, ui: { ...props.voice.ui, updates: { ...updates, ...patch } } });
@@ -29,12 +30,12 @@ export function VoiceLiveUpdatesSection(props: Readonly<{
     { id: 'activity', label: t('settingsVoice.pages.privacy.liveActivity') },
     { id: 'summaries', label: t('settingsVoice.pages.privacy.liveSummaries') },
     { id: 'snippets', label: t('settingsVoice.pages.privacy.liveMessages') },
-  ] as const satisfies ReadonlyArray<SegmentedChoiceOption<VoiceUpdates['activeSession']>>, []);
+  ] as const satisfies ReadonlyArray<SegmentedChoiceOption<VoiceUpdates['activeSession']>>, [language]);
   const otherModeOptions = React.useMemo(() => [
     { id: 'never', label: t('settingsVoice.pages.privacy.liveOtherModeNever') },
     { id: 'on_demand_only', label: t('settingsVoice.pages.privacy.liveOtherModeWhenAsked') },
     { id: 'auto', label: t('settingsVoice.pages.privacy.liveOtherModeAutomatically') },
-  ] as const satisfies ReadonlyArray<SegmentedChoiceOption<VoiceUpdates['otherSessionsSnippetsMode']>>, []);
+  ] as const satisfies ReadonlyArray<SegmentedChoiceOption<VoiceUpdates['otherSessionsSnippetsMode']>>, [language]);
   const sendsMessages = updates.activeSession === 'snippets' || updates.otherSessions === 'snippets';
   const otherSendsMessages = updates.otherSessions === 'snippets';
   const messagesUnavailable = t('settingsVoice.pages.privacy.liveMessagesUnavailable');

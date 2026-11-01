@@ -23,6 +23,20 @@ const blocked: VoiceRoleReadiness = {
 };
 
 describe('local Voice pipeline', () => {
+    it('projects speech engine labels in the current locale after module initialization', async () => {
+        const { t, getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings } = await import('@/text');
+        const original = getPreferredLanguage();
+        await preloadTranslations('fr');
+        setPreferredLanguageFromSettings('en');
+        const stt = getLocalSttProviderSpec('local_neural');
+        const tts = getLocalTtsProviderSpec('local_neural');
+        try {
+            setPreferredLanguageFromSettings('fr');
+            expect(stt?.title).toBe(t('settingsVoice.local.localNeuralStt.provider.title'));
+            expect(tts?.title).toBe(t('settingsVoice.local.localNeuralTts.provider.title'));
+        } finally { setPreferredLanguageFromSettings(original); }
+    });
+
     it('gets explicit neural execution placement from the selected speech specs', () => {
         for (const spec of [getLocalSttProviderSpec('local_neural'), getLocalTtsProviderSpec('local_neural')]) {
             expect(spec?.resolvePreferredExecution?.('daemon')).toBe('daemon');

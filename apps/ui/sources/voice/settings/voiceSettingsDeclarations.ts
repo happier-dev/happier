@@ -187,7 +187,7 @@ export const VOICE_PRIVACY_SETTINGS = defineSettingsPage({
         history: {
             titleKey: 'settingsVoice.history.sectionTitle',
             settings: {
-                voiceHistory: {},
+                voiceHistory: { operation: voiceSettingsOperation('history_inspect') },
                 privacyPolicy: { operation: voiceSettingsOperation('privacy_policy_open') },
             },
         },

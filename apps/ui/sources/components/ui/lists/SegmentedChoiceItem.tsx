@@ -3,7 +3,7 @@ import { HappierPageRowFieldLayoutContext, resolveHappierSegmentedChoiceRow } fr
 
 import { SegmentedTabBar, type SegmentedTabBarProps } from '@/components/ui/navigation/SegmentedTabBar';
 
-import { t } from '@/text';
+import { t, usePreferredLanguage } from '@/text';
 
 import { Item, type ItemProps } from './Item';
 
@@ -95,7 +95,8 @@ export function SegmentedChoiceItem<T extends string>(props: SegmentedChoiceItem
 
 /** The bar fits its row once the row has moved it beneath the label (see the tab bar's `overflow`). */
 function SegmentedChoiceBar<T extends string>(props: SegmentedTabBarProps<T>) {
+    const language = usePreferredLanguage();
     const stacked = React.useContext(HappierPageRowFieldLayoutContext)?.stacked === true;
-    const overflow = React.useMemo(() => (stacked ? { label: t('common.more') } : undefined), [stacked]);
+    const overflow = React.useMemo(() => (stacked ? { label: t('common.more') } : undefined), [stacked, language]);
     return <SegmentedTabBar<T> {...props} overflow={overflow} />;
 }

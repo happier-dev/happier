@@ -59,6 +59,12 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
         return unavailable('model_operation_changed');
     }
     try {
+        if (operation === 'history_inspect') {
+            const { getDefaultVoiceHistoryConsumer } = await import('@/voice/history/defaultVoiceHistoryConsumer');
+            if (!current()) return { status: 'cancelled' };
+            const history = await getDefaultVoiceHistoryConsumer().search();
+            return current() ? completed(history) : { status: 'cancelled' };
+        }
         if (operation === 'privacy_policy_open') {
             const { openExternalUrl } = await import('@/utils/url/openExternalUrl');
             if (!current()) return { status: 'cancelled' };

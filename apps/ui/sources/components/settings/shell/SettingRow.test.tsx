@@ -60,6 +60,19 @@ async function renderPage(requested: string, rowMounted: boolean) {
 }
 
 describe('SettingSection', () => {
+    it('refreshes a mounted declaration label on a locale change', async () => {
+        const { t, getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings } = await import('@/text');
+        const { VOICE_PRIVACY_SETTINGS } = await import('@/voice/settings/voiceSettingsDeclarations');
+        const original = getPreferredLanguage();
+        await preloadTranslations('fr');
+        setPreferredLanguageFromSettings('en');
+        try {
+            const screen = await renderScreen(<SettingRow setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsLocation} />);
+            await act(async () => { setPreferredLanguageFromSettings('fr'); });
+            expect(screen.findAll(node => node.props.title === t('settingsVoice.diagnostics.location')).length).toBeGreaterThan(0);
+        } finally { await act(async () => { setPreferredLanguageFromSettings(original); }); }
+    });
+
     afterEach(() => {
         vi.useRealTimers();
         paramsState.value = {};

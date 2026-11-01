@@ -27,10 +27,10 @@ const LocalNeuralProviderSettings: LocalTtsProviderSpec['Settings'] = (props) =>
 
 export const localNeuralTtsProviderSpec: LocalTtsProviderSpec = {
   id: 'local_neural',
-  title: t('settingsVoice.local.localNeuralTts.provider.title'),
-  subtitle: t('settingsVoice.local.localNeuralTts.provider.subtitle'),
+  get title() { return t('settingsVoice.local.localNeuralTts.provider.title'); },
+  get subtitle() { return t('settingsVoice.local.localNeuralTts.provider.subtitle'); },
   iconName: 'sparkle',
-  detail: t('settingsVoice.local.localNeuralTts.provider.detail'),
+  get detail() { return t('settingsVoice.local.localNeuralTts.provider.detail'); },
   Settings: LocalNeuralProviderSettings,
   resolvePreferredExecution: (requestedExecution) => resolveLocalNeuralExecutionPolicy({ requestedExecution }).preferredExecution,
   test: async ({ cfgTts, networkTimeoutMs, sample, signal, isCurrent, registerPlaybackStopper }) => previewLocalNeuralTts({

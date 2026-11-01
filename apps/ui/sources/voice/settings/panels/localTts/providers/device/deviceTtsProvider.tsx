@@ -10,10 +10,10 @@ const DeviceTtsSettings: LocalTtsProviderSpec['Settings'] = () => null;
 
 export const deviceTtsProviderSpec: LocalTtsProviderSpec = {
   id: 'device',
-  title: t('settingsVoice.local.deviceTts'),
-  subtitle: t('settingsVoice.local.deviceTtsSubtitle'),
+  get title() { return t('settingsVoice.local.deviceTts'); },
+  get subtitle() { return t('settingsVoice.local.deviceTtsSubtitle'); },
   iconName: 'device-mobile',
-  detail: t('settingsVoice.local.deviceTtsDetail'),
+  get detail() { return t('settingsVoice.local.deviceTtsDetail'); },
   Settings: DeviceTtsSettings,
   test: async ({ sample, signal, isCurrent, registerPlaybackStopper }) => {
     const playback = new AbortController();

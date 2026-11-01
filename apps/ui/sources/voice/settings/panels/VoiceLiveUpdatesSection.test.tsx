@@ -26,6 +26,23 @@ async function render(voice: VoiceSettings, setVoice = vi.fn()) {
 }
 
 describe('VoiceLiveUpdatesSection', () => {
+  it('refreshes mounted option labels when the language changes', async () => {
+    const { act } = await import('react-test-renderer');
+    const { t, getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings } = await import('@/text');
+    const { VoiceLiveUpdatesSection } = await import('./VoiceLiveUpdatesSection');
+    const original = getPreferredLanguage();
+    await preloadTranslations('fr');
+    setPreferredLanguageFromSettings('en');
+    try {
+      const screen = await renderScreen(<VoiceLiveUpdatesSection voice={voiceSettingsDefaults} setVoice={vi.fn()} />);
+      await act(async () => { setPreferredLanguageFromSettings('fr'); });
+      for (const [id, key] of [["none", "liveNothing"], ["activity", "liveActivity"], ["summaries", "liveSummaries"], ["snippets", "liveMessages"]] as const) {
+        expect(screen.findByTestId(`settings.voice.ui.updates.activeSession:${id}`)?.props.accessibilityLabel).toBe(t(`settingsVoice.pages.privacy.${key}`));
+      }
+    } finally { await act(async () => { setPreferredLanguageFromSettings(original); }); }
+  });
+
+
   it('keeps the message options visible and locked until a session sends messages', async () => {
     const screen = await render(voiceWithUpdates({ activeSession: 'summaries', otherSessions: 'activity' }));
 

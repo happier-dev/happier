@@ -4,7 +4,7 @@ import { useIsFocused, useLocalSearchParams } from '@/components/appShell/worksp
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { t } from '@/text';
+import { t, usePreferredLanguage } from '@/text';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { usePopoverScrollSourceRef } from '@/components/ui/popover';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
@@ -152,6 +152,7 @@ export type SettingRowProps = Omit<ItemProps, 'title' | 'subtitle'> & Readonly<{
  * shows. Revealing it from search is `SettingAnchor`'s job.
  */
 export const SettingRow = React.memo(function SettingRow(props: SettingRowProps) {
+    usePreferredLanguage();
     const { setting, subtitle, showDivider, ...itemProps } = props;
     return (
         <SettingAnchor setting={setting} showDivider={showDivider}>
