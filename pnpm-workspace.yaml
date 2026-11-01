@@ -23,7 +23,10 @@ packages:
   - packages/email-transports-protocol
   - packages/brand
   - packages/triage-protocol
+  - packages/deployment-protocol
+  - packages/deployments
   - packages/triage-sources
+  - packages/forge-ci
   - packages/plugins/[a-z]*
   - packages/peer-mediation
   - packages/transfers
@@ -121,6 +124,9 @@ allowBuilds:
   "@prisma/client": true
   "@happier-dev/cli": false
 patchedDependencies:
+  metro-file-map@0.83.5: patches/metro-file-map@0.83.5.patch
+  react-native-web@0.21.2: patches/react-native-web@0.21.2.patch
+  monaco-editor@0.57.0: patches/monaco-editor@0.57.0.patch
   "@elevenlabs/client@1.18.0": patches/@elevenlabs__client@1.18.0.patch
   "@expo/metro-config@55.0.13": patches/@expo__metro-config@55.0.13.patch
   "@legendapp/list@3.3.3": patches/@legendapp__list@3.3.3.patch
@@ -131,8 +137,11 @@ patchedDependencies:
   "@sentry/react-native@7.11.0": patches/@sentry__react-native@7.11.0.patch
   "@socket.io/redis-streams-adapter@0.3.1": patches/@socket.io__redis-streams-adapter@0.3.1.patch
   expo-crypto@55.0.12: patches/expo-crypto@55.0.12.patch
+  expo-notifications@55.0.16: patches/expo-notifications@55.0.16.patch
   expo-router@55.0.10: patches/expo-router@55.0.10.patch
+  expo-updates@55.0.18: patches/expo-updates@55.0.18.patch
   expo-widgets@55.0.15: patches/expo-widgets@55.0.15.patch
+  jiti@2.7.0: patches/jiti@2.7.0.patch
   libmime@5.4.7: patches/libmime@5.4.7.patch
   metro-runtime@0.83.5: patches/metro-runtime@0.83.5.patch
   metro@0.83.5: patches/metro@0.83.5.patch

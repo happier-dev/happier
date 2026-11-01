@@ -19,6 +19,6 @@
     "build:finite": "pnpm --silent run build",
     "project:finite": "node --experimental-strip-types ../../../apps/cli/scripts/build-owned/checkBundledPluginWorkspace.mjs"
   },
-  "dependencies": { "@happier-dev/plugin-sdk": "0.0.0" },
-  "devDependencies": { "@types/node": "^22.0.0", "vitest": "^3.2.4" }
+  "dependencies": { "@happier-dev/plugin-sdk": "0.0.0", "@happier-dev/plugin-ui": "0.0.0" },
+  "devDependencies": { "@types/node": "^22.0.0", "@types/react": "19.2.0", "react": "19.2.0", "react-native": "0.83.5", "vitest": "^3.2.4" }
 }

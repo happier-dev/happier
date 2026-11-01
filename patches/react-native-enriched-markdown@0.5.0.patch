@@ -1814,7 +1814,7 @@ index 2639759eb077d57136ab72a09ce81e6252ea005d..b84f50b86bbbe2da72045dcc9c2f9757
  }
  
 diff --git a/ios/renderer/LinkRenderer.m b/ios/renderer/LinkRenderer.m
-index 8c37b26dcf22fc3f313970f6607c276821ccf240..2f6caccd15e8521ebcc1af5dd1e88421032044db 100644
+index 8c37b26dcf22fc3f313970f6607c276821ccf240..a634821ed4a31bcb40cf7c269be04f54c1700a2b 100644
 --- a/ios/renderer/LinkRenderer.m
 +++ b/ios/renderer/LinkRenderer.m
 @@ -4,9 +4,10 @@
@@ -2278,7 +2278,7 @@ index 34ee5c5f45e076bf3bdad87f2efb844b496d492e..4c88b06bad6da081d19e8004f6794f7b
                              if (img.imageURL) {
                                if (img.isInline) {
 diff --git a/ios/utils/MarkdownAccessibilityElementBuilder.m b/ios/utils/MarkdownAccessibilityElementBuilder.m
-index d37c02f40496ad72f7fee52a53cf1fa1395607e2..ccf20aafff4aa5be974bf55a14ee0d3892146bde 100644
+index d37c02f40496ad72f7fee52a53cf1fa1395607e2..a965ddc29c6b2bea513fb069bfb0fb3c5d4c3448 100644
 --- a/ios/utils/MarkdownAccessibilityElementBuilder.m
 +++ b/ios/utils/MarkdownAccessibilityElementBuilder.m
 @@ -1,4 +1,5 @@
@@ -2500,7 +2500,7 @@ index 490b5670a6c3424123ec88dd51b088be845fee53..7ff21c2db00504d1b487a16c02ac1e78
          start: selectionStart,
          end: selectionEnd
 diff --git a/lib/module/normalizeMarkdownStyle.js b/lib/module/normalizeMarkdownStyle.js
-index 6b10dda932331fb61e137e1b0714563a32a302d7..7f7e83d8dabf8d14109541bc0365ff807bf9b368 100644
+index 6b10dda932331fb61e137e1b0714563a32a302d7..8dc779d832a676fa84ae6f38e640f771b8eb11e6 100644
 --- a/lib/module/normalizeMarkdownStyle.js
 +++ b/lib/module/normalizeMarkdownStyle.js
 @@ -159,7 +159,8 @@ const DEFAULT_NORMALIZED_STYLE = Object.freeze({
@@ -2514,10 +2514,10 @@ index 6b10dda932331fb61e137e1b0714563a32a302d7..7f7e83d8dabf8d14109541bc0365ff80
    strong: {
      fontFamily: '',
 diff --git a/lib/module/web/EnrichedMarkdownText.js b/lib/module/web/EnrichedMarkdownText.js
-index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..9741b23665bce845804e4c5c7a0c10c3438b25d5 100644
+index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..492435f6c80b6b91dff0ea3af2c998fe16c1652e 100644
 --- a/lib/module/web/EnrichedMarkdownText.js
 +++ b/lib/module/web/EnrichedMarkdownText.js
-@@ -1,13 +1,22 @@
+@@ -1,47 +1,67 @@
  "use strict";
  
 -import { useState, useEffect, useMemo } from 'react';
@@ -2534,16 +2534,20 @@ index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..9741b23665bce845804e4c5c7a0c10c3
  import { jsx as _jsx } from "react/jsx-runtime";
 +const STREAMING_REVEAL_RANGE_TTL_MS = 260;
 +const STREAMING_REVEAL_CLEANUP_BUFFER_MS = 16;
++const EMPTY_MARKDOWN_STYLE = {};
++const EMPTY_MD4C_FLAGS = {};
 +function prepareAstForRendering(ast) {
-+  indexTaskItems(ast);
-+  markInlineImages(ast);
-+  markStreamingRevealOffsets(ast);
-+  return ast;
++  return markStreamingRevealOffsets(markInlineImages(indexTaskItems(ast)));
 +}
  export const EnrichedMarkdownText = ({
    markdown,
-   markdownStyle = {},
-@@ -18,30 +27,41 @@ export const EnrichedMarkdownText = ({
+-  markdownStyle = {},
+-  md4cFlags = {},
++  markdownStyle = EMPTY_MARKDOWN_STYLE,
++  md4cFlags = EMPTY_MD4C_FLAGS,
+   onLinkPress,
+   onLinkLongPress,
+   onTaskListItemPress,
    allowTrailingMargin = false,
    containerStyle,
    selectable = true,
@@ -2562,12 +2566,13 @@ index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..9741b23665bce845804e4c5c7a0c10c3
 +    latexMath = true,
 +    texMathBackslashDelimiters = false
    } = md4cFlags;
++  const previousAstRef = useRef(null);
 +  const syncAst = useMemo(() => {
 +    const parsed = parseMarkdownSyncIfReady(markdown, {
 +      underline,
 +      latexMath,
 +      texMathBackslashDelimiters
-+    });
++    }, previousAstRef.current);
 +    return parsed ? prepareAstForRendering(parsed) : null;
 +  }, [markdown, underline, latexMath, texMathBackslashDelimiters]);
 +  const [ast, setAst] = useState(null);
@@ -2586,7 +2591,7 @@ index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..9741b23665bce845804e4c5c7a0c10c3
 -    }), katexPromise]).then(([result, katexInstance]) => {
 +      latexMath,
 +      texMathBackslashDelimiters
-+    }).then(result => {
++    }, previousAstRef.current).then(result => {
        if (!cancelled) {
 -        indexTaskItems(result);
 -        markInlineImages(result);
@@ -2597,7 +2602,7 @@ index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..9741b23665bce845804e4c5c7a0c10c3
        }
      }).catch(error => {
        if (!cancelled) {
-@@ -50,21 +70,84 @@ export const EnrichedMarkdownText = ({
+@@ -50,21 +70,89 @@ export const EnrichedMarkdownText = ({
          }
          setParseError(true);
          setAst(null);
@@ -2619,9 +2624,14 @@ index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..9741b23665bce845804e4c5c7a0c10c3
 +    void loadKaTeX().then(instance => {
 +      if (!cancelled) setKatex(instance);
 +    });
-+    return () => { cancelled = true; };
++    return () => {
++      cancelled = true;
++    };
 +  }, [latexMath]);
 +  const renderedAst = syncAst ?? ast;
++  useLayoutEffect(() => {
++    previousAstRef.current = renderedAst;
++  }, [renderedAst]);
    const callbacks = useMemo(() => ({
      onLinkPress,
      onLinkLongPress,
@@ -2642,10 +2652,10 @@ index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..9741b23665bce845804e4c5c7a0c10c3
 +    previousSourceLength: previousSourceLengthRef.current,
 +    currentSourceLength: markdown.length
 +  }) : [], [currentComparisonText, markdown, revealCleanupRevision, streamingAnimation]);
-+  const streamingReveal = createStreamingRevealState({
++  const streamingReveal = useMemo(() => createStreamingRevealState({
 +    enabled: streamingAnimation,
 +    activeRanges: activeRevealRanges
-+  });
++  }), [streamingAnimation, activeRevealRanges]);
 +  useLayoutEffect(() => {
 +    if (!streamingAnimation) {
 +      activeRevealRangesRef.current = [];
@@ -2686,7 +2696,7 @@ index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..9741b23665bce845804e4c5c7a0c10c3
    const lastChildStyle = useMemo(() => allowTrailingMargin ? normalizedStyle : zeroTrailingMargins(normalizedStyle), [normalizedStyle, allowTrailingMargin]);
    const styles = useMemo(() => buildStyles(normalizedStyle), [normalizedStyle]);
    const lastChildStyles = useMemo(() => buildStyles(lastChildStyle), [lastChildStyle]);
-@@ -76,19 +159,46 @@ export const EnrichedMarkdownText = ({
+@@ -76,19 +164,46 @@ export const EnrichedMarkdownText = ({
        userSelect: 'none'
      })
    }), [containerStyle, selectable]);
@@ -2738,6 +2748,14 @@ index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..9741b23665bce845804e4c5c7a0c10c3
    const lastIdx = children.length - 1;
    return /*#__PURE__*/_jsx("div", {
      style: wrapperStyle,
+diff --git a/lib/module/web/EnrichedMarkdownText.js.map b/lib/module/web/EnrichedMarkdownText.js.map
+index 34c173f4225cb8b352224a225b1769d41825c304..e50af5dcf9489499481d74a4ca1ae1f395450215 100644
+--- a/lib/module/web/EnrichedMarkdownText.js.map
++++ b/lib/module/web/EnrichedMarkdownText.js.map
+@@ -1 +1 @@
+-{"version":3,"names":["useState","useEffect","useMemo","normalizeMarkdownStyle","zeroTrailingMargins","parseErrorFallbackStyle","buildStyles","parseMarkdown","RenderNode","indexTaskItems","markInlineImages","loadKaTeX","jsx","_jsx","EnrichedMarkdownText","markdown","markdownStyle","md4cFlags","onLinkPress","onLinkLongPress","onTaskListItemPress","allowTrailingMargin","containerStyle","selectable","dir","rest","normalizedStyle","ast","setAst","katex","setKatex","parseError","setParseError","underline","latexMath","cancelled","katexPromise","Promise","resolve","all","then","result","katexInstance","catch","error","__DEV__","console","callbacks","capabilities","lastChildStyle","styles","lastChildStyles","wrapperStyle","display","flexDirection","undefined","userSelect","style","children","lastIdx","length","map","child","index","node","type"],"sourceRoot":"../../../src","sources":["web/EnrichedMarkdownText.tsx"],"mappings":"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","ignoreList":[]}
++{"version":3,"names":["useState","useEffect","useLayoutEffect","useMemo","useRef","normalizeMarkdownStyle","zeroTrailingMargins","buildStyles","parseMarkdown","parseMarkdownSyncIfReady","RenderNode","indexTaskItems","markInlineImages","loadKaTeX","createStreamingRevealState","markStreamingRevealOffsets","readRenderedComparisonText","updateStreamingRevealRanges","jsx","_jsx","STREAMING_REVEAL_RANGE_TTL_MS","STREAMING_REVEAL_CLEANUP_BUFFER_MS","EMPTY_MARKDOWN_STYLE","EMPTY_MD4C_FLAGS","prepareAstForRendering","ast","EnrichedMarkdownText","markdown","markdownStyle","md4cFlags","onLinkPress","onLinkLongPress","onTaskListItemPress","allowTrailingMargin","containerStyle","selectable","streamingAnimation","renderRawFallback","dir","rest","normalizedStyle","underline","latexMath","texMathBackslashDelimiters","previousAstRef","syncAst","parsed","current","setAst","katex","setKatex","parseError","setParseError","cancelled","then","result","catch","error","__DEV__","console","instance","renderedAst","callbacks","previousComparisonTextRef","previousSourceLengthRef","activeRevealRangesRef","revealCleanupTimerRef","revealCleanupRevision","setRevealCleanupRevision","currentComparisonText","activeRevealRanges","activeRanges","previousComparisonText","nowMs","Date","now","ttlMs","previousSourceLength","currentSourceLength","length","streamingReveal","enabled","clearTimeout","nextExpiryMs","Math","min","map","range","expiresAtMs","delayMs","max","setTimeout","revision","capabilities","lastChildStyle","styles","lastChildStyles","wrapperStyle","display","flexDirection","undefined","userSelect","style","children","paragraph","whiteSpace","fallbackParagraphStyle","visibility","lastIdx","child","index","node","type"],"sources":["../../../src/web/EnrichedMarkdownText.tsx"],"sourcesContent":["import {\n  useState,\n  useEffect,\n  useLayoutEffect,\n  useMemo,\n  useRef,\n  type CSSProperties,\n} from 'react';\nimport type { EnrichedMarkdownTextProps } from '../types/MarkdownTextProps.web';\nimport { normalizeMarkdownStyle } from '../normalizeMarkdownStyle.web';\nimport {\n  zeroTrailingMargins,\n  buildStyles,\n} from './styles';\nimport { parseMarkdown, parseMarkdownSyncIfReady } from './parseMarkdown';\nimport { RenderNode } from './renderers';\nimport type { ASTNode, RendererCallbacks, RenderCapabilities } from './types';\nimport { indexTaskItems, markInlineImages } from './utils';\nimport { loadKaTeX } from './katex';\nimport type { KaTeXInstance } from './katex';\nimport {\n  createStreamingRevealState,\n  markStreamingRevealOffsets,\n  readRenderedComparisonText,\n  updateStreamingRevealRanges,\n  type StreamingRevealRange,\n} from './streamingReveal';\n\nconst STREAMING_REVEAL_RANGE_TTL_MS = 260;\nconst STREAMING_REVEAL_CLEANUP_BUFFER_MS = 16;\nconst EMPTY_MARKDOWN_STYLE = {};\nconst EMPTY_MD4C_FLAGS = {};\n\nfunction prepareAstForRendering(ast: ASTNode): ASTNode {\n  return markStreamingRevealOffsets(markInlineImages(indexTaskItems(ast)));\n}\n\nexport const EnrichedMarkdownText = ({\n  markdown,\n  markdownStyle = EMPTY_MARKDOWN_STYLE,\n  md4cFlags = EMPTY_MD4C_FLAGS,\n  onLinkPress,\n  onLinkLongPress,\n  onTaskListItemPress,\n  allowTrailingMargin = false,\n  containerStyle,\n  selectable = true,\n  streamingAnimation = false,\n  renderRawFallback = true,\n  dir,\n  ...rest\n}: EnrichedMarkdownTextProps) => {\n  const normalizedStyle = useMemo(\n    () => normalizeMarkdownStyle(markdownStyle),\n    [markdownStyle]\n  );\n  const { underline = false, latexMath = true, texMathBackslashDelimiters = false } = md4cFlags;\n  const previousAstRef = useRef<ASTNode | null>(null);\n\n  const syncAst = useMemo(() => {\n    const parsed = parseMarkdownSyncIfReady(markdown, { underline, latexMath, texMathBackslashDelimiters }, previousAstRef.current);\n    return parsed ? prepareAstForRendering(parsed) : null;\n  }, [markdown, underline, latexMath, texMathBackslashDelimiters]);\n  const [ast, setAst] = useState<ASTNode | null>(null);\n  const [katex, setKatex] = useState<KaTeXInstance | null>(null);\n  const [parseError, setParseError] = useState<boolean>(false);\n\n  useEffect(() => {\n    // A warm synchronous AST is already the rendered authority. Only cold or\n    // failed synchronous parsing needs an asynchronous result publication.\n    if (syncAst) return;\n    let cancelled = false;\n    parseMarkdown(markdown, { underline, latexMath, texMathBackslashDelimiters }, previousAstRef.current)\n      .then((result) => {\n        if (!cancelled) {\n          setParseError(false);\n          setAst(prepareAstForRendering(result));\n        }\n      })\n      .catch((error) => {\n        if (!cancelled) {\n          if (__DEV__) {\n            console.error('[EnrichedMarkdownText] Parse failed:', error);\n          }\n\n          setParseError(true);\n          setAst(null);\n        }\n      });\n\n    return () => {\n      cancelled = true;\n    };\n  }, [syncAst, markdown, underline, latexMath, texMathBackslashDelimiters]);\n\n  useEffect(() => {\n    let cancelled = false;\n    if (!latexMath) {\n      setKatex(null);\n      return;\n    }\n    // Optional math readiness is independent of document parsing and streaming.\n    void loadKaTeX().then((instance) => {\n      if (!cancelled) setKatex(instance);\n    });\n    return () => { cancelled = true; };\n  }, [latexMath]);\n\n  const renderedAst = syncAst ?? ast;\n  useLayoutEffect(() => {\n    previousAstRef.current = renderedAst;\n  }, [renderedAst]);\n\n  const callbacks = useMemo<RendererCallbacks>(\n    () => ({ onLinkPress, onLinkLongPress, onTaskListItemPress }),\n    [onLinkPress, onLinkLongPress, onTaskListItemPress]\n  );\n\n  const previousComparisonTextRef = useRef('');\n  const previousSourceLengthRef = useRef(0);\n  const activeRevealRangesRef = useRef<readonly StreamingRevealRange[]>([]);\n  const revealCleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(\n    null\n  );\n  const [revealCleanupRevision, setRevealCleanupRevision] = useState(0);\n  const currentComparisonText = useMemo(\n    () => readRenderedComparisonText(renderedAst),\n    [renderedAst]\n  );\n  const activeRevealRanges = useMemo(\n    () =>\n      streamingAnimation\n        ? updateStreamingRevealRanges({\n            activeRanges: activeRevealRangesRef.current,\n            previousComparisonText: previousComparisonTextRef.current,\n            currentComparisonText,\n            nowMs: Date.now(),\n            ttlMs: STREAMING_REVEAL_RANGE_TTL_MS,\n            previousSourceLength: previousSourceLengthRef.current,\n            currentSourceLength: markdown.length,\n          })\n        : [],\n    [currentComparisonText, markdown, revealCleanupRevision, streamingAnimation]\n  );\n  const streamingReveal = useMemo(() => createStreamingRevealState({\n    enabled: streamingAnimation,\n    activeRanges: activeRevealRanges,\n  }), [streamingAnimation, activeRevealRanges]);\n\n  useLayoutEffect(() => {\n    if (!streamingAnimation) {\n      activeRevealRangesRef.current = [];\n      previousComparisonTextRef.current = currentComparisonText;\n      previousSourceLengthRef.current = markdown.length;\n      return;\n    }\n\n    activeRevealRangesRef.current = activeRevealRanges;\n    previousComparisonTextRef.current = currentComparisonText;\n    previousSourceLengthRef.current = markdown.length;\n  }, [activeRevealRanges, currentComparisonText, markdown, streamingAnimation]);\n\n  useEffect(() => {\n    if (revealCleanupTimerRef.current) {\n      clearTimeout(revealCleanupTimerRef.current);\n      revealCleanupTimerRef.current = null;\n    }\n\n    if (!streamingAnimation || activeRevealRanges.length === 0) return;\n\n    const nowMs = Date.now();\n    const nextExpiryMs = Math.min(\n      ...activeRevealRanges.map((range) => range.expiresAtMs)\n    );\n    const delayMs = Math.max(\n      0,\n      nextExpiryMs - nowMs + STREAMING_REVEAL_CLEANUP_BUFFER_MS\n    );\n\n    revealCleanupTimerRef.current = setTimeout(() => {\n      revealCleanupTimerRef.current = null;\n      setRevealCleanupRevision((revision) => revision + 1);\n    }, delayMs);\n\n    return () => {\n      if (revealCleanupTimerRef.current) {\n        clearTimeout(revealCleanupTimerRef.current);\n        revealCleanupTimerRef.current = null;\n      }\n    };\n  }, [activeRevealRanges, streamingAnimation]);\n\n  const capabilities = useMemo<RenderCapabilities>(\n    () => ({ katex, streamingReveal }),\n    [katex, streamingReveal]\n  );\n\n  const lastChildStyle = useMemo(\n    () =>\n      allowTrailingMargin\n        ? normalizedStyle\n        : zeroTrailingMargins(normalizedStyle),\n    [normalizedStyle, allowTrailingMargin]\n  );\n\n  const styles = useMemo(() => buildStyles(normalizedStyle), [normalizedStyle]);\n\n  const lastChildStyles = useMemo(\n    () => buildStyles(lastChildStyle),\n    [lastChildStyle]\n  );\n\n  const wrapperStyle = useMemo<CSSProperties>(\n    () => ({\n      display: 'flex',\n      flexDirection: 'column',\n      ...(containerStyle as CSSProperties),\n      ...(selectable ? undefined : { userSelect: 'none' }),\n    }),\n    [containerStyle, selectable]\n  );\n\n  if (parseError && !syncAst) {\n    return (\n      <div style={wrapperStyle} dir={dir} {...rest}>\n        <p\n          style={{\n            ...lastChildStyles.paragraph,\n            whiteSpace: 'pre-wrap',\n          }}\n        >\n          {markdown}\n        </p>\n      </div>\n    );\n  }\n\n  if (!renderedAst) {\n    const fallbackParagraphStyle = {\n      ...lastChildStyles.paragraph,\n      whiteSpace: 'pre-wrap',\n      ...(renderRawFallback === 'hidden' ? { visibility: 'hidden' as const } : undefined),\n    };\n\n    if (!renderRawFallback) {\n      return <div style={wrapperStyle} dir={dir} {...rest} />;\n    }\n\n    return (\n      <div style={wrapperStyle} dir={dir} {...rest}>\n        <p style={fallbackParagraphStyle}>\n          {markdown}\n        </p>\n      </div>\n    );\n  }\n\n  const children = renderedAst.children ?? [];\n  const lastIdx = children.length - 1;\n\n  return (\n    <div style={wrapperStyle} dir={dir} {...rest}>\n      {children.map((child, index) => (\n        <RenderNode\n          key={`${child.type}-${index}`}\n          node={child}\n          style={index === lastIdx ? lastChildStyle : normalizedStyle}\n          styles={index === lastIdx ? lastChildStyles : styles}\n          callbacks={callbacks}\n          capabilities={capabilities}\n        />\n      ))}\n    </div>\n  );\n};\n\nexport default EnrichedMarkdownText;\n"],"mappings":"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","ignoreList":[]}
+\ No newline at end of file
 diff --git a/lib/module/web/katex.js b/lib/module/web/katex.js
 index b0dbf6aee9f73208a1a2431aeb3aa7217e7bdf23..6d641c79274f1b6c8ea9f1c3096284bd790dbe8e 100644
 --- a/lib/module/web/katex.js
@@ -2766,10 +2784,10 @@ index b0dbf6aee9f73208a1a2431aeb3aa7217e7bdf23..6d641c79274f1b6c8ea9f1c3096284bd
    return katexLoadPromise;
  }
 diff --git a/lib/module/web/parseMarkdown.js b/lib/module/web/parseMarkdown.js
-index 7604c1373b3fb26b3259cc1e0d529c2219459fff..20039e4663f7935387c8838776f8fce1b4ba85b2 100644
+index 7604c1373b3fb26b3259cc1e0d529c2219459fff..d186fc484dc4709009c536a651b14b9a4a6a3bb5 100644
 --- a/lib/module/web/parseMarkdown.js
 +++ b/lib/module/web/parseMarkdown.js
-@@ -1,32 +1,169 @@
+@@ -1,32 +1,186 @@
  "use strict";
  
 +import createMd4cModule from './wasm/md4c.js';
@@ -2778,7 +2796,7 @@ index 7604c1373b3fb26b3259cc1e0d529c2219459fff..20039e4663f7935387c8838776f8fce1
  let parserPromise = null;
 +let parserRuntime = null;
 +const PARSE_CACHE_MAX_ENTRIES = 48;
-+const PARSE_CACHE_MAX_MARKDOWN_CHARS = 32000;
++const PARSE_CACHE_MAX_MARKDOWN_CHARS = 32_000;
 +const parseCache = new Map();
 +const parseResultCache = new Map();
 +const WASM_FACTORY_UNAVAILABLE_MESSAGE = 'WASM parser module did not export a factory';
@@ -2836,11 +2854,11 @@ index 7604c1373b3fb26b3259cc1e0d529c2219459fff..20039e4663f7935387c8838776f8fce1
 +  return markdown.length <= PARSE_CACHE_MAX_MARKDOWN_CHARS;
 +}
 +function buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters) {
-+  return shouldCacheParseResult(markdown) ? `${underline ? 1 : 0}\0${latexMath ? 1 : 0}\0${texMathBackslashDelimiters ? 1 : 0}\0${markdown}` : null;
++  return shouldCacheParseResult(markdown) ? `${underline ? 1 : 0}\u0000${latexMath ? 1 : 0}\u0000${texMathBackslashDelimiters ? 1 : 0}\u0000${markdown}` : null;
 +}
 +function rememberParsedResult(cacheKey, ast) {
 +  if (!cacheKey) return;
-+  parseResultCache.set(cacheKey, cloneAst(ast));
++  parseResultCache.set(cacheKey, ast);
 +  parseCache.delete(cacheKey);
 +  while (parseResultCache.size > PARSE_CACHE_MAX_ENTRIES) {
 +    const oldestKey = parseResultCache.keys().next().value;
@@ -2848,13 +2866,13 @@ index 7604c1373b3fb26b3259cc1e0d529c2219459fff..20039e4663f7935387c8838776f8fce1
 +    parseResultCache.delete(oldestKey);
 +  }
 +}
-+function readCachedParsedResult(cacheKey) {
++function readCachedParsedResult(cacheKey, previousAst) {
 +  if (!cacheKey) return null;
 +  const cached = parseResultCache.get(cacheKey);
 +  if (!cached) return null;
 +  parseResultCache.delete(cacheKey);
 +  parseResultCache.set(cacheKey, cached);
-+  return cloneAst(cached);
++  return cloneAst(cached, previousAst);
 +}
 +function parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath, texMathBackslashDelimiters) {
 +  const {
@@ -2875,18 +2893,25 @@ index 7604c1373b3fb26b3259cc1e0d529c2219459fff..20039e4663f7935387c8838776f8fce1
  export async function parseMarkdown(markdown, {
    underline = false,
 -  latexMath = true
+-} = {}) {
+-  const parse = await initializeParser();
+-  const result = JSON.parse(parse(markdown, underline ? 1 : 0, latexMath ? 1 : 0));
+-  if (!isASTNode(result)) {
+-    throw new Error('WASM parser returned invalid AST');
+-  }
+-  return result;
 +  latexMath = true,
 +  texMathBackslashDelimiters = false
-+} = {}) {
++} = {}, previousAst) {
 +  const cacheKey = buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters);
-+  const cachedResult = readCachedParsedResult(cacheKey);
++  const cachedResult = readCachedParsedResult(cacheKey, previousAst);
 +  if (cachedResult) return cachedResult;
 +  if (cacheKey) {
 +    const cached = parseCache.get(cacheKey);
 +    if (cached) {
 +      parseCache.delete(cacheKey);
 +      parseCache.set(cacheKey, cached);
-+      return cloneAst(await cached);
++      return cloneAst(await cached, previousAst);
 +    }
 +  }
 +  const parsed = initializeParser().then(runtime => {
@@ -2906,7 +2931,7 @@ index 7604c1373b3fb26b3259cc1e0d529c2219459fff..20039e4663f7935387c8838776f8fce1
 +    }
 +  }
 +  try {
-+    return cloneAst(await parsed);
++    return cloneAst(await parsed, previousAst);
 +  } catch (error) {
 +    if (cacheKey) {
 +      parseCache.delete(cacheKey);
@@ -2918,13 +2943,9 @@ index 7604c1373b3fb26b3259cc1e0d529c2219459fff..20039e4663f7935387c8838776f8fce1
 +  underline = false,
 +  latexMath = true,
 +  texMathBackslashDelimiters = false
- } = {}) {
--  const parse = await initializeParser();
--  const result = JSON.parse(parse(markdown, underline ? 1 : 0, latexMath ? 1 : 0));
--  if (!isASTNode(result)) {
--    throw new Error('WASM parser returned invalid AST');
++} = {}, previousAst) {
 +  const cacheKey = buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters);
-+  const cachedResult = readCachedParsedResult(cacheKey);
++  const cachedResult = readCachedParsedResult(cacheKey, previousAst);
 +  if (cachedResult) return cachedResult;
 +  if (!parserRuntime) return null;
 +  try {
@@ -2933,20 +2954,43 @@ index 7604c1373b3fb26b3259cc1e0d529c2219459fff..20039e4663f7935387c8838776f8fce1
 +      throw new Error('WASM parser returned invalid AST');
 +    }
 +    rememberParsedResult(cacheKey, result);
-+    return cloneAst(result);
++    return cloneAst(result, previousAst);
 +  } catch (error) {
 +    if (cacheKey) {
 +      parseCache.delete(cacheKey);
 +      parseResultCache.delete(cacheKey);
 +    }
 +    return null;
-   }
--  return result;
++  }
 +}
-+function cloneAst(ast) {
-+  return JSON.parse(JSON.stringify(ast));
++function cloneAst(ast, previous) {
++  // The cache keeps raw parser output private. Only the caller's own previous
++  // tree may be shared; render annotations are recomputed immutably afterwards.
++  const keys = Object.keys(ast.attributes ?? {}).filter(key => key !== 'taskIndex' && key !== 'isInline');
++  const previousKeys = Object.keys(previous?.attributes ?? {}).filter(key => key !== 'taskIndex' && key !== 'isInline');
++  const sameAttributes = keys.length === previousKeys.length && keys.every(key => ast.attributes?.[key] === previous?.attributes?.[key]);
++  const children = ast.children?.map((child, index) => cloneAst(child, previous?.children?.[index]));
++  if (previous && previous.type === ast.type && previous.content === ast.content && sameAttributes && previous.children?.length === children?.length && (children?.every((child, index) => child === previous.children?.[index]) ?? true)) return previous;
++  return {
++    ...ast,
++    ...(ast.attributes ? {
++      attributes: {
++        ...ast.attributes
++      }
++    } : {}),
++    ...(children ? {
++      children
++    } : {})
++  };
  }
  //# sourceMappingURL=parseMarkdown.js.map
+diff --git a/lib/module/web/parseMarkdown.js.map b/lib/module/web/parseMarkdown.js.map
+index d47ca7036b909eb1982f787a9b061d1aed7613fb..d9b65a2f0f915a06b891b14b4f8936232abbabc3 100644
+--- a/lib/module/web/parseMarkdown.js.map
++++ b/lib/module/web/parseMarkdown.js.map
+@@ -1 +1 @@
+-{"version":3,"names":["parserPromise","initializeParser","then","module","default","wasmModule","cwrap","catch","error","isASTNode","value","type","parseMarkdown","markdown","underline","latexMath","parse","result","JSON","Error"],"sourceRoot":"../../../src","sources":["web/parseMarkdown.ts"],"mappings":";;AASA;AACA;AACA,IAAIA,aAAsC,GAAG,IAAI;;AAEjD;AACA;AACA,SAASC,gBAAgBA,CAAA,EAAqB;EAC5C,IAAI,CAACD,aAAa,EAAE;IAClBA,aAAa,GAAG,MAAM,CAAC,aAAa,CAAC,CAClCE,IAAI,CAAEC,MAAM,IAAKA,MAAM,CAACC,OAAO,CAAC,CAAC,CAAC,CAClCF,IAAI,CAAEG,UAAU,IACfA,UAAU,CAACC,KAAK,CAAC,eAAe,EAAE,QAAQ,EAAE,CAC1C,QAAQ,EACR,QAAQ,EACR,QAAQ,CACT,CACH,CAAC,CACAC,KAAK,CAAEC,KAAK,IAAK;MAChBR,aAAa,GAAG,IAAI;MACpB,MAAMQ,KAAK;IACb,CAAC,CAAqB;EAC1B;EACA,OAAOR,aAAa;AACtB;AAEA,SAASS,SAASA,CAACC,KAAc,EAAoB;EACnD,OACE,OAAOA,KAAK,KAAK,QAAQ,IACzBA,KAAK,KAAK,IAAI,IACd,MAAM,IAAIA,KAAK,IACf,OAAQA,KAAK,CAAaC,IAAI,KAAK,QAAQ;AAE/C;AAEA,OAAO,eAAeC,aAAaA,CACjCC,QAAgB,EAChB;EAAEC,SAAS,GAAG,KAAK;EAAEC,SAAS,GAAG;AAAgB,CAAC,GAAG,CAAC,CAAC,EACrC;EAClB,MAAMC,KAAK,GAAG,MAAMf,gBAAgB,CAAC,CAAC;EAEtC,MAAMgB,MAAe,GAAGC,IAAI,CAACF,KAAK,CAChCA,KAAK,CAACH,QAAQ,EAAEC,SAAS,GAAG,CAAC,GAAG,CAAC,EAAEC,SAAS,GAAG,CAAC,GAAG,CAAC,CACtD,CAAC;EAED,IAAI,CAACN,SAAS,CAACQ,MAAM,CAAC,EAAE;IACtB,MAAM,IAAIE,KAAK,CAAC,kCAAkC,CAAC;EACrD;EAEA,OAAOF,MAAM;AACf","ignoreList":[]}
++{"version":3,"names":["createMd4cModule","parserPromise","parserRuntime","PARSE_CACHE_MAX_ENTRIES","PARSE_CACHE_MAX_MARKDOWN_CHARS","parseCache","Map","parseResultCache","WASM_FACTORY_UNAVAILABLE_MESSAGE","WASM_INPUT_ALLOCATION_FAILED_MESSAGE","resolveMd4cModuleFactory","value","default","initializeParser","Promise","resolve","then","factory","Error","wasmModule","parse","cwrap","runtime","catch","error","preloadMarkdownRuntime","message","window","isASTNode","type","shouldCacheParseResult","markdown","length","buildCacheKey","underline","latexMath","texMathBackslashDelimiters","rememberParsedResult","cacheKey","ast","set","delete","size","oldestKey","keys","next","readCachedParsedResult","previousAst","cached","get","cloneAst","parseMarkdownWithHeapInput","inputBytes","lengthBytesUTF8","inputPointer","_malloc","stringToUTF8","_free","parseMarkdown","cachedResult","parsed","result","JSON","parseMarkdownSyncIfReady","previous","Object","attributes","filter","key","previousKeys","sameAttributes","every","children","map","child","index","content"],"sources":["../../../src/web/parseMarkdown.ts"],"sourcesContent":["import type { ASTNode } from './types';\nimport type { Md4cFlags } from '../types/MarkdownStyle';\nimport createMd4cModule from './wasm/md4c.js';\n\ntype ParseFn = (\n  markdownPointer: number,\n  underline: number,\n  latexMath: number,\n  texMathBackslashDelimiters: number\n) => string;\ntype Md4cModule = {\n  cwrap(name: string, returnType: string, argTypes: string[]): ParseFn;\n  _malloc(size: number): number;\n  _free(pointer: number): void;\n  stringToUTF8(value: string, outputPointer: number, maxBytesToWrite: number): void;\n  lengthBytesUTF8(value: string): number;\n};\ntype Md4cModuleFactory = () => Promise<Md4cModule>;\ntype ParserRuntime = Readonly<{\n  parse: ParseFn;\n  wasmModule: Md4cModule;\n}>;\n\n// Caching the Promise (not the resolved value) means concurrent callers share\n// a single WASM initialization — no duplicate loading.\nlet parserPromise: Promise<ParserRuntime> | null = null;\nlet parserRuntime: ParserRuntime | null = null;\nconst PARSE_CACHE_MAX_ENTRIES = 48;\nconst PARSE_CACHE_MAX_MARKDOWN_CHARS = 32_000;\nconst parseCache = new Map<string, Promise<ASTNode>>();\nconst parseResultCache = new Map<string, ASTNode>();\nconst WASM_FACTORY_UNAVAILABLE_MESSAGE =\n  'WASM parser module did not export a factory';\nconst WASM_INPUT_ALLOCATION_FAILED_MESSAGE =\n  'WASM parser failed to allocate markdown input';\n\nfunction resolveMd4cModuleFactory(value: unknown): Md4cModuleFactory | null {\n  if (typeof value === 'function') {\n    return value as Md4cModuleFactory;\n  }\n\n  if (typeof value !== 'object' || value === null || !('default' in value)) {\n    return null;\n  }\n\n  return resolveMd4cModuleFactory(\n    (value as { default?: unknown }).default\n  );\n}\n\n// SINGLE_FILE=1 inlines the WASM binary as base64 inside md4c.js, so no\n// runtime fetch is needed — only a one-time decode + compile on first call.\nfunction initializeParser(): Promise<ParserRuntime> {\n  if (!parserPromise) {\n    parserPromise = Promise.resolve()\n      .then(() => {\n        const factory = resolveMd4cModuleFactory(createMd4cModule);\n        if (!factory) {\n          throw new Error(WASM_FACTORY_UNAVAILABLE_MESSAGE);\n        }\n\n        return factory();\n      })\n      .then((wasmModule) => ({\n        parse: wasmModule.cwrap('parseMarkdown', 'string', [\n          'number',\n          'number',\n          'number',\n          'number',\n        ]),\n        wasmModule,\n      }))\n      .then((runtime) => {\n        parserRuntime = runtime;\n        return runtime;\n      })\n      .catch((error) => {\n        parserPromise = null;\n        parserRuntime = null;\n        throw error;\n      }) as Promise<ParserRuntime>;\n  }\n  return parserPromise;\n}\n\nexport async function preloadMarkdownRuntime(): Promise<void> {\n  try {\n    await initializeParser();\n  } catch (error) {\n    if (\n      error instanceof Error &&\n      error.message === WASM_FACTORY_UNAVAILABLE_MESSAGE &&\n      typeof window === 'undefined'\n    ) {\n      return;\n    }\n\n    throw error;\n  }\n}\n\nfunction isASTNode(value: unknown): value is ASTNode {\n  return (\n    typeof value === 'object' &&\n    value !== null &&\n    'type' in value &&\n    typeof (value as ASTNode).type === 'string'\n  );\n}\n\nfunction shouldCacheParseResult(markdown: string): boolean {\n  return markdown.length <= PARSE_CACHE_MAX_MARKDOWN_CHARS;\n}\n\nfunction buildCacheKey(\n  markdown: string,\n  underline: boolean,\n  latexMath: boolean,\n  texMathBackslashDelimiters: boolean\n): string | null {\n  return shouldCacheParseResult(markdown)\n    ? `${underline ? 1 : 0}\\u0000${latexMath ? 1 : 0}\\u0000${texMathBackslashDelimiters ? 1 : 0}\\u0000${markdown}`\n    : null;\n}\n\nfunction rememberParsedResult(cacheKey: string | null, ast: ASTNode): void {\n  if (!cacheKey) return;\n\n  parseResultCache.set(cacheKey, ast);\n  parseCache.delete(cacheKey);\n  while (parseResultCache.size > PARSE_CACHE_MAX_ENTRIES) {\n    const oldestKey = parseResultCache.keys().next().value;\n    if (typeof oldestKey !== 'string') break;\n    parseResultCache.delete(oldestKey);\n  }\n}\n\nfunction readCachedParsedResult(cacheKey: string | null, previousAst?: ASTNode | null): ASTNode | null {\n  if (!cacheKey) return null;\n\n  const cached = parseResultCache.get(cacheKey);\n  if (!cached) return null;\n  parseResultCache.delete(cacheKey);\n  parseResultCache.set(cacheKey, cached);\n  return cloneAst(cached, previousAst);\n}\n\nfunction parseMarkdownWithHeapInput(\n  runtime: ParserRuntime,\n  markdown: string,\n  underline: boolean,\n  latexMath: boolean,\n  texMathBackslashDelimiters: boolean\n): string {\n  const { wasmModule } = runtime;\n  const inputBytes = wasmModule.lengthBytesUTF8(markdown) + 1;\n  const inputPointer = wasmModule._malloc(inputBytes);\n  if (!inputPointer) {\n    throw new Error(WASM_INPUT_ALLOCATION_FAILED_MESSAGE);\n  }\n\n  try {\n    wasmModule.stringToUTF8(markdown, inputPointer, inputBytes);\n    return runtime.parse(\n      inputPointer,\n      underline ? 1 : 0,\n      latexMath ? 1 : 0,\n      texMathBackslashDelimiters ? 1 : 0\n    );\n  } finally {\n    wasmModule._free(inputPointer);\n  }\n}\n\nexport async function parseMarkdown(\n  markdown: string,\n  { underline = false, latexMath = true, texMathBackslashDelimiters = false }: Md4cFlags = {},\n  previousAst?: ASTNode | null\n): Promise<ASTNode> {\n  const cacheKey = buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters);\n  const cachedResult = readCachedParsedResult(cacheKey, previousAst);\n  if (cachedResult) return cachedResult;\n\n  if (cacheKey) {\n    const cached = parseCache.get(cacheKey);\n    if (cached) {\n      parseCache.delete(cacheKey);\n      parseCache.set(cacheKey, cached);\n      return cloneAst(await cached, previousAst);\n    }\n  }\n\n  const parsed = initializeParser().then((runtime) => {\n    const result: unknown = JSON.parse(\n      parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath, texMathBackslashDelimiters)\n    );\n\n    if (!isASTNode(result)) {\n      throw new Error('WASM parser returned invalid AST');\n    }\n\n    rememberParsedResult(cacheKey, result);\n    return result;\n  });\n\n  if (cacheKey) {\n    parseCache.set(cacheKey, parsed);\n    while (parseCache.size > PARSE_CACHE_MAX_ENTRIES) {\n      const oldestKey = parseCache.keys().next().value;\n      if (typeof oldestKey !== 'string') break;\n      parseCache.delete(oldestKey);\n    }\n  }\n\n  try {\n    return cloneAst(await parsed, previousAst);\n  } catch (error) {\n    if (cacheKey) {\n      parseCache.delete(cacheKey);\n    }\n    throw error;\n  }\n}\n\nexport function parseMarkdownSyncIfReady(\n  markdown: string,\n  { underline = false, latexMath = true, texMathBackslashDelimiters = false }: Md4cFlags = {},\n  previousAst?: ASTNode | null\n): ASTNode | null {\n  const cacheKey = buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters);\n  const cachedResult = readCachedParsedResult(cacheKey, previousAst);\n  if (cachedResult) return cachedResult;\n  if (!parserRuntime) return null;\n\n  try {\n    const result: unknown = JSON.parse(\n      parseMarkdownWithHeapInput(parserRuntime, markdown, underline, latexMath, texMathBackslashDelimiters)\n    );\n\n    if (!isASTNode(result)) {\n      throw new Error('WASM parser returned invalid AST');\n    }\n\n    rememberParsedResult(cacheKey, result);\n    return cloneAst(result, previousAst);\n  } catch (error) {\n    if (cacheKey) {\n      parseCache.delete(cacheKey);\n      parseResultCache.delete(cacheKey);\n    }\n    return null;\n  }\n}\n\nfunction cloneAst(ast: ASTNode, previous?: ASTNode | null): ASTNode {\n  // The cache keeps raw parser output private. Only the caller's own previous\n  // tree may be shared; render annotations are recomputed immutably afterwards.\n  const keys = Object.keys(ast.attributes ?? {}).filter(\n    (key) => key !== 'taskIndex' && key !== 'isInline'\n  ) as (keyof NonNullable<ASTNode['attributes']>)[];\n  const previousKeys = Object.keys(previous?.attributes ?? {}).filter(\n    (key) => key !== 'taskIndex' && key !== 'isInline'\n  );\n  const sameAttributes = keys.length === previousKeys.length && keys.every(\n    (key) => ast.attributes?.[key] === previous?.attributes?.[key]\n  );\n  const children = ast.children?.map((child, index) =>\n    cloneAst(child, previous?.children?.[index])\n  );\n  if (\n    previous && previous.type === ast.type && previous.content === ast.content &&\n    sameAttributes && previous.children?.length === children?.length &&\n    (children?.every((child, index) => child === previous.children?.[index]) ?? true)\n  ) return previous;\n\n  return {\n    ...ast,\n    ...(ast.attributes ? { attributes: { ...ast.attributes } } : {}),\n    ...(children ? { children } : {}),\n  };\n}\n"],"mappings":";;AAEA,OAAOA,gBAAgB,MAAM,gBAAgB;AAqB7C;AACA;AACA,IAAIC,aAA4C,GAAG,IAAI;AACvD,IAAIC,aAAmC,GAAG,IAAI;AAC9C,MAAMC,uBAAuB,GAAG,EAAE;AAClC,MAAMC,8BAA8B,GAAG,MAAM;AAC7C,MAAMC,UAAU,GAAG,IAAIC,GAAG,CAA2B,CAAC;AACtD,MAAMC,gBAAgB,GAAG,IAAID,GAAG,CAAkB,CAAC;AACnD,MAAME,gCAAgC,GACpC,6CAA6C;AAC/C,MAAMC,oCAAoC,GACxC,+CAA+C;AAEjD,SAASC,wBAAwBA,CAACC,KAAc,EAA4B;EAC1E,IAAI,OAAOA,KAAK,KAAK,UAAU,EAAE;IAC/B,OAAOA,KAAK;EACd;EAEA,IAAI,OAAOA,KAAK,KAAK,QAAQ,IAAIA,KAAK,KAAK,IAAI,IAAI,EAAE,SAAS,IAAIA,KAAK,CAAC,EAAE;IACxE,OAAO,IAAI;EACb;EAEA,OAAOD,wBAAwB,CAC5BC,KAAK,CAA2BC,OACnC,CAAC;AACH;;AAEA;AACA;AACA,SAASC,gBAAgBA,CAAA,EAA2B;EAClD,IAAI,CAACZ,aAAa,EAAE;IAClBA,aAAa,GAAGa,OAAO,CAACC,OAAO,CAAC,CAAC,CAC9BC,IAAI,CAAC,MAAM;MACV,MAAMC,OAAO,GAAGP,wBAAwB,CAACV,gBAAgB,CAAC;MAC1D,IAAI,CAACiB,OAAO,EAAE;QACZ,MAAM,IAAIC,KAAK,CAACV,gCAAgC,CAAC;MACnD;MAEA,OAAOS,OAAO,CAAC,CAAC;IAClB,CAAC,CAAC,CACDD,IAAI,CAAEG,UAAU,KAAM;MACrBC,KAAK,EAAED,UAAU,CAACE,KAAK,CAAC,eAAe,EAAE,QAAQ,EAAE,CACjD,QAAQ,EACR,QAAQ,EACR,QAAQ,EACR,QAAQ,CACT,CAAC;MACFF;IACF,CAAC,CAAC,CAAC,CACFH,IAAI,CAAEM,OAAO,IAAK;MACjBpB,aAAa,GAAGoB,OAAO;MACvB,OAAOA,OAAO;IAChB,CAAC,CAAC,CACDC,KAAK,CAAEC,KAAK,IAAK;MAChBvB,aAAa,GAAG,IAAI;MACpBC,aAAa,GAAG,IAAI;MACpB,MAAMsB,KAAK;IACb,CAAC,CAA2B;EAChC;EACA,OAAOvB,aAAa;AACtB;AAEA,OAAO,eAAewB,sBAAsBA,CAAA,EAAkB;EAC5D,IAAI;IACF,MAAMZ,gBAAgB,CAAC,CAAC;EAC1B,CAAC,CAAC,OAAOW,KAAK,EAAE;IACd,IACEA,KAAK,YAAYN,KAAK,IACtBM,KAAK,CAACE,OAAO,KAAKlB,gCAAgC,IAClD,OAAOmB,MAAM,KAAK,WAAW,EAC7B;MACA;IACF;IAEA,MAAMH,KAAK;EACb;AACF;AAEA,SAASI,SAASA,CAACjB,KAAc,EAAoB;EACnD,OACE,OAAOA,KAAK,KAAK,QAAQ,IACzBA,KAAK,KAAK,IAAI,IACd,MAAM,IAAIA,KAAK,IACf,OAAQA,KAAK,CAAakB,IAAI,KAAK,QAAQ;AAE/C;AAEA,SAASC,sBAAsBA,CAACC,QAAgB,EAAW;EACzD,OAAOA,QAAQ,CAACC,MAAM,IAAI5B,8BAA8B;AAC1D;AAEA,SAAS6B,aAAaA,CACpBF,QAAgB,EAChBG,SAAkB,EAClBC,SAAkB,EAClBC,0BAAmC,EACpB;EACf,OAAON,sBAAsB,CAACC,QAAQ,CAAC,GACnC,GAAGG,SAAS,GAAG,CAAC,GAAG,CAAC,SAASC,SAAS,GAAG,CAAC,GAAG,CAAC,SAASC,0BAA0B,GAAG,CAAC,GAAG,CAAC,SAASL,QAAQ,EAAE,GAC5G,IAAI;AACV;AAEA,SAASM,oBAAoBA,CAACC,QAAuB,EAAEC,GAAY,EAAQ;EACzE,IAAI,CAACD,QAAQ,EAAE;EAEf/B,gBAAgB,CAACiC,GAAG,CAACF,QAAQ,EAAEC,GAAG,CAAC;EACnClC,UAAU,CAACoC,MAAM,CAACH,QAAQ,CAAC;EAC3B,OAAO/B,gBAAgB,CAACmC,IAAI,GAAGvC,uBAAuB,EAAE;IACtD,MAAMwC,SAAS,GAAGpC,gBAAgB,CAACqC,IAAI,CAAC,CAAC,CAACC,IAAI,CAAC,CAAC,CAAClC,KAAK;IACtD,IAAI,OAAOgC,SAAS,KAAK,QAAQ,EAAE;IACnCpC,gBAAgB,CAACkC,MAAM,CAACE,SAAS,CAAC;EACpC;AACF;AAEA,SAASG,sBAAsBA,CAACR,QAAuB,EAAES,WAA4B,EAAkB;EACrG,IAAI,CAACT,QAAQ,EAAE,OAAO,IAAI;EAE1B,MAAMU,MAAM,GAAGzC,gBAAgB,CAAC0C,GAAG,CAACX,QAAQ,CAAC;EAC7C,IAAI,CAACU,MAAM,EAAE,OAAO,IAAI;EACxBzC,gBAAgB,CAACkC,MAAM,CAACH,QAAQ,CAAC;EACjC/B,gBAAgB,CAACiC,GAAG,CAACF,QAAQ,EAAEU,MAAM,CAAC;EACtC,OAAOE,QAAQ,CAACF,MAAM,EAAED,WAAW,CAAC;AACtC;AAEA,SAASI,0BAA0BA,CACjC7B,OAAsB,EACtBS,QAAgB,EAChBG,SAAkB,EAClBC,SAAkB,EAClBC,0BAAmC,EAC3B;EACR,MAAM;IAAEjB;EAAW,CAAC,GAAGG,OAAO;EAC9B,MAAM8B,UAAU,GAAGjC,UAAU,CAACkC,eAAe,CAACtB,QAAQ,CAAC,GAAG,CAAC;EAC3D,MAAMuB,YAAY,GAAGnC,UAAU,CAACoC,OAAO,CAACH,UAAU,CAAC;EACnD,IAAI,CAACE,YAAY,EAAE;IACjB,MAAM,IAAIpC,KAAK,CAACT,oCAAoC,CAAC;EACvD;EAEA,IAAI;IACFU,UAAU,CAACqC,YAAY,CAACzB,QAAQ,EAAEuB,YAAY,EAAEF,UAAU,CAAC;IAC3D,OAAO9B,OAAO,CAACF,KAAK,CAClBkC,YAAY,EACZpB,SAAS,GAAG,CAAC,GAAG,CAAC,EACjBC,SAAS,GAAG,CAAC,GAAG,CAAC,EACjBC,0BAA0B,GAAG,CAAC,GAAG,CACnC,CAAC;EACH,CAAC,SAAS;IACRjB,UAAU,CAACsC,KAAK,CAACH,YAAY,CAAC;EAChC;AACF;AAEA,OAAO,eAAeI,aAAaA,CACjC3B,QAAgB,EAChB;EAAEG,SAAS,GAAG,KAAK;EAAEC,SAAS,GAAG,IAAI;EAAEC,0BAA0B,GAAG;AAAiB,CAAC,GAAG,CAAC,CAAC,EAC3FW,WAA4B,EACV;EAClB,MAAMT,QAAQ,GAAGL,aAAa,CAACF,QAAQ,EAAEG,SAAS,EAAEC,SAAS,EAAEC,0BAA0B,CAAC;EAC1F,MAAMuB,YAAY,GAAGb,sBAAsB,CAACR,QAAQ,EAAES,WAAW,CAAC;EAClE,IAAIY,YAAY,EAAE,OAAOA,YAAY;EAErC,IAAIrB,QAAQ,EAAE;IACZ,MAAMU,MAAM,GAAG3C,UAAU,CAAC4C,GAAG,CAACX,QAAQ,CAAC;IACvC,IAAIU,MAAM,EAAE;MACV3C,UAAU,CAACoC,MAAM,CAACH,QAAQ,CAAC;MAC3BjC,UAAU,CAACmC,GAAG,CAACF,QAAQ,EAAEU,MAAM,CAAC;MAChC,OAAOE,QAAQ,CAAC,MAAMF,MAAM,EAAED,WAAW,CAAC;IAC5C;EACF;EAEA,MAAMa,MAAM,GAAG/C,gBAAgB,CAAC,CAAC,CAACG,IAAI,CAAEM,OAAO,IAAK;IAClD,MAAMuC,MAAe,GAAGC,IAAI,CAAC1C,KAAK,CAChC+B,0BAA0B,CAAC7B,OAAO,EAAES,QAAQ,EAAEG,SAAS,EAAEC,SAAS,EAAEC,0BAA0B,CAChG,CAAC;IAED,IAAI,CAACR,SAAS,CAACiC,MAAM,CAAC,EAAE;MACtB,MAAM,IAAI3C,KAAK,CAAC,kCAAkC,CAAC;IACrD;IAEAmB,oBAAoB,CAACC,QAAQ,EAAEuB,MAAM,CAAC;IACtC,OAAOA,MAAM;EACf,CAAC,CAAC;EAEF,IAAIvB,QAAQ,EAAE;IACZjC,UAAU,CAACmC,GAAG,CAACF,QAAQ,EAAEsB,MAAM,CAAC;IAChC,OAAOvD,UAAU,CAACqC,IAAI,GAAGvC,uBAAuB,EAAE;MAChD,MAAMwC,SAAS,GAAGtC,UAAU,CAACuC,IAAI,CAAC,CAAC,CAACC,IAAI,CAAC,CAAC,CAAClC,KAAK;MAChD,IAAI,OAAOgC,SAAS,KAAK,QAAQ,EAAE;MACnCtC,UAAU,CAACoC,MAAM,CAACE,SAAS,CAAC;IAC9B;EACF;EAEA,IAAI;IACF,OAAOO,QAAQ,CAAC,MAAMU,MAAM,EAAEb,WAAW,CAAC;EAC5C,CAAC,CAAC,OAAOvB,KAAK,EAAE;IACd,IAAIc,QAAQ,EAAE;MACZjC,UAAU,CAACoC,MAAM,CAACH,QAAQ,CAAC;IAC7B;IACA,MAAMd,KAAK;EACb;AACF;AAEA,OAAO,SAASuC,wBAAwBA,CACtChC,QAAgB,EAChB;EAAEG,SAAS,GAAG,KAAK;EAAEC,SAAS,GAAG,IAAI;EAAEC,0BAA0B,GAAG;AAAiB,CAAC,GAAG,CAAC,CAAC,EAC3FW,WAA4B,EACZ;EAChB,MAAMT,QAAQ,GAAGL,aAAa,CAACF,QAAQ,EAAEG,SAAS,EAAEC,SAAS,EAAEC,0BAA0B,CAAC;EAC1F,MAAMuB,YAAY,GAAGb,sBAAsB,CAACR,QAAQ,EAAES,WAAW,CAAC;EAClE,IAAIY,YAAY,EAAE,OAAOA,YAAY;EACrC,IAAI,CAACzD,aAAa,EAAE,OAAO,IAAI;EAE/B,IAAI;IACF,MAAM2D,MAAe,GAAGC,IAAI,CAAC1C,KAAK,CAChC+B,0BAA0B,CAACjD,aAAa,EAAE6B,QAAQ,EAAEG,SAAS,EAAEC,SAAS,EAAEC,0BAA0B,CACtG,CAAC;IAED,IAAI,CAACR,SAAS,CAACiC,MAAM,CAAC,EAAE;MACtB,MAAM,IAAI3C,KAAK,CAAC,kCAAkC,CAAC;IACrD;IAEAmB,oBAAoB,CAACC,QAAQ,EAAEuB,MAAM,CAAC;IACtC,OAAOX,QAAQ,CAACW,MAAM,EAAEd,WAAW,CAAC;EACtC,CAAC,CAAC,OAAOvB,KAAK,EAAE;IACd,IAAIc,QAAQ,EAAE;MACZjC,UAAU,CAACoC,MAAM,CAACH,QAAQ,CAAC;MAC3B/B,gBAAgB,CAACkC,MAAM,CAACH,QAAQ,CAAC;IACnC;IACA,OAAO,IAAI;EACb;AACF;AAEA,SAASY,QAAQA,CAACX,GAAY,EAAEyB,QAAyB,EAAW;EAClE;EACA;EACA,MAAMpB,IAAI,GAAGqB,MAAM,CAACrB,IAAI,CAACL,GAAG,CAAC2B,UAAU,IAAI,CAAC,CAAC,CAAC,CAACC,MAAM,CAClDC,GAAG,IAAKA,GAAG,KAAK,WAAW,IAAIA,GAAG,KAAK,UAC1C,CAAiD;EACjD,MAAMC,YAAY,GAAGJ,MAAM,CAACrB,IAAI,CAACoB,QAAQ,EAAEE,UAAU,IAAI,CAAC,CAAC,CAAC,CAACC,MAAM,CAChEC,GAAG,IAAKA,GAAG,KAAK,WAAW,IAAIA,GAAG,KAAK,UAC1C,CAAC;EACD,MAAME,cAAc,GAAG1B,IAAI,CAACZ,MAAM,KAAKqC,YAAY,CAACrC,MAAM,IAAIY,IAAI,CAAC2B,KAAK,CACrEH,GAAG,IAAK7B,GAAG,CAAC2B,UAAU,GAAGE,GAAG,CAAC,KAAKJ,QAAQ,EAAEE,UAAU,GAAGE,GAAG,CAC/D,CAAC;EACD,MAAMI,QAAQ,GAAGjC,GAAG,CAACiC,QAAQ,EAAEC,GAAG,CAAC,CAACC,KAAK,EAAEC,KAAK,KAC9CzB,QAAQ,CAACwB,KAAK,EAAEV,QAAQ,EAAEQ,QAAQ,GAAGG,KAAK,CAAC,CAC7C,CAAC;EACD,IACEX,QAAQ,IAAIA,QAAQ,CAACnC,IAAI,KAAKU,GAAG,CAACV,IAAI,IAAImC,QAAQ,CAACY,OAAO,KAAKrC,GAAG,CAACqC,OAAO,IAC1EN,cAAc,IAAIN,QAAQ,CAACQ,QAAQ,EAAExC,MAAM,KAAKwC,QAAQ,EAAExC,MAAM,KAC/DwC,QAAQ,EAAED,KAAK,CAAC,CAACG,KAAK,EAAEC,KAAK,KAAKD,KAAK,KAAKV,QAAQ,CAACQ,QAAQ,GAAGG,KAAK,CAAC,CAAC,IAAI,IAAI,CAAC,EACjF,OAAOX,QAAQ;EAEjB,OAAO;IACL,GAAGzB,GAAG;IACN,IAAIA,GAAG,CAAC2B,UAAU,GAAG;MAAEA,UAAU,EAAE;QAAE,GAAG3B,GAAG,CAAC2B;MAAW;IAAE,CAAC,GAAG,CAAC,CAAC,CAAC;IAChE,IAAIM,QAAQ,GAAG;MAAEA;IAAS,CAAC,GAAG,CAAC,CAAC;EAClC,CAAC;AACH","ignoreList":[]}
 \ No newline at end of file
 diff --git a/lib/module/web/renderers/BlockRenderers.js b/lib/module/web/renderers/BlockRenderers.js
 index 5bdaee98be35c7b622d0b700e7de7d6c9e634878..ab8bc37dcac4ddc5894854f512d7fd5057035881 100644
@@ -3023,6 +3067,56 @@ index 7c31c2bc971679076ac5429cccb630610bfe830c..5bc65a74e390f5b41a105181d37bb9f0
    });
  }
  function LinkRenderer({
+diff --git a/lib/module/web/renderers/KaTeXRenderer.js b/lib/module/web/renderers/KaTeXRenderer.js
+index 67b457da0e523966547412d4922cc250ad9a756e..ae6334a0ef23a5b3b50caa7b47dbc8be6a9e009a 100644
+--- a/lib/module/web/renderers/KaTeXRenderer.js
++++ b/lib/module/web/renderers/KaTeXRenderer.js
+@@ -19,19 +19,32 @@ export function KaTeXRenderer({
+       trust: false
+     });
+   }, [katex, content, displayMode]);
++
++  // Display math may occur inside Markdown phrasing nodes (p/strong/a).
++  // Keep block layout without introducing a flow-only HTML descendant.
++  const displayStyle = useMemo(() => displayMode ? {
++    ...style,
++    display: 'block'
++  } : style, [displayMode, style]);
++  const SafeFallbackTag = FallbackTag === 'pre' ? 'span' : FallbackTag;
++  const fallbackStyle = FallbackTag === 'pre' ? {
++    fontFamily: 'monospace',
++    whiteSpace: 'pre',
++    ...style,
++    display: 'block'
++  } : style;
+   if (!html) {
+-    return /*#__PURE__*/_jsx(FallbackTag, {
++    return /*#__PURE__*/_jsx(SafeFallbackTag, {
+       role: "math",
+       "aria-label": content,
+-      style: style,
++      style: fallbackStyle,
+       children: `${delimiter}${content}${delimiter}`
+     });
+   }
+-  const WrapperTag = displayMode ? 'div' : 'span';
+-  return /*#__PURE__*/_jsx(WrapperTag, {
++  return /*#__PURE__*/_jsx("span", {
+     role: "math",
+     "aria-label": content,
+-    style: style,
++    style: displayStyle,
+     dangerouslySetInnerHTML: {
+       __html: html
+     }
+diff --git a/lib/module/web/renderers/KaTeXRenderer.js.map b/lib/module/web/renderers/KaTeXRenderer.js.map
+index d81011c6628ad9fde6f926c4bc98b90c3625681e..8a0de7ae8cd19b5d2c8802a749b1ce7a0851c6e9 100644
+--- a/lib/module/web/renderers/KaTeXRenderer.js.map
++++ b/lib/module/web/renderers/KaTeXRenderer.js.map
+@@ -1 +1 @@
+-{"version":3,"names":["useMemo","jsx","_jsx","KaTeXRenderer","content","katex","displayMode","style","fallbackTag","FallbackTag","delimiter","html","renderToString","output","throwOnError","trust","role","children","WrapperTag","dangerouslySetInnerHTML","__html"],"sourceRoot":"../../../../src","sources":["web/renderers/KaTeXRenderer.tsx"],"mappings":";;AAAA,SAASA,OAAO,QAA4B,OAAO;AAAC,SAAAC,GAAA,IAAAC,IAAA;AAWpD,OAAO,SAASC,aAAaA,CAAC;EAC5BC,OAAO;EACPC,KAAK;EACLC,WAAW;EACXC,KAAK;EACLC,WAAW,EAAEC;AACK,CAAC,EAAE;EACrB,MAAMC,SAAS,GAAGJ,WAAW,GAAG,IAAI,GAAG,GAAG;EAE1C,MAAMK,IAAI,GAAGX,OAAO,CAAC,MAAM;IACzB,IAAI,CAACK,KAAK,EAAE,OAAO,IAAI;IACvB,OAAOA,KAAK,CAACO,cAAc,CAACR,OAAO,EAAE;MACnCS,MAAM,EAAE,QAAQ;MAChBP,WAAW;MACXQ,YAAY,EAAE,KAAK;MACnBC,KAAK,EAAE;IACT,CAAC,CAAC;EACJ,CAAC,EAAE,CAACV,KAAK,EAAED,OAAO,EAAEE,WAAW,CAAC,CAAC;EAEjC,IAAI,CAACK,IAAI,EAAE;IACT,oBACET,IAAA,CAACO,WAAW;MAACO,IAAI,EAAC,MAAM;MAAC,cAAYZ,OAAQ;MAACG,KAAK,EAAEA,KAAM;MAAAU,QAAA,EACxD,GAAGP,SAAS,GAAGN,OAAO,GAAGM,SAAS;IAAE,CAC1B,CAAC;EAElB;EAEA,MAAMQ,UAAU,GAAGZ,WAAW,GAAG,KAAK,GAAG,MAAM;EAE/C,oBACEJ,IAAA,CAACgB,UAAU;IACTF,IAAI,EAAC,MAAM;IACX,cAAYZ,OAAQ;IACpBG,KAAK,EAAEA,KAAM;IACbY,uBAAuB,EAAE;MAAEC,MAAM,EAAET;IAAK;EAAE,CAC3C,CAAC;AAEN","ignoreList":[]}
++{"version":3,"names":["useMemo","jsx","_jsx","KaTeXRenderer","content","katex","displayMode","style","fallbackTag","FallbackTag","delimiter","html","renderToString","output","throwOnError","trust","displayStyle","display","SafeFallbackTag","fallbackStyle","fontFamily","whiteSpace","role","children","dangerouslySetInnerHTML","__html"],"sources":["../../../../src/web/renderers/KaTeXRenderer.tsx"],"sourcesContent":["import { useMemo, type CSSProperties } from 'react';\nimport type { KaTeXInstance } from '../katex';\n\ninterface KaTeXRendererProps {\n  content: string;\n  katex: KaTeXInstance | null;\n  displayMode: boolean;\n  style: CSSProperties;\n  fallbackTag: 'code' | 'pre';\n}\n\nexport function KaTeXRenderer({\n  content,\n  katex,\n  displayMode,\n  style,\n  fallbackTag: FallbackTag,\n}: KaTeXRendererProps) {\n  const delimiter = displayMode ? '$$' : '$';\n\n  const html = useMemo(() => {\n    if (!katex) return null;\n    return katex.renderToString(content, {\n      output: 'mathml',\n      displayMode,\n      throwOnError: false,\n      trust: false,\n    });\n  }, [katex, content, displayMode]);\n\n  // Display math may occur inside Markdown phrasing nodes (p/strong/a).\n  // Keep block layout without introducing a flow-only HTML descendant.\n  const displayStyle = useMemo<CSSProperties>(\n    () => displayMode ? { ...style, display: 'block' } : style,\n    [displayMode, style]\n  );\n  const SafeFallbackTag = FallbackTag === 'pre' ? 'span' : FallbackTag;\n  const fallbackStyle: CSSProperties = FallbackTag === 'pre'\n    ? { fontFamily: 'monospace', whiteSpace: 'pre', ...style, display: 'block' }\n    : style;\n\n  if (!html) {\n    return (\n      <SafeFallbackTag role=\"math\" aria-label={content} style={fallbackStyle}>\n        {`${delimiter}${content}${delimiter}`}\n      </SafeFallbackTag>\n    );\n  }\n\n  return (\n    <span\n      role=\"math\"\n      aria-label={content}\n      style={displayStyle}\n      dangerouslySetInnerHTML={{ __html: html }}\n    />\n  );\n}\n"],"mappings":";;AAAA,SAASA,OAAO,QAA4B,OAAO;AAAC,SAAAC,GAAA,IAAAC,IAAA;AAWpD,OAAO,SAASC,aAAaA,CAAC;EAC5BC,OAAO;EACPC,KAAK;EACLC,WAAW;EACXC,KAAK;EACLC,WAAW,EAAEC;AACK,CAAC,EAAE;EACrB,MAAMC,SAAS,GAAGJ,WAAW,GAAG,IAAI,GAAG,GAAG;EAE1C,MAAMK,IAAI,GAAGX,OAAO,CAAC,MAAM;IACzB,IAAI,CAACK,KAAK,EAAE,OAAO,IAAI;IACvB,OAAOA,KAAK,CAACO,cAAc,CAACR,OAAO,EAAE;MACnCS,MAAM,EAAE,QAAQ;MAChBP,WAAW;MACXQ,YAAY,EAAE,KAAK;MACnBC,KAAK,EAAE;IACT,CAAC,CAAC;EACJ,CAAC,EAAE,CAACV,KAAK,EAAED,OAAO,EAAEE,WAAW,CAAC,CAAC;;EAEjC;EACA;EACA,MAAMU,YAAY,GAAGhB,OAAO,CAC1B,MAAMM,WAAW,GAAG;IAAE,GAAGC,KAAK;IAAEU,OAAO,EAAE;EAAQ,CAAC,GAAGV,KAAK,EAC1D,CAACD,WAAW,EAAEC,KAAK,CACrB,CAAC;EACD,MAAMW,eAAe,GAAGT,WAAW,KAAK,KAAK,GAAG,MAAM,GAAGA,WAAW;EACpE,MAAMU,aAA4B,GAAGV,WAAW,KAAK,KAAK,GACtD;IAAEW,UAAU,EAAE,WAAW;IAAEC,UAAU,EAAE,KAAK;IAAE,GAAGd,KAAK;IAAEU,OAAO,EAAE;EAAQ,CAAC,GAC1EV,KAAK;EAET,IAAI,CAACI,IAAI,EAAE;IACT,oBACET,IAAA,CAACgB,eAAe;MAACI,IAAI,EAAC,MAAM;MAAC,cAAYlB,OAAQ;MAACG,KAAK,EAAEY,aAAc;MAAAI,QAAA,EACpE,GAAGb,SAAS,GAAGN,OAAO,GAAGM,SAAS;IAAE,CACtB,CAAC;EAEtB;EAEA,oBACER,IAAA;IACEoB,IAAI,EAAC,MAAM;IACX,cAAYlB,OAAQ;IACpBG,KAAK,EAAES,YAAa;IACpBQ,uBAAuB,EAAE;MAAEC,MAAM,EAAEd;IAAK;EAAE,CAC3C,CAAC;AAEN","ignoreList":[]}
+\ No newline at end of file
 diff --git a/lib/module/web/renderers/ListRenderers.js b/lib/module/web/renderers/ListRenderers.js
 index 9433b812529115828b69877083a0956afd8d976b..1950089184d6d346d023065304b6c3bac4b022c4 100644
 --- a/lib/module/web/renderers/ListRenderers.js
@@ -3048,10 +3142,17 @@ index 9433b812529115828b69877083a0956afd8d976b..1950089184d6d346d023065304b6c3ba
          checked: isChecked,
          onChange: handleChange,
 diff --git a/lib/module/web/renderers/index.js b/lib/module/web/renderers/index.js
-index 17a84648cefaf71a4d6e8cfde54b962f18a24074..319026433780e20b6fe661f2f8437f71d54af9dd 100644
+index 17a84648cefaf71a4d6e8cfde54b962f18a24074..f005f5296701ff9909c0e6ec081369409aba8266 100644
 --- a/lib/module/web/renderers/index.js
 +++ b/lib/module/web/renderers/index.js
-@@ -24,7 +24,10 @@ export function RenderNode({
+@@ -1,5 +1,6 @@
+ "use strict";
+ 
++import { useCallback, useMemo } from 'react';
+ import { blockRenderers } from "./BlockRenderers.js";
+ import { inlineRenderers } from "./InlineRenderers.js";
+ import { listRenderers } from "./ListRenderers.js";
+@@ -24,26 +25,44 @@ export function RenderNode({
    styles,
    callbacks,
    capabilities,
@@ -3062,18 +3163,34 @@ index 17a84648cefaf71a4d6e8cfde54b962f18a24074..319026433780e20b6fe661f2f8437f71
 +  siblingCount
  }) {
    const Renderer = RENDERERS[node.type];
-   if (!Renderer) return null;
-@@ -34,13 +37,19 @@ export function RenderNode({
+-  if (!Renderer) return null;
+-  const renderChildren = childNode => childNode.children?.map((child, index) => /*#__PURE__*/_jsx(RenderNode, {
++  const settledCapabilities = useMemo(() => ({
++    katex: capabilities.katex,
++    streamingReveal: null
++  }), [capabilities.katex]);
++  // Reveal arrivals are facts about a text interval, not the whole document.
++  // Unaffected branches keep the same capability and child-element producer.
++  const start = node.streamingRevealStartOffset;
++  const end = node.streamingRevealEndOffset;
++  const hasReveal = capabilities.streamingReveal?.activeRanges.some(range => start === undefined || end === undefined || range.start < end && range.end > start);
++  const nodeCapabilities = hasReveal ? capabilities : settledCapabilities;
++  const renderChildren = useCallback(childNode => childNode.children?.map((child, index) => /*#__PURE__*/_jsx(RenderNode, {
+     node: child,
+     style: style,
      styles: styles,
      callbacks: callbacks,
-     capabilities: capabilities,
+-    capabilities: capabilities,
 -    parentType: childNode.type
+-  }, nodeKey(child, index))) ?? null;
+-  return /*#__PURE__*/_jsx(Renderer, {
++    capabilities: nodeCapabilities,
 +    parentType: childNode.type,
 +    parentAttributes: childNode.attributes,
 +    childIndex: index,
 +    siblingCount: childNode.children?.length ?? 0
-   }, nodeKey(child, index))) ?? null;
-   return /*#__PURE__*/_jsx(Renderer, {
++  }, nodeKey(child, index))) ?? null, [style, styles, callbacks, nodeCapabilities]);
++  return useMemo(() => Renderer ? /*#__PURE__*/_jsx(Renderer, {
      node: node,
      style: style,
      styles: styles,
@@ -3082,8 +3199,21 @@ index 17a84648cefaf71a4d6e8cfde54b962f18a24074..319026433780e20b6fe661f2f8437f71
 +    childIndex: childIndex,
 +    siblingCount: siblingCount,
      callbacks: callbacks,
-     capabilities: capabilities,
+-    capabilities: capabilities,
++    capabilities: nodeCapabilities,
      renderChildren: renderChildren
+-  });
++  }) : null, [Renderer, node, style, styles, parentType, parentAttributes, childIndex, siblingCount, callbacks, nodeCapabilities, renderChildren]);
+ }
+ //# sourceMappingURL=index.js.map
+diff --git a/lib/module/web/renderers/index.js.map b/lib/module/web/renderers/index.js.map
+index c729f989a89853f48a636747a6eeed35f5f9cbcd..de4498efede732d2c4f779572c52a3a3257768f1 100644
+--- a/lib/module/web/renderers/index.js.map
++++ b/lib/module/web/renderers/index.js.map
+@@ -1 +1 @@
+-{"version":3,"names":["blockRenderers","inlineRenderers","listRenderers","tableRenderers","jsx","_jsx","nodeKey","node","index","type","attributes","isTask","taskId","taskIndex","taskChecked","RENDERERS","RenderNode","style","styles","callbacks","capabilities","parentType","Renderer","renderChildren","childNode","children","map","child"],"sourceRoot":"../../../../src","sources":["web/renderers/index.tsx"],"mappings":";;AAUA,SAASA,cAAc,QAAQ,qBAAkB;AACjD,SAASC,eAAe,QAAQ,sBAAmB;AACnD,SAASC,aAAa,QAAQ,oBAAiB;AAC/C,SAASC,cAAc,QAAQ,qBAAkB;AAAC,SAAAC,GAAA,IAAAC,IAAA;AAElD,SAASC,OAAOA,CAACC,IAAa,EAAEC,KAAa,EAAmB;EAC9D,IAAID,IAAI,CAACE,IAAI,KAAK,UAAU,IAAIF,IAAI,CAACG,UAAU,EAAEC,MAAM,KAAK,MAAM,EAAE;IAClE,MAAMC,MAAM,GAAGL,IAAI,CAACG,UAAU,CAACG,SAAS,IAAIL,KAAK;IACjD,OAAO,QAAQI,MAAM,IAAIL,IAAI,CAACG,UAAU,CAACI,WAAW,EAAE;EACxD;EACA,OAAON,KAAK;AACd;AAEA,MAAMO,SAAsB,GAAG;EAC7B,GAAGf,cAAc;EACjB,GAAGC,eAAe;EAClB,GAAGC,aAAa;EAChB,GAAGC;AACL,CAAC;AAWD,OAAO,SAASa,UAAUA,CAAC;EACzBT,IAAI;EACJU,KAAK;EACLC,MAAM;EACNC,SAAS;EACTC,YAAY;EACZC;AACe,CAAC,EAAa;EAC7B,MAAMC,QAAQ,GAAGP,SAAS,CAACR,IAAI,CAACE,IAAI,CAAC;EACrC,IAAI,CAACa,QAAQ,EAAE,OAAO,IAAI;EAE1B,MAAMC,cAAc,GAAIC,SAAkB,IACxCA,SAAS,CAACC,QAAQ,EAAEC,GAAG,CAAC,CAACC,KAAK,EAAEnB,KAAK,kBACnCH,IAAA,CAACW,UAAU;IAETT,IAAI,EAAEoB,KAAM;IACZV,KAAK,EAAEA,KAAM;IACbC,MAAM,EAAEA,MAAO;IACfC,SAAS,EAAEA,SAAU;IACrBC,YAAY,EAAEA,YAAa;IAC3BC,UAAU,EAAEG,SAAS,CAACf;EAAK,GANtBH,OAAO,CAACqB,KAAK,EAAEnB,KAAK,CAO1B,CACF,CAAC,IAAI,IAAI;EAEZ,oBACEH,IAAA,CAACiB,QAAQ;IACPf,IAAI,EAAEA,IAAK;IACXU,KAAK,EAAEA,KAAM;IACbC,MAAM,EAAEA,MAAO;IACfG,UAAU,EAAEA,UAAW;IACvBF,SAAS,EAAEA,SAAU;IACrBC,YAAY,EAAEA,YAAa;IAC3BG,cAAc,EAAEA;EAAe,CAChC,CAAC;AAEN","ignoreList":[]}
++{"version":3,"names":["useCallback","useMemo","blockRenderers","inlineRenderers","listRenderers","tableRenderers","jsx","_jsx","nodeKey","node","index","type","attributes","isTask","taskId","taskIndex","taskChecked","RENDERERS","RenderNode","style","styles","callbacks","capabilities","parentType","parentAttributes","childIndex","siblingCount","Renderer","settledCapabilities","katex","streamingReveal","start","streamingRevealStartOffset","end","streamingRevealEndOffset","hasReveal","activeRanges","some","range","undefined","nodeCapabilities","renderChildren","childNode","children","map","child","length"],"sources":["../../../../src/web/renderers/index.tsx"],"sourcesContent":["import { useCallback, useMemo, type ReactNode } from 'react';\nimport type {\n  ASTNode,\n  RendererProps,\n  RendererMap,\n  RenderCapabilities,\n} from '../types';\nimport { blockRenderers } from './BlockRenderers';\nimport { inlineRenderers } from './InlineRenderers';\nimport { listRenderers } from './ListRenderers';\nimport { tableRenderers } from './TableRenderers';\n\nfunction nodeKey(node: ASTNode, index: number): string | number {\n  if (node.type === 'ListItem' && node.attributes?.isTask === 'true') {\n    const taskId = node.attributes.taskIndex ?? index;\n    return `task-${taskId}-${node.attributes.taskChecked}`;\n  }\n  return index;\n}\n\nconst RENDERERS: RendererMap = {\n  ...blockRenderers,\n  ...inlineRenderers,\n  ...listRenderers,\n  ...tableRenderers,\n};\n\nexport type RenderNodeProps = Omit<RendererProps, 'renderChildren'>;\n\nexport function RenderNode({\n  node,\n  style,\n  styles,\n  callbacks,\n  capabilities,\n  parentType,\n  parentAttributes,\n  childIndex,\n  siblingCount,\n}: RenderNodeProps): ReactNode {\n  const Renderer = RENDERERS[node.type];\n  const settledCapabilities = useMemo<RenderCapabilities>(\n    () => ({ katex: capabilities.katex, streamingReveal: null }),\n    [capabilities.katex]\n  );\n  // Reveal arrivals are facts about a text interval, not the whole document.\n  // Unaffected branches keep the same capability and child-element producer.\n  const start = node.streamingRevealStartOffset;\n  const end = node.streamingRevealEndOffset;\n  const hasReveal = capabilities.streamingReveal?.activeRanges.some((range) =>\n    start === undefined || end === undefined || (range.start < end && range.end > start)\n  );\n  const nodeCapabilities = hasReveal ? capabilities : settledCapabilities;\n\n  const renderChildren = useCallback((childNode: ASTNode): ReactNode =>\n    childNode.children?.map((child, index) => (\n      <RenderNode\n        key={nodeKey(child, index)}\n        node={child}\n        style={style}\n        styles={styles}\n        callbacks={callbacks}\n        capabilities={nodeCapabilities}\n        parentType={childNode.type}\n        parentAttributes={childNode.attributes}\n        childIndex={index}\n        siblingCount={childNode.children?.length ?? 0}\n      />\n    )) ?? null, [style, styles, callbacks, nodeCapabilities]);\n\n  return useMemo(() => Renderer ? (\n    <Renderer\n      node={node}\n      style={style}\n      styles={styles}\n      parentType={parentType}\n      parentAttributes={parentAttributes}\n      childIndex={childIndex}\n      siblingCount={siblingCount}\n      callbacks={callbacks}\n      capabilities={nodeCapabilities}\n      renderChildren={renderChildren}\n    />\n  ) : null, [Renderer, node, style, styles, parentType, parentAttributes, childIndex, siblingCount, callbacks, nodeCapabilities, renderChildren]);\n}\n"],"mappings":"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","ignoreList":[]}
+\ No newline at end of file
 diff --git a/lib/module/web/streamingReveal.d.ts b/lib/module/web/streamingReveal.d.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..74504cfe80c1d8b82fab71c87d77bda209df1d9f
@@ -3093,10 +3223,10 @@ index 0000000000000000000000000000000000000000..74504cfe80c1d8b82fab71c87d77bda2
 +export * from '../../typescript/src/web/streamingReveal';
 diff --git a/lib/module/web/streamingReveal.js b/lib/module/web/streamingReveal.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..bc8dafb92bb3014304c265ee826710969aab5162
+index 0000000000000000000000000000000000000000..e584b6c56b6b94d875f2b56c1c96e3403cac8b04
 --- /dev/null
 +++ b/lib/module/web/streamingReveal.js
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,193 @@
 +"use strict";
 +
 +import { createElement } from 'react';
@@ -3121,14 +3251,18 @@ index 0000000000000000000000000000000000000000..bc8dafb92bb3014304c265ee82671096
 +export function markStreamingRevealOffsets(node, cursor = {
 +  current: 0
 +}) {
-+  if (!node) return;
++  const startOffset = cursor.current;
 +  if (COMPARISON_TEXT_NODE_TYPES.has(node.type)) {
-+    node.streamingRevealStartOffset = cursor.current;
 +    cursor.current += (node.content ?? '').length;
 +  }
-+  for (const child of node.children ?? []) {
-+    markStreamingRevealOffsets(child, cursor);
-+  }
++  const children = node.children?.map(child => markStreamingRevealOffsets(child, cursor));
++  if (node.streamingRevealStartOffset === startOffset && node.streamingRevealEndOffset === cursor.current && children?.every((child, index) => child === node.children?.[index]) !== false) return node;
++  return {
++    ...node,
++    children,
++    streamingRevealStartOffset: startOffset,
++    streamingRevealEndOffset: cursor.current
++  };
 +}
 +export function createStreamingRevealState(params) {
 +  if (!params.enabled) return null;
@@ -3237,6 +3371,13 @@ index 0000000000000000000000000000000000000000..bc8dafb92bb3014304c265ee82671096
 +export function shouldRevealTextForParent(parentType) {
 +  return parentType ? !NON_REVEALED_PARENT_TYPES.has(parentType) : true;
 +}
++/**
++ * SHARED word classifier for streaming text reveal — the single owner of the
++ * "which words of this text animate in" decision. Consumed by the enriched AST
++ * renderer below (range-driven) and by the host app's plain-text
++ * `StreamingTextReveal` (single appended-suffix range), so the two streaming
++ * surfaces cannot drift apart in word semantics.
++ */
 +export function splitStreamingRevealTextParts(params) {
 +  let cursor = params.startOffset;
 +  let rangeIndex = 0;
@@ -3248,9 +3389,10 @@ index 0000000000000000000000000000000000000000..bc8dafb92bb3014304c265ee82671096
 +    while (rangeIndex < activeRanges.length && activeRanges[rangeIndex].end <= start) {
 +      rangeIndex++;
 +    }
++    const isActiveRevealRange = rangeIndex < activeRanges.length &&
 +    // A suffix can extend a word that is already visible. Keep that word
 +    // visible instead of restarting its opacity animation from zero.
-+    const isActiveRevealRange = rangeIndex < activeRanges.length && activeRanges[rangeIndex].start <= start;
++    activeRanges[rangeIndex].start <= start;
 +    return {
 +      text: part,
 +      animated: !/^\s+$/.test(part) && isActiveRevealRange,
@@ -3278,6 +3420,14 @@ index 0000000000000000000000000000000000000000..bc8dafb92bb3014304c265ee82671096
 +  });
 +}
 +//# sourceMappingURL=streamingReveal.js.map
+diff --git a/lib/module/web/streamingReveal.js.map b/lib/module/web/streamingReveal.js.map
+new file mode 100644
+index 0000000000000000000000000000000000000000..c2a69d6febd4835fb8556b591609073bb6087b07
+--- /dev/null
++++ b/lib/module/web/streamingReveal.js.map
+@@ -0,0 +1 @@
++{"version":3,"names":["createElement","COMPARISON_TEXT_NODE_TYPES","Set","NON_REVEALED_PARENT_TYPES","readCommonPrefixLength","a","b","max","Math","min","length","index","readRenderedComparisonText","node","text","has","type","content","child","children","markStreamingRevealOffsets","cursor","current","startOffset","map","streamingRevealStartOffset","streamingRevealEndOffset","every","createStreamingRevealState","params","enabled","activeRanges","readRevealWordRanges","ranges","wordPattern","match","exec","push","start","end","expiresAtMs","mergeRevealRanges","sorted","sort","left","right","merged","range","previous","STREAMING_REVEAL_SOURCE_WINDOW_SLACK","resolveStreamingRevealFloor","hasSourceLengths","previousSourceLength","Number","isFinite","currentSourceLength","commonPrefixLength","appendedSourceLength","currentComparisonTextLength","revealWindow","updateStreamingRevealRanges","previousComparisonText","currentComparisonText","retainedRanges","filter","nowMs","revealFloor","slice","ttlMs","shouldRevealTextForParent","parentType","splitStreamingRevealTextParts","rangeIndex","split","part","isActiveRevealRange","animated","test","renderStreamingRevealText","reveal","capabilities","streamingReveal","revealable","key"],"sources":["../../../src/web/streamingReveal.ts"],"sourcesContent":["import { createElement, type ReactNode } from 'react';\nimport type { ASTNode, NodeType, RenderCapabilities } from './types';\n\nconst COMPARISON_TEXT_NODE_TYPES: ReadonlySet<NodeType> = new Set([\n  'Text',\n  'Code',\n  'LatexMathInline',\n  'LatexMathDisplay',\n]);\n\nconst NON_REVEALED_PARENT_TYPES: ReadonlySet<NodeType> = new Set([\n  'Code',\n  'CodeBlock',\n  'LatexMathInline',\n  'LatexMathDisplay',\n]);\n\nexport interface StreamingRevealState {\n  activeRanges: readonly StreamingRevealRange[];\n}\n\nexport interface StreamingRevealRange {\n  start: number;\n  end: number;\n  expiresAtMs: number;\n}\n\nexport function readCommonPrefixLength(a: string, b: string): number {\n  const max = Math.min(a.length, b.length);\n  let index = 0;\n  while (index < max && a[index] === b[index]) {\n    index++;\n  }\n  return index;\n}\n\nexport function readRenderedComparisonText(node: ASTNode | null): string {\n  if (!node) return '';\n\n  let text = COMPARISON_TEXT_NODE_TYPES.has(node.type) ? node.content ?? '' : '';\n  for (const child of node.children ?? []) {\n    text += readRenderedComparisonText(child);\n  }\n  return text;\n}\n\nexport function markStreamingRevealOffsets(\n  node: ASTNode,\n  cursor: { current: number } = { current: 0 }\n): ASTNode {\n  const startOffset = cursor.current;\n  if (COMPARISON_TEXT_NODE_TYPES.has(node.type)) {\n    cursor.current += (node.content ?? '').length;\n  }\n  const children = node.children?.map((child) => markStreamingRevealOffsets(child, cursor));\n  if (node.streamingRevealStartOffset === startOffset && node.streamingRevealEndOffset === cursor.current &&\n    children?.every((child, index) => child === node.children?.[index]) !== false) return node;\n  return { ...node, children, streamingRevealStartOffset: startOffset, streamingRevealEndOffset: cursor.current };\n}\n\nexport function createStreamingRevealState(params: Readonly<{\n  enabled: boolean;\n  activeRanges: readonly StreamingRevealRange[];\n}>): StreamingRevealState | null {\n  if (!params.enabled) return null;\n\n  return {\n    activeRanges: params.activeRanges,\n  };\n}\n\nfunction readRevealWordRanges(params: Readonly<{\n  text: string;\n  startOffset: number;\n  expiresAtMs: number;\n}>): StreamingRevealRange[] {\n  const ranges: StreamingRevealRange[] = [];\n  const wordPattern = /\\S+/g;\n  let match: RegExpExecArray | null;\n\n  while ((match = wordPattern.exec(params.text)) != null) {\n    ranges.push({\n      start: params.startOffset + match.index,\n      end: params.startOffset + match.index + match[0].length,\n      expiresAtMs: params.expiresAtMs,\n    });\n  }\n\n  return ranges;\n}\n\nfunction mergeRevealRanges(\n  ranges: readonly StreamingRevealRange[]\n): StreamingRevealRange[] {\n  const sorted = [...ranges].sort((left, right) => {\n    if (left.start !== right.start) return left.start - right.start;\n    return left.end - right.end;\n  });\n  const merged: StreamingRevealRange[] = [];\n\n  for (const range of sorted) {\n    const previous = merged[merged.length - 1];\n    if (!previous || range.start > previous.end) {\n      merged.push(range);\n      continue;\n    }\n\n    merged[merged.length - 1] = {\n      start: previous.start,\n      end: Math.max(previous.end, range.end),\n      expiresAtMs: Math.max(previous.expiresAtMs, range.expiresAtMs),\n    };\n  }\n\n  return merged;\n}\n\nconst STREAMING_REVEAL_SOURCE_WINDOW_SLACK = 16;\n\nfunction resolveStreamingRevealFloor(params: Readonly<{\n  commonPrefixLength: number;\n  currentComparisonTextLength: number;\n  previousSourceLength?: number;\n  currentSourceLength?: number;\n}>): number {\n  const hasSourceLengths =\n    typeof params.previousSourceLength === 'number' &&\n    Number.isFinite(params.previousSourceLength) &&\n    typeof params.currentSourceLength === 'number' &&\n    Number.isFinite(params.currentSourceLength);\n  if (!hasSourceLengths) return params.commonPrefixLength;\n\n  // The rendered comparison text is NOT append-only while markdown streams:\n  // completing inline syntax (`**bo` rendered literally, then closing `**` renders\n  // bold `bo`) rewrites the rendered prefix, collapsing the common prefix far\n  // upstream of the tail. Without a bound, every formatting completion re-classified\n  // the whole downstream region as new and replayed the reveal animation each chunk\n  // (constant text flicker on large streaming markdown). The SOURCE markdown IS\n  // append-only during streaming, so genuinely new content is bounded by the appended\n  // source length (with slack for rendered expansion). A pure re-parse with no\n  // appended source reveals nothing new.\n  const appendedSourceLength = Math.max(\n    0,\n    (params.currentSourceLength as number) - (params.previousSourceLength as number)\n  );\n  if (appendedSourceLength === 0) return params.currentComparisonTextLength;\n  const revealWindow = appendedSourceLength * 2 + STREAMING_REVEAL_SOURCE_WINDOW_SLACK;\n  return Math.max(\n    params.commonPrefixLength,\n    params.currentComparisonTextLength - revealWindow\n  );\n}\n\nexport function updateStreamingRevealRanges(params: Readonly<{\n  activeRanges: readonly StreamingRevealRange[];\n  previousComparisonText: string;\n  currentComparisonText: string;\n  nowMs: number;\n  ttlMs: number;\n  previousSourceLength?: number;\n  currentSourceLength?: number;\n}>): readonly StreamingRevealRange[] {\n  const commonPrefixLength = readCommonPrefixLength(\n    params.previousComparisonText,\n    params.currentComparisonText\n  );\n\n  // A range's start/end are offsets into the rendered comparison text of the\n  // render that CREATED it, and ranges outlive that render (they are carried\n  // forward for ttlMs so the reveal keyframe can finish). The rendered text is\n  // not append-only while markdown streams, so as soon as the common prefix\n  // collapses those offsets denote different characters: a range created over\n  // '**beta' keeps animating as 'beta', and on the raw/repaired markdown flip a\n  // range slides onto words that were painted long ago and replays their\n  // opacity keyframe. Rebase every carried-forward range onto the region that is\n  // byte-identical in both renders — the common prefix — and discard the rest,\n  // which described text that no longer exists. A genuine append leaves the whole\n  // previous text as the common prefix, so ordinary retention is untouched.\n  const retainedRanges = params.activeRanges.filter((range) =>\n    range.expiresAtMs > params.nowMs &&\n    range.start < commonPrefixLength\n  ).map((range) => ({\n    ...range,\n    end: Math.min(range.end, commonPrefixLength),\n  }));\n\n  // A mount — a remount above all — starts with no baseline: previousComparisonText\n  // is empty while this instance already renders the whole message. Diffing against\n  // '' makes the entire message look appended (the source-append bound cannot help\n  // either: previousSourceLength is 0, so the window spans everything), every word\n  // re-enters the reveal, and the block replays its opacity keyframe. Measured on\n  // web: 1 570 of 2 098 rendered chars below opacity 0.5 for ~155 ms immediately\n  // after the enriched run was replaced mid-stream. Content already rendered when\n  // this instance first compared is not new — seed the baseline and reveal nothing.\n  // Genuine appends after the seed still animate word by word.\n  if (\n    params.previousComparisonText === '' &&\n    params.currentComparisonText.length > 0\n  ) {\n    return mergeRevealRanges(retainedRanges);\n  }\n\n  const revealFloor = resolveStreamingRevealFloor({\n    commonPrefixLength,\n    currentComparisonTextLength: params.currentComparisonText.length,\n    previousSourceLength: params.previousSourceLength,\n    currentSourceLength: params.currentSourceLength,\n  });\n  if (revealFloor >= params.currentComparisonText.length) {\n    return mergeRevealRanges(retainedRanges);\n  }\n\n  return mergeRevealRanges([\n    ...retainedRanges,\n    ...readRevealWordRanges({\n      text: params.currentComparisonText.slice(revealFloor),\n      startOffset: revealFloor,\n      expiresAtMs: params.nowMs + params.ttlMs,\n    }),\n  ]);\n}\n\nexport function shouldRevealTextForParent(parentType?: NodeType): boolean {\n  return parentType ? !NON_REVEALED_PARENT_TYPES.has(parentType) : true;\n}\n\nexport interface StreamingRevealTextPart {\n  text: string;\n  animated: boolean;\n  startOffset: number;\n}\n\n/**\n * SHARED word classifier for streaming text reveal — the single owner of the\n * \"which words of this text animate in\" decision. Consumed by the enriched AST\n * renderer below (range-driven) and by the host app's plain-text\n * `StreamingTextReveal` (single appended-suffix range), so the two streaming\n * surfaces cannot drift apart in word semantics.\n */\nexport function splitStreamingRevealTextParts(params: Readonly<{\n  text: string;\n  startOffset: number;\n  activeRanges: readonly StreamingRevealRange[];\n}>): StreamingRevealTextPart[] {\n  let cursor = params.startOffset;\n  let rangeIndex = 0;\n  const activeRanges = params.activeRanges;\n  return params.text\n    .split(/(\\s+)/)\n    .filter((part) => part.length > 0)\n    .map((part) => {\n      const start = cursor;\n      const end = start + part.length;\n      cursor = end;\n\n      while (\n        rangeIndex < activeRanges.length &&\n        activeRanges[rangeIndex]!.end <= start\n      ) {\n        rangeIndex++;\n      }\n\n      const isActiveRevealRange =\n        rangeIndex < activeRanges.length &&\n        // A suffix can extend a word that is already visible. Keep that word\n        // visible instead of restarting its opacity animation from zero.\n        activeRanges[rangeIndex]!.start <= start;\n\n      return {\n        text: part,\n        animated: !/^\\s+$/.test(part) && isActiveRevealRange,\n        startOffset: start,\n      };\n    });\n}\n\nexport function renderStreamingRevealText(params: Readonly<{\n  capabilities: RenderCapabilities;\n  text: string;\n  revealable: boolean;\n  startOffset: number;\n}>): ReactNode {\n  const reveal = params.capabilities.streamingReveal;\n  if (!reveal || !params.revealable) {\n    return params.text;\n  }\n\n  return splitStreamingRevealTextParts({\n    text: params.text,\n    startOffset: params.startOffset,\n    activeRanges: reveal.activeRanges,\n  }).map((part, index) => {\n    if (!part.animated) {\n      return part.text;\n    }\n    return createElement(\n      'span',\n      {\n        key: `${part.startOffset}:${index}`,\n        'data-happier-enriched-markdown-reveal': 'text',\n      },\n      part.text\n    );\n  });\n}\n"],"mappings":";;AAAA,SAASA,aAAa,QAAwB,OAAO;AAGrD,MAAMC,0BAAiD,GAAG,IAAIC,GAAG,CAAC,CAChE,MAAM,EACN,MAAM,EACN,iBAAiB,EACjB,kBAAkB,CACnB,CAAC;AAEF,MAAMC,yBAAgD,GAAG,IAAID,GAAG,CAAC,CAC/D,MAAM,EACN,WAAW,EACX,iBAAiB,EACjB,kBAAkB,CACnB,CAAC;AAYF,OAAO,SAASE,sBAAsBA,CAACC,CAAS,EAAEC,CAAS,EAAU;EACnE,MAAMC,GAAG,GAAGC,IAAI,CAACC,GAAG,CAACJ,CAAC,CAACK,MAAM,EAAEJ,CAAC,CAACI,MAAM,CAAC;EACxC,IAAIC,KAAK,GAAG,CAAC;EACb,OAAOA,KAAK,GAAGJ,GAAG,IAAIF,CAAC,CAACM,KAAK,CAAC,KAAKL,CAAC,CAACK,KAAK,CAAC,EAAE;IAC3CA,KAAK,EAAE;EACT;EACA,OAAOA,KAAK;AACd;AAEA,OAAO,SAASC,0BAA0BA,CAACC,IAAoB,EAAU;EACvE,IAAI,CAACA,IAAI,EAAE,OAAO,EAAE;EAEpB,IAAIC,IAAI,GAAGb,0BAA0B,CAACc,GAAG,CAACF,IAAI,CAACG,IAAI,CAAC,GAAGH,IAAI,CAACI,OAAO,IAAI,EAAE,GAAG,EAAE;EAC9E,KAAK,MAAMC,KAAK,IAAIL,IAAI,CAACM,QAAQ,IAAI,EAAE,EAAE;IACvCL,IAAI,IAAIF,0BAA0B,CAACM,KAAK,CAAC;EAC3C;EACA,OAAOJ,IAAI;AACb;AAEA,OAAO,SAASM,0BAA0BA,CACxCP,IAAa,EACbQ,MAA2B,GAAG;EAAEC,OAAO,EAAE;AAAE,CAAC,EACnC;EACT,MAAMC,WAAW,GAAGF,MAAM,CAACC,OAAO;EAClC,IAAIrB,0BAA0B,CAACc,GAAG,CAACF,IAAI,CAACG,IAAI,CAAC,EAAE;IAC7CK,MAAM,CAACC,OAAO,IAAI,CAACT,IAAI,CAACI,OAAO,IAAI,EAAE,EAAEP,MAAM;EAC/C;EACA,MAAMS,QAAQ,GAAGN,IAAI,CAACM,QAAQ,EAAEK,GAAG,CAAEN,KAAK,IAAKE,0BAA0B,CAACF,KAAK,EAAEG,MAAM,CAAC,CAAC;EACzF,IAAIR,IAAI,CAACY,0BAA0B,KAAKF,WAAW,IAAIV,IAAI,CAACa,wBAAwB,KAAKL,MAAM,CAACC,OAAO,IACrGH,QAAQ,EAAEQ,KAAK,CAAC,CAACT,KAAK,EAAEP,KAAK,KAAKO,KAAK,KAAKL,IAAI,CAACM,QAAQ,GAAGR,KAAK,CAAC,CAAC,KAAK,KAAK,EAAE,OAAOE,IAAI;EAC5F,OAAO;IAAE,GAAGA,IAAI;IAAEM,QAAQ;IAAEM,0BAA0B,EAAEF,WAAW;IAAEG,wBAAwB,EAAEL,MAAM,CAACC;EAAQ,CAAC;AACjH;AAEA,OAAO,SAASM,0BAA0BA,CAACC,MAGzC,EAA+B;EAC/B,IAAI,CAACA,MAAM,CAACC,OAAO,EAAE,OAAO,IAAI;EAEhC,OAAO;IACLC,YAAY,EAAEF,MAAM,CAACE;EACvB,CAAC;AACH;AAEA,SAASC,oBAAoBA,CAACH,MAI5B,EAA0B;EAC1B,MAAMI,MAA8B,GAAG,EAAE;EACzC,MAAMC,WAAW,GAAG,MAAM;EAC1B,IAAIC,KAA6B;EAEjC,OAAO,CAACA,KAAK,GAAGD,WAAW,CAACE,IAAI,CAACP,MAAM,CAACf,IAAI,CAAC,KAAK,IAAI,EAAE;IACtDmB,MAAM,CAACI,IAAI,CAAC;MACVC,KAAK,EAAET,MAAM,CAACN,WAAW,GAAGY,KAAK,CAACxB,KAAK;MACvC4B,GAAG,EAAEV,MAAM,CAACN,WAAW,GAAGY,KAAK,CAACxB,KAAK,GAAGwB,KAAK,CAAC,CAAC,CAAC,CAACzB,MAAM;MACvD8B,WAAW,EAAEX,MAAM,CAACW;IACtB,CAAC,CAAC;EACJ;EAEA,OAAOP,MAAM;AACf;AAEA,SAASQ,iBAAiBA,CACxBR,MAAuC,EACf;EACxB,MAAMS,MAAM,GAAG,CAAC,GAAGT,MAAM,CAAC,CAACU,IAAI,CAAC,CAACC,IAAI,EAAEC,KAAK,KAAK;IAC/C,IAAID,IAAI,CAACN,KAAK,KAAKO,KAAK,CAACP,KAAK,EAAE,OAAOM,IAAI,CAACN,KAAK,GAAGO,KAAK,CAACP,KAAK;IAC/D,OAAOM,IAAI,CAACL,GAAG,GAAGM,KAAK,CAACN,GAAG;EAC7B,CAAC,CAAC;EACF,MAAMO,MAA8B,GAAG,EAAE;EAEzC,KAAK,MAAMC,KAAK,IAAIL,MAAM,EAAE;IAC1B,MAAMM,QAAQ,GAAGF,MAAM,CAACA,MAAM,CAACpC,MAAM,GAAG,CAAC,CAAC;IAC1C,IAAI,CAACsC,QAAQ,IAAID,KAAK,CAACT,KAAK,GAAGU,QAAQ,CAACT,GAAG,EAAE;MAC3CO,MAAM,CAACT,IAAI,CAACU,KAAK,CAAC;MAClB;IACF;IAEAD,MAAM,CAACA,MAAM,CAACpC,MAAM,GAAG,CAAC,CAAC,GAAG;MAC1B4B,KAAK,EAAEU,QAAQ,CAACV,KAAK;MACrBC,GAAG,EAAE/B,IAAI,CAACD,GAAG,CAACyC,QAAQ,CAACT,GAAG,EAAEQ,KAAK,CAACR,GAAG,CAAC;MACtCC,WAAW,EAAEhC,IAAI,CAACD,GAAG,CAACyC,QAAQ,CAACR,WAAW,EAAEO,KAAK,CAACP,WAAW;IAC/D,CAAC;EACH;EAEA,OAAOM,MAAM;AACf;AAEA,MAAMG,oCAAoC,GAAG,EAAE;AAE/C,SAASC,2BAA2BA,CAACrB,MAKnC,EAAU;EACV,MAAMsB,gBAAgB,GACpB,OAAOtB,MAAM,CAACuB,oBAAoB,KAAK,QAAQ,IAC/CC,MAAM,CAACC,QAAQ,CAACzB,MAAM,CAACuB,oBAAoB,CAAC,IAC5C,OAAOvB,MAAM,CAAC0B,mBAAmB,KAAK,QAAQ,IAC9CF,MAAM,CAACC,QAAQ,CAACzB,MAAM,CAAC0B,mBAAmB,CAAC;EAC7C,IAAI,CAACJ,gBAAgB,EAAE,OAAOtB,MAAM,CAAC2B,kBAAkB;;EAEvD;EACA;EACA;EACA;EACA;EACA;EACA;EACA;EACA;EACA,MAAMC,oBAAoB,GAAGjD,IAAI,CAACD,GAAG,CACnC,CAAC,EACAsB,MAAM,CAAC0B,mBAAmB,GAAe1B,MAAM,CAACuB,oBACnD,CAAC;EACD,IAAIK,oBAAoB,KAAK,CAAC,EAAE,OAAO5B,MAAM,CAAC6B,2BAA2B;EACzE,MAAMC,YAAY,GAAGF,oBAAoB,GAAG,CAAC,GAAGR,oCAAoC;EACpF,OAAOzC,IAAI,CAACD,GAAG,CACbsB,MAAM,CAAC2B,kBAAkB,EACzB3B,MAAM,CAAC6B,2BAA2B,GAAGC,YACvC,CAAC;AACH;AAEA,OAAO,SAASC,2BAA2BA,CAAC/B,MAQ1C,EAAmC;EACnC,MAAM2B,kBAAkB,GAAGpD,sBAAsB,CAC/CyB,MAAM,CAACgC,sBAAsB,EAC7BhC,MAAM,CAACiC,qBACT,CAAC;;EAED;EACA;EACA;EACA;EACA;EACA;EACA;EACA;EACA;EACA;EACA;EACA,MAAMC,cAAc,GAAGlC,MAAM,CAACE,YAAY,CAACiC,MAAM,CAAEjB,KAAK,IACtDA,KAAK,CAACP,WAAW,GAAGX,MAAM,CAACoC,KAAK,IAChClB,KAAK,CAACT,KAAK,GAAGkB,kBAChB,CAAC,CAAChC,GAAG,CAAEuB,KAAK,KAAM;IAChB,GAAGA,KAAK;IACRR,GAAG,EAAE/B,IAAI,CAACC,GAAG,CAACsC,KAAK,CAACR,GAAG,EAAEiB,kBAAkB;EAC7C,CAAC,CAAC,CAAC;;EAEH;EACA;EACA;EACA;EACA;EACA;EACA;EACA;EACA;EACA,IACE3B,MAAM,CAACgC,sBAAsB,KAAK,EAAE,IACpChC,MAAM,CAACiC,qBAAqB,CAACpD,MAAM,GAAG,CAAC,EACvC;IACA,OAAO+B,iBAAiB,CAACsB,cAAc,CAAC;EAC1C;EAEA,MAAMG,WAAW,GAAGhB,2BAA2B,CAAC;IAC9CM,kBAAkB;IAClBE,2BAA2B,EAAE7B,MAAM,CAACiC,qBAAqB,CAACpD,MAAM;IAChE0C,oBAAoB,EAAEvB,MAAM,CAACuB,oBAAoB;IACjDG,mBAAmB,EAAE1B,MAAM,CAAC0B;EAC9B,CAAC,CAAC;EACF,IAAIW,WAAW,IAAIrC,MAAM,CAACiC,qBAAqB,CAACpD,MAAM,EAAE;IACtD,OAAO+B,iBAAiB,CAACsB,cAAc,CAAC;EAC1C;EAEA,OAAOtB,iBAAiB,CAAC,CACvB,GAAGsB,cAAc,EACjB,GAAG/B,oBAAoB,CAAC;IACtBlB,IAAI,EAAEe,MAAM,CAACiC,qBAAqB,CAACK,KAAK,CAACD,WAAW,CAAC;IACrD3C,WAAW,EAAE2C,WAAW;IACxB1B,WAAW,EAAEX,MAAM,CAACoC,KAAK,GAAGpC,MAAM,CAACuC;EACrC,CAAC,CAAC,CACH,CAAC;AACJ;AAEA,OAAO,SAASC,yBAAyBA,CAACC,UAAqB,EAAW;EACxE,OAAOA,UAAU,GAAG,CAACnE,yBAAyB,CAACY,GAAG,CAACuD,UAAU,CAAC,GAAG,IAAI;AACvE;AAQA;AACA;AACA;AACA;AACA;AACA;AACA;AACA,OAAO,SAASC,6BAA6BA,CAAC1C,MAI5C,EAA6B;EAC7B,IAAIR,MAAM,GAAGQ,MAAM,CAACN,WAAW;EAC/B,IAAIiD,UAAU,GAAG,CAAC;EAClB,MAAMzC,YAAY,GAAGF,MAAM,CAACE,YAAY;EACxC,OAAOF,MAAM,CAACf,IAAI,CACf2D,KAAK,CAAC,OAAO,CAAC,CACdT,MAAM,CAAEU,IAAI,IAAKA,IAAI,CAAChE,MAAM,GAAG,CAAC,CAAC,CACjCc,GAAG,CAAEkD,IAAI,IAAK;IACb,MAAMpC,KAAK,GAAGjB,MAAM;IACpB,MAAMkB,GAAG,GAAGD,KAAK,GAAGoC,IAAI,CAAChE,MAAM;IAC/BW,MAAM,GAAGkB,GAAG;IAEZ,OACEiC,UAAU,GAAGzC,YAAY,CAACrB,MAAM,IAChCqB,YAAY,CAACyC,UAAU,CAAC,CAAEjC,GAAG,IAAID,KAAK,EACtC;MACAkC,UAAU,EAAE;IACd;IAEA,MAAMG,mBAAmB,GACvBH,UAAU,GAAGzC,YAAY,CAACrB,MAAM;IAChC;IACA;IACAqB,YAAY,CAACyC,UAAU,CAAC,CAAElC,KAAK,IAAIA,KAAK;IAE1C,OAAO;MACLxB,IAAI,EAAE4D,IAAI;MACVE,QAAQ,EAAE,CAAC,OAAO,CAACC,IAAI,CAACH,IAAI,CAAC,IAAIC,mBAAmB;MACpDpD,WAAW,EAAEe;IACf,CAAC;EACH,CAAC,CAAC;AACN;AAEA,OAAO,SAASwC,yBAAyBA,CAACjD,MAKxC,EAAa;EACb,MAAMkD,MAAM,GAAGlD,MAAM,CAACmD,YAAY,CAACC,eAAe;EAClD,IAAI,CAACF,MAAM,IAAI,CAAClD,MAAM,CAACqD,UAAU,EAAE;IACjC,OAAOrD,MAAM,CAACf,IAAI;EACpB;EAEA,OAAOyD,6BAA6B,CAAC;IACnCzD,IAAI,EAAEe,MAAM,CAACf,IAAI;IACjBS,WAAW,EAAEM,MAAM,CAACN,WAAW;IAC/BQ,YAAY,EAAEgD,MAAM,CAAChD;EACvB,CAAC,CAAC,CAACP,GAAG,CAAC,CAACkD,IAAI,EAAE/D,KAAK,KAAK;IACtB,IAAI,CAAC+D,IAAI,CAACE,QAAQ,EAAE;MAClB,OAAOF,IAAI,CAAC5D,IAAI;IAClB;IACA,OAAOd,aAAa,CAClB,MAAM,EACN;MACEmF,GAAG,EAAE,GAAGT,IAAI,CAACnD,WAAW,IAAIZ,KAAK,EAAE;MACnC,uCAAuC,EAAE;IAC3C,CAAC,EACD+D,IAAI,CAAC5D,IACP,CAAC;EACH,CAAC,CAAC;AACJ","ignoreList":[]}
+\ No newline at end of file
 diff --git a/lib/module/web/styles.js b/lib/module/web/styles.js
 index 1c5a2930e22b44b24920e43c4adf31485d55a784..875211f741ef9ecab6039ad4bc0970f9376c237a 100644
 --- a/lib/module/web/styles.js
@@ -3310,6 +3460,91 @@ index 1c5a2930e22b44b24920e43c4adf31485d55a784..875211f741ef9ecab6039ad4bc0970f9
      h1: headingStyle(style, '1'),
      h2: headingStyle(style, '2'),
      h3: headingStyle(style, '3'),
+diff --git a/lib/module/web/utils.js b/lib/module/web/utils.js
+index a864001019eb9a4b4d777cdd0287c81a7aacee56..e36ba29754ab892407173f75f0f5ce40624ba46b 100644
+--- a/lib/module/web/utils.js
++++ b/lib/module/web/utils.js
+@@ -20,37 +20,58 @@ export function filenameFromUrl(url) {
+ /**
+  * Stamps each task ListItem with a sequential `taskIndex` matching the order
+  * native C++ assigns — so onTaskListItemPress.index is correct on web too.
+- * Mutates the AST in-place (safe: called once on the freshly-parsed result).
++ * Reuses unchanged nodes without mutating a previous render's shared prefix.
+  */
+ export function indexTaskItems(node, counter = {
+   value: 0
+ }) {
++  let attributes = node.attributes;
+   if (node.type === 'ListItem' && node.attributes?.isTask === 'true') {
+-    node.attributes.taskIndex = counter.value++;
++    const taskIndex = counter.value++;
++    if (attributes?.taskIndex !== taskIndex) attributes = {
++      ...attributes,
++      taskIndex
++    };
+   }
+-  node.children?.forEach(child => indexTaskItems(child, counter));
++  const children = node.children?.map(child => indexTaskItems(child, counter));
++  if (attributes === node.attributes && children?.every((child, index) => child === node.children?.[index]) !== false) return node;
++  return {
++    ...node,
++    attributes,
++    children
++  };
+ }
+ 
+ /**
+  * Stamps Image nodes with `isInline` when they appear inside a paragraph
+  * that also contains other content (text, links, etc.).
+  * Matches native behavior: sole-child images are block-level, mixed are inline.
+- * Mutates the AST in-place (safe: called once on the freshly-parsed result).
++ * Reuses unchanged nodes without mutating a previous render's shared prefix.
+  */
+ export function markInlineImages(node) {
++  let children = node.children?.map(markInlineImages);
+   if (node.type === 'Paragraph' && node.children) {
+     const hasNonImageChild = node.children.some(child => child.type !== 'Image');
+-    if (hasNonImageChild) {
+-      for (const child of node.children) {
+-        if (child.type === 'Image') {
+-          child.attributes = {
+-            ...child.attributes,
+-            isInline: true
+-          };
+-        }
++    children = children?.map(child => {
++      if (child.type !== 'Image' || Boolean(child.attributes?.isInline) === hasNonImageChild) return child;
++      const attributes = {
++        ...child.attributes
++      };
++      if (hasNonImageChild) {
++        attributes.isInline = true;
++      } else {
++        delete attributes.isInline;
+       }
+-    }
++      return {
++        ...child,
++        attributes
++      };
++    });
+   }
+-  node.children?.forEach(markInlineImages);
++  if (children?.every((child, index) => child === node.children?.[index]) !== false) return node;
++  return {
++    ...node,
++    children
++  };
+ }
+ //# sourceMappingURL=utils.js.map
+diff --git a/lib/module/web/utils.js.map b/lib/module/web/utils.js.map
+index 0e7fe640b59005e87da9154de72f18d6960b9c0b..b88479d096efe614712e17a616beb028c785262a 100644
+--- a/lib/module/web/utils.js.map
++++ b/lib/module/web/utils.js.map
+@@ -1 +1 @@
+-{"version":3,"names":["extractNodeText","node","content","undefined","children","map","join","filenameFromUrl","url","pathname","URL","filename","split","pop","replace","indexTaskItems","counter","value","type","attributes","isTask","taskIndex","forEach","child","markInlineImages","hasNonImageChild","some","isInline"],"sourceRoot":"../../../src","sources":["web/utils.ts"],"mappings":";;AAEA;AACA,OAAO,SAASA,eAAeA,CAACC,IAAa,EAAU;EACrD,IAAIA,IAAI,CAACC,OAAO,KAAKC,SAAS,EAAE,OAAOF,IAAI,CAACC,OAAO;EACnD,OAAOD,IAAI,CAACG,QAAQ,EAAEC,GAAG,CAACL,eAAe,CAAC,CAACM,IAAI,CAAC,EAAE,CAAC,IAAI,EAAE;AAC3D;;AAEA;AACA,OAAO,SAASC,eAAeA,CAACC,GAAW,EAAU;EACnD,IAAI;IACF,MAAMC,QAAQ,GAAG,IAAIC,GAAG,CAACF,GAAG,EAAE,qBAAqB,CAAC,CAACC,QAAQ;IAC7D,MAAME,QAAQ,GAAGF,QAAQ,CAACG,KAAK,CAAC,GAAG,CAAC,CAACC,GAAG,CAAC,CAAC,IAAI,EAAE;IAChD,OAAOF,QAAQ,CAACG,OAAO,CAAC,UAAU,EAAE,EAAE,CAAC;EACzC,CAAC,CAAC,MAAM;IACN,OAAO,EAAE;EACX;AACF;;AAEA;AACA;AACA;AACA;AACA;AACA,OAAO,SAASC,cAAcA,CAACd,IAAa,EAAEe,OAAO,GAAG;EAAEC,KAAK,EAAE;AAAE,CAAC,EAAQ;EAC1E,IAAIhB,IAAI,CAACiB,IAAI,KAAK,UAAU,IAAIjB,IAAI,CAACkB,UAAU,EAAEC,MAAM,KAAK,MAAM,EAAE;IAClEnB,IAAI,CAACkB,UAAU,CAACE,SAAS,GAAGL,OAAO,CAACC,KAAK,EAAE;EAC7C;EACAhB,IAAI,CAACG,QAAQ,EAAEkB,OAAO,CAAEC,KAAK,IAAKR,cAAc,CAACQ,KAAK,EAAEP,OAAO,CAAC,CAAC;AACnE;;AAEA;AACA;AACA;AACA;AACA;AACA;AACA,OAAO,SAASQ,gBAAgBA,CAACvB,IAAa,EAAQ;EACpD,IAAIA,IAAI,CAACiB,IAAI,KAAK,WAAW,IAAIjB,IAAI,CAACG,QAAQ,EAAE;IAC9C,MAAMqB,gBAAgB,GAAGxB,IAAI,CAACG,QAAQ,CAACsB,IAAI,CACxCH,KAAK,IAAKA,KAAK,CAACL,IAAI,KAAK,OAC5B,CAAC;IACD,IAAIO,gBAAgB,EAAE;MACpB,KAAK,MAAMF,KAAK,IAAItB,IAAI,CAACG,QAAQ,EAAE;QACjC,IAAImB,KAAK,CAACL,IAAI,KAAK,OAAO,EAAE;UAC1BK,KAAK,CAACJ,UAAU,GAAG;YAAE,GAAGI,KAAK,CAACJ,UAAU;YAAEQ,QAAQ,EAAE;UAAK,CAAC;QAC5D;MACF;IACF;EACF;EACA1B,IAAI,CAACG,QAAQ,EAAEkB,OAAO,CAACE,gBAAgB,CAAC;AAC1C","ignoreList":[]}
++{"version":3,"names":["extractNodeText","node","content","undefined","children","map","join","filenameFromUrl","url","pathname","URL","filename","split","pop","replace","indexTaskItems","counter","value","attributes","type","isTask","taskIndex","child","every","index","markInlineImages","hasNonImageChild","some","Boolean","isInline"],"sources":["../../../src/web/utils.ts"],"sourcesContent":["import type { ASTNode } from './types';\n\n/** Recursively collects plain text content from an AST node's subtree. */\nexport function extractNodeText(node: ASTNode): string {\n  if (node.content !== undefined) return node.content;\n  return node.children?.map(extractNodeText).join('') ?? '';\n}\n\n/** Extracts the filename from a URL path, without extension. */\nexport function filenameFromUrl(url: string): string {\n  try {\n    const pathname = new URL(url, 'https://placeholder').pathname;\n    const filename = pathname.split('/').pop() ?? '';\n    return filename.replace(/\\.[^.]+$/, '');\n  } catch {\n    return '';\n  }\n}\n\n/**\n * Stamps each task ListItem with a sequential `taskIndex` matching the order\n * native C++ assigns — so onTaskListItemPress.index is correct on web too.\n * Reuses unchanged nodes without mutating a previous render's shared prefix.\n */\nexport function indexTaskItems(node: ASTNode, counter = { value: 0 }): ASTNode {\n  let attributes = node.attributes;\n  if (node.type === 'ListItem' && node.attributes?.isTask === 'true') {\n    const taskIndex = counter.value++;\n    if (attributes?.taskIndex !== taskIndex) attributes = { ...attributes, taskIndex };\n  }\n  const children = node.children?.map((child) => indexTaskItems(child, counter));\n  if (attributes === node.attributes && children?.every((child, index) => child === node.children?.[index]) !== false) return node;\n  return { ...node, attributes, children };\n}\n\n/**\n * Stamps Image nodes with `isInline` when they appear inside a paragraph\n * that also contains other content (text, links, etc.).\n * Matches native behavior: sole-child images are block-level, mixed are inline.\n * Reuses unchanged nodes without mutating a previous render's shared prefix.\n */\nexport function markInlineImages(node: ASTNode): ASTNode {\n  let children = node.children?.map(markInlineImages);\n  if (node.type === 'Paragraph' && node.children) {\n    const hasNonImageChild = node.children.some(\n      (child) => child.type !== 'Image'\n    );\n    children = children?.map((child) => {\n      if (child.type !== 'Image' || Boolean(child.attributes?.isInline) === hasNonImageChild) return child;\n      const attributes = { ...child.attributes };\n      if (hasNonImageChild) {\n        attributes.isInline = true;\n      } else {\n        delete attributes.isInline;\n      }\n      return { ...child, attributes };\n    });\n  }\n  if (children?.every((child, index) => child === node.children?.[index]) !== false) return node;\n  return { ...node, children };\n}\n"],"mappings":"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","ignoreList":[]}
+\ No newline at end of file
 diff --git a/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts b/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
 index 567cc1e8cb89e42c316f4ab2dc3deb8b1fde2d5c..76735cf0eb234ade27de1983caaf8cfea4889ee0 100644
 --- a/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
@@ -3377,7 +3612,7 @@ index 7c5aeced380dfccebaed655b9b39d1f4cc61644d..be08a1367385497d812ee41c786fd783
  //# sourceMappingURL=styleUtils.d.ts.map
 \ No newline at end of file
 diff --git a/lib/typescript/src/types/MarkdownStyle.d.ts b/lib/typescript/src/types/MarkdownStyle.d.ts
-index b2c9fb9d64d320d3d3919dff59587090ac7969e1..b78607103313c10c4fd966c2188d4ed383309ee3 100644
+index b2c9fb9d64d320d3d3919dff59587090ac7969e1..5b2fe15731a2d37f320c12a6d15ca2acb8eaa412 100644
 --- a/lib/typescript/src/types/MarkdownStyle.d.ts
 +++ b/lib/typescript/src/types/MarkdownStyle.d.ts
 @@ -41,6 +41,8 @@ interface CodeBlockStyle extends BaseBlockStyle {
@@ -3397,8 +3632,9 @@ index b2c9fb9d64d320d3d3919dff59587090ac7969e1..b78607103313c10c4fd966c2188d4ed3
  }
  export {};
  //# sourceMappingURL=MarkdownStyle.d.ts.map
+\ No newline at end of file
 diff --git a/lib/typescript/src/types/MarkdownStyleInternal.d.ts b/lib/typescript/src/types/MarkdownStyleInternal.d.ts
-index d2ed4860ca9788551c39fed3df7b59a4c6a4f569..8d5cc6860fab249c3079a74e20db7fe6e9f37676 100644
+index d2ed4860ca9788551c39fed3df7b59a4c6a4f569..0dc8998c9fdcd878aa1a0425337183c5fc240453 100644
 --- a/lib/typescript/src/types/MarkdownStyleInternal.d.ts
 +++ b/lib/typescript/src/types/MarkdownStyleInternal.d.ts
 @@ -38,6 +38,7 @@ interface CodeBlockStyleInternal extends BaseBlockStyleInternal {
@@ -3464,17 +3700,17 @@ index 0b620239dbb0835552e5db32f454e43fd30aa03e..a264aefa5ae1be656caf8d7a0dbf1ad0
      selectionEnd: number;
  }
 diff --git a/lib/typescript/src/web/parseMarkdown.d.ts b/lib/typescript/src/web/parseMarkdown.d.ts
-index 4643d20e7d7d4e8e5f41ab17d4c7ce30319bb046..8f43e3b591fd7aa26772470fd1d73eba3f900ff1 100644
+index 4643d20e7d7d4e8e5f41ab17d4c7ce30319bb046..a65d4ce4fac40879caa47cd164a725238325fd12 100644
 --- a/lib/typescript/src/web/parseMarkdown.d.ts
 +++ b/lib/typescript/src/web/parseMarkdown.d.ts
 @@ -1,4 +1,6 @@
  import type { ASTNode } from './types';
  import type { Md4cFlags } from '../types/MarkdownStyle';
+-export declare function parseMarkdown(markdown: string, { underline, latexMath }?: Md4cFlags): Promise<ASTNode>;
 +export declare function preloadMarkdownRuntime(): Promise<void>;
- export declare function parseMarkdown(markdown: string, { underline, latexMath }?: Md4cFlags): Promise<ASTNode>;
-+export declare function parseMarkdownSyncIfReady(markdown: string, { underline, latexMath }?: Md4cFlags): ASTNode | null;
++export declare function parseMarkdown(markdown: string, { underline, latexMath, texMathBackslashDelimiters }?: Md4cFlags, previousAst?: ASTNode | null): Promise<ASTNode>;
++export declare function parseMarkdownSyncIfReady(markdown: string, { underline, latexMath, texMathBackslashDelimiters }?: Md4cFlags, previousAst?: ASTNode | null): ASTNode | null;
  //# sourceMappingURL=parseMarkdown.d.ts.map
-\ No newline at end of file
 diff --git a/lib/typescript/src/web/renderers/index.d.ts b/lib/typescript/src/web/renderers/index.d.ts
 index 7881f090eb0092c180bce7308438fe27bd3a1075..8beb61002a527a5b3d686e294f085ac42a8f0b1c 100644
 --- a/lib/typescript/src/web/renderers/index.d.ts
@@ -3500,7 +3736,7 @@ index 7881f090eb0092c180bce7308438fe27bd3a1075..8beb61002a527a5b3d686e294f085ac4
 \ No newline at end of file
 diff --git a/lib/typescript/src/web/streamingReveal.d.ts b/lib/typescript/src/web/streamingReveal.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..a2236c20895d573bd228647a813224b128386e69
+index 0000000000000000000000000000000000000000..60a4a561497649475e814f64ff7d383251118eb2
 --- /dev/null
 +++ b/lib/typescript/src/web/streamingReveal.d.ts
 @@ -0,0 +1,45 @@
@@ -3516,9 +3752,9 @@ index 0000000000000000000000000000000000000000..a2236c20895d573bd228647a813224b1
 +}
 +export declare function readCommonPrefixLength(a: string, b: string): number;
 +export declare function readRenderedComparisonText(node: ASTNode | null): string;
-+export declare function markStreamingRevealOffsets(node: ASTNode | null, cursor?: {
++export declare function markStreamingRevealOffsets(node: ASTNode, cursor?: {
 +    current: number;
-+}): void;
++}): ASTNode;
 +export declare function createStreamingRevealState(params: Readonly<{
 +    enabled: boolean;
 +    activeRanges: readonly StreamingRevealRange[];
@@ -3563,7 +3799,7 @@ index d5629f6e0baf9b7adfb2e92049bf0fbb36a3d69f..2e100d7666c787f28ef5256a5d22fcd0
      h2: CSSProperties;
      h3: CSSProperties;
 diff --git a/lib/typescript/src/web/types.d.ts b/lib/typescript/src/web/types.d.ts
-index 5bf45015c8804abfa788796c928dde3083452e11..980dfbe9465e22c99a41290c6e337c12179f961f 100644
+index 5bf45015c8804abfa788796c928dde3083452e11..5d534f3840d3462ad3184bdbb480da7492f9af9b 100644
 --- a/lib/typescript/src/web/types.d.ts
 +++ b/lib/typescript/src/web/types.d.ts
 @@ -3,6 +3,7 @@ import type { MarkdownStyleInternal } from '../types/MarkdownStyleInternal';
@@ -3574,16 +3810,18 @@ index 5bf45015c8804abfa788796c928dde3083452e11..980dfbe9465e22c99a41290c6e337c12
  export type NodeType = 'Document' | 'Paragraph' | 'Text' | 'Link' | 'Heading' | 'LineBreak' | 'Strong' | 'Emphasis' | 'Strikethrough' | 'Underline' | 'Code' | 'Image' | 'Blockquote' | 'UnorderedList' | 'OrderedList' | 'ListItem' | 'CodeBlock' | 'ThematicBreak' | 'Table' | 'TableHead' | 'TableBody' | 'TableRow' | 'TableHeaderCell' | 'TableCell' | 'LatexMathInline' | 'LatexMathDisplay';
  export interface NodeAttributes {
      level?: string;
-@@ -29,6 +30,8 @@ export interface ASTNode {
+@@ -29,6 +30,10 @@ export interface ASTNode {
      attributes?: NodeAttributes;
      /** Child nodes; absent on leaf nodes (Text, LineBreak, ThematicBreak). */
      children?: ASTNode[];
 +    /** Stamped by markStreamingRevealOffsets() for web streaming reveal. */
 +    streamingRevealStartOffset?: number;
++    /** End of this subtree in the rendered comparison text. */
++    streamingRevealEndOffset?: number;
  }
  export interface RendererCallbacks {
      onLinkPress?: (event: LinkPressEvent) => void;
-@@ -37,12 +40,16 @@ export interface RendererCallbacks {
+@@ -37,12 +42,16 @@ export interface RendererCallbacks {
  }
  export interface RenderCapabilities {
      katex: KaTeXInstance | null;
@@ -3600,6 +3838,31 @@ index 5bf45015c8804abfa788796c928dde3083452e11..980dfbe9465e22c99a41290c6e337c12
      callbacks: RendererCallbacks;
      capabilities: RenderCapabilities;
      renderChildren: (node: ASTNode) => ReactNode;
+diff --git a/lib/typescript/src/web/utils.d.ts b/lib/typescript/src/web/utils.d.ts
+index 7792074d1672eca381f5520e09ffc338d6e63a18..346eca4e8f55594aee82d3570ea61642dcb778d7 100644
+--- a/lib/typescript/src/web/utils.d.ts
++++ b/lib/typescript/src/web/utils.d.ts
+@@ -6,16 +6,16 @@ export declare function filenameFromUrl(url: string): string;
+ /**
+  * Stamps each task ListItem with a sequential `taskIndex` matching the order
+  * native C++ assigns — so onTaskListItemPress.index is correct on web too.
+- * Mutates the AST in-place (safe: called once on the freshly-parsed result).
++ * Reuses unchanged nodes without mutating a previous render's shared prefix.
+  */
+ export declare function indexTaskItems(node: ASTNode, counter?: {
+     value: number;
+-}): void;
++}): ASTNode;
+ /**
+  * Stamps Image nodes with `isInline` when they appear inside a paragraph
+  * that also contains other content (text, links, etc.).
+  * Matches native behavior: sole-child images are block-level, mixed are inline.
+- * Mutates the AST in-place (safe: called once on the freshly-parsed result).
++ * Reuses unchanged nodes without mutating a previous render's shared prefix.
+  */
+-export declare function markInlineImages(node: ASTNode): void;
++export declare function markInlineImages(node: ASTNode): ASTNode;
+ //# sourceMappingURL=utils.d.ts.map
 diff --git a/src/EnrichedMarkdownNativeComponent.ts b/src/EnrichedMarkdownNativeComponent.ts
 index 06024b47242de2ebef33aa68a0890ea520e60b8f..6b5d48d063fc10bfb8966cb9cb524b74872d8632 100644
 --- a/src/EnrichedMarkdownNativeComponent.ts
@@ -3841,10 +4104,10 @@ index 11f876c7737baf9a472b848eda1d1dad997518da..d652cc60471b092f460967f52f81683d
    selectionEnd: number;
  }
 diff --git a/src/web/EnrichedMarkdownText.tsx b/src/web/EnrichedMarkdownText.tsx
-index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..dec24c2572f7728e8dd35210fac8634a2b363dd1 100644
+index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..42a31ec003fdf1b42da981566c7d26eb77f02e80 100644
 --- a/src/web/EnrichedMarkdownText.tsx
 +++ b/src/web/EnrichedMarkdownText.tsx
-@@ -1,17 +1,40 @@
+@@ -1,28 +1,52 @@
 -import { useState, useEffect, useMemo, type CSSProperties } from 'react';
 +import {
 +  useState,
@@ -3878,17 +4141,22 @@ index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..dec24c2572f7728e8dd35210fac8634a
 +
 +const STREAMING_REVEAL_RANGE_TTL_MS = 260;
 +const STREAMING_REVEAL_CLEANUP_BUFFER_MS = 16;
++const EMPTY_MARKDOWN_STYLE = {};
++const EMPTY_MD4C_FLAGS = {};
 +
 +function prepareAstForRendering(ast: ASTNode): ASTNode {
-+  indexTaskItems(ast);
-+  markInlineImages(ast);
-+  markStreamingRevealOffsets(ast);
-+  return ast;
++  return markStreamingRevealOffsets(markInlineImages(indexTaskItems(ast)));
 +}
  
  export const EnrichedMarkdownText = ({
    markdown,
-@@ -23,6 +46,8 @@ export const EnrichedMarkdownText = ({
+-  markdownStyle = {},
+-  md4cFlags = {},
++  markdownStyle = EMPTY_MARKDOWN_STYLE,
++  md4cFlags = EMPTY_MD4C_FLAGS,
+   onLinkPress,
+   onLinkLongPress,
+   onTaskListItemPress,
    allowTrailingMargin = false,
    containerStyle,
    selectable = true,
@@ -3897,14 +4165,15 @@ index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..dec24c2572f7728e8dd35210fac8634a
    dir,
    ...rest
  }: EnrichedMarkdownTextProps) => {
-@@ -30,30 +55,26 @@ export const EnrichedMarkdownText = ({
+@@ -30,30 +54,27 @@ export const EnrichedMarkdownText = ({
      () => normalizeMarkdownStyle(markdownStyle),
      [markdownStyle]
    );
 +  const { underline = false, latexMath = true, texMathBackslashDelimiters = false } = md4cFlags;
++  const previousAstRef = useRef<ASTNode | null>(null);
  
 +  const syncAst = useMemo(() => {
-+    const parsed = parseMarkdownSyncIfReady(markdown, { underline, latexMath, texMathBackslashDelimiters });
++    const parsed = parseMarkdownSyncIfReady(markdown, { underline, latexMath, texMathBackslashDelimiters }, previousAstRef.current);
 +    return parsed ? prepareAstForRendering(parsed) : null;
 +  }, [markdown, underline, latexMath, texMathBackslashDelimiters]);
    const [ast, setAst] = useState<ASTNode | null>(null);
@@ -3926,7 +4195,7 @@ index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..dec24c2572f7728e8dd35210fac8634a
 -      katexPromise,
 -    ])
 -      .then(([result, katexInstance]) => {
-+    parseMarkdown(markdown, { underline, latexMath, texMathBackslashDelimiters })
++    parseMarkdown(markdown, { underline, latexMath, texMathBackslashDelimiters }, previousAstRef.current)
 +      .then((result) => {
          if (!cancelled) {
 -          indexTaskItems(result);
@@ -3939,7 +4208,7 @@ index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..dec24c2572f7728e8dd35210fac8634a
          }
        })
        .catch((error) => {
-@@ -64,21 +85,112 @@ export const EnrichedMarkdownText = ({
+@@ -64,21 +85,115 @@ export const EnrichedMarkdownText = ({
  
            setParseError(true);
            setAst(null);
@@ -3967,6 +4236,9 @@ index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..dec24c2572f7728e8dd35210fac8634a
 +  }, [latexMath]);
 +
 +  const renderedAst = syncAst ?? ast;
++  useLayoutEffect(() => {
++    previousAstRef.current = renderedAst;
++  }, [renderedAst]);
  
    const callbacks = useMemo<RendererCallbacks>(
      () => ({ onLinkPress, onLinkLongPress, onTaskListItemPress }),
@@ -4000,10 +4272,10 @@ index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..dec24c2572f7728e8dd35210fac8634a
 +        : [],
 +    [currentComparisonText, markdown, revealCleanupRevision, streamingAnimation]
 +  );
-+  const streamingReveal = createStreamingRevealState({
++  const streamingReveal = useMemo(() => createStreamingRevealState({
 +    enabled: streamingAnimation,
 +    activeRanges: activeRevealRanges,
-+  });
++  }), [streamingAnimation, activeRevealRanges]);
 +
 +  useLayoutEffect(() => {
 +    if (!streamingAnimation) {
@@ -4055,7 +4327,7 @@ index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..dec24c2572f7728e8dd35210fac8634a
  
    const lastChildStyle = useMemo(
      () =>
-@@ -105,17 +217,42 @@ export const EnrichedMarkdownText = ({
+@@ -105,17 +220,42 @@ export const EnrichedMarkdownText = ({
      [containerStyle, selectable]
    );
  
@@ -4130,7 +4402,7 @@ index 2ab4a06fe1a7ba743f3809f41b4fbe4333c39e1a..3a3dfeb72ac41f2ffcad43765a90ebce
    return katexLoadPromise;
  }
 diff --git a/src/web/parseMarkdown.ts b/src/web/parseMarkdown.ts
-index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..1dff70c8b7241ac553c5b81d00ee0de5b91709f0 100644
+index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..b0f1f4acd3a017c9a85b00df231d204688094953 100644
 --- a/src/web/parseMarkdown.ts
 +++ b/src/web/parseMarkdown.ts
 @@ -1,37 +1,104 @@
@@ -4209,11 +4481,11 @@ index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..1dff70c8b7241ac553c5b81d00ee0de5
 +      })
 +      .then((wasmModule) => ({
 +        parse: wasmModule.cwrap('parseMarkdown', 'string', [
++          'number',
            'number',
            'number',
 -        ])
 -      )
-+          'number',
 +          'number',
 +        ]),
 +        wasmModule,
@@ -4251,7 +4523,7 @@ index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..1dff70c8b7241ac553c5b81d00ee0de5
  function isASTNode(value: unknown): value is ASTNode {
    return (
      typeof value === 'object' &&
-@@ -41,19 +108,148 @@ function isASTNode(value: unknown): value is ASTNode {
+@@ -41,19 +108,174 @@ function isASTNode(value: unknown): value is ASTNode {
    );
  }
  
@@ -4273,7 +4545,7 @@ index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..1dff70c8b7241ac553c5b81d00ee0de5
 +function rememberParsedResult(cacheKey: string | null, ast: ASTNode): void {
 +  if (!cacheKey) return;
 +
-+  parseResultCache.set(cacheKey, cloneAst(ast));
++  parseResultCache.set(cacheKey, ast);
 +  parseCache.delete(cacheKey);
 +  while (parseResultCache.size > PARSE_CACHE_MAX_ENTRIES) {
 +    const oldestKey = parseResultCache.keys().next().value;
@@ -4282,14 +4554,14 @@ index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..1dff70c8b7241ac553c5b81d00ee0de5
 +  }
 +}
 +
-+function readCachedParsedResult(cacheKey: string | null): ASTNode | null {
++function readCachedParsedResult(cacheKey: string | null, previousAst?: ASTNode | null): ASTNode | null {
 +  if (!cacheKey) return null;
 +
 +  const cached = parseResultCache.get(cacheKey);
 +  if (!cached) return null;
 +  parseResultCache.delete(cacheKey);
 +  parseResultCache.set(cacheKey, cached);
-+  return cloneAst(cached);
++  return cloneAst(cached, previousAst);
 +}
 +
 +function parseMarkdownWithHeapInput(
@@ -4322,11 +4594,12 @@ index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..1dff70c8b7241ac553c5b81d00ee0de5
  export async function parseMarkdown(
    markdown: string,
 -  { underline = false, latexMath = true }: Md4cFlags = {}
-+  { underline = false, latexMath = true, texMathBackslashDelimiters = false }: Md4cFlags = {}
++  { underline = false, latexMath = true, texMathBackslashDelimiters = false }: Md4cFlags = {},
++  previousAst?: ASTNode | null
  ): Promise<ASTNode> {
 -  const parse = await initializeParser();
 +  const cacheKey = buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters);
-+  const cachedResult = readCachedParsedResult(cacheKey);
++  const cachedResult = readCachedParsedResult(cacheKey, previousAst);
 +  if (cachedResult) return cachedResult;
  
 -  const result: unknown = JSON.parse(
@@ -4337,7 +4610,7 @@ index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..1dff70c8b7241ac553c5b81d00ee0de5
 +    if (cached) {
 +      parseCache.delete(cacheKey);
 +      parseCache.set(cacheKey, cached);
-+      return cloneAst(await cached);
++      return cloneAst(await cached, previousAst);
 +    }
 +  }
 +
@@ -4345,9 +4618,7 @@ index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..1dff70c8b7241ac553c5b81d00ee0de5
 +    const result: unknown = JSON.parse(
 +      parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath, texMathBackslashDelimiters)
 +    );
- 
--  if (!isASTNode(result)) {
--    throw new Error('WASM parser returned invalid AST');
++
 +    if (!isASTNode(result)) {
 +      throw new Error('WASM parser returned invalid AST');
 +    }
@@ -4364,23 +4635,26 @@ index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..1dff70c8b7241ac553c5b81d00ee0de5
 +      parseCache.delete(oldestKey);
 +    }
 +  }
-+
+ 
+-  if (!isASTNode(result)) {
+-    throw new Error('WASM parser returned invalid AST');
 +  try {
-+    return cloneAst(await parsed);
++    return cloneAst(await parsed, previousAst);
 +  } catch (error) {
 +    if (cacheKey) {
 +      parseCache.delete(cacheKey);
 +    }
 +    throw error;
-+  }
+   }
 +}
 +
 +export function parseMarkdownSyncIfReady(
 +  markdown: string,
-+  { underline = false, latexMath = true, texMathBackslashDelimiters = false }: Md4cFlags = {}
++  { underline = false, latexMath = true, texMathBackslashDelimiters = false }: Md4cFlags = {},
++  previousAst?: ASTNode | null
 +): ASTNode | null {
 +  const cacheKey = buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters);
-+  const cachedResult = readCachedParsedResult(cacheKey);
++  const cachedResult = readCachedParsedResult(cacheKey, previousAst);
 +  if (cachedResult) return cachedResult;
 +  if (!parserRuntime) return null;
 +
@@ -4394,19 +4668,43 @@ index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..1dff70c8b7241ac553c5b81d00ee0de5
 +    }
 +
 +    rememberParsedResult(cacheKey, result);
-+    return cloneAst(result);
++    return cloneAst(result, previousAst);
 +  } catch (error) {
 +    if (cacheKey) {
 +      parseCache.delete(cacheKey);
 +      parseResultCache.delete(cacheKey);
 +    }
 +    return null;
-   }
++  }
 +}
++
++function cloneAst(ast: ASTNode, previous?: ASTNode | null): ASTNode {
++  // The cache keeps raw parser output private. Only the caller's own previous
++  // tree may be shared; render annotations are recomputed immutably afterwards.
++  const keys = Object.keys(ast.attributes ?? {}).filter(
++    (key) => key !== 'taskIndex' && key !== 'isInline'
++  ) as (keyof NonNullable<ASTNode['attributes']>)[];
++  const previousKeys = Object.keys(previous?.attributes ?? {}).filter(
++    (key) => key !== 'taskIndex' && key !== 'isInline'
++  );
++  const sameAttributes = keys.length === previousKeys.length && keys.every(
++    (key) => ast.attributes?.[key] === previous?.attributes?.[key]
++  );
++  const children = ast.children?.map((child, index) =>
++    cloneAst(child, previous?.children?.[index])
++  );
++  if (
++    previous && previous.type === ast.type && previous.content === ast.content &&
++    sameAttributes && previous.children?.length === children?.length &&
++    (children?.every((child, index) => child === previous.children?.[index]) ?? true)
++  ) return previous;
  
 -  return result;
-+function cloneAst(ast: ASTNode): ASTNode {
-+  return JSON.parse(JSON.stringify(ast)) as ASTNode;
++  return {
++    ...ast,
++    ...(ast.attributes ? { attributes: { ...ast.attributes } } : {}),
++    ...(children ? { children } : {}),
++  };
  }
 diff --git a/src/web/renderers/BlockRenderers.tsx b/src/web/renderers/BlockRenderers.tsx
 index 28c5386d9b51fefeee373f02b32b98089806ad51..f6200239219cbb5f0ed99388f58fbe9db410d885 100644
@@ -4486,6 +4784,47 @@ index f25cb2a680389e1ae075d9c7599738a29243a68d..b6c021e6b236a27b9cfe62de9955a6fb
    );
  }
  
+diff --git a/src/web/renderers/KaTeXRenderer.tsx b/src/web/renderers/KaTeXRenderer.tsx
+index b80769633d50e9f77c29cac464f7ecd1648b73be..601aa3a8f4c2be376c1c4d540ab0bc2e82ee7f42 100644
+--- a/src/web/renderers/KaTeXRenderer.tsx
++++ b/src/web/renderers/KaTeXRenderer.tsx
+@@ -28,21 +28,30 @@ export function KaTeXRenderer({
+     });
+   }, [katex, content, displayMode]);
+ 
++  // Display math may occur inside Markdown phrasing nodes (p/strong/a).
++  // Keep block layout without introducing a flow-only HTML descendant.
++  const displayStyle = useMemo<CSSProperties>(
++    () => displayMode ? { ...style, display: 'block' } : style,
++    [displayMode, style]
++  );
++  const SafeFallbackTag = FallbackTag === 'pre' ? 'span' : FallbackTag;
++  const fallbackStyle: CSSProperties = FallbackTag === 'pre'
++    ? { fontFamily: 'monospace', whiteSpace: 'pre', ...style, display: 'block' }
++    : style;
++
+   if (!html) {
+     return (
+-      <FallbackTag role="math" aria-label={content} style={style}>
++      <SafeFallbackTag role="math" aria-label={content} style={fallbackStyle}>
+         {`${delimiter}${content}${delimiter}`}
+-      </FallbackTag>
++      </SafeFallbackTag>
+     );
+   }
+ 
+-  const WrapperTag = displayMode ? 'div' : 'span';
+-
+   return (
+-    <WrapperTag
++    <span
+       role="math"
+       aria-label={content}
+-      style={style}
++      style={displayStyle}
+       dangerouslySetInnerHTML={{ __html: html }}
+     />
+   );
 diff --git a/src/web/renderers/ListRenderers.tsx b/src/web/renderers/ListRenderers.tsx
 index dfe69cbcb85eb5e7e85359952e74a7aa58f6ac7d..4d4e7c25f6f1f0ee9934a54b65457d29cb945d06 100644
 --- a/src/web/renderers/ListRenderers.tsx
@@ -4527,11 +4866,12 @@ index dfe69cbcb85eb5e7e85359952e74a7aa58f6ac7d..4d4e7c25f6f1f0ee9934a54b65457d29
        </span>
        {nestedNode && renderChildren(nestedNode)}
 diff --git a/src/web/renderers/index.tsx b/src/web/renderers/index.tsx
-index dca24cf13cafbf25df5f2e578d901eed9694ffd2..a59dc94a521891976d9bcd42a91cb02a37c0e96c 100644
+index dca24cf13cafbf25df5f2e578d901eed9694ffd2..71651d92598f040ae845ce1939669738367c477a 100644
 --- a/src/web/renderers/index.tsx
 +++ b/src/web/renderers/index.tsx
-@@ -1,13 +1,9 @@
- import type { ReactNode } from 'react';
+@@ -1,13 +1,10 @@
+-import type { ReactNode } from 'react';
++import { useCallback, useMemo, type ReactNode } from 'react';
  import type {
    ASTNode,
 -  NodeType,
@@ -4539,13 +4879,14 @@ index dca24cf13cafbf25df5f2e578d901eed9694ffd2..a59dc94a521891976d9bcd42a91cb02a
 -  RenderCapabilities,
 +  RendererProps,
    RendererMap,
++  RenderCapabilities,
  } from '../types';
 -import type { MarkdownStyleInternal } from '../../types/MarkdownStyleInternal';
 -import type { Styles } from '../styles';
  import { blockRenderers } from './BlockRenderers';
  import { inlineRenderers } from './InlineRenderers';
  import { listRenderers } from './ListRenderers';
-@@ -28,14 +24,7 @@ const RENDERERS: RendererMap = {
+@@ -28,14 +25,7 @@ const RENDERERS: RendererMap = {
    ...tableRenderers,
  };
  
@@ -4561,7 +4902,7 @@ index dca24cf13cafbf25df5f2e578d901eed9694ffd2..a59dc94a521891976d9bcd42a91cb02a
  
  export function RenderNode({
    node,
-@@ -44,6 +33,9 @@ export function RenderNode({
+@@ -44,11 +34,25 @@ export function RenderNode({
    callbacks,
    capabilities,
    parentType,
@@ -4570,18 +4911,43 @@ index dca24cf13cafbf25df5f2e578d901eed9694ffd2..a59dc94a521891976d9bcd42a91cb02a
 +  siblingCount,
  }: RenderNodeProps): ReactNode {
    const Renderer = RENDERERS[node.type];
-   if (!Renderer) return null;
-@@ -58,6 +50,9 @@ export function RenderNode({
+-  if (!Renderer) return null;
++  const settledCapabilities = useMemo<RenderCapabilities>(
++    () => ({ katex: capabilities.katex, streamingReveal: null }),
++    [capabilities.katex]
++  );
++  // Reveal arrivals are facts about a text interval, not the whole document.
++  // Unaffected branches keep the same capability and child-element producer.
++  const start = node.streamingRevealStartOffset;
++  const end = node.streamingRevealEndOffset;
++  const hasReveal = capabilities.streamingReveal?.activeRanges.some((range) =>
++    start === undefined || end === undefined || (range.start < end && range.end > start)
++  );
++  const nodeCapabilities = hasReveal ? capabilities : settledCapabilities;
+ 
+-  const renderChildren = (childNode: ASTNode): ReactNode =>
++  const renderChildren = useCallback((childNode: ASTNode): ReactNode =>
+     childNode.children?.map((child, index) => (
+       <RenderNode
+         key={nodeKey(child, index)}
+@@ -56,20 +60,26 @@ export function RenderNode({
+         style={style}
+         styles={styles}
          callbacks={callbacks}
-         capabilities={capabilities}
+-        capabilities={capabilities}
++        capabilities={nodeCapabilities}
          parentType={childNode.type}
 +        parentAttributes={childNode.attributes}
 +        childIndex={index}
 +        siblingCount={childNode.children?.length ?? 0}
        />
-     )) ?? null;
+-    )) ?? null;
++    )) ?? null, [style, styles, callbacks, nodeCapabilities]);
  
-@@ -67,6 +62,9 @@ export function RenderNode({
+-  return (
++  return useMemo(() => Renderer ? (
+     <Renderer
+       node={node}
        style={style}
        styles={styles}
        parentType={parentType}
@@ -4589,14 +4955,19 @@ index dca24cf13cafbf25df5f2e578d901eed9694ffd2..a59dc94a521891976d9bcd42a91cb02a
 +      childIndex={childIndex}
 +      siblingCount={siblingCount}
        callbacks={callbacks}
-       capabilities={capabilities}
+-      capabilities={capabilities}
++      capabilities={nodeCapabilities}
        renderChildren={renderChildren}
+     />
+-  );
++  ) : null, [Renderer, node, style, styles, parentType, parentAttributes, childIndex, siblingCount, callbacks, nodeCapabilities, renderChildren]);
+ }
 diff --git a/src/web/streamingReveal.ts b/src/web/streamingReveal.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..f31bffedcc99b9a242c93696f25858b13d1f53c4
+index 0000000000000000000000000000000000000000..3b66ff19918680ef07ae860fca02ddac23ff4b63
 --- /dev/null
 +++ b/src/web/streamingReveal.ts
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,305 @@
 +import { createElement, type ReactNode } from 'react';
 +import type { ASTNode, NodeType, RenderCapabilities } from './types';
 +
@@ -4644,19 +5015,17 @@ index 0000000000000000000000000000000000000000..f31bffedcc99b9a242c93696f25858b1
 +}
 +
 +export function markStreamingRevealOffsets(
-+  node: ASTNode | null,
++  node: ASTNode,
 +  cursor: { current: number } = { current: 0 }
-+): void {
-+  if (!node) return;
-+
++): ASTNode {
++  const startOffset = cursor.current;
 +  if (COMPARISON_TEXT_NODE_TYPES.has(node.type)) {
-+    node.streamingRevealStartOffset = cursor.current;
 +    cursor.current += (node.content ?? '').length;
 +  }
-+
-+  for (const child of node.children ?? []) {
-+    markStreamingRevealOffsets(child, cursor);
-+  }
++  const children = node.children?.map((child) => markStreamingRevealOffsets(child, cursor));
++  if (node.streamingRevealStartOffset === startOffset && node.streamingRevealEndOffset === cursor.current &&
++    children?.every((child, index) => child === node.children?.[index]) !== false) return node;
++  return { ...node, children, streamingRevealStartOffset: startOffset, streamingRevealEndOffset: cursor.current };
 +}
 +
 +export function createStreamingRevealState(params: Readonly<{
@@ -4944,7 +5313,7 @@ index 4d0ff8e05d381c2c754ff502799f66038bc56423..10b731557fdcf2cc912f43e7325af0e6
      h2: headingStyle(style, '2'),
      h3: headingStyle(style, '3'),
 diff --git a/src/web/types.ts b/src/web/types.ts
-index 3a297c549971884a5b0c3338d1e84a09e0390391..95da4b25c2315fbc9cacbd949a90d4600dc15ba3 100644
+index 3a297c549971884a5b0c3338d1e84a09e0390391..d37faaddbfea3fe88c682bca9ca8d386ff8b4088 100644
 --- a/src/web/types.ts
 +++ b/src/web/types.ts
 @@ -7,6 +7,7 @@ import type {
@@ -4955,16 +5324,18 @@ index 3a297c549971884a5b0c3338d1e84a09e0390391..95da4b25c2315fbc9cacbd949a90d460
  
  export type NodeType =
    | 'Document'
-@@ -62,6 +63,8 @@ export interface ASTNode {
+@@ -62,6 +63,10 @@ export interface ASTNode {
    attributes?: NodeAttributes;
    /** Child nodes; absent on leaf nodes (Text, LineBreak, ThematicBreak). */
    children?: ASTNode[];
 +  /** Stamped by markStreamingRevealOffsets() for web streaming reveal. */
 +  streamingRevealStartOffset?: number;
++  /** End of this subtree in the rendered comparison text. */
++  streamingRevealEndOffset?: number;
  }
  
  export interface RendererCallbacks {
-@@ -72,6 +75,7 @@ export interface RendererCallbacks {
+@@ -72,6 +77,7 @@ export interface RendererCallbacks {
  
  export interface RenderCapabilities {
    katex: KaTeXInstance | null;
@@ -4972,7 +5343,7 @@ index 3a297c549971884a5b0c3338d1e84a09e0390391..95da4b25c2315fbc9cacbd949a90d460
  }
  
  export interface RendererProps {
-@@ -79,6 +83,9 @@ export interface RendererProps {
+@@ -79,6 +85,9 @@ export interface RendererProps {
    style: MarkdownStyleInternal;
    styles: Styles;
    parentType?: NodeType;
@@ -4982,3 +5353,63 @@ index 3a297c549971884a5b0c3338d1e84a09e0390391..95da4b25c2315fbc9cacbd949a90d460
    callbacks: RendererCallbacks;
    capabilities: RenderCapabilities;
    renderChildren: (node: ASTNode) => ReactNode;
+diff --git a/src/web/utils.ts b/src/web/utils.ts
+index dea6f0d0c72697540e275bbb9d337d545b3641b7..f6ebd2ec71ff8d823b46115de16618607ec26903 100644
+--- a/src/web/utils.ts
++++ b/src/web/utils.ts
+@@ -20,33 +20,42 @@ export function filenameFromUrl(url: string): string {
+ /**
+  * Stamps each task ListItem with a sequential `taskIndex` matching the order
+  * native C++ assigns — so onTaskListItemPress.index is correct on web too.
+- * Mutates the AST in-place (safe: called once on the freshly-parsed result).
++ * Reuses unchanged nodes without mutating a previous render's shared prefix.
+  */
+-export function indexTaskItems(node: ASTNode, counter = { value: 0 }): void {
++export function indexTaskItems(node: ASTNode, counter = { value: 0 }): ASTNode {
++  let attributes = node.attributes;
+   if (node.type === 'ListItem' && node.attributes?.isTask === 'true') {
+-    node.attributes.taskIndex = counter.value++;
++    const taskIndex = counter.value++;
++    if (attributes?.taskIndex !== taskIndex) attributes = { ...attributes, taskIndex };
+   }
+-  node.children?.forEach((child) => indexTaskItems(child, counter));
++  const children = node.children?.map((child) => indexTaskItems(child, counter));
++  if (attributes === node.attributes && children?.every((child, index) => child === node.children?.[index]) !== false) return node;
++  return { ...node, attributes, children };
+ }
+ 
+ /**
+  * Stamps Image nodes with `isInline` when they appear inside a paragraph
+  * that also contains other content (text, links, etc.).
+  * Matches native behavior: sole-child images are block-level, mixed are inline.
+- * Mutates the AST in-place (safe: called once on the freshly-parsed result).
++ * Reuses unchanged nodes without mutating a previous render's shared prefix.
+  */
+-export function markInlineImages(node: ASTNode): void {
++export function markInlineImages(node: ASTNode): ASTNode {
++  let children = node.children?.map(markInlineImages);
+   if (node.type === 'Paragraph' && node.children) {
+     const hasNonImageChild = node.children.some(
+       (child) => child.type !== 'Image'
+     );
+-    if (hasNonImageChild) {
+-      for (const child of node.children) {
+-        if (child.type === 'Image') {
+-          child.attributes = { ...child.attributes, isInline: true };
+-        }
++    children = children?.map((child) => {
++      if (child.type !== 'Image' || Boolean(child.attributes?.isInline) === hasNonImageChild) return child;
++      const attributes = { ...child.attributes };
++      if (hasNonImageChild) {
++        attributes.isInline = true;
++      } else {
++        delete attributes.isInline;
+       }
+-    }
++      return { ...child, attributes };
++    });
+   }
+-  node.children?.forEach(markInlineImages);
++  if (children?.every((child, index) => child === node.children?.[index]) !== false) return node;
++  return { ...node, children };
+ }

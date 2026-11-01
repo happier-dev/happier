@@ -116,6 +116,7 @@
   "dependencies": {
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
+    "string-width": "8.1.0",
     "zod": "4.6.7"
   },
   "devDependencies": {

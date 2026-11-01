@@ -1,0 +1,21 @@
+{
+  "name": "@happier-dev/forge-ci",
+  "version": "0.0.0",
+  "private": false,
+  "type": "module",
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/plugin-ui": "0.0.0",
+    "@happier-dev/triage-protocol": "0.0.0",
+    "@happier-dev/triage-sources": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.10",
+    "react": "19.2.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "peerDependencies": {
+    "react": "19.2.0"
+  }
+}

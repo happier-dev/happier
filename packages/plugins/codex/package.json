@@ -462,13 +462,13 @@
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@happier-dev/protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
     "smol-toml": "^1.9.0",
     "ws": "8.21.1",
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@happier-dev/protocol": "0.0.0",
     "@types/ws": "8.18.1",
     "esbuild": "^0.27.2",
     "typescript": "^5.9.2",

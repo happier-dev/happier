@@ -20,6 +20,6 @@
     ".": { "happier-source": "./src/index.ts", "types": "./dist/index.d.ts", "default": "./dist/index.js" },
     "./manifest": { "happier-source": "./src/manifest.ts", "types": "./dist/manifest.d.ts", "default": "./dist/manifest.js" }
   },
-  "dependencies": { "@happier-dev/plugin-sdk": "0.0.0" },
-  "devDependencies": { "@happier-dev/protocol": "0.0.0", "typescript": "^5.9.2", "vitest": "^3.2.4" }
+  "dependencies": { "@happier-dev/plugin-sdk": "0.0.0", "@happier-dev/plugin-ui": "0.0.0" },
+  "devDependencies": { "@happier-dev/protocol": "0.0.0", "@types/react": "19.2.0", "react": "19.2.0", "typescript": "^5.9.2", "vitest": "^3.2.4" }
 }

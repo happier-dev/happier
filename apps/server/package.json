@@ -99,6 +99,7 @@
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/brand": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
+    "@happier-dev/deployment-protocol": "0.0.0",
     "@happier-dev/iroh-native": "0.0.0",
     "@happier-dev/peer-mediation": "0.0.0",
     "@happier-dev/transfers": "0.0.0",

@@ -179,3 +179,44 @@ index e576432dda50809488a234918943fbb84ac7d98a..204730a3c999bc58a0b50a89415b39a0
    end(
      dismissalPolicy?: string,
      afterDate?: number,
+diff --git a/plugin/build/index.d.ts b/plugin/build/index.d.ts
+--- a/plugin/build/index.d.ts
++++ b/plugin/build/index.d.ts
+@@ -4,6 +4,7 @@
+     bundleIdentifier?: string;
+     groupIdentifier?: string;
++    deploymentTarget?: string;
+     enablePushNotifications?: boolean;
+     frequentUpdates?: boolean;
+     widgets?: WidgetConfig[];
+ };
+diff --git a/plugin/build/index.js b/plugin/build/index.js
+--- a/plugin/build/index.js
++++ b/plugin/build/index.js
+@@ -15,7 +15,7 @@
+ const pkg = require('expo-widgets/package.json');
+ const withWidgets = (config, props) => {
+     let plugins = [];
+-    const deploymentTarget = '16.2';
++    const deploymentTarget = props?.deploymentTarget ?? '16.2';
+     const targetName = 'ExpoWidgetsTarget';
+     let bundleIdentifier = props?.bundleIdentifier;
+     if (!bundleIdentifier) {
+diff --git a/plugin/src/index.ts b/plugin/src/index.ts
+--- a/plugin/src/index.ts
++++ b/plugin/src/index.ts
+@@ -17,6 +17,8 @@
+   bundleIdentifier?: string;
+   // App group identifier used for communication between the main app and widgets. Defaults to `group.<main app bundle identifier>`.
+   groupIdentifier?: string;
++  // Widget target minimum, which must cover the app's compiled native modules.
++  deploymentTarget?: string;
+   // Enable push notifications for widgets. Defaults to false.
+   enablePushNotifications?: boolean;
+   // Enable frequent updates for widgets. Defaults to false.
+@@ -27,4 +29,4 @@
+ const withWidgets: ConfigPlugin<ExpoWidgetsConfigPluginProps | undefined> = (config, props) => {
+   let plugins: (StaticPlugin | ConfigPlugin | string)[] = [];
+-  const deploymentTarget = '16.2';
++  const deploymentTarget = props?.deploymentTarget ?? '16.2';
+   const targetName = 'ExpoWidgetsTarget';

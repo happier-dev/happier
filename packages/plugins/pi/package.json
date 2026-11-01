@@ -76,11 +76,11 @@
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@happier-dev/protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0"
   },
   "devDependencies": {
     "@happier-dev/agents": "0.0.0",
-    "@happier-dev/protocol": "0.0.0",
     "@happier-dev/tests": "0.0.0",
     "ajv": "^8.17.1",
     "pi-ai-0810": "npm:@earendil-works/pi-ai@0.81.0",

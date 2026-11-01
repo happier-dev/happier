@@ -1,0 +1,13 @@
+{
+  "name": "@happier-dev/deployments",
+  "version": "0.0.0",
+  "private": false,
+  "type": "module",
+  "dependencies": {
+    "@happier-dev/deployment-protocol": "0.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

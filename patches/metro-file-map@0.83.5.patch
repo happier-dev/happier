@@ -1,0 +1,195 @@
+diff --git a/src/index.js b/src/index.js
+index 7764d3c..62af2b7 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -582,21 +582,13 @@ class FileMap extends _events.default {
+         _perf_hooks.performance.timeOrigin + _perf_hooks.performance.now();
+       changeQueue = changeQueue
+         .then(async () => {
+-          if (
+-            nextEmit != null &&
+-            nextEmit.eventsQueue.find(
+-              (event) =>
+-                event.type === eventTypeToEmit &&
+-                event.filePath === absoluteFilePath &&
+-                ((!event.metadata && !change.metadata) ||
+-                  (event.metadata &&
+-                    change.metadata &&
+-                    event.metadata.modifiedTime != null &&
+-                    change.metadata.modifiedTime != null &&
+-                    event.metadata.modifiedTime ===
+-                      change.metadata.modifiedTime)),
+-            )
+-          ) {
++          // The installer's relink bursts can contain tens of thousands of
++          // paths. Index the existing exact-event identity once per batch.
++          const eventKey = change.metadata == null
++            ? JSON.stringify([eventTypeToEmit, absoluteFilePath])
++            : change.metadata.modifiedTime == null ? null
++              : JSON.stringify([eventTypeToEmit, absoluteFilePath, change.metadata.modifiedTime]);
++          if (eventKey != null && nextEmit?.eventKeys.has(eventKey)) {
+             return null;
+           }
+           const linkStats = fileSystem.linkStats(relativeFilePath);
+@@ -609,6 +601,7 @@ class FileMap extends _events.default {
+             if (nextEmit == null) {
+               nextEmit = {
+                 eventsQueue: [event],
++                eventKeys: new Set(eventKey == null ? [] : [eventKey]),
+                 firstEnqueuedTimestamp:
+                   _perf_hooks.performance.timeOrigin +
+                   _perf_hooks.performance.now(),
+@@ -616,6 +609,7 @@ class FileMap extends _events.default {
+               };
+             } else {
+               nextEmit.eventsQueue.push(event);
++              if (eventKey != null) nextEmit.eventKeys.add(eventKey);
+             }
+             return null;
+           };
+@@ -698,6 +692,9 @@ class FileMap extends _events.default {
+       "Expected #watcher to have been initialised by build()",
+     );
+     await this.#watcher.watch(onChange);
++    // Initial watch enumeration may have queued changes since the crawl.
++    // Admit those files before the file map reports readiness.
++    await changeQueue;
+     if (this.#options.healthCheck.enabled) {
+       const performHealthCheck = () => {
+         if (!this.#watcher) {
+diff --git a/src/index.js.flow b/src/index.js.flow
+index 2f1c650..a74a026 100644
+--- a/src/index.js.flow
++++ b/src/index.js.flow
+@@ -966,6 +966,9 @@ export default class FileMap extends EventEmitter {
+       'Expected #watcher to have been initialised by build()',
+     );
+     await this.#watcher.watch(onChange);
++    // Initial watch enumeration may have queued changes since the crawl.
++    // Admit those files before the file map reports readiness.
++    await changeQueue;
+ 
+     if (this.#options.healthCheck.enabled) {
+       const performHealthCheck = () => {
+diff --git a/src/watchers/FallbackWatcher.js b/src/watchers/FallbackWatcher.js
+index fe12544..c233896 100644
+--- a/src/watchers/FallbackWatcher.js
++++ b/src/watchers/FallbackWatcher.js
+@@ -51,18 +51,24 @@ class FallbackWatcher extends _AbstractWatcher.AbstractWatcher {
+   #watched = Object.create(null);
+   async startWatching() {
+     this.#watchdir(this.root);
++    // The file-map crawl finishes before watches attach. Replay this existing
++    // walk so files added in that gap reach the map; it drops unchanged metadata.
++    const registerInitialFile = (filepath, stats, type) => {
++      if (!this.#register(filepath, type)) return;
++      this.emitFileEvent({
++        event: TOUCH_EVENT,
++        relativePath: _path.default.relative(this.root, filepath),
++        metadata: { modifiedTime: stats.mtime.getTime(), size: stats.size, type },
++      });
++    };
+     await new Promise((resolve) => {
+       recReaddir(
+         this.root,
+         (dir) => {
+           this.#watchdir(dir);
+         },
+-        (filename) => {
+-          this.#register(filename, "f");
+-        },
+-        (symlink) => {
+-          this.#register(symlink, "l");
+-        },
++        (filename, stats) => registerInitialFile(filename, stats, "f"),
++        (symlink, stats) => registerInitialFile(symlink, stats, "l"),
+         () => {
+           resolve();
+         },
+@@ -339,13 +345,16 @@ function recReaddir(
+   ignored,
+ ) {
+   const walk = (0, _walker.default)(dir);
+-  if (ignored) {
+-    walk.filterDir(
+-      (currentDir) => !common.posixPathMatchesPattern(ignored, currentDir),
+-    );
+-  }
++  // Walker emits `dir` after readdir; attach before that read so additions
++  // cannot fall between enumeration and watching (including new directories).
++  walk.filterDir((currentDir, stats) => {
++    if (ignored && common.posixPathMatchesPattern(ignored, currentDir)) {
++      return false;
++    }
++    dirCallback(_path.default.normalize(currentDir), stats);
++    return true;
++  });
+   walk
+-    .on("dir", normalizeProxy(dirCallback))
+     .on("file", normalizeProxy(fileCallback))
+     .on("symlink", normalizeProxy(symlinkCallback))
+     .on("error", errorCallback)
+diff --git a/src/watchers/FallbackWatcher.js.flow b/src/watchers/FallbackWatcher.js.flow
+index 5f87b07..efb98bf 100644
+--- a/src/watchers/FallbackWatcher.js.flow
++++ b/src/watchers/FallbackWatcher.js.flow
+@@ -52,18 +52,29 @@ export default class FallbackWatcher extends AbstractWatcher {
+   async startWatching(): Promise<void> {
+     this.#watchdir(this.root);
+ 
++    // The file-map crawl finishes before watches attach. Replay this existing
++    // walk so files added in that gap reach the map; it drops unchanged metadata.
++    const registerInitialFile = (
++      filepath: string,
++      stats: Stats,
++      type: 'f' | 'l',
++    ): void => {
++      if (!this.#register(filepath, type)) return;
++      this.emitFileEvent({
++        event: TOUCH_EVENT,
++        relativePath: path.relative(this.root, filepath),
++        metadata: {modifiedTime: stats.mtime.getTime(), size: stats.size, type},
++      });
++    };
++
+     await new Promise(resolve => {
+       recReaddir(
+         this.root,
+         dir => {
+           this.#watchdir(dir);
+         },
+-        filename => {
+-          this.#register(filename, 'f');
+-        },
+-        symlink => {
+-          this.#register(symlink, 'l');
+-        },
++        (filename, stats) => registerInitialFile(filename, stats, 'f'),
++        (symlink, stats) => registerInitialFile(symlink, stats, 'l'),
+         () => {
+           resolve();
+         },
+@@ -414,14 +425,16 @@ function recReaddir(
+   ignored: ?RegExp,
+ ) {
+   const walk = walker(dir);
+-  if (ignored) {
+-    walk.filterDir(
+-      (currentDir: string) =>
+-        !common.posixPathMatchesPattern(ignored, currentDir),
+-    );
+-  }
++  // Walker emits `dir` after readdir; attach before that read so additions
++  // cannot fall between enumeration and watching (including new directories).
++  walk.filterDir((currentDir: string, stats: Stats) => {
++    if (ignored && common.posixPathMatchesPattern(ignored, currentDir)) {
++      return false;
++    }
++    dirCallback(path.normalize(currentDir), stats);
++    return true;
++  });
+   walk
+-    .on('dir', normalizeProxy(dirCallback))
+     .on('file', normalizeProxy(fileCallback))
+     .on('symlink', normalizeProxy(symlinkCallback))
+     .on('error', errorCallback)

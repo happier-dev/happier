@@ -11,3 +11,76 @@ index d7433e4626c0d3acecdcc108397fb2fbc69ec17b..1e1e72c74dcc5d7649cdd2aae066ffe2
      }
      return asset;
  }
+diff --git a/build/serializer/serializeChunks.js b/build/serializer/serializeChunks.js
+--- a/build/serializer/serializeChunks.js
++++ b/build/serializer/serializeChunks.js
+@@ -60,9 +60,9 @@
+         projectRoot: options.projectRoot,
+     });
+     // Create chunks for splitting.
+     const chunks = new Set();
+-    gatherChunks(preModules, chunks, { test: pathToRegex(entryFile) }, preModules, graph, options, false, true);
++    gatherChunks(preModules, chunks, { path: entryFile }, preModules, graph, options, false, true);
+     const entryChunk = findEntryChunk(chunks, entryFile);
+     if (entryChunk) {
+         removeEntryDepsFromAsyncChunks(entryChunk, chunks);
+         const commonChunk = extractCommonChunk(chunks, graph, options);
+@@ -431,24 +431,28 @@
+             .flat()),
+     ].filter((value) => typeof value === 'string');
+ }
+ function getEntryModulesForChunkSettings(graph, settings) {
++    // Concrete entry paths already have an index in Metro's dependency map.
++    // Retain the existing wildcard matching for paths containing '*'.
++    if (!settings.path.includes('*')) {
++        const module = graph.dependencies.get(settings.path);
++        return module ? [module] : [];
++    }
++    const test = pathToRegex(settings.path);
+     return [...graph.dependencies.entries()]
+-        .filter(([path]) => settings.test.test(path))
++        .filter(([path]) => test.test(path))
+         .map(([, module]) => module);
+ }
+ function chunkIdForModules(modules) {
+     return modules
+         .map((module) => module.path)
+         .sort()
+         .join('=>');
+ }
+-function gatherChunks(runtimePremodules, chunks, settings, preModules, graph, options, isAsync = false, isEntry = false) {
++function gatherChunks(runtimePremodules, chunks, settings, preModules, graph, options, isAsync = false, isEntry = false, visitedEntries = new Set()) {
+     let entryModules = getEntryModulesForChunkSettings(graph, settings);
+-    const existingChunks = [...chunks.values()];
+-    entryModules = entryModules.filter((module) => {
+-        return !existingChunks.find((chunk) => chunk.entries.includes(module));
+-    });
++    entryModules = entryModules.filter((module) => !visitedEntries.has(module));
+     // Prevent processing the same entry file twice.
+     if (!entryModules.length) {
+         return chunks;
+     }
+@@ -460,8 +464,12 @@
+             entryChunk.preModules.add(module);
+         }
+     }
+     chunks.add(entryChunk);
++    // Claim all entries before recursing, including cyclic async imports.
++    for (const module of entryModules) {
++        visitedEntries.add(module);
++    }
+     function includeModule(entryModule) {
+         for (const dependency of entryModule.dependencies.values()) {
+             if (!(0, isResolvedDependency_1.isResolvedDependency)(dependency)) {
+                 continue;
+@@ -469,9 +477,9 @@
+             else if (dependency.data.data.asyncType &&
+                 // Support disabling multiple chunks.
+                 entryChunk.options.serializerOptions?.splitChunks !== false) {
+                 const isEntry = dependency.data.data.asyncType === 'worker';
+-                gatherChunks(runtimePremodules, chunks, { test: pathToRegex(dependency.absolutePath) }, isEntry ? runtimePremodules : [], graph, options, true, isEntry);
++                gatherChunks(runtimePremodules, chunks, { path: dependency.absolutePath }, isEntry ? runtimePremodules : [], graph, options, true, isEntry, visitedEntries);
+             }
+             else {
+                 const module = graph.dependencies.get(dependency.absolutePath);
+                 if (module) {

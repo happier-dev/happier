@@ -120,8 +120,7 @@
     "@happier-dev/protocol"
   ],
   "dependencies": {
-    "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/protocol": "0.0.0"
+    "@happier-dev/plugin-sdk": "0.0.0"
   },
   "peerDependencies": {
     "react": "19.2.0",
@@ -138,6 +137,7 @@
     }
   },
   "devDependencies": {
+    "@happier-dev/protocol": "0.0.0",
     "@types/react": "~19.2.10",
     "@types/react-dom": "~19.1.7",
     "@types/react-test-renderer": "^19.1.0",

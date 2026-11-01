@@ -1,0 +1,14 @@
+{
+  "name": "@happier-dev/plugins-machine-upstash-box",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0"
+  },
+  "devDependencies": {
+    "@happier-dev/protocol": "0.0.0",
+    "@types/node": "^22.15.3",
+    "vitest": "^3.2.4"
+  }
+}

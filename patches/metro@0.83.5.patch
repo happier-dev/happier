@@ -1,5 +1,143 @@
+diff --git a/src/DeltaBundler/DeltaCalculator.js b/src/DeltaBundler/DeltaCalculator.js
+index 5b4b17b..316dc3f 100644
+--- a/src/DeltaBundler/DeltaCalculator.js
++++ b/src/DeltaBundler/DeltaCalculator.js
+@@ -15,7 +15,7 @@ class DeltaCalculator extends _events.default {
+   _deletedFiles = new Set();
+   _modifiedFiles = new Set();
+   _addedFiles = new Set();
+-  _requiresReset = false;
++  _requiresResolutionCheck = false;
+   constructor(entryPoints, changeEventSource, options) {
+     super();
+     this._options = options;
+@@ -51,16 +51,33 @@ class DeltaCalculator extends _events.default {
+     this._deletedFiles = new Set();
+     const addedFiles = this._addedFiles;
+     this._addedFiles = new Set();
+-    const requiresReset = this._requiresReset;
+-    this._requiresReset = false;
+-    if (requiresReset) {
+-      const markModified = (file) => {
+-        if (!addedFiles.has(file) && !deletedFiles.has(file)) {
+-          modifiedFiles.add(file);
++    const requiresResolutionCheck = this._requiresResolutionCheck;
++    this._requiresResolutionCheck = false;
++    // Package metadata and links invalidate resolution, not every transform.
++    // Reuse the admitted graph and retraverse only importers whose resolved
++    // targets changed.
++    if (requiresResolutionCheck || (this._options.unstable_enablePackageExports &&
++        [...modifiedFiles, ...deletedFiles, ...addedFiles].some(file =>
++          file.endsWith(_path.default.sep + "package.json")))) {
++      for (const module of this._graph.dependencies.values()) {
++        for (const dependency of module.dependencies.values()) {
++          if (dependency.data.data.contextParams) {
++            // Context dependencies use synthetic paths rather than normal
++            // resolution. A link can retarget even an empty context directory.
++            if (requiresResolutionCheck) modifiedFiles.add(dependency.absolutePath);
++            continue;
++          }
++          try {
++            if (this._options.resolve(module.path, dependency.data).filePath === dependency.absolutePath) continue;
++          } catch (error) {
++            // Already-unresolved optional imports remain unchanged. A newly
++            // failing import is handled by the normal traversal/error owner.
++            if (dependency.absolutePath === undefined) continue;
++          }
++          modifiedFiles.add(module.path);
++          break;
+         }
+-      };
+-      this._graph.dependencies.forEach((_, key) => markModified(key));
+-      this._graph.entryPoints.forEach(markModified);
++      }
+     }
+     this._currentBuildPromise = this._getChangedDependencies(
+       modifiedFiles,
+@@ -101,15 +118,8 @@ class DeltaCalculator extends _events.default {
+   };
+   _handleFileChange = ({ type, filePath, metadata }, logger) => {
+     debug("Handling %s: %s (type: %s)", type, filePath, metadata.type);
+-    if (
+-      metadata.type === "l" ||
+-      (this._options.unstable_enablePackageExports &&
+-        filePath.endsWith(_path.default.sep + "package.json"))
+-    ) {
+-      this._requiresReset = true;
+-      this.emit("change", {
+-        logger,
+-      });
++    if (metadata.type === "l") {
++      this._requiresResolutionCheck = true;
+     }
+     let state;
+     if (this._deletedFiles.has(filePath)) {
+diff --git a/src/DeltaBundler/Graph.js b/src/DeltaBundler/Graph.js
+index 9f1b169..4c3562a 100644
+--- a/src/DeltaBundler/Graph.js
++++ b/src/DeltaBundler/Graph.js
+@@ -8,6 +8,7 @@ var _contextModule = require("../lib/contextModule");
+ var _CountingSet = _interopRequireDefault(require("../lib/CountingSet"));
+ var _isResolvedDependency = require("../lib/isResolvedDependency");
+ var _buildSubgraph = require("./buildSubgraph");
++var _metroSourceMap = require("metro-source-map");
+ var _invariant = _interopRequireDefault(require("invariant"));
+ var _nullthrows = _interopRequireDefault(require("nullthrows"));
+ function _interopRequireDefault(e) {
+@@ -175,7 +176,31 @@ class Graph {
+           options.onDependencyAdd();
+           const result = await options.transform(absolutePath, requireContext);
+           options.onDependencyAdded();
+-          return result;
++          // Retain compact maps in both the in-flight subgraph and live graph.
++          // Admission also covers raw tuples read from existing transform caches.
++          return {
++            ...result,
++            output: result.output.map((output) => {
++              if (
++                typeof output?.type !== "string" ||
++                !output.type.startsWith("js/") ||
++                !Array.isArray(output.data?.map)
++              ) {
++                return output;
++              }
++              return {
++                ...output,
++                data: {
++                  ...output.data,
++                  map: (0, _metroSourceMap.fromRawMappings)([{
++                    ...output.data,
++                    path: absolutePath,
++                    source: "",
++                  }]).toMap(undefined, { excludeSource: true }),
++                },
++              };
++            }),
++          };
+         },
+       },
+     );
+diff --git a/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts b/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
+index cf3bc0c..81265f0 100644
+--- a/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
++++ b/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
+@@ -10,12 +10,13 @@
+ 
+ import type {Module} from '../types';
+ import type {
++  BasicSourceMap,
+   FBSourceFunctionMap,
+   MetroSourceMapSegmentTuple,
+ } from 'metro-source-map';
+ 
+ export type ExplodedSourceMap = ReadonlyArray<{
+-  readonly map: Array<MetroSourceMapSegmentTuple>;
++  readonly map: Array<MetroSourceMapSegmentTuple> | BasicSourceMap;
+   readonly firstLine1Based: number;
+   readonly functionMap: null | undefined | FBSourceFunctionMap;
+   readonly path: string;
 diff --git a/src/DeltaBundler.js b/src/DeltaBundler.js
-index da1cdb8946a3f6c46682e5a6603aee2cfb52b910..fbd7048aacc178f47ebcf77fc68ee9713fc6685b 100644
+index da1cdb8..fbd7048 100644
 --- a/src/DeltaBundler.js
 +++ b/src/DeltaBundler.js
 @@ -25,13 +25,15 @@ class DeltaBundler {
@@ -46,73 +184,11 @@ index da1cdb8946a3f6c46682e5a6603aee2cfb52b910..fbd7048aacc178f47ebcf77fc68ee971
      const graph = deltaCalculator.getGraph();
      this._deltaCalculators.set(graph, deltaCalculator);
      return graph;
-diff --git a/src/node-haste/DependencyGraph.js b/src/node-haste/DependencyGraph.js
-index 342bbce6374a9cfdf338ba72ca3d2afad4b50dd4..4b16f01c3469fd40bbabd531f1d1a6ef00bde4d7 100644
---- a/src/node-haste/DependencyGraph.js
-+++ b/src/node-haste/DependencyGraph.js
-@@ -186,6 +186,14 @@ class DependencyGraph extends _events.default {
-     return (0, _nullthrows.default)(this._fileSystem).getAllFiles();
-   }
-   async getOrComputeSha1(mixedPath) {
-+    if (mixedPath.includes("react-native-worklets/.worklets/")) {
-+      const createHash = require("crypto").createHash;
-+      return {
-+        sha1: createHash("sha1")
-+          .update(performance.now().toString())
-+          .digest("hex"),
-+      };
-+    }
-     const result = await this._fileSystem.getOrComputeSha1(mixedPath);
-     if (!result || !result.sha1) {
-       throw new Error(`Failed to get the SHA-1 for: ${mixedPath}.
-diff --git a/src/DeltaBundler/Graph.js b/src/DeltaBundler/Graph.js
---- a/src/DeltaBundler/Graph.js
-+++ b/src/DeltaBundler/Graph.js
-@@ -8,6 +8,7 @@
- var _CountingSet = _interopRequireDefault(require("../lib/CountingSet"));
- var _isResolvedDependency = require("../lib/isResolvedDependency");
- var _buildSubgraph = require("./buildSubgraph");
-+var _metroSourceMap = require("metro-source-map");
- var _invariant = _interopRequireDefault(require("invariant"));
- var _nullthrows = _interopRequireDefault(require("nullthrows"));
- function _interopRequireDefault(e) {
-@@ -175,7 +176,31 @@
-           options.onDependencyAdd();
-           const result = await options.transform(absolutePath, requireContext);
-           options.onDependencyAdded();
--          return result;
-+          // Retain compact maps in both the in-flight subgraph and live graph.
-+          // Admission also covers raw tuples read from existing transform caches.
-+          return {
-+            ...result,
-+            output: result.output.map((output) => {
-+              if (
-+                typeof output?.type !== "string" ||
-+                !output.type.startsWith("js/") ||
-+                !Array.isArray(output.data?.map)
-+              ) {
-+                return output;
-+              }
-+              return {
-+                ...output,
-+                data: {
-+                  ...output.data,
-+                  map: (0, _metroSourceMap.fromRawMappings)([{
-+                    ...output.data,
-+                    path: absolutePath,
-+                    source: "",
-+                  }]).toMap(undefined, { excludeSource: true }),
-+                },
-+              };
-+            }),
-+          };
-         },
-       },
-     );
 diff --git a/src/Server/symbolicate.js b/src/Server/symbolicate.js
+index 72d1720..7849f0d 100644
 --- a/src/Server/symbolicate.js
 +++ b/src/Server/symbolicate.js
-@@ -4,6 +4,7 @@
+@@ -4,6 +4,7 @@ Object.defineProperty(exports, "__esModule", {
    value: true,
  });
  exports.default = symbolicate;
@@ -120,7 +196,7 @@ diff --git a/src/Server/symbolicate.js b/src/Server/symbolicate.js
  var _search = require("metro-source-map/private/Consumer/search");
  var _Symbolication = require("metro-symbolicate/private/Symbolication");
  function createFunctionNameGetter(module) {
-@@ -30,6 +31,7 @@
+@@ -30,6 +31,7 @@ async function symbolicate(stack, maps, config, extraData) {
      mapsByUrl.set(url, map);
    }
    const functionNameGetters = new Map();
@@ -128,7 +204,7 @@ diff --git a/src/Server/symbolicate.js b/src/Server/symbolicate.js
    function findModule(frame) {
      const map = mapsByUrl.get(frame.file);
      if (!map || frame.lineNumber == null) {
-@@ -57,6 +59,20 @@
+@@ -57,6 +59,20 @@ async function symbolicate(stack, maps, config, extraData) {
        line1Based: frame.lineNumber - module.firstLine1Based + 1,
        column0Based: frame.column,
      };
@@ -149,7 +225,7 @@ diff --git a/src/Server/symbolicate.js b/src/Server/symbolicate.js
      const mappingIndex = (0, _search.greatestLowerBound)(
        module.map,
        generatedPosInModule,
-@@ -97,11 +113,6 @@
+@@ -97,11 +113,6 @@ async function symbolicate(stack, maps, config, extraData) {
          ...frame,
        };
      }
@@ -161,21 +237,22 @@ diff --git a/src/Server/symbolicate.js b/src/Server/symbolicate.js
      const originalPos = findOriginalPos(frame, module);
      if (!originalPos) {
        return {
-diff --git a/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts b/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
---- a/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
-+++ b/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
-@@ -10,12 +10,13 @@
- 
- import type {Module} from '../types';
- import type {
-+  BasicSourceMap,
-   FBSourceFunctionMap,
-   MetroSourceMapSegmentTuple,
- } from 'metro-source-map';
- 
- export type ExplodedSourceMap = ReadonlyArray<{
--  readonly map: Array<MetroSourceMapSegmentTuple>;
-+  readonly map: Array<MetroSourceMapSegmentTuple> | BasicSourceMap;
-   readonly firstLine1Based: number;
-   readonly functionMap: null | undefined | FBSourceFunctionMap;
-   readonly path: string;
+diff --git a/src/node-haste/DependencyGraph.js b/src/node-haste/DependencyGraph.js
+index 342bbce..4b16f01 100644
+--- a/src/node-haste/DependencyGraph.js
++++ b/src/node-haste/DependencyGraph.js
+@@ -186,6 +186,14 @@ class DependencyGraph extends _events.default {
+     return (0, _nullthrows.default)(this._fileSystem).getAllFiles();
+   }
+   async getOrComputeSha1(mixedPath) {
++    if (mixedPath.includes("react-native-worklets/.worklets/")) {
++      const createHash = require("crypto").createHash;
++      return {
++        sha1: createHash("sha1")
++          .update(performance.now().toString())
++          .digest("hex"),
++      };
++    }
+     const result = await this._fileSystem.getOrComputeSha1(mixedPath);
+     if (!result || !result.sha1) {
+       throw new Error(`Failed to get the SHA-1 for: ${mixedPath}.

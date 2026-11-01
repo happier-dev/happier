@@ -153,6 +153,7 @@
     "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
     "@playwright/test": "^1.56.0",
     "@types/node": ">=20",
+    "socket.io-parser": "4.2.7",
     "tar": "7.5.22",
     "tsx": "^4.20.6",
     "typescript": "5.9.3",

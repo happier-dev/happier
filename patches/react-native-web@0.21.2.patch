@@ -1,0 +1,218 @@
+diff --git a/dist/cjs/modules/useElementLayout/index.js b/dist/cjs/modules/useElementLayout/index.js
+index f302870429..be974eea7f 100644
+--- a/dist/cjs/modules/useElementLayout/index.js
++++ b/dist/cjs/modules/useElementLayout/index.js
+@@ -63,6 +63,7 @@ function getResizeObserver() {
+ }
+ function useElementLayout(ref, onLayout) {
+   var observer = getResizeObserver();
++  var hasOnLayout = typeof onLayout === 'function';
+   (0, _useLayoutEffect.default)(() => {
+     var node = ref.current;
+     if (node != null) {
+@@ -70,22 +71,14 @@ function useElementLayout(ref, onLayout) {
+     }
+   }, [ref, onLayout]);
+ 
+-  // Observing is done in a separate effect to avoid this effect running
+-  // when 'onLayout' changes.
++  // Observe when a handler is present, without restarting observation when
++  // only the callback changes. ResizeObserver supplies the initial measurement.
+   (0, _useLayoutEffect.default)(() => {
+     var node = ref.current;
+-    if (node != null && observer != null) {
+-      if (typeof node[DOM_LAYOUT_HANDLER_NAME] === 'function') {
+-        observer.observe(node);
+-      } else {
+-        observer.unobserve(node);
+-      }
++    if (node != null && observer != null && hasOnLayout) {
++      observer.observe(node);
++      return () => observer.unobserve(node);
+     }
+-    return () => {
+-      if (node != null && observer != null) {
+-        observer.unobserve(node);
+-      }
+-    };
+-  }, [ref, observer]);
++  }, [ref, observer, hasOnLayout]);
+ }
+-module.exports = exports.default;
+\ No newline at end of file
++module.exports = exports.default;
+diff --git a/dist/modules/useElementLayout/index.js b/dist/modules/useElementLayout/index.js
+index cd75e40a82..b2bf053bfa 100644
+--- a/dist/modules/useElementLayout/index.js
++++ b/dist/modules/useElementLayout/index.js
+@@ -58,6 +58,7 @@ function getResizeObserver() {
+ }
+ export default function useElementLayout(ref, onLayout) {
+   var observer = getResizeObserver();
++  var hasOnLayout = typeof onLayout === 'function';
+   useLayoutEffect(() => {
+     var node = ref.current;
+     if (node != null) {
+@@ -65,21 +66,13 @@ export default function useElementLayout(ref, onLayout) {
+     }
+   }, [ref, onLayout]);
+ 
+-  // Observing is done in a separate effect to avoid this effect running
+-  // when 'onLayout' changes.
++  // Observe when a handler is present, without restarting observation when
++  // only the callback changes. ResizeObserver supplies the initial measurement.
+   useLayoutEffect(() => {
+     var node = ref.current;
+-    if (node != null && observer != null) {
+-      if (typeof node[DOM_LAYOUT_HANDLER_NAME] === 'function') {
+-        observer.observe(node);
+-      } else {
+-        observer.unobserve(node);
+-      }
++    if (node != null && observer != null && hasOnLayout) {
++      observer.observe(node);
++      return () => observer.unobserve(node);
+     }
+-    return () => {
+-      if (node != null && observer != null) {
+-        observer.unobserve(node);
+-      }
+-    };
+-  }, [ref, observer]);
+-}
+\ No newline at end of file
++  }, [ref, observer, hasOnLayout]);
++}
+diff --git a/src/modules/useElementLayout/index.js b/src/modules/useElementLayout/index.js
+index 6099899ca6..225dc7641c 100644
+--- a/src/modules/useElementLayout/index.js
++++ b/src/modules/useElementLayout/index.js
+@@ -67,6 +67,7 @@ export default function useElementLayout(
+   onLayout?: ?(e: LayoutEvent) => void
+ ) {
+   const observer = getResizeObserver();
++  const hasOnLayout = typeof onLayout === 'function';
+ 
+   useLayoutEffect(() => {
+     const node = ref.current;
+@@ -75,21 +76,13 @@ export default function useElementLayout(
+     }
+   }, [ref, onLayout]);
+ 
+-  // Observing is done in a separate effect to avoid this effect running
+-  // when 'onLayout' changes.
++  // Observe when a handler is present, without restarting observation when
++  // only the callback changes. ResizeObserver supplies the initial measurement.
+   useLayoutEffect(() => {
+     const node = ref.current;
+-    if (node != null && observer != null) {
+-      if (typeof node[DOM_LAYOUT_HANDLER_NAME] === 'function') {
+-        observer.observe(node);
+-      } else {
+-        observer.unobserve(node);
+-      }
++    if (node != null && observer != null && hasOnLayout) {
++      observer.observe(node);
++      return () => observer.unobserve(node);
+     }
+-    return () => {
+-      if (node != null && observer != null) {
+-        observer.unobserve(node);
+-      }
+-    };
+-  }, [ref, observer]);
++  }, [ref, observer, hasOnLayout]);
+ }
+diff --git a/dist/cjs/modules/useLocale/index.js b/dist/cjs/modules/useLocale/index.js
+index 0c9c16c..3d1e464 100644
+--- a/dist/cjs/modules/useLocale/index.js
++++ b/dist/cjs/modules/useLocale/index.js
+@@ -29,12 +29,15 @@ function LocaleProvider(props) {
+     locale = props.locale,
+     children = props.children;
+   var needsContext = direction || locale;
++  var resolvedDirection = locale ? getLocaleDirection(locale) : direction;
++  // Stable value identity: a fresh object each render re-renders every consumer.
++  var value = (0, _react.useMemo)(() => ({
++    direction: resolvedDirection,
++    locale
++  }), [resolvedDirection, locale]);
+   return needsContext ? /*#__PURE__*/_react.default.createElement(LocaleContext.Provider, {
+     children: children,
+-    value: {
+-      direction: locale ? getLocaleDirection(locale) : direction,
+-      locale
+-    }
++    value: value
+   }) : children;
+ }
+ function useLocaleContext() {
+diff --git a/dist/modules/useLocale/index.js b/dist/modules/useLocale/index.js
+index 2c4e233..20c929f 100644
+--- a/dist/modules/useLocale/index.js
++++ b/dist/modules/useLocale/index.js
+@@ -7,7 +7,7 @@
+  * 
+  */
+ 
+-import React, { createContext, useContext } from 'react';
++import React, { createContext, useContext, useMemo } from 'react';
+ import { isLocaleRTL } from './isLocaleRTL';
+ var defaultLocale = {
+   direction: 'ltr',
+@@ -22,12 +22,15 @@ export function LocaleProvider(props) {
+     locale = props.locale,
+     children = props.children;
+   var needsContext = direction || locale;
++  var resolvedDirection = locale ? getLocaleDirection(locale) : direction;
++  // Stable value identity: a fresh object each render re-renders every consumer.
++  var value = useMemo(() => ({
++    direction: resolvedDirection,
++    locale
++  }), [resolvedDirection, locale]);
+   return needsContext ? /*#__PURE__*/React.createElement(LocaleContext.Provider, {
+     children: children,
+-    value: {
+-      direction: locale ? getLocaleDirection(locale) : direction,
+-      locale
+-    }
++    value: value
+   }) : children;
+ }
+ export function useLocaleContext() {
+diff --git a/src/modules/useLocale/index.js b/src/modules/useLocale/index.js
+index 11c5151..f827388 100644
+--- a/src/modules/useLocale/index.js
++++ b/src/modules/useLocale/index.js
+@@ -9,7 +9,7 @@
+ 
+ import type { Node } from 'react';
+ 
+-import React, { createContext, useContext } from 'react';
++import React, { createContext, useContext, useMemo } from 'react';
+ import { isLocaleRTL } from './isLocaleRTL';
+ 
+ type Locale = string;
+@@ -41,15 +41,15 @@ export function getLocaleDirection(locale: Locale): WritingDirection {
+ export function LocaleProvider(props: ProviderProps): Node {
+   const { direction, locale, children } = props;
+   const needsContext = direction || locale;
++  const resolvedDirection = locale ? getLocaleDirection(locale) : direction;
++  // Stable value identity: a fresh object each render re-renders every consumer.
++  const value = useMemo(
++    () => ({ direction: resolvedDirection, locale }),
++    [resolvedDirection, locale]
++  );
+ 
+   return needsContext ? (
+-    <LocaleContext.Provider
+-      children={children}
+-      value={{
+-        direction: locale ? getLocaleDirection(locale) : direction,
+-        locale
+-      }}
+-    />
++    <LocaleContext.Provider children={children} value={value} />
+   ) : (
+     children
+   );

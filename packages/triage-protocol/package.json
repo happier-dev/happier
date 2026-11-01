@@ -43,7 +43,9 @@
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@happier-dev/channels-protocol": "0.0.0"
+  },
   "peerDependencies": {
     "@happier-dev/plugin-sdk": ">=0.0.0 <1.0.0"
   },
