@@ -2,10 +2,12 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { storage } from '@/sync/domains/state/storage';
+import { readCurrentProjectAccountRows } from '@/sync/store/domains/projectAccountRows';
 import { readSessionTerminalWorkspaceForScope, registerSessionTerminalSplitMeasurements, setSessionTerminalPendingActionApproval } from '@/components/sessions/terminal/sessionTerminalWorkspaceRuntime';
 import { invokeSessionTerminalAction } from '@/components/sessions/terminal/sessionTerminalActions';
 import { buildProjectPaneScopeId } from '../projectPaneScope';
@@ -64,7 +66,9 @@ describe('Project terminal through the incumbent pane workspace', () => {
                 ? Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: [source, worker, unrelated] })) : undefined });
         try {
             publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-            applyProjectAccountRowsFixture(storage, { workspaceRefs: [source, worker, unrelated] });
+            await vi.waitFor(() => expect(readCurrentProjectAccountRows(storage.getState())).toMatchObject({
+                status: 'ready', workspaceRefs: [source, worker, unrelated],
+            }));
             const scopeId = buildProjectPaneScopeId(source.id, serverId);
             const workspace = { serverId, workspaceId: source.id, machineId: source.machineId, rootPath: source.rootPath };
             const screen = await renderScreen(<AppPaneProvider><ActiveProjectPane scopeId={scopeId}><ProjectTerminalSurface scopeId={scopeId}
@@ -115,7 +119,7 @@ describe('Project terminal through the incumbent pane workspace', () => {
             await screen.unmount();
         } finally { await home.dispose(); }
     });
-    it('shows unreachable at silent heartbeat expiry and keeps its admitted terminal identity', async () => {
+    it('uses pushed Machine presence and keeps its admitted terminal identity across disconnect/reconnect', async () => {
         const home = await serveActionHomes({ homes: [{ key: 'project', serverUrl: 'https://project-terminal-expiry.test', accountId: 'bob' }],
             route: () => undefined });
         const previous = storage.getState();
@@ -126,16 +130,22 @@ describe('Project terminal through the incumbent pane workspace', () => {
             applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ ...workspace, id: workspace.workspaceId, createdAtMs: 1 }] });
             const machine = createMachineFixture({ id: workspace.machineId, activeAt: Date.now() });
             storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+            observeMachinePresenceForTest({ serverId, accountId: 'bob' }, [machine.id]);
             vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
             const screen = await renderScreen(<AppPaneProvider><WorkspaceEmbeddedTerminalPane scopeId="expiry-terminal"
                 machineId={machine.id} serverId={serverId} rootPath={workspace.rootPath} workspace={workspace}
                 attachedTerminalId={null} terminalKey="expiry-terminal" /></AppPaneProvider>);
             expect(screen.findByType(EmbeddedTerminalPane).props.controller.status).toBe('connecting');
             await act(async () => { vi.advanceTimersByTime(60_001); });
+            expect(screen.findByType(EmbeddedTerminalPane).props.controller.status).toBe('connecting');
+            await act(async () => { storage.getState().applyMachines([
+                { ...machine, active: false, activeAt: Date.now() },
+            ], false, { sourceServerId: serverId, sourceAccountId: 'bob' }); });
             expect(screen.findByType(EmbeddedTerminalPane).props.controller).toMatchObject({ status: 'error', error: 'terminal_machine_unreachable' });
             expect(screen.findByType(EmbeddedTerminalPane).props.nativeSurfaceKey).toBe('expiry-terminal');
-            const heartbeat = { ...machine, activeAt: Date.now() };
-            await act(async () => { storage.setState({ machines: { [machine.id]: heartbeat }, machineListByServerId: { [serverId]: [heartbeat] } }); });
+            await act(async () => { storage.getState().applyMachines([
+                { ...machine, active: true, activeAt: Date.now() + 1 },
+            ], false, { sourceServerId: serverId, sourceAccountId: 'bob' }); });
             expect(screen.findByType(EmbeddedTerminalPane).props.controller.status).toBe('connecting');
             await screen.unmount();
         } finally { vi.useRealTimers(); storage.setState(previous); await home.dispose(); }
@@ -155,7 +165,9 @@ describe('Project terminal through the incumbent pane workspace', () => {
             const serverId = home.homes.project!.id;
             expect(serverId).toBe(serverIdentityId);
             const workspace = { serverId, workspaceId: checkout.id, machineId: checkout.machineId, rootPath: checkout.rootPath };
-            applyProjectAccountRowsFixture(storage, { workspaceRefs: [ref, checkout] });
+            await vi.waitFor(() => expect(readCurrentProjectAccountRows(storage.getState())).toMatchObject({
+                status: 'ready', workspaceRefs: [ref, checkout],
+            }));
             const scopeId = buildProjectPaneScopeId(ref.id, serverId);
             const sessions = storage.getState().sessions;
             const screen = await renderScreen(<AppPaneProvider><ProjectTerminalSurface scopeId={scopeId}
