@@ -10938,12 +10938,36 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
             runScriptA11y: 'Запустить скрипт в новой вкладке терминала',
             failure: {
                 title: 'Действие не выполнено',
-                refused: 'Машина отклонила это действие. Проверьте разрешения локальных служб на этой машине и попробуйте снова.',
+                refused: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Машина отклонила это действие."
+                  : 'Машина отклонила это действие. Проверьте разрешения локальных служб на этой машине и попробуйте снова.',
                 unavailable: 'Это действие недоступно для этой службы на этой машине.',
-                incomplete: 'Действие не завершилось. Вы можете попробовать ещё раз.',
-                serviceNotRunning: 'Этот сервис больше не работает; проверьте раздел «Сервисы».',
-                namedServiceNotRunning: ({ service }: { service: string }) => `${service} больше не работает; проверьте раздел «Сервисы».`,
-                outcomeUnknown: 'Результат действия неизвестен. Проверьте эту службу на выбранной машине, прежде чем повторять попытку.',
+                incomplete: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Действие не завершилось."
+                  : 'Действие не завершилось. Вы можете попробовать ещё раз.',
+                serviceNotRunning: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Этот сервис больше не работает."
+                  : 'Этот сервис больше не работает; проверьте раздел «Сервисы».',
+                namedServiceNotRunning: ({ service, servicesActionOffered = false }: { service: string; servicesActionOffered?: boolean }) => servicesActionOffered
+                  ? `${service} больше не работает.`
+                  : `${service} больше не работает; проверьте раздел «Сервисы».`,
+                previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Этот сервис ещё не готов к открытию."
+                  : 'Этот сервис ещё не готов к открытию; проверьте раздел «Сервисы».',
+                browserViewUnavailable: "Happier не удалось открыть встроенный просмотр браузера. Попробуйте ещё раз чуть позже.",
+                startFailedTitle: "Не удалось запустить сервис",
+                startFailed: "Сервис остановился до завершения запуска.",
+                namedStartFailed: ({ service }: { service: string }): string => `${service} остановился до завершения запуска.`,
+                previewFailed: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Не удалось открыть предпросмотр."
+                  : 'Не удалось открыть предпросмотр; проверьте «Сервисы» и повторите попытку.',
+                previewUnavailable: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Доступ к предпросмотру недоступен."
+                  : 'Доступ к предпросмотру недоступен; проверьте раздел «Сервисы».',
+                namedReason: ({ service, reason }: { service: string; reason: string }) => `${service}: ${reason}`,
+                outcomeUnknown: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Результат действия неизвестен."
+                  : 'Результат действия неизвестен. Проверьте эту службу на выбранной машине, прежде чем повторять попытку.',
       portInUse: ({ port }: { port: number }) => `Порт ${port} уже занят. Остановите существующий сервис или выберите другой порт.`,
       portInUseSameProject: ({ port }: { port: number }) => `Порт ${port} уже занят этим проектом. Используйте работающий сервис или выберите другой порт.`,
       processExit: ({ code }: { code: string }) => `Сервис завершился с кодом ${code}. Перед повторной попыткой проверьте подробности.`,
@@ -11166,14 +11190,21 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       previewElsewhere: `Это устройство не может открыть его напрямую. Поделитесь ссылкой в разделе «Сервисы», чтобы открыть его здесь.`,
       previewEndedTitle: `Этот предпросмотр завершён`,
       previewEnded: `Сервис перестал им делиться, или ссылка отозвана. Откройте его снова в разделе «Сервисы».`,
-      previewEndedLastPage: ({ page }: { page: string }) => `Последняя страница: ${page}. Сервис перестал им делиться, или ссылка отозвана. Откройте его снова в разделе «Сервисы».`,
+      previewEndedLastPageDetail: ({ page }: { page: string }) => `Последняя страница: ${page}`,
+      previewEndedStopped: `Сервис перестал им делиться, или ссылка отозвана.`,
+      previewEndedServiceStopped: ({ service }: { service: string }) => `${service} остановлен.`,
       previewEndedRunning: `Сервис запущен, поэтому его можно снова открыть здесь.`,
-      previewEndedRunningLastPage: ({ page }: { page: string }) => `Последняя страница: ${page}. Сервис запущен, поэтому его можно снова открыть здесь.`,
+      previewEndedNamed: ({ service }: { service: string }) => `Сервис ${service} перестал им делиться, или ссылка отозвана. Откройте его снова в разделе «Сервисы».`,
+      previewEndedStoppedNamed: ({ service }: { service: string }) => `Сервис ${service} перестал им делиться, или ссылка отозвана.`,
+      previewEndedRunningNamed: ({ service }: { service: string }) => `Сервис ${service} запущен, поэтому его можно снова открыть здесь.`,
       openAgain: `Открыть снова`,
       openServices: `Перейти к сервисам`,
       previewTransportUnavailableTitle: `Не удаётся подключиться к предпросмотру`,
-      previewTransportUnavailable: `Компьютер, на котором он запущен, сейчас не отвечает. Перезагрузите, чтобы попробовать снова.`,
+      previewTransportUnavailable: `Компьютер, на котором он запущен, сейчас не отвечает.`,
       closeTab: `Закрыть вкладку`,
+      previewTransportUnavailableNamed: ({ machine }: { machine: string }) => `${machine} сейчас не отвечает на запросы этого предпросмотра.`,
+      startService: ({ service }: { service: string }) => `Запустить ${service}`,
+      startAgain: `Запустить снова`,
       desktopEngineUnavailable: "Встроенный движок браузера недоступен на этом компьютере.",
       desktopWebView: "Встроенный движок браузера недоступен на этом компьютере. Эту страницу всё ещё можно открыть в системном браузере.",
       desktopWebViewUnsupportedPlatform: "Встроенный просмотр пока недоступен на этой платформе.",

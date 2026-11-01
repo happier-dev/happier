@@ -1,4 +1,6 @@
 import { createSharedSubscriptionStore } from '@/sync/runtime/subscriptions/sharedSubscriptionStore';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { subscribeLocalServiceCredentialRetirement } from '../inventory/sharedStore';
 import {
     type LocalServicePreviewSnapshotClientInput,
     type LocalServicePreviewSnapshotClientResult,
@@ -20,7 +22,7 @@ import {
 // same daemon route into a detached action result — two divergent truths and N wall-clock timers.
 //
 // This module is the single backing model: keyed by
-// (serverId, machineId), it does exactly one fetch when a key gains its first subscriber and is
+// canonical (Home, Account, Machine), it does one fetch when a key gains its first subscriber and is
 // otherwise refreshed by invalidation — the runtime-action executor publishes each
 // openOrCreate / revoke / status snapshot straight into the store, so an open pane updates
 // immediately without polling. No `setInterval` anywhere.
@@ -36,11 +38,15 @@ export type LocalServicePreviewSnapshotClient = (
 export type LocalServicePreviewStoreKeyInput = Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string | null;
+    credentialKey?: string | null;
 }>;
 
 type NormalizedLocalServicePreviewStoreKeyInput = Readonly<{
     machineId: string;
     serverId: string | null;
+    accountId: string | null;
+    credentialKey: string | null;
 }>;
 
 // Stable empty reference so `getState` for an absent/disabled key never churns the
@@ -54,12 +60,16 @@ const defaultSnapshotClient: LocalServicePreviewSnapshotClient = (input) => (
 function normalizeInput(input: LocalServicePreviewStoreKeyInput): NormalizedLocalServicePreviewStoreKeyInput {
     return {
         machineId: input.machineId,
-        serverId: input.serverId ?? null,
+        serverId: resolveServerProfileScopeIdForIdentifier(input.serverId) || null,
+        accountId: input.accountId ?? null,
+        credentialKey: input.credentialKey ?? null,
     };
 }
 
 function storeKey(input: LocalServicePreviewStoreKeyInput): string {
-    return `${input.serverId ?? ''}::${input.machineId}`;
+    const normalized = normalizeInput(input);
+    // Account owns data identity; the captured credential owns entry retirement.
+    return JSON.stringify([normalized.serverId, normalized.accountId, normalized.machineId]);
 }
 
 const store = createSharedSubscriptionStore<
@@ -73,12 +83,14 @@ const store = createSharedSubscriptionStore<
     normalizeInput,
     storeKey,
     defaultSnapshotClient,
+    subscribeRetirement: subscribeLocalServiceCredentialRetirement,
     beginRefresh: (state) => applyLocalServicePreviewRefreshStarted(state),
     refresh: async ({ input, state, snapshotClient, signal }) => {
         const receivedAt = state.generatedAt;
         const result = await snapshotClient({
             machineId: input.machineId,
             serverId: input.serverId ?? null,
+            accountId: input.accountId ?? null,
             signal,
         });
         return (current: LocalServicePreviewState) => result.ok

@@ -10916,12 +10916,36 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
             runScriptA11y: 'Uruchom skrypt w nowej karcie terminala',
             failure: {
                 title: 'Akcja nie została wykonana',
-                refused: 'Maszyna odrzuciła tę akcję. Sprawdź uprawnienia usług lokalnych na tej maszynie i spróbuj ponownie.',
+                refused: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Maszyna odrzuciła tę akcję."
+                  : 'Maszyna odrzuciła tę akcję. Sprawdź uprawnienia usług lokalnych na tej maszynie i spróbuj ponownie.',
                 unavailable: 'Ta akcja jest niedostępna dla tej usługi na tej maszynie.',
-                incomplete: 'Akcja nie dobiegła końca. Możesz spróbować ponownie.',
-                serviceNotRunning: 'Ta usługa już nie działa; sprawdź Usługi.',
-                namedServiceNotRunning: ({ service }: { service: string }) => `${service} już nie działa; sprawdź Usługi.`,
-                outcomeUnknown: 'Wynik działania jest nieznany. Sprawdź tę usługę na wybranej maszynie, zanim spróbujesz ponownie.',
+                incomplete: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Akcja nie dobiegła końca."
+                  : 'Akcja nie dobiegła końca. Możesz spróbować ponownie.',
+                serviceNotRunning: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Ta usługa już nie działa."
+                  : 'Ta usługa już nie działa; sprawdź Usługi.',
+                namedServiceNotRunning: ({ service, servicesActionOffered = false }: { service: string; servicesActionOffered?: boolean }) => servicesActionOffered
+                  ? `${service} już nie działa.`
+                  : `${service} już nie działa; sprawdź Usługi.`,
+                previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Ta usługa nie jest jeszcze gotowa do otwarcia."
+                  : 'Ta usługa nie jest jeszcze gotowa do otwarcia; sprawdź Usługi.',
+                browserViewUnavailable: "Happier nie mógł otworzyć wbudowanego widoku przeglądarki. Spróbuj ponownie za chwilę.",
+                startFailedTitle: "Nie udało się uruchomić usługi",
+                startFailed: "Usługa zatrzymała się, zanim była gotowa.",
+                namedStartFailed: ({ service }: { service: string }): string => `${service} zatrzymał się przed osiągnięciem gotowości.`,
+                previewFailed: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Nie udało się otworzyć podglądu."
+                  : 'Nie udało się otworzyć podglądu; sprawdź Usługi i spróbuj ponownie.',
+                previewUnavailable: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Dostęp do podglądu jest niedostępny."
+                  : 'Dostęp do podglądu jest niedostępny; sprawdź Usługi.',
+                namedReason: ({ service, reason }: { service: string; reason: string }) => `${service}: ${reason}`,
+                outcomeUnknown: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Wynik działania jest nieznany."
+                  : 'Wynik działania jest nieznany. Sprawdź tę usługę na wybranej maszynie, zanim spróbujesz ponownie.',
       portInUse: ({ port }: { port: number }) => `Port ${port} jest już używany. Zatrzymaj istniejącą usługę lub wybierz inny port.`,
       portInUseSameProject: ({ port }: { port: number }) => `Port ${port} jest już używany przez ten projekt. Użyj działającej usługi lub wybierz inny port.`,
       processExit: ({ code }: { code: string }) => `Usługa zakończyła się z kodem ${code}. Przed ponowną próbą sprawdź szczegóły.`,
@@ -11144,14 +11168,21 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       previewElsewhere: `To urządzenie nie może otworzyć go bezpośrednio. Udostępnij link w Usługach, aby otworzyć go tutaj.`,
       previewEndedTitle: `Ten podgląd się zakończył`,
       previewEnded: `Usługa przestała go udostępniać albo link został unieważniony. Otwórz go ponownie z Usług.`,
-      previewEndedLastPage: ({ page }: { page: string }) => `Ostatnia strona to ${page}. Usługa przestała go udostępniać albo link został unieważniony. Otwórz go ponownie z Usług.`,
+      previewEndedLastPageDetail: ({ page }: { page: string }) => `Ostatnia strona: ${page}`,
+      previewEndedStopped: `Usługa przestała go udostępniać albo link został unieważniony.`,
+      previewEndedServiceStopped: ({ service }: { service: string }) => `${service} został zatrzymany.`,
       previewEndedRunning: `Usługa działa, więc możesz otworzyć go tutaj ponownie.`,
-      previewEndedRunningLastPage: ({ page }: { page: string }) => `Ostatnia strona to ${page}. Usługa działa, więc możesz otworzyć go tutaj ponownie.`,
+      previewEndedNamed: ({ service }: { service: string }) => `Usługa ${service} przestała go udostępniać albo link został unieważniony. Otwórz go ponownie z Usług.`,
+      previewEndedStoppedNamed: ({ service }: { service: string }) => `Usługa ${service} przestała go udostępniać albo link został unieważniony.`,
+      previewEndedRunningNamed: ({ service }: { service: string }) => `Usługa ${service} działa, więc możesz otworzyć go tutaj ponownie.`,
       openAgain: `Otwórz ponownie`,
       openServices: `Przejdź do Usług`,
       previewTransportUnavailableTitle: `Nie można połączyć się z podglądem`,
-      previewTransportUnavailable: `Komputer, na którym działa, teraz nie odpowiada. Odśwież, aby spróbować ponownie.`,
+      previewTransportUnavailable: `Komputer, na którym działa, teraz nie odpowiada.`,
       closeTab: `Zamknij kartę`,
+      previewTransportUnavailableNamed: ({ machine }: { machine: string }) => `${machine} nie odpowiada teraz na żądania tego podglądu.`,
+      startService: ({ service }: { service: string }) => `Uruchom ${service}`,
+      startAgain: `Uruchom ponownie`,
       desktopEngineUnavailable: "Wbudowany silnik przeglądarki jest niedostępny na tym komputerze.",
       desktopWebView: "Wbudowany silnik przeglądarki jest niedostępny na tym komputerze. Nadal możesz otworzyć tę stronę w przeglądarce systemowej.",
       desktopWebViewUnsupportedPlatform: "Wbudowane przeglądanie nie jest jeszcze dostępne na tej platformie.",

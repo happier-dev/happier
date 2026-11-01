@@ -59,6 +59,8 @@ export type BrowserRuntimeActionDisabledReason =
 type BrowserRuntimeActionFailure = Extract<ActionExecuteResult, Readonly<{ ok: false }>>;
 
 export type BrowserRuntimeControlAdapter = Readonly<{
+    /** Exact mounted owner; workspace reopens must not borrow a same-id view from another Home. */
+    accountLifetime?: ServerAccountScopeLifetime | null;
     readState: () => BrowserControlState | null | undefined;
     applyDispatchResult: (result: BrowserControlCommandDispatchResult) => void | Promise<void>;
     /** Project authoritative Machine events through the mounted host's existing reducer. */

@@ -8937,12 +8937,36 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             runScriptA11y: '在新的終端分頁中執行指令碼',
             failure: {
                 title: '操作未完成',
-                refused: '機器拒絕了此操作。請檢查此機器的本機服務權限後再試一次。',
+                refused: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "機器拒絕了此操作。"
+                  : '機器拒絕了此操作。請檢查此機器的本機服務權限後再試一次。',
                 unavailable: '此操作不適用於此機器上的該服務。',
-                incomplete: '操作沒有完成，你可以再試一次。',
-                serviceNotRunning: '此服務已停止執行，請查看「服務」。',
-                namedServiceNotRunning: ({ service }: { service: string }) => `${service} 已停止執行，請查看「服務」。`,
-                outcomeUnknown: '操作結果未知。重試前，請在所選機器上檢查此服務。',
+                incomplete: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "操作沒有完成。"
+                  : '操作沒有完成，你可以再試一次。',
+                serviceNotRunning: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "此服務已停止執行。"
+                  : '此服務已停止執行，請查看「服務」。',
+                namedServiceNotRunning: ({ service, servicesActionOffered = false }: { service: string; servicesActionOffered?: boolean }) => servicesActionOffered
+                  ? `${service} 已停止執行。`
+                  : `${service} 已停止執行，請查看「服務」。`,
+                previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "此服務尚未準備好開啟。"
+                  : '此服務尚未準備好開啟，請查看「服務」。',
+                browserViewUnavailable: "Happier 無法開啟應用程式內的瀏覽器檢視，請稍後再試。",
+                startFailedTitle: "服務未能啟動",
+                startFailed: "服務在就緒前已停止。",
+                namedStartFailed: ({ service }: { service: string }): string => `${service}在就緒前已停止。`,
+                previewFailed: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "無法開啟預覽。"
+                  : '無法開啟預覽，請檢查「服務」後重試。',
+                previewUnavailable: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "無法存取預覽。"
+                  : '無法存取預覽，請查看「服務」。',
+                namedReason: ({ service, reason }: { service: string; reason: string }) => `${service}：${reason}`,
+                outcomeUnknown: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "操作結果未知。"
+                  : '操作結果未知。重試前，請在所選機器上檢查此服務。',
       portInUse: ({ port }: { port: number }) => `連接埠 ${port} 已被佔用。請停止現有服務或選擇其他連接埠。`,
       portInUseSameProject: ({ port }: { port: number }) => `此專案已在使用連接埠 ${port}。請使用正在執行的服務或選擇其他連接埠。`,
       processExit: ({ code }: { code: string }) => `服務已結束，代碼為 ${code}。重試前請查看詳細資料。`,
@@ -9165,14 +9189,20 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             previewElsewhere: `此裝置無法直接開啟它。在「服務」中分享連結即可在這裡開啟。`,
             previewEndedTitle: `此預覽已結束`,
             previewEnded: `它的服務已停止分享，或連結已被撤銷。請從「服務」重新開啟。`,
-            previewEndedLastPage: ({ page }: { page: string }) => `最後一頁是 ${page}。它的服務已停止分享，或連結已被撤銷。請從「服務」重新開啟。`,
+            previewEndedLastPageDetail: ({ page }: { page: string }) => `最後一頁：${page}`,
+            previewEndedStopped: `它的服務已停止分享，或連結已被撤銷。`,
+            previewEndedServiceStopped: ({ service }: { service: string }) => `${service} 已停止。`,
             previewEndedRunning: `它的服務正在執行，可以在這裡重新開啟。`,
-            previewEndedRunningLastPage: ({ page }: { page: string }) => `最後一頁是 ${page}。它的服務正在執行，可以在這裡重新開啟。`,
+            previewEndedNamed: ({ service }: { service: string }) => `${service} 已停止分享，或連結已被撤銷。請從「服務」重新開啟。`,
+            previewEndedStoppedNamed: ({ service }: { service: string }) => `${service} 已停止分享，或連結已被撤銷。`,
+            previewEndedRunningNamed: ({ service }: { service: string }) => `${service} 正在執行，可以在這裡重新開啟。`,
             openAgain: `重新開啟`,
             openServices: `前往服務`,
             previewTransportUnavailableTitle: `無法連線到此預覽`,
-            previewTransportUnavailable: `執行它的機器目前沒有回應。重新載入以再試一次。`,
+            previewTransportUnavailable: `執行它的機器目前沒有回應。`,
             closeTab: `關閉分頁`,
+            previewTransportUnavailableNamed: ({ machine }: { machine: string }) => `${machine} 目前沒有回應此預覽。`,
+            startService: ({ service }: { service: string }) => `啟動 ${service}`,
             desktopEngineUnavailable: '此裝置上的內建瀏覽器引擎不可用。',
             desktopWebView: '此裝置上的內建瀏覽器引擎不可用。你仍可在系統瀏覽器中開啟此頁面。',
             desktopWebViewUnsupportedPlatform: '此平台尚不支援內建瀏覽。',

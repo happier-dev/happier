@@ -11087,12 +11087,36 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
             runScriptA11y: 'Ejecutar script en una nueva pestaña de terminal',
             failure: {
                 title: 'La acción no se completó',
-                refused: 'La máquina rechazó esta acción. Revisa los permisos de servicios locales de esta máquina e inténtalo de nuevo.',
+                refused: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "La máquina rechazó esta acción."
+                  : 'La máquina rechazó esta acción. Revisa los permisos de servicios locales de esta máquina e inténtalo de nuevo.',
                 unavailable: 'Esta acción no está disponible para este servicio en esta máquina.',
-                incomplete: 'La acción no terminó. Puedes intentarlo de nuevo.',
-                serviceNotRunning: 'Este servicio ya no está en ejecución; revisa Servicios.',
-                namedServiceNotRunning: ({ service }: { service: string }) => `${service} ya no está en ejecución; revisa Servicios.`,
-                outcomeUnknown: 'Se desconoce el resultado de la acción. Revisa este servicio en la máquina seleccionada antes de intentarlo de nuevo.',
+                incomplete: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "La acción no terminó."
+                  : 'La acción no terminó. Puedes intentarlo de nuevo.',
+                serviceNotRunning: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Este servicio ya no está en ejecución."
+                  : 'Este servicio ya no está en ejecución; revisa Servicios.',
+                namedServiceNotRunning: ({ service, servicesActionOffered = false }: { service: string; servicesActionOffered?: boolean }) => servicesActionOffered
+                  ? `${service} ya no está en ejecución.`
+                  : `${service} ya no está en ejecución; revisa Servicios.`,
+                previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Este servicio aún no está listo para abrirse."
+                  : 'Este servicio aún no está listo para abrirse; revisa Servicios.',
+                browserViewUnavailable: "Happier no pudo abrir su vista de navegador integrada. Inténtalo de nuevo en un momento.",
+                startFailedTitle: "El servicio no pudo iniciarse",
+                startFailed: "El servicio se detuvo antes de estar listo.",
+                namedStartFailed: ({ service }: { service: string }): string => `${service} se detuvo antes de estar listo.`,
+                previewFailed: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "No se pudo abrir la vista previa."
+                  : 'No se pudo abrir la vista previa; revisa Servicios e inténtalo de nuevo.',
+                previewUnavailable: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "El acceso a la vista previa no está disponible."
+                  : 'El acceso a la vista previa no está disponible; revisa Servicios.',
+                namedReason: ({ service, reason }: { service: string; reason: string }) => `${service}: ${reason}`,
+                outcomeUnknown: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Se desconoce el resultado de la acción."
+                  : 'Se desconoce el resultado de la acción. Revisa este servicio en la máquina seleccionada antes de intentarlo de nuevo.',
       portInUse: ({ port }: { port: number }) => `El puerto ${port} ya está en uso. Detén el servicio existente o elige otro puerto.`,
       portInUseSameProject: ({ port }: { port: number }) => `Este proyecto ya usa el puerto ${port}. Usa el servicio en ejecución o elige otro puerto.`,
       processExit: ({ code }: { code: string }) => `El servicio terminó con el código ${code}. Consulta los detalles antes de reintentarlo.`,
@@ -11315,14 +11339,21 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       previewElsewhere: `Este dispositivo no puede abrirlo directamente. Comparte un enlace desde Servicios para abrirlo aquí.`,
       previewEndedTitle: `Esta vista previa ha terminado`,
       previewEnded: `Su servicio dejó de compartirla o se revocó el enlace. Ábrela de nuevo desde Servicios.`,
-      previewEndedLastPage: ({ page }: { page: string }) => `La última página era ${page}. Su servicio dejó de compartirla o se revocó el enlace. Ábrela de nuevo desde Servicios.`,
+      previewEndedLastPageDetail: ({ page }: { page: string }) => `Última página: ${page}`,
+      previewEndedStopped: `Su servicio dejó de compartirla o se revocó el enlace.`,
+      previewEndedServiceStopped: ({ service }: { service: string }) => `${service} se detuvo.`,
       previewEndedRunning: `Su servicio está en marcha, así que puedes abrirla de nuevo aquí.`,
-      previewEndedRunningLastPage: ({ page }: { page: string }) => `La última página era ${page}. Su servicio está en marcha, así que puedes abrirla de nuevo aquí.`,
+      previewEndedNamed: ({ service }: { service: string }) => `${service} dejó de compartirla o se revocó el enlace. Ábrela de nuevo desde Servicios.`,
+      previewEndedStoppedNamed: ({ service }: { service: string }) => `${service} dejó de compartirla o se revocó el enlace.`,
+      previewEndedRunningNamed: ({ service }: { service: string }) => `${service} está en marcha, así que puedes abrirla de nuevo aquí.`,
       openAgain: `Abrir de nuevo`,
       openServices: `Ir a Servicios`,
       previewTransportUnavailableTitle: `No se puede conectar con esta vista previa`,
-      previewTransportUnavailable: `El equipo que la ejecuta no responde ahora. Recarga para intentarlo de nuevo.`,
+      previewTransportUnavailable: `El equipo que la ejecuta no responde ahora.`,
       closeTab: `Cerrar pestaña`,
+      previewTransportUnavailableNamed: ({ machine }: { machine: string }) => `${machine} no responde para esta vista previa ahora.`,
+      startService: ({ service }: { service: string }) => `Iniciar ${service}`,
+      startAgain: `Iniciar de nuevo`,
       desktopEngineUnavailable: "El motor del navegador integrado no está disponible en este equipo.",
       desktopWebView: "El motor del navegador integrado no está disponible en este equipo. Aún puedes abrir esta página en el navegador del sistema.",
       desktopWebViewUnsupportedPlatform: "La navegación integrada aún no está disponible en esta plataforma.",

@@ -42,7 +42,7 @@ import { SimulatorPreviewTarget } from './adapters/SimulatorPreviewTarget';
 import type {
     BrowserAutomationEngineBridgeConfig,
     BrowserDiagnosticsEngineBridgeConfig,
-    BrowserEndedPreviewRecovery,
+    BrowserFrameRecovery,
     BrowserFrameNavigationCommand,
 } from './frame/types';
 import type { BrowserSurfaceLifecycleState } from './surfaces/browserSurfaceLifecycle';
@@ -273,19 +273,18 @@ function StreamedBrowserView(props: Readonly<{
         onOpenPageHere={props.onOpenPageHere} onClosePage={props.onClosePage} testID={props.testID} />;
 }
 
-function buildViewLifecycleEmitter(input: Readonly<{
-    view: BrowserControlViewState;
+function useViewLifecycleEmitter(input: Readonly<{
+    view: BrowserControlViewState | null;
     onViewLifecycle?: (target: BrowserViewLifecycleTarget, signal: BrowserViewLifecycleSignal) => void;
 }>): BrowserViewLifecycleEmitter | undefined {
+    const browserSessionId = input.view?.browserSessionId;
+    const viewId = input.view?.viewId;
     const onViewLifecycle = input.onViewLifecycle;
-    if (!onViewLifecycle) {
-        return undefined;
-    }
-    const target: BrowserViewLifecycleTarget = {
-        browserSessionId: input.view.browserSessionId,
-        viewId: input.view.viewId,
-    };
-    return (signal) => onViewLifecycle(target, signal);
+    return React.useMemo(() => {
+        if (!onViewLifecycle || !browserSessionId || !viewId) return undefined;
+        const target: BrowserViewLifecycleTarget = { browserSessionId, viewId };
+        return (signal: BrowserViewLifecycleSignal) => onViewLifecycle(target, signal);
+    }, [browserSessionId, onViewLifecycle, viewId]);
 }
 
 /** Target access stays mounted while its snapshot and navigation projection change. */
@@ -293,6 +292,7 @@ function LocalPreviewView(props: Readonly<{
     view: BrowserControlViewState;
     target: Extract<BrowserControlViewState['target'], { kind: 'localServicePreview' }>;
     preview: LocalServicePreviewRow | null;
+    previewSnapshotComplete: boolean;
     serverId?: string | null;
     profileId?: string | null;
     lifecycleState?: BrowserSurfaceLifecycleState;
@@ -301,10 +301,15 @@ function LocalPreviewView(props: Readonly<{
     navigationKey?: string;
     navigationCommand?: BrowserFrameNavigationCommand;
     onLifecycle?: BrowserViewLifecycleEmitter;
-    endedPreview?: BrowserEndedPreviewRecovery;
+    recovery?: BrowserFrameRecovery;
     testID: string;
 }>): React.ReactElement {
     const { view, preview, target, testID } = props;
+    // Only an observed registration followed by authoritative absence is revocation.
+    // Cold/disabled feeds and target-only Home admission do not establish absence.
+    const observedRegistration = React.useRef(Boolean(preview));
+    if (preview) observedRegistration.current = true;
+    const ended = observedRegistration.current && props.previewSnapshotComplete && !preview;
     const noServerRoute = preview?.accessUnavailableReasonCode === 'preview_private_route_unavailable';
     const lifecycleAllowsLease = props.lifecycleState !== 'suspended'
         && props.lifecycleState !== 'closed' && props.lifecycleState !== 'orphaned';
@@ -316,12 +321,23 @@ function LocalPreviewView(props: Readonly<{
         previewId: preview?.previewId ?? target.targetId,
         machineId: preview?.resource.machineId ?? target.machineId,
         serverId: props.serverId,
-        enabled: lifecycleAllowsLease && (view.engineKind === 'webIframe' || view.engineKind === 'nativeWebView' || view.engineKind === 'desktopWebView'),
+        enabled: !ended && lifecycleAllowsLease && (view.engineKind === 'webIframe' || view.engineKind === 'nativeWebView' || view.engineKind === 'desktopWebView'),
         nativeDirectEnabled,
         fallbackUrl: noServerRoute ? null : preview?.accessUrl ?? null,
         requestedUrl: noServerRoute && !preview?.nativeDirect ? null : view.pendingUrl ?? view.currentUrl,
         initialPath: preview ? preview.resource.initialPath.pathname + preview.resource.initialPath.search : undefined,
+        viewFailed: view.loadingState === 'failed',
+        reloadCommandId: props.navigationKey
+            ?? (props.navigationCommand?.kind === 'reload' ? props.navigationCommand.commandId : undefined),
     });
+    const onLifecycle = props.onLifecycle;
+    const reasonCode = ended ? 'preview_ended' : access.reasonCode;
+    // A view that settled as unreachable shows Can't reach in place of the page, even while its access
+    // URL remains: a native engine paints over anything drawn beside it, and Try again reloads it.
+    const transportUnavailable = view.loadingState === 'failed' && view.lastError === 'preview_transport_unavailable';
+    React.useEffect(() => {
+        if (reasonCode) onLifecycle?.({ kind: 'loadFailed', errorCode: reasonCode });
+    }, [reasonCode, onLifecycle]);
     const title = view.title ?? target.display?.title ?? preview?.resource.display?.title
         ?? target.display?.addressLabel ?? target.targetId;
     const nativeOrigin = access.localOrigin && access.url?.startsWith(`${access.localOrigin}/`) ? access.localOrigin : null;
@@ -330,7 +346,9 @@ function LocalPreviewView(props: Readonly<{
     const automation = React.useMemo(() => nativeOrigin && props.automation
         ? { ...props.automation, sourceOrigin: nativeOrigin } : props.automation, [nativeOrigin, props.automation]);
     return <View testID={testID} style={stylesheet.root}>
-        {access.acquiring ? <BrowserFrameLoading testID={testID} host={title} /> : access.url ? <LocalPreviewTarget
+        {ended ? <BrowserFrameUnavailable testID={testID} reasonCode="preview_ended" recovery={props.recovery} />
+            : transportUnavailable ? <BrowserFrameUnavailable testID={testID} reasonCode="preview_transport_unavailable" recovery={props.recovery} />
+            : access.acquiring ? <BrowserFrameLoading testID={testID} host={title} /> : access.url ? <LocalPreviewTarget
             title={title}
             url={access.url}
             view={view}
@@ -341,10 +359,10 @@ function LocalPreviewView(props: Readonly<{
             navigationCommand={props.navigationCommand}
             diagnostics={diagnostics}
             automation={automation}
-            onLifecycle={props.onLifecycle}
-            endedPreview={props.endedPreview}
+            onLifecycle={onLifecycle}
+            recovery={props.recovery}
         /> : noServerRoute ? <BrowserLocalPreviewElsewhere testID={testID} serviceTitle={title} machineId={target.machineId} />
-                : <BrowserFrameUnavailable testID={testID} reasonCode={access.reasonCode ?? resolveBrowserViewUnavailableReasonCode(view)} endedPreview={props.endedPreview} />}
+                : <BrowserFrameUnavailable testID={testID} reasonCode={access.reasonCode ?? resolveBrowserViewUnavailableReasonCode(view)} recovery={props.recovery} />}
         <BrowserLocalPreviewPublicLinkControls target={target} serviceTitle={title} serverId={props.serverId} testID={`${testID}-public-link`} />
     </View>;
 }
@@ -381,19 +399,19 @@ export function BrowserViewHost(props: Readonly<{
     onStreamedPageRectChange?: (rect: BrowserStreamedPageRect | null) => void;
     onOpenStreamedPageHere?: () => void;
     onClosePage?: () => void;
-    /** The ended relay preview's recovery, resolved by the shell (see `BrowserEndedPreviewRecovery`). */
-    endedPreview?: BrowserEndedPreviewRecovery;
+    /** The ended relay preview's recovery, resolved by the shell (see `BrowserFrameRecovery`). */
+    recovery?: BrowserFrameRecovery;
     onOpenInSystemBrowser?: () => void;
     nowMs?: () => number;
     testID?: string;
 }>): React.ReactElement {
     const testID = props.testID ?? 'browser-view-host';
     const view = props.view;
+    const onViewLifecycle = useViewLifecycleEmitter({ view, onViewLifecycle: props.onViewLifecycle });
     if (!view) {
         return <BrowserFrameUnavailable testID={testID} />;
     }
     const renderKind = resolveBrowserViewRenderKind(view);
-    const onViewLifecycle = buildViewLifecycleEmitter({ view, onViewLifecycle: props.onViewLifecycle });
     const navigationEffect = resolveClientLocalNavigationEffect({
         view,
         navigationEffect: props.navigationEffect,
@@ -418,6 +436,8 @@ export function BrowserViewHost(props: Readonly<{
             view={view}
             target={view.target}
             preview={localPreview}
+            previewSnapshotComplete={props.localServicePreviewState?.generatedAt != null
+                && props.localServicePreviewState.refreshState === 'idle'}
             serverId={props.localServicePreviewServerId}
             profileId={props.browserProfile?.profileId}
             lifecycleState={props.lifecycleState}
@@ -427,7 +447,7 @@ export function BrowserViewHost(props: Readonly<{
             diagnostics={diagnosticsBridge}
             automation={automationBridge}
             onLifecycle={onViewLifecycle}
-            endedPreview={props.endedPreview}
+            recovery={props.recovery}
         />;
     }
     if (renderKind === 'hostedPlugin' && view.target.kind === 'hostedPluginWeb') {

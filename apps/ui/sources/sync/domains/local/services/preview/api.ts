@@ -37,6 +37,7 @@ export type LocalServicePreviewRevokeClientResult =
 export type LocalServicePreviewSnapshotClientInput = Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string | null;
     signal?: AbortSignal;
 }>;
 

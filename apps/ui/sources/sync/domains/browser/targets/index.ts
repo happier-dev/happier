@@ -5,6 +5,7 @@ export {
 export {
     buildBrowserLaunchpadRows,
     selectRunningServiceForEndedPreview,
+    selectServiceForEndedPreview,
     type BrowserLaunchpadRow,
     type BrowserLaunchpadRowSourceKind,
     type BrowserLaunchpadSection,

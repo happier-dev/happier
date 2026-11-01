@@ -11382,12 +11382,36 @@ localTailscale: {
             runScriptA11y: '新しいターミナルタブでスクリプトを実行',
             failure: {
                 title: '操作が完了しませんでした',
-                refused: 'マシンがこの操作を拒否しました。このマシンのローカルサービスの権限を確認してから、もう一度お試しください。',
+                refused: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "マシンがこの操作を拒否しました。"
+                  : 'マシンがこの操作を拒否しました。このマシンのローカルサービスの権限を確認してから、もう一度お試しください。',
                 unavailable: 'この操作は、このマシンのこのサービスでは利用できません。',
-                incomplete: '操作が最後まで進みませんでした。もう一度お試しいただけます。',
-                serviceNotRunning: 'このサービスは停止しているため、「サービス」を確認してください。',
-                namedServiceNotRunning: ({ service }: { service: string }) => `${service} は停止しているため、「サービス」を確認してください。`,
-                outcomeUnknown: '操作結果を確認できません。再試行する前に、選択したマシンでこのサービスを確認してください。',
+                incomplete: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "操作が最後まで進みませんでした。"
+                  : '操作が最後まで進みませんでした。もう一度お試しいただけます。',
+                serviceNotRunning: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "このサービスは停止しています。"
+                  : 'このサービスは停止しているため、「サービス」を確認してください。',
+                namedServiceNotRunning: ({ service, servicesActionOffered = false }: { service: string; servicesActionOffered?: boolean }) => servicesActionOffered
+                  ? `${service} は停止しています。`
+                  : `${service} は停止しているため、「サービス」を確認してください。`,
+                previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "このサービスはまだ開けません。"
+                  : 'このサービスはまだ開けません。「サービス」を確認してください。',
+                browserViewUnavailable: "Happier がアプリ内ブラウザビューを開けませんでした。しばらくしてからもう一度お試しください。",
+                startFailedTitle: "サービスを起動できませんでした",
+                startFailed: "サービスは準備が整う前に停止しました。",
+                namedStartFailed: ({ service }: { service: string }): string => `${service}は準備が整う前に停止しました。`,
+                previewFailed: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "プレビューを開けませんでした。"
+                  : 'プレビューを開けませんでした。「サービス」を確認して再試行してください。',
+                previewUnavailable: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "プレビューにアクセスできません。"
+                  : 'プレビューにアクセスできません。「サービス」を確認してください。',
+                namedReason: ({ service, reason }: { service: string; reason: string }) => `${service}：${reason}`,
+                outcomeUnknown: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "操作結果を確認できません。"
+                  : '操作結果を確認できません。再試行する前に、選択したマシンでこのサービスを確認してください。',
       portInUse: ({ port }: { port: number }) => `ポート ${port} は使用中です。既存のサービスを停止するか、別のポートを選んでください。`,
       portInUseSameProject: ({ port }: { port: number }) => `このプロジェクトはポート ${port} を使用中です。実行中のサービスを使うか、別のポートを選んでください。`,
       processExit: ({ code }: { code: string }) => `サービスはコード ${code} で終了しました。再試行する前に詳細を確認してください。`,
@@ -11610,14 +11634,21 @@ localTailscale: {
       previewElsewhere: `このデバイスからは直接開けません。サービスからリンクを共有すると、ここで開けます。`,
       previewEndedTitle: `このプレビューは終了しました`,
       previewEnded: `サービスの共有が停止したか、リンクが取り消されました。サービスからもう一度開いてください。`,
-      previewEndedLastPage: ({ page }: { page: string }) => `最後のページは ${page} でした。サービスの共有が停止したか、リンクが取り消されました。サービスからもう一度開いてください。`,
+      previewEndedLastPageDetail: ({ page }: { page: string }) => `最後のページ：${page}`,
+      previewEndedStopped: `サービスの共有が停止したか、リンクが取り消されました。`,
+      previewEndedServiceStopped: ({ service }: { service: string }) => `${service} は停止しました。`,
       previewEndedRunning: `サービスは実行中なので、ここでもう一度開けます。`,
-      previewEndedRunningLastPage: ({ page }: { page: string }) => `最後のページは ${page} でした。サービスは実行中なので、ここでもう一度開けます。`,
+      previewEndedNamed: ({ service }: { service: string }) => `${service} の共有が停止したか、リンクが取り消されました。サービスからもう一度開いてください。`,
+      previewEndedStoppedNamed: ({ service }: { service: string }) => `${service} の共有が停止したか、リンクが取り消されました。`,
+      previewEndedRunningNamed: ({ service }: { service: string }) => `${service} は実行中なので、ここでもう一度開けます。`,
       openAgain: `もう一度開く`,
       openServices: `サービスへ移動`,
       previewTransportUnavailableTitle: `このプレビューに接続できません`,
-      previewTransportUnavailable: `実行しているマシンが現在応答していません。再読み込みしてもう一度お試しください。`,
+      previewTransportUnavailable: `実行しているマシンが現在応答していません。`,
       closeTab: `タブを閉じる`,
+      previewTransportUnavailableNamed: ({ machine }: { machine: string }) => `${machine} は現在このプレビューに応答していません。`,
+      startService: ({ service }: { service: string }) => `${service} を起動`,
+      startAgain: `もう一度起動`,
       desktopEngineUnavailable: "このマシンでは組み込みブラウザーエンジンを利用できません。",
       desktopWebView: "このマシンでは組み込みブラウザーエンジンを利用できません。このページはシステムブラウザーで開けます。",
       desktopWebViewUnsupportedPlatform: "このプラットフォームでは組み込みブラウジングをまだ利用できません。",

@@ -73,6 +73,7 @@ export async function fetchLocalServicePreviewSnapshotViaMachineRpc(
             machineId: input.machineId,
             serverId: input.serverId,
             method: RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT,
+            accountId: input.accountId,
             payload,
             signal: input.signal,
         });

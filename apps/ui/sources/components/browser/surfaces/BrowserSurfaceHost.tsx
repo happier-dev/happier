@@ -249,6 +249,7 @@ export function BrowserSurfaceHost(props: Readonly<{
     measuredRect?: BrowserSurfaceRect | null;
     policy?: BrowserSurfacePolicyDecisionV1;
     launchpadRows?: readonly BrowserLaunchpadRow[];
+    localServiceTargets?: React.ComponentProps<typeof BrowserShell>['localServiceTargets'];
     launchpadRefreshStatus?: 'idle' | 'refreshing' | 'error';
     launchpadRefreshError?: string | null;
     onRefreshLaunchpad?: () => void;
@@ -587,6 +588,7 @@ export function BrowserSurfaceHost(props: Readonly<{
         ? (command: BrowserCommandV1) => daemonCommandSender(command, receiveDaemonEvents)
         : undefined, [daemonCommandSender, receiveDaemonEvents]);
     const runtimeControlAdapter = React.useMemo<BrowserRuntimeControlAdapter>(() => ({
+        accountLifetime: browserActionAccountLifetime,
         readState: () => isBrowserActionCurrent() && !browserActionFactsRef.current.unavailableReason ? surfaceStateRef.current.browserState : null,
         applyDispatchResult: applyRuntimeDispatchResult,
         applyDaemonEvents: receiveDaemonEvents,
@@ -601,7 +603,7 @@ export function BrowserSurfaceHost(props: Readonly<{
             };
         },
         ...(sendDaemonCommand ? { sendDaemonCommand } : {}),
-    }), [isBrowserActionCurrent, applyRuntimeDispatchResult, receiveDaemonEvents, sendDaemonCommand]);
+    }), [browserActionAccountLifetime, isBrowserActionCurrent, applyRuntimeDispatchResult, receiveDaemonEvents, sendDaemonCommand]);
     const executeBrowserAction = React.useMemo(() => createFrontDoorActionExecute(undefined, {
         runtimeActions: { browserControl: runtimeControlAdapter, browserAutomation: runtimeAutomationAdapter },
         isActionEnabled: () => isBrowserActionCurrent() && !browserActionFactsRef.current.unavailableReason,
@@ -891,6 +893,7 @@ export function BrowserSurfaceHost(props: Readonly<{
                 onViewLifecycle={applyViewLifecycleSignal}
                 lifecycleState={lifecycleSlot ? lifecycleSnapshot.lifecycleState : undefined}
                 launchpadRows={props.launchpadRows}
+                localServiceTargets={props.localServiceTargets}
                 launchpadRefreshStatus={props.launchpadRefreshStatus}
                 launchpadRefreshError={props.launchpadRefreshError}
                 onRefreshLaunchpad={props.onRefreshLaunchpad}

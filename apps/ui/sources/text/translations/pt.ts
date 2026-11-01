@@ -11205,12 +11205,36 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
             runScriptA11y: 'Executar script em uma nova aba do terminal',
             failure: {
                 title: 'A ação não foi concluída',
-                refused: 'A máquina recusou esta ação. Verifique as permissões de serviços locais desta máquina e tente novamente.',
+                refused: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "A máquina recusou esta ação."
+                  : 'A máquina recusou esta ação. Verifique as permissões de serviços locais desta máquina e tente novamente.',
                 unavailable: 'Esta ação não está disponível para este serviço nesta máquina.',
-                incomplete: 'A ação não chegou ao fim. Você pode tentar de novo.',
-                serviceNotRunning: 'Este serviço não está mais em execução; confira Serviços.',
-                namedServiceNotRunning: ({ service }: { service: string }) => `${service} não está mais em execução; confira Serviços.`,
-                outcomeUnknown: 'O resultado da ação é desconhecido. Verifique este serviço na máquina selecionada antes de tentar novamente.',
+                incomplete: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "A ação não chegou ao fim."
+                  : 'A ação não chegou ao fim. Você pode tentar de novo.',
+                serviceNotRunning: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Este serviço não está mais em execução."
+                  : 'Este serviço não está mais em execução; confira Serviços.',
+                namedServiceNotRunning: ({ service, servicesActionOffered = false }: { service: string; servicesActionOffered?: boolean }) => servicesActionOffered
+                  ? `${service} não está mais em execução.`
+                  : `${service} não está mais em execução; confira Serviços.`,
+                previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Este serviço ainda não está pronto para abrir."
+                  : 'Este serviço ainda não está pronto para abrir; confira Serviços.',
+                browserViewUnavailable: "O Happier não conseguiu abrir a visualização do navegador integrado. Tente de novo em instantes.",
+                startFailedTitle: "O serviço não conseguiu iniciar",
+                startFailed: "O serviço parou antes de estar pronto.",
+                namedStartFailed: ({ service }: { service: string }): string => `${service} parou antes de estar pronto.`,
+                previewFailed: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Não foi possível abrir a prévia."
+                  : 'Não foi possível abrir a prévia; confira Serviços e tente novamente.',
+                previewUnavailable: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "O acesso à prévia está indisponível."
+                  : 'O acesso à prévia está indisponível; confira Serviços.',
+                namedReason: ({ service, reason }: { service: string; reason: string }) => `${service}: ${reason}`,
+                outcomeUnknown: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "O resultado da ação é desconhecido."
+                  : 'O resultado da ação é desconhecido. Verifique este serviço na máquina selecionada antes de tentar novamente.',
       portInUse: ({ port }: { port: number }) => `A porta ${port} já está em uso. Pare o serviço existente ou escolha outra porta.`,
       portInUseSameProject: ({ port }: { port: number }) => `Este projeto já usa a porta ${port}. Use o serviço em execução ou escolha outra porta.`,
       processExit: ({ code }: { code: string }) => `O serviço terminou com o código ${code}. Confira os detalhes antes de tentar novamente.`,
@@ -11433,14 +11457,21 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       previewElsewhere: `Este dispositivo não consegue abri-lo diretamente. Compartilhe um link em Serviços para abri-lo aqui.`,
       previewEndedTitle: `Esta prévia terminou`,
       previewEnded: `O serviço parou de compartilhá-la ou o link foi revogado. Abra-a novamente em Serviços.`,
-      previewEndedLastPage: ({ page }: { page: string }) => `A última página era ${page}. O serviço parou de compartilhá-la ou o link foi revogado. Abra-a novamente em Serviços.`,
+      previewEndedLastPageDetail: ({ page }: { page: string }) => `Última página: ${page}`,
+      previewEndedStopped: `O serviço parou de compartilhá-la ou o link foi revogado.`,
+      previewEndedServiceStopped: ({ service }: { service: string }) => `${service} parou.`,
       previewEndedRunning: `O serviço está em execução, então você pode abri-la novamente aqui.`,
-      previewEndedRunningLastPage: ({ page }: { page: string }) => `A última página era ${page}. O serviço está em execução, então você pode abri-la novamente aqui.`,
+      previewEndedNamed: ({ service }: { service: string }) => `${service} parou de compartilhá-la ou o link foi revogado. Abra-a novamente em Serviços.`,
+      previewEndedStoppedNamed: ({ service }: { service: string }) => `${service} parou de compartilhá-la ou o link foi revogado.`,
+      previewEndedRunningNamed: ({ service }: { service: string }) => `${service} está em execução, então você pode abri-la novamente aqui.`,
       openAgain: `Abrir novamente`,
       openServices: `Ir para Serviços`,
       previewTransportUnavailableTitle: `Não é possível acessar esta prévia`,
-      previewTransportUnavailable: `A máquina que a executa não está respondendo agora. Recarregue para tentar de novo.`,
+      previewTransportUnavailable: `A máquina que a executa não está respondendo agora.`,
       closeTab: `Fechar aba`,
+      previewTransportUnavailableNamed: ({ machine }: { machine: string }) => `${machine} não está respondendo para esta prévia agora.`,
+      startService: ({ service }: { service: string }) => `Iniciar ${service}`,
+      startAgain: `Iniciar novamente`,
       desktopEngineUnavailable: "O motor do navegador integrado está indisponível nesta máquina.",
       desktopWebView: "O motor do navegador integrado está indisponível nesta máquina. Ainda podes abrir esta página no navegador do sistema.",
       desktopWebViewUnsupportedPlatform: "A navegação integrada ainda não está disponível nesta plataforma.",

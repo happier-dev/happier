@@ -12929,14 +12929,37 @@ const enLocalServices = {
     runScriptA11y: 'Run script in a new terminal tab',
     failure: {
       title: 'Action did not complete',
-      refused:
-        'The machine refused this action. Check this machine’s local-service permissions and try again.',
+      refused: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}): string => servicesActionOffered
+        ? "The machine refused this action."
+        : 'The machine refused this action. Check this machine’s local-service permissions and try again.',
       unavailable:
         'This action is not available for this service on this machine.',
-      incomplete: 'The action did not finish. You can try it again.',
-      serviceNotRunning: 'This service isn’t running anymore; check Services.',
-      namedServiceNotRunning: ({ service }: { service: string }) => `${service} isn’t running anymore; check Services.`,
-      outcomeUnknown: 'The action outcome is unknown. Check this service on the selected machine before trying again.',
+      incomplete: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}): string => servicesActionOffered
+        ? "The action did not finish."
+        : 'The action did not finish. You can try it again.',
+      serviceNotRunning: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}): string => servicesActionOffered
+        ? "This service isn’t running anymore."
+        : 'This service isn’t running anymore; check Services.',
+      namedServiceNotRunning: ({ service, servicesActionOffered = false }: { service: string; servicesActionOffered?: boolean }): string => servicesActionOffered
+        ? `${service} isn’t running anymore.`
+        : `${service} isn’t running anymore; check Services.`,
+      previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}): string => servicesActionOffered
+        ? "This service isn’t ready to open."
+        : 'This service isn’t ready to open; check Services.',
+      browserViewUnavailable: "Happier couldn’t open its in-app browser view. Try again in a moment.",
+      startFailedTitle: "Service couldn’t start",
+      startFailed: "The service stopped before it was ready.",
+      namedStartFailed: ({ service }: { service: string }): string => `${service} stopped before it was ready.`,
+      previewFailed: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}): string => servicesActionOffered
+        ? "The preview could not be opened."
+        : 'The preview could not be opened; check Services and try again.',
+      previewUnavailable: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}): string => servicesActionOffered
+        ? "Preview access is unavailable."
+        : 'Preview access is unavailable; check Services.',
+      namedReason: ({ service, reason }: { service: string; reason: string }) => `${service}: ${reason}`,
+      outcomeUnknown: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}): string => servicesActionOffered
+        ? "The action outcome is unknown."
+        : 'The action outcome is unknown. Check this service on the selected machine before trying again.',
       portInUse: ({ port }: { port: number }) => `Port ${port} is already in use. Stop the existing service or choose another port.`,
       portInUseSameProject: ({ port }: { port: number }) => `Port ${port} is already in use by this project. Use the running service or choose another port.`,
       processExit: ({ code }: { code: string }) => `The service exited with code ${code}. Check Details before trying again.`,
@@ -13172,14 +13195,21 @@ const enBrowserShell = {
     previewElsewhere: `This device can’t open it directly. Share a link from Services to open it here.`,
     previewEndedTitle: `This preview has ended`,
     previewEnded: `Its service stopped sharing it, or the link was revoked. Open it again from Services.`,
-    previewEndedLastPage: ({ page }: { page: string }) => `The last page was ${page}. Its service stopped sharing it, or the link was revoked. Open it again from Services.`,
+    previewEndedLastPageDetail: ({ page }: { page: string }) => `Last page: ${page}`,
+    previewEndedStopped: `Its service stopped sharing it, or the link was revoked.`,
+    previewEndedServiceStopped: ({ service }: { service: string }) => `${service} stopped.`,
     previewEndedRunning: `Its service is running, so you can open it again here.`,
-    previewEndedRunningLastPage: ({ page }: { page: string }) => `The last page was ${page}. Its service is running, so you can open it again here.`,
+    previewEndedNamed: ({ service }: { service: string }) => `${service} stopped sharing it, or the link was revoked. Open it again from Services.`,
+    previewEndedStoppedNamed: ({ service }: { service: string }) => `${service} stopped sharing it, or the link was revoked.`,
+    previewEndedRunningNamed: ({ service }: { service: string }) => `${service} is running, so you can open it again here.`,
     openAgain: `Open again`,
     openServices: `Go to Services`,
     previewTransportUnavailableTitle: `Can’t reach this preview`,
-    previewTransportUnavailable: `The machine running it isn’t answering right now. Reload to try again.`,
+    previewTransportUnavailable: `The machine running it isn’t answering right now.`,
     closeTab: `Close tab`,
+    previewTransportUnavailableNamed: ({ machine }: { machine: string }) => `${machine} isn’t answering for this preview right now.`,
+    startAgain: `Start again`,
+    startService: ({ service }: { service: string }) => `Start ${service}`,
     desktopEngineUnavailable:
       'The in-app browser engine is unavailable on this machine.',
     desktopWebView:

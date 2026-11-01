@@ -115,6 +115,11 @@ function resolveStatus(target: LocalServiceLaunchTarget, inventoryRow: LocalServ
     }
 }
 
+/** Whether this target's Services row offers Start (the same decision the row's primary action makes). */
+export function canStartLocalService(target: LocalServiceLaunchTarget): boolean {
+    return resolvePrimaryAction(target)?.kind === 'start';
+}
+
 function resolvePrimaryAction(target: LocalServiceLaunchTarget): ServiceRow['primaryAction'] {
     if (target.state === 'stale') return null;
     if (target.unavailableReason === 'project_service_binding_pending') return null;

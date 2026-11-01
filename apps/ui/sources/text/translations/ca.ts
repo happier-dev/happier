@@ -10225,12 +10225,36 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             runScriptA11y: 'Executa l’script en una pestanya de terminal nova',
             failure: {
                 title: 'L’acció no s’ha completat',
-                refused: 'La màquina ha rebutjat aquesta acció. Comprova els permisos de serveis locals d’aquesta màquina i torna-ho a provar.',
+                refused: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "La màquina ha rebutjat aquesta acció."
+                  : 'La màquina ha rebutjat aquesta acció. Comprova els permisos de serveis locals d’aquesta màquina i torna-ho a provar.',
                 unavailable: 'Aquesta acció no està disponible per a aquest servei en aquesta màquina.',
-                incomplete: 'L’acció no ha acabat. Pots tornar-ho a provar.',
-                serviceNotRunning: 'Aquest servei ja no s’està executant; consulta Serveis.',
-                namedServiceNotRunning: ({ service }: { service: string }) => `${service} ja no s’està executant; consulta Serveis.`,
-                outcomeUnknown: 'Es desconeix el resultat de l’acció. Revisa aquest servei a la màquina seleccionada abans de tornar-ho a provar.',
+                incomplete: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "L’acció no ha acabat."
+                  : 'L’acció no ha acabat. Pots tornar-ho a provar.',
+                serviceNotRunning: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Aquest servei ja no s’està executant."
+                  : 'Aquest servei ja no s’està executant; consulta Serveis.',
+                namedServiceNotRunning: ({ service, servicesActionOffered = false }: { service: string; servicesActionOffered?: boolean }) => servicesActionOffered
+                  ? `${service} ja no s’està executant.`
+                  : `${service} ja no s’està executant; consulta Serveis.`,
+                previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Aquest servei encara no es pot obrir."
+                  : 'Aquest servei encara no es pot obrir; consulta Serveis.',
+                browserViewUnavailable: "Happier no ha pogut obrir la seva vista de navegador integrada. Torna-ho a provar d’aquí a un moment.",
+                startFailedTitle: "El servei no s’ha pogut iniciar",
+                startFailed: "El servei s’ha aturat abans d’estar a punt.",
+                namedStartFailed: ({ service }: { service: string }): string => `${service} s’ha aturat abans d’estar a punt.`,
+                previewFailed: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "No s’ha pogut obrir la previsualització."
+                  : 'No s’ha pogut obrir la previsualització; comprova Serveis i torna-ho a provar.',
+                previewUnavailable: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "L’accés a la previsualització no està disponible."
+                  : 'L’accés a la previsualització no està disponible; consulta Serveis.',
+                namedReason: ({ service, reason }: { service: string; reason: string }) => `${service}: ${reason}`,
+                outcomeUnknown: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Es desconeix el resultat de l’acció."
+                  : 'Es desconeix el resultat de l’acció. Revisa aquest servei a la màquina seleccionada abans de tornar-ho a provar.',
       portInUse: ({ port }: { port: number }) => `El port ${port} ja està en ús. Atura el servei existent o tria un altre port.`,
       portInUseSameProject: ({ port }: { port: number }) => `Aquest projecte ja utilitza el port ${port}. Utilitza el servei en execució o tria un altre port.`,
       processExit: ({ code }: { code: string }) => `El servei ha finalitzat amb el codi ${code}. Consulta els detalls abans de tornar-ho a provar.`,
@@ -10453,14 +10477,21 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             previewElsewhere: `Aquest dispositiu no el pot obrir directament. Comparteix un enllaç des de Serveis per obrir-lo aquí.`,
             previewEndedTitle: `Aquesta previsualització ha acabat`,
             previewEnded: `El seu servei ha deixat de compartir-la o s’ha revocat l’enllaç. Torna-la a obrir des de Serveis.`,
-            previewEndedLastPage: ({ page }: { page: string }) => `L’última pàgina era ${page}. El seu servei ha deixat de compartir-la o s’ha revocat l’enllaç. Torna-la a obrir des de Serveis.`,
+            previewEndedLastPageDetail: ({ page }: { page: string }) => `Última pàgina: ${page}`,
+            previewEndedStopped: `El seu servei ha deixat de compartir-la o s’ha revocat l’enllaç.`,
+            previewEndedServiceStopped: ({ service }: { service: string }) => `${service} s’ha aturat.`,
             previewEndedRunning: `El seu servei està en marxa, així que la pots tornar a obrir aquí.`,
-            previewEndedRunningLastPage: ({ page }: { page: string }) => `L’última pàgina era ${page}. El seu servei està en marxa, així que la pots tornar a obrir aquí.`,
+            previewEndedNamed: ({ service }: { service: string }) => `${service} ha deixat de compartir-la o s’ha revocat l’enllaç. Torna-la a obrir des de Serveis.`,
+            previewEndedStoppedNamed: ({ service }: { service: string }) => `${service} ha deixat de compartir-la o s’ha revocat l’enllaç.`,
+            previewEndedRunningNamed: ({ service }: { service: string }) => `${service} està en marxa, així que la pots tornar a obrir aquí.`,
             openAgain: `Torna a obrir`,
             openServices: `Ves a Serveis`,
             previewTransportUnavailableTitle: `No es pot connectar amb aquesta previsualització`,
-            previewTransportUnavailable: `L’equip que l’executa no respon ara mateix. Torna a carregar per tornar-ho a provar.`,
+            previewTransportUnavailable: `L’equip que l’executa no respon ara mateix.`,
             closeTab: `Tanca la pestanya`,
+            previewTransportUnavailableNamed: ({ machine }: { machine: string }) => `${machine} no respon per a aquesta previsualització ara mateix.`,
+            startService: ({ service }: { service: string }) => `Inicia ${service}`,
+            startAgain: `Torna a iniciar`,
             desktopEngineUnavailable: 'El motor del navegador integrat no està disponible en aquest equip.',
             desktopWebView: 'El motor del navegador integrat no està disponible en aquest equip. Encara pots obrir aquesta pàgina al navegador del sistema.',
             desktopWebViewUnsupportedPlatform: 'La navegació integrada encara no està disponible en aquesta plataforma.',

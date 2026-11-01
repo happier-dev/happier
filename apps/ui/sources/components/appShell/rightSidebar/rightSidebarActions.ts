@@ -27,6 +27,26 @@ export function openRightSidebarBuiltinTab(
 /** The mounted rail publishes its existing catalog and chooser to its enclosing pane host. */
 export const RightSidebarActionsContext = React.createContext<React.MutableRefObject<RightSidebarActions | null> | null>(null);
 
+const tabListeners = new WeakMap<object, Set<() => void>>();
+
+function notifySidebarTabs(owner: object | null): void {
+    for (const listener of owner ? tabListeners.get(owner) ?? [] : []) listener();
+}
+
+/** Whether this scope publishes the tab, independently of the rail's current presentation. */
+export function useRightSidebarTabAvailable(tabId: string): boolean {
+    const owner = React.useContext(RightSidebarActionsContext);
+    const subscribe = React.useCallback((listener: () => void) => {
+        if (!owner) return () => {};
+        const listeners = tabListeners.get(owner) ?? new Set<() => void>();
+        tabListeners.set(owner, listeners);
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+    }, [owner]);
+    const read = React.useCallback(() => owner?.current?.tabs.includes(tabId) === true, [owner, tabId]);
+    return React.useSyncExternalStore(subscribe, read, () => false);
+}
+
 export function usePublishRightSidebarActions(actions: RightSidebarActions): void {
     const owner = React.useContext(RightSidebarActionsContext);
     const latest = React.useRef(actions);
@@ -39,8 +59,13 @@ export function usePublishRightSidebarActions(actions: RightSidebarActions): voi
             selectTab: tab => latest.current.selectTab(tab),
         };
         owner.current = publication;
-        return () => { if (owner.current === publication) owner.current = null; };
+        return () => {
+            if (owner.current !== publication) return;
+            owner.current = null;
+            notifySidebarTabs(owner);
+        };
     }, [owner]);
+    React.useLayoutEffect(() => notifySidebarTabs(owner), [owner, actions.tabs]);
 }
 
 export function toggleRightSidebarTab(

@@ -183,13 +183,21 @@ export function selectBrowserViewDisplayHost(view: BrowserControlViewState | nul
 }
 
 /**
- * The page an ended relay preview was last on, as its address read (`localhost:5173/dashboard`): the
- * service's own label for the host, the observed path, never the one-use admission.
+ * The page an ended relay preview was last on: its retained page-info title when known,
+ * otherwise its display address, never the one-use admission.
  */
 export function selectBrowserEndedPreviewLastPage(view: BrowserControlViewState | null): string | null {
     if (!view || view.target.kind !== 'localServicePreview') return null;
+    return view.title?.trim() || selectBrowserPreviewDisplayAddress(view);
+}
+
+/** The preview location shared by the address field and title-less recovery. */
+function selectBrowserPreviewDisplayAddress(view: BrowserControlViewState): string | null {
     const host = view.target.display?.addressLabel?.split('/')[0]?.trim();
     if (!host) return null;
     const url = view.currentUrl ?? view.pendingUrl;
-    return url ? formatBrowserDisplayUrl(withoutPreviewAdmission(url), { displayHost: host }) || host : host;
+    if (!url) return host;
+    // A page reported as a bare path (`/`, `/dashboard`) is on the preview's own host.
+    if (url.startsWith('/')) return url === '/' ? host : `${host}${url}`;
+    return formatBrowserDisplayUrl(withoutPreviewAdmission(url), { displayHost: host }) || host;
 }

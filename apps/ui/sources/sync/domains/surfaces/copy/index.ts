@@ -1,4 +1,5 @@
 export {
+    isLocalServiceActionRefusedByPolicy,
     resolvePluginExecutionOriginReasonDetail,
     resolvePluginSurfaceStatePresentation,
     resolveReasonCopy,

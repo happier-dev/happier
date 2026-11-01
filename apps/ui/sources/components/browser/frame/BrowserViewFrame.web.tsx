@@ -28,7 +28,7 @@ export function BrowserViewFrame(props: Readonly<{
                     onError={props.engine.onError}
                     onNavigationStateChange={props.engine.onNavigationStateChange}
                     onPreviewRefused={props.engine.onPreviewRefused}
-                    endedPreview={props.engine.endedPreview}
+                    recovery={props.engine.recovery}
                     revokeOnUnexpectedNavigation={props.engine.revokeOnUnexpectedNavigation}
                     onUnexpectedNavigation={props.engine.onUnexpectedNavigation}
                     diagnostics={props.engine.diagnostics}

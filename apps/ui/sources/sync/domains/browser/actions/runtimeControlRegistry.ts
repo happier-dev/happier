@@ -4,7 +4,7 @@ import type {
     BrowserRuntimeControlAdapter,
     BrowserRuntimeWorkspaceOpeningAdapter,
 } from './runtimeActionExecutor';
-import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 type BrowserRuntimeControlRegistrationToken = Readonly<{
     id: symbol;
@@ -114,13 +114,15 @@ export function registerBrowserRuntimeControlAdapter(
     };
 }
 
-function readRegistration(browserSessionId: string, viewId?: string): BrowserRuntimeControlRegistration | null {
+function readRegistration(browserSessionId: string, viewId?: string, scope?: ServerAccountScope): BrowserRuntimeControlRegistration | null {
     const sessionId = normalizeBrowserSessionId(browserSessionId);
     const registrations = registrationsBySessionId.get(sessionId) ?? [];
     // A Session can have several mounted tabs. Resolve an existing view at its actual host;
     // registration order only selects the host for a new view, or a relocated copy of one view.
     for (let index = registrations.length - 1; index >= 0; index--) {
         const registration = registrations[index];
+        if (scope && (!registration.control.accountLifetime?.isCurrent()
+            || !areServerAccountScopesEqual(scope, registration.control.accountLifetime.scope))) continue;
         if (!viewId || registration.control.readState()?.viewsById[viewId]?.browserSessionId === sessionId) return registration;
     }
     return null;
@@ -129,15 +131,17 @@ function readRegistration(browserSessionId: string, viewId?: string): BrowserRun
 export function readRegisteredBrowserRuntimeControlAdapter(
     browserSessionId: string,
     viewId?: string,
+    scope?: ServerAccountScope,
 ): BrowserRuntimeControlAdapter | null {
-    return readRegistration(browserSessionId, viewId)?.control ?? null;
+    return readRegistration(browserSessionId, viewId, scope)?.control ?? null;
 }
 
 export function readRegisteredBrowserRuntimeAutomationAdapter(
     browserSessionId: string,
     viewId?: string,
+    scope?: ServerAccountScope,
 ): BrowserRuntimeAutomationAdapter | null {
-    return readRegistration(browserSessionId, viewId)?.automation ?? null;
+    return readRegistration(browserSessionId, viewId, scope)?.automation ?? null;
 }
 
 export function readRegisteredBrowserRuntimeDiagnosticsAdapter(browserSessionId: string, viewId: string): BrowserRuntimeDiagnosticsAdapter | null {

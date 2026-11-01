@@ -35,7 +35,7 @@ import {
 import type { BrowserRecordingState } from '@/sync/domains/browser/recording';
 import type { BrowserAutomationControlService } from '@/sync/domains/browser/automation';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
-import { useLocalServicePreviewState } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
+import { useLocalServicePreviewStateController } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import {
     createPluginLocalizedTextResolver,
@@ -48,11 +48,10 @@ import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/
 import {
     resolveExternalUrlTargetFromInput,
     selectActiveBrowserView,
-    selectBrowserEndedPreviewLastPage,
     selectBrowserToolbarModel,
     selectBrowserViewDisplayHost,
 } from '@/sync/domains/browser/shell';
-import { selectRunningServiceForEndedPreview, type BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
+import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
 import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
 import { openDesktopBrowserDevtools } from '@/sync/domains/browser/adapters/desktopWebViewBridge';
 import type { SimulatorPreviewSurfaceRuntime } from '@/sync/domains/devices/simulator/useSimulatorPreviewRuntime';
@@ -92,10 +91,9 @@ import {
 import { type BrowserProfileStatusModel } from './profile/BrowserProfileStatus';
 import { BrowserPrivacyPopover } from './profile/BrowserPrivacyPopover';
 import { shouldSurfaceBrowserPrivacy } from './profile/browserPrivacyVisibility';
-import type { BrowserDiagnosticsEngineBridgeConfig, BrowserEndedPreviewRecovery } from './frame/types';
-import { bindServicesOpenInBrowser } from './surfaces/openBrowserTargetInWorkspace';
-import { RightSidebarActionsContext } from '@/components/appShell/rightSidebar/rightSidebarActions';
-import { useLocalServiceActionRunner } from '@/components/sessions/localServices/localServiceActionOutcome';
+import type { BrowserDiagnosticsEngineBridgeConfig } from './frame/types';
+import type { OpenBrowserViewTarget } from './surfaces/openBrowserTargetInWorkspace';
+import { useBrowserPreviewRecovery } from './useBrowserPreviewRecovery';
 import {
     BrowserRecordingCapsule,
     resolveBrowserRecordingControl,
@@ -267,10 +265,11 @@ export function BrowserShell(props: Readonly<{
     onViewLifecycle?: (target: BrowserViewLifecycleTarget, signal: BrowserViewLifecycleSignal) => void;
     lifecycleState?: BrowserSurfaceLifecycleState;
     launchpadRows?: readonly BrowserLaunchpadRow[];
+    localServiceTargets?: readonly import('@/sync/domains/local/services/launch').LocalServiceLaunchTarget[];
     launchpadRefreshStatus?: 'idle' | 'refreshing' | 'error';
     launchpadRefreshError?: string | null;
     onRefreshLaunchpad?: () => void;
-    onOpenTarget?: (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void;
+    onOpenTarget?: OpenBrowserViewTarget;
     /**
      * OWNER-NAV (DV-NAV): navigate the CURRENT tab in place (the launchpad/new-tab URL entry uses
      * this). Distinct from `onOpenTarget`, which opens a NEW workspace tab and is reserved for
@@ -385,7 +384,7 @@ export function BrowserShell(props: Readonly<{
     const activeLocalPreviewMachineId = activeView?.target.kind === 'localServicePreview'
         ? activeView.target.machineId
         : null;
-    const liveLocalServicePreviewState = useLocalServicePreviewState({
+    const previewController = useLocalServicePreviewStateController({
         machineId: activeLocalPreviewMachineId,
         serverId: props.localServicePreviewServerId,
         enabled: props.localServicePreviewState === undefined,
@@ -393,7 +392,7 @@ export function BrowserShell(props: Readonly<{
     const localServicePreviewState =
         props.localServicePreviewState !== undefined
             ? props.localServicePreviewState
-            : liveLocalServicePreviewState;
+            : previewController.state;
     // Only drawer identity/sections live in chrome. Its open body reads the event history.
     const activeDiagnostics = React.useMemo(() => activeView && browserDiagnostics
         ? selectBrowserDiagnosticsForView(createBrowserDiagnosticsUiStore(), {
@@ -560,39 +559,19 @@ export function BrowserShell(props: Readonly<{
         reload: toolbar.canReload ? () => dispatchViewCommand('reload') : null,
     } : null), [dispatchViewCommand, inViewer, toolbar.canGoBack, toolbar.canGoForward, toolbar.canReload]);
     const closePage = React.useCallback(() => dispatchViewCommand('closeView'), [dispatchViewCommand]);
-    // Lab ST, Ended: an ended relay preview names its last page and, while the same Service runs
-    // (the launchpad's running Services rows), opens it again through the one Services opener the
-    // launchpad and the Services surface use. The fresh tab replaces the ended one.
-    const endedView = activeView?.loadingState === 'failed' && activeView.lastError === 'preview_ended' ? activeView : null;
-    const endedServiceTarget = React.useMemo(() => endedView
-        ? selectRunningServiceForEndedPreview(launchpadRows, endedView.target) : null, [endedView, launchpadRows]);
-    const openTargetInNewTab = props.onOpenTarget;
-    const openServiceAgain = React.useMemo(() => openTargetInNewTab
-        ? bindServicesOpenInBrowser({ onOpenTarget: openTargetInNewTab, platform: props.platform, serverId: props.localServicePreviewServerId })
-        : null, [openTargetInNewTab, props.localServicePreviewServerId, props.platform]);
-    const endedLastPage = selectBrowserEndedPreviewLastPage(endedView);
-    // The Services surface's own outcome owner: a refused reopen keeps its typed reason for the card.
-    const reopenRunner = useLocalServiceActionRunner({ presentation: 'inline' });
-    const runReopen = reopenRunner.run;
-    const reopenFailure = reopenRunner.failure?.body ?? null;
-    // The way to Services is the scope's own right-sidebar chooser, when this scope has that tab.
-    const scopeSideActions = React.useContext(RightSidebarActionsContext);
-    const openServices = React.useCallback(() => scopeSideActions?.current?.selectTab('services'), [scopeSideActions]);
-    const scopeHasServices = scopeSideActions?.current?.tabs.includes('services') === true;
-    const endedPreview = React.useMemo<BrowserEndedPreviewRecovery>(() => ({
-        lastPage: endedLastPage,
-        onOpenAgain: endedServiceTarget && openServiceAgain ? () => runReopen({
-            id: 'ended-preview-open-again',
-            failureTitle: t('browserShell.unavailable.openAgain'),
-            serviceName: endedServiceTarget.title,
-            action: () => openServiceAgain(endedServiceTarget),
-        }).then((opened) => {
-            if (opened) closePage();
-        }) : undefined,
-        openAgainFailure: reopenFailure,
-        onOpenServices: scopeHasServices ? openServices : undefined,
+    const frameRecovery = useBrowserPreviewRecovery({
+        activeView,
+        launchpadRows,
+        localServiceTargets: props.localServiceTargets,
+        platform: props.platform,
+        serverId: props.localServicePreviewServerId,
+        accountLifetime: previewController.accountLifetime,
+        credentialKey: previewController.credentialKey,
+        onOpenTarget: props.onOpenTarget,
         onClose: closePage,
-    }), [closePage, endedLastPage, endedServiceTarget, openServiceAgain, openServices, reopenFailure, runReopen, scopeHasServices]);
+        canReload: toolbar.canReload,
+        onCommand: dispatchViewCommand,
+    });
     // Recovery opens the last page through the current-tab owner, not the stopped daemon view.
     const recoveredUrl = activeView?.target.kind === 'externalUrl' ? activeView.currentUrl ?? activeView.target.url : null;
     const recoveredPage = React.useMemo(() => recoveredUrl ? resolveExternalUrlTargetFromInput(recoveredUrl) : null, [recoveredUrl]);
@@ -794,7 +773,7 @@ export function BrowserShell(props: Readonly<{
                         onStreamedPageRectChange={setStreamedPageRect}
                         onOpenStreamedPageHere={recoveredPage && props.onNavigateInPlace ? openStreamedPageHere : undefined}
                         onClosePage={closePage}
-                        endedPreview={endedPreview}
+                        recovery={frameRecovery}
                         agent={props.agent ?? null}
                         nowMs={props.nowMs}
                     />

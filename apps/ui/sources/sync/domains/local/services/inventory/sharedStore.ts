@@ -5,6 +5,7 @@ import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/server
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
+import { invalidateLocalServicePreviewStore } from '../preview/sharedStore';
 import {
     type LocalServiceInventorySnapshotClientInput,
     type LocalServiceInventorySnapshotClientResult,
@@ -137,6 +138,10 @@ const store = createSharedSubscriptionStore<
     },
     defaultWatchClient,
     watchAfterRefresh: true,
+    // Preview membership shares this Machine watch. Its canonical snapshot must
+    // be re-read even if a launcher projection never observed the registration.
+    // One notification per shared watch, not one per Session/launcher consumer.
+    onWatchSnapshot: (input) => invalidateLocalServicePreviewStore(input),
     // Freshness comes from the daemon: one parked watch per subscribed machine, re-armed on each
     // answer. `sinceGeneratedAt` closes the window between this store's snapshot read and its
     // first watch so a service that starts in between is not missed.

@@ -254,16 +254,25 @@ export function selectRunningServiceForEndedPreview(
 ): ServiceRow['target'] | null {
     if (ended.kind !== 'localServicePreview') return null;
     const running = rows.flatMap((row) => row.serviceRow?.primaryAction?.kind === 'open'
-        ? [{ row: row.serviceRow, target: row.serviceRow.primaryAction.openTarget }] : []);
-    const samePreview = running.find(({ target }) => target.browserTarget?.kind === 'localServicePreview'
+        ? [row.serviceRow.primaryAction.openTarget] : []);
+    return selectServiceForEndedPreview(running, ended);
+}
+
+/** Same identity match for current Services facts, including a failed replacement occurrence. */
+export function selectServiceForEndedPreview(
+    targets: readonly ServiceRow['target'][],
+    ended: BrowserViewTargetV1,
+): ServiceRow['target'] | null {
+    if (ended.kind !== 'localServicePreview') return null;
+    const samePreview = targets.find(target => target.machineId === ended.machineId && target.browserTarget?.kind === 'localServicePreview'
         && target.browserTarget.targetId === ended.targetId);
-    if (samePreview) return samePreview.target;
+    if (samePreview) return samePreview;
     const declared = ended.serviceTarget;
     if (declared) {
         const key = createCanonicalJsonSigningInput(declared.declaration);
-        return running.find(({ target }) => target.machineId === declared.machineId
+        return targets.find(target => target.machineId === declared.machineId
             && target.declaration !== undefined && createCanonicalJsonSigningInput(target.declaration) === key
-            && (target.cwd ?? null) === (declared.cwd ?? null))?.target ?? null;
+            && (target.cwd ?? null) === (declared.cwd ?? null)) ?? null;
     }
     return null;
 }

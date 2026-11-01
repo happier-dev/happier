@@ -14,7 +14,7 @@ import type { BrowserSurfaceLifecycleState } from '../surfaces/browserSurfaceLif
 import type {
     BrowserAutomationEngineBridgeConfig,
     BrowserDiagnosticsEngineBridgeConfig,
-    BrowserEndedPreviewRecovery,
+    BrowserFrameRecovery,
     BrowserFrameNavigationCommand,
 } from '../frame/types';
 
@@ -31,7 +31,7 @@ export function LocalPreviewTarget(props: Readonly<{
     onLoad?: () => void;
     onError?: () => void;
     /** What the ended-preview state offers (last page, Open again, Close tab). */
-    endedPreview?: BrowserEndedPreviewRecovery;
+    recovery?: BrowserFrameRecovery;
     diagnostics?: BrowserDiagnosticsEngineBridgeConfig;
     automation?: BrowserAutomationEngineBridgeConfig;
     /**
@@ -41,7 +41,18 @@ export function LocalPreviewTarget(props: Readonly<{
      */
     onLifecycle?: BrowserViewLifecycleEmitter;
 }>): React.ReactElement {
-    const onLifecycle = props.onLifecycle;
+    const onLifecycle = React.useCallback<BrowserViewLifecycleEmitter>((signal) => {
+        if (signal.kind === 'loadFailed') {
+            // A failed preview document is a transport refusal; retain more specific native and proxy reasons.
+            props.onLifecycle?.({
+                ...signal,
+                errorCode: signal.errorCode === WEBVIEW_LOAD_FAILED_ERROR_CODE
+                    ? 'preview_transport_unavailable' : signal.errorCode,
+            });
+        } else {
+            props.onLifecycle?.(signal);
+        }
+    }, [props.onLifecycle]);
     if (props.view?.engineKind === 'desktopWebView') {
         if (!props.profileId) {
             return <BrowserViewFrame engine={{ kind: 'unavailable', reasonCode: 'browser_profile_missing', testID: props.testID }} />;
@@ -88,7 +99,7 @@ export function LocalPreviewTarget(props: Readonly<{
                     props.onError?.();
                     onLifecycle?.({ kind: 'loadFailed', errorCode: reasonCode, url: props.url });
                 },
-                endedPreview: props.endedPreview,
+                recovery: props.recovery,
                 diagnostics: props.diagnostics,
                 automation: props.automation,
             }}

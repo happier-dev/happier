@@ -260,6 +260,7 @@ function readPreviewTargetReferences(input: unknown): Readonly<Record<string, un
     if (inventoryEntryId) references.inventoryEntryId = inventoryEntryId;
     const managedServiceId = normalizeNonEmptyString(input.managedServiceId);
     if (managedServiceId) references.managedServiceId = managedServiceId;
+    if (isRecord(input.serviceTarget)) references.serviceTarget = input.serviceTarget;
     const launchTargetId = normalizeNonEmptyString(input.launchTargetId);
     if (launchTargetId) references.launchTargetId = launchTargetId;
     if (isRecord(input.initialPath)) references.initialPath = input.initialPath;
@@ -353,11 +354,12 @@ export function createLocalServicesRuntimeActionExecutor(
     const fetchPreviewSnapshot = input.fetchPreviewSnapshot ?? fetchLocalServicePreviewSnapshotViaMachineRpc;
     const openOrCreatePreview = input.openOrCreatePreview ?? openOrCreateLocalServicePreviewViaMachineRpc;
     const revokePreview = input.revokePreview ?? revokeLocalServicePreviewViaMachineRpc;
-    const onPreviewSnapshot = input.onPreviewSnapshot
-        ?? ((published) => publishLocalServicePreviewSnapshot(
-            { machineId: published.machineId, serverId: published.serverId },
-            published.snapshot,
-        ));
+    const onPreviewSnapshot: NonNullable<CreateLocalServicesRuntimeActionExecutorInput['onPreviewSnapshot']> = published => {
+        if (!mayPublishCatalog(published.serverId)) return;
+        if (input.onPreviewSnapshot) input.onPreviewSnapshot(published);
+        else publishLocalServicePreviewSnapshot({ machineId: published.machineId, serverId: published.serverId,
+            ...catalogScope }, published.snapshot);
+    };
     const onPublicPreviewSnapshot = input.onPublicPreviewSnapshot
         ?? ((published) => publishLocalServicePublicPreviewSnapshot(
             {

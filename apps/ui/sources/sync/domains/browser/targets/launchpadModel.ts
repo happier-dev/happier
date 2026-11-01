@@ -2,13 +2,15 @@ import type { BrowserLaunchpadRow } from './suggestions';
 import { buildBrowserLaunchpadRows } from './suggestions';
 import type { BrowserRecentTarget } from './recents';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
-import type { LocalServiceLauncherSnapshot } from '@/sync/domains/local/services/launch';
+import type { LocalServiceLauncherSnapshot, LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/targets';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 
 export type BrowserLaunchpadModel = Readonly<{
     rows: readonly BrowserLaunchpadRow[];
+    /** The same admitted Services feed, before the launchpad's running-only presentation. */
+    localServiceTargets: readonly LocalServiceLaunchTarget[];
     refreshStatus: 'idle' | 'refreshing' | 'error';
     refreshError: string | null;
 }>;
@@ -37,7 +39,10 @@ export function buildBrowserLaunchpadModel(input: Readonly<{
 }>): BrowserLaunchpadModel {
     return {
         rows: buildBrowserLaunchpadRows(input),
+        localServiceTargets: input.launcherSnapshot?.targets ?? EMPTY_SERVICE_TARGETS,
         refreshStatus: resolveRefreshStatus(input.localServicePreviewState),
         refreshError: resolveRefreshError(input.localServicePreviewState),
     };
 }
+
+const EMPTY_SERVICE_TARGETS: readonly LocalServiceLaunchTarget[] = Object.freeze([]);

@@ -1,4 +1,5 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
+export * from './actions/specs/machine/services.js';
 export * from './account/publicProfile.js';
 export * from './account/publicProfilePublication.js';
 export * from './account/publicProfileEmbeds.js';

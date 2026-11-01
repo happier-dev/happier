@@ -10718,12 +10718,36 @@ export const zhHans: TranslationStructure = {
             runScriptA11y: '在新终端标签页中运行脚本',
             failure: {
                 title: '操作未完成',
-                refused: '机器拒绝了此操作。请检查此机器的本地服务权限后重试。',
+                refused: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "机器拒绝了此操作。"
+                  : '机器拒绝了此操作。请检查此机器的本地服务权限后重试。',
                 unavailable: '此操作不适用于此机器上的该服务。',
-                incomplete: '操作没有完成，你可以再试一次。',
-                serviceNotRunning: '此服务已停止运行，请查看“服务”。',
-                namedServiceNotRunning: ({ service }: { service: string }) => `${service} 已停止运行，请查看“服务”。`,
-                outcomeUnknown: '操作结果未知。重试前，请在所选机器上检查此服务。',
+                incomplete: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "操作没有完成。"
+                  : '操作没有完成，你可以再试一次。',
+                serviceNotRunning: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "此服务已停止运行。"
+                  : '此服务已停止运行，请查看“服务”。',
+                namedServiceNotRunning: ({ service, servicesActionOffered = false }: { service: string; servicesActionOffered?: boolean }) => servicesActionOffered
+                  ? `${service} 已停止运行。`
+                  : `${service} 已停止运行，请查看“服务”。`,
+                previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "此服务尚未准备好打开。"
+                  : '此服务尚未准备好打开，请查看“服务”。',
+                browserViewUnavailable: "Happier 无法打开应用内浏览器视图，请稍后再试。",
+                startFailedTitle: "服务未能启动",
+                startFailed: "服务在就绪前已停止。",
+                namedStartFailed: ({ service }: { service: string }): string => `${service}在就绪前已停止。`,
+                previewFailed: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "无法打开预览。"
+                  : '无法打开预览，请检查“服务”后重试。',
+                previewUnavailable: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "无法访问预览。"
+                  : '无法访问预览，请查看“服务”。',
+                namedReason: ({ service, reason }: { service: string; reason: string }) => `${service}：${reason}`,
+                outcomeUnknown: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "操作结果未知。"
+                  : '操作结果未知。重试前，请在所选机器上检查此服务。',
       portInUse: ({ port }: { port: number }) => `端口 ${port} 已被占用。请停止现有服务或选择其他端口。`,
       portInUseSameProject: ({ port }: { port: number }) => `此项目已在使用端口 ${port}。请使用正在运行的服务或选择其他端口。`,
       processExit: ({ code }: { code: string }) => `服务已退出，代码为 ${code}。重试前请查看详情。`,
@@ -10946,14 +10970,21 @@ export const zhHans: TranslationStructure = {
       previewElsewhere: `此设备无法直接打开它。在“服务”中分享链接即可在这里打开。`,
       previewEndedTitle: `此预览已结束`,
       previewEnded: `它的服务已停止分享，或链接已被撤销。请从“服务”重新打开。`,
-      previewEndedLastPage: ({ page }: { page: string }) => `最后一页是 ${page}。它的服务已停止分享，或链接已被撤销。请从“服务”重新打开。`,
+      previewEndedLastPageDetail: ({ page }: { page: string }) => `最后一页：${page}`,
+      previewEndedStopped: `它的服务已停止分享，或链接已被撤销。`,
+      previewEndedServiceStopped: ({ service }: { service: string }) => `${service} 已停止。`,
       previewEndedRunning: `它的服务正在运行，可以在这里重新打开。`,
-      previewEndedRunningLastPage: ({ page }: { page: string }) => `最后一页是 ${page}。它的服务正在运行，可以在这里重新打开。`,
+      previewEndedNamed: ({ service }: { service: string }) => `${service} 已停止分享，或链接已被撤销。请从“服务”重新打开。`,
+      previewEndedStoppedNamed: ({ service }: { service: string }) => `${service} 已停止分享，或链接已被撤销。`,
+      previewEndedRunningNamed: ({ service }: { service: string }) => `${service} 正在运行，可以在这里重新打开。`,
       openAgain: `重新打开`,
       openServices: `前往服务`,
       previewTransportUnavailableTitle: `无法连接到此预览`,
-      previewTransportUnavailable: `运行它的机器当前没有响应。重新加载以再试一次。`,
+      previewTransportUnavailable: `运行它的机器当前没有响应。`,
       closeTab: `关闭标签页`,
+      previewTransportUnavailableNamed: ({ machine }: { machine: string }) => `${machine} 当前没有响应此预览。`,
+      startService: ({ service }: { service: string }) => `启动 ${service}`,
+      startAgain: `重新启动`,
       desktopEngineUnavailable: "此设备上的内置浏览器引擎不可用。",
       desktopWebView: "此设备上的内置浏览器引擎不可用。你仍可以在系统浏览器中打开此页面。",
       desktopWebViewUnsupportedPlatform: "此平台暂不支持内置浏览。",

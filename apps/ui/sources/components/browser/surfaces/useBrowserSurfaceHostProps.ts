@@ -16,10 +16,10 @@ import {
     useLocalServiceLauncherStateController,
     type LocalServiceLauncherSnapshotClient,
     type LocalServiceLauncherState,
+    type LocalServiceLaunchTarget,
 } from '@/sync/domains/local/services/launch';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
-import { useLocalServicePreviewState, type UseLocalServicePreviewStateInput } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
-import { invalidateLocalServicePreviewStore } from '@/sync/domains/local/services/preview/sharedStore';
+import { useLocalServicePreviewStateController, type UseLocalServicePreviewStateInput } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
 import type { LocalServicePreviewSnapshotClient } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/targets';
@@ -58,6 +58,7 @@ export type BrowserSurfaceScope =
 
 export type BrowserSurfaceHostFeedAssembly = Readonly<{
     rows: readonly BrowserLaunchpadRow[];
+    localServiceTargets?: readonly LocalServiceLaunchTarget[];
     refreshStatus: 'idle' | 'refreshing' | 'error';
     refreshError: string | null;
 }>;
@@ -92,6 +93,7 @@ export type BrowserSurfaceHostPropsBundle = Readonly<{
     surfaceKey: string;
     presentationSlotId: string;
     launchpadRows: readonly BrowserLaunchpadRow[];
+    localServiceTargets?: readonly LocalServiceLaunchTarget[];
     launchpadRefreshStatus: 'idle' | 'refreshing' | 'error';
     launchpadRefreshError: string | null;
     onRefreshLaunchpad: (() => void) | undefined;
@@ -211,7 +213,7 @@ export function useBrowserSurfaceHostFeed(
         ? input.launcherState
         : liveLauncherState;
 
-    const liveLocalServicePreviewState = useLocalServicePreviewState({
+    const previewController = useLocalServicePreviewStateController({
         machineId,
         serverId,
         enabled: input.enabled !== false && input.localServicePreviewState === undefined,
@@ -221,13 +223,8 @@ export function useBrowserSurfaceHostFeed(
     });
     const localServicePreviewState = input.localServicePreviewState !== undefined
         ? input.localServicePreviewState
-            : liveLocalServicePreviewState;
-    const onRefreshLaunchpad = React.useMemo(() => (
-        // Refresh the canonical preview key without starting another controller or reloading.
-        machineId
-            ? () => invalidateLocalServicePreviewStore({ machineId, serverId })
-            : undefined
-    ), [machineId, serverId]);
+            : previewController.state;
+    const onRefreshLaunchpad = previewController.refresh;
     const pluginLocale = getPreferredLanguage();
     const localizePluginText = React.useMemo(
         () => createPluginLocalizedTextResolver({
@@ -333,6 +330,7 @@ export function useBrowserSurfaceHostProps(
         surfaceKey,
         presentationSlotId,
         launchpadRows: feed.rows,
+        localServiceTargets: feed.localServiceTargets,
         launchpadRefreshStatus: feed.refreshStatus,
         launchpadRefreshError: feed.refreshError,
         onRefreshLaunchpad,

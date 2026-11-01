@@ -6,8 +6,19 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { ActionApprovalRequestCreatedResultSchema, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { LocalServiceNativePrerequisiteV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { LocalServiceLaunchTargetV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { bindServicesOpenInBrowser } from '@/components/browser/surfaces/openBrowserTargetInWorkspace';
+import { createBrowserWorkspaceOpeningFixture } from '@/dev/testkit/fixtures/browserWorkspaceOpening';
+import { createBrowserRuntimeActionExecutor } from '@/sync/domains/browser/actions/runtimeActionExecutor';
+import { createLocalServicesRuntimeActionExecutor } from '@/sync/domains/local/services/actions/runtimeActionExecutor';
+import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
+import { t } from '@/text';
 
 const modalSpies = vi.hoisted(() => ({ alert: vi.fn() }));
+const previewRpc = vi.hoisted(() => vi.fn());
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
+    (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(previewRpc));
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -16,6 +27,7 @@ vi.mock('@/modal', async () => {
 
 import {
     readLocalServiceActionOutcome,
+    describeLocalServiceActionFailure,
     presentLocalServiceActionFailure,
     useLocalServiceActionRunner,
 } from './localServiceActionOutcome';
@@ -66,6 +78,31 @@ describe('readLocalServiceActionOutcome', () => {
             error: 'runtime_action_disabled:browser:private transport detail' }))
             .toEqual({ kind: 'failed', reasonCode: 'runtime_action_disabled' });
     });
+    it.each([
+        ['localServices', 'local_services_preview_refused:preview_target_unresolved', 'preview_target_unresolved'],
+        ['localServices', 'local_services_preview_refused:unknown_managed_service', 'unknown_managed_service'],
+        ['localServices', 'local_services_preview_refused:requester_credentials_unavailable', 'requester_credentials_unavailable'],
+        ['browser', 'browser_adapter_unavailable', 'browser_adapter_unavailable'],
+        ['browser', 'browser_view_unavailable', 'browser_view_unavailable'],
+    ])('keeps the Action-wrapped %s/%s refusal named without changing its diagnostic code', (family, wrappedCode, reasonCode) => {
+        const outcome = readLocalServiceActionOutcome({ ok: false, errorCode: 'runtime_action_disabled',
+            error: `runtime_action_disabled:${family}:${wrappedCode}` });
+        expect(outcome).toEqual({ kind: 'failed', reasonCode });
+        if (outcome.kind !== 'failed') throw new Error('Expected a refusal');
+        const failure = describeLocalServiceActionFailure({ ...outcome, serviceName: 'Reading desk' });
+        expect(failure.details).toContain(reasonCode);
+        expect(failure.body).toContain('Reading desk');
+        expect(failure.body).not.toContain(reasonCode);
+        expect(failure.body).not.toContain(resolveReasonCopy({ reasonCode: null, kind: 'localServiceAction' }).body);
+    });
+    it('says the Service once: a title that names it is not repeated in the body, and a missing in-app browser view is a failure, not a refusal', () => {
+        const input = { reasonCode: 'browser_view_unavailable', serviceName: 'Lumen web' };
+        const named = describeLocalServiceActionFailure({ ...input, title: 'Could not open Lumen web' });
+        expect(named.body).not.toContain('Lumen web');
+        expect(named.refusal).toBe(false);
+        expect(describeLocalServiceActionFailure({ ...input, title: 'Open again' }).body).toContain('Lumen web');
+        expect(describeLocalServiceActionFailure({ reasonCode: 'permission_denied' }).refusal).toBe(true);
+    });
     it('keeps a real Ask-first receipt pending rather than reporting a successful mutation', () => {
         const receipt = ActionApprovalRequestCreatedResultSchema.parse({ kind: 'approval_request_created',
             artifactId: 'service-approval', actionId: 'localServices.launcher.start' });
@@ -106,6 +143,83 @@ function renderRunner() {
 describe('useLocalServiceActionRunner', () => {
     afterEach(standardCleanup);
     beforeEach(() => modalSpies.alert.mockReset());
+
+    it('retains an accepted native operation without announcing a completed service mutation', async () => {
+        const receipt = { kind: 'accepted', operation: { operationId: 'native-stop-operation' } };
+        expect(readLocalServiceActionOutcome(receipt)).toEqual({ kind: 'accepted',
+            operationId: receipt.operation.operationId });
+        const { value, Harness } = renderRunner();
+        await renderScreen(<Harness />);
+        await act(async () => {
+            expect(await value.current?.run({ id: 'stop', failureTitle: 'Could not stop',
+                action: async () => receipt })).toBe(false);
+        });
+        expect(value.current?.failure).toBeNull();
+        expect(modalSpies.alert).not.toHaveBeenCalled();
+    });
+
+    it('keeps a failed Service start typed, named and recoverable through the real Open outcome owner', async () => {
+        previewRpc.mockReset();
+        previewRpc.mockRejectedValue(new Error('local_service_preview_lifecycle_refused:preview_registration_failed'));
+        const target = LocalServiceLaunchTargetV1Schema.parse({
+            id: 'managed:lumen', source: 'managed_service', machineId: 'machine', title: 'Lumen web',
+            sourceClass: { kind: 'managed_service', managedServiceId: 'lumen' },
+            cwd: '/repo', declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'web' } },
+            serviceState: 'failed', confidence: 'high', state: 'available', actions: ['manage'],
+            diagnostics: [{ code: 'native_service_output', severity: 'info', message: 'Address already in use' }],
+        });
+        const openTarget = vi.fn();
+        const open = bindServicesOpenInBrowser({ platform: 'web', onOpenTarget: openTarget });
+        const value: { current: ReturnType<typeof useLocalServiceActionRunner> | null } = { current: null };
+        function Harness() { value.current = useLocalServiceActionRunner({ presentation: 'inline', servicesActionOffered: true }); return null; }
+        await renderScreen(<Harness />);
+        await act(async () => {
+            expect(await value.current?.run({ id: 'open-again', failureTitle: 'Open again', serviceName: target.title,
+                serviceTarget: target, action: () => open(target) })).toBe(false);
+        });
+        expect(value.current?.failure).toMatchObject({
+            reasonCode: 'plugin_managed_service_establishment_failed',
+            title: 'Service couldn’t start', body: 'Lumen web stopped before it was ready.',
+            recovery: { kind: 'reviewOutput', label: 'Review output', lines: ['Address already in use'] },
+        });
+        expect(value.current?.failure?.body).not.toContain('Review output');
+        // A known failed start neither registers another preview nor opens another tab or retries.
+        expect(previewRpc).not.toHaveBeenCalled();
+        expect(openTarget).not.toHaveBeenCalled();
+        expect(value.current?.pendingId).toBeNull();
+    });
+
+    it('presents a typed startup failure before its feed arrives and keeps structured output in Details', async () => {
+        const value: { current: ReturnType<typeof useLocalServiceActionRunner> | null } = { current: null };
+        function Harness() { value.current = useLocalServiceActionRunner({ presentation: 'inline', servicesActionOffered: true }); return null; }
+        await renderScreen(<Harness />);
+        const serviceTarget = LocalServiceLaunchTargetV1Schema.parse({
+            id: 'managed:lumen', source: 'managed_service', machineId: 'machine', title: 'Lumen web',
+            sourceClass: { kind: 'managed_service', managedServiceId: 'lumen' },
+            serviceState: 'running', confidence: 'high', state: 'available', actions: ['manage'],
+        });
+        const establishmentFailure = { cause: 'process_exited' as const, exitCode: 1, lastStderrLine: 'Unable to bind listener' };
+        await act(async () => {
+            expect(await value.current?.run({ id: 'open-again', failureTitle: 'Open again', serviceName: 'Lumen web', serviceTarget,
+                action: async () => ({ status: 'failed', reasonCode: 'plugin_managed_service_establishment_failed', establishmentFailure }) })).toBe(false);
+        });
+        expect(value.current?.failure).toMatchObject({
+            reasonCode: 'plugin_managed_service_establishment_failed',
+            title: 'Service couldn’t start', body: 'Lumen web stopped before it was ready.',
+            details: ['Exit code 1', 'Unable to bind listener', 'plugin_managed_service_establishment_failed'],
+        });
+        expect(value.current?.pendingId).toBeNull();
+        expect(modalSpies.alert).not.toHaveBeenCalled();
+        // The plain headline must not discard a known port conflict's actionable detail.
+        const portFailure = { cause: 'port_in_use' as const, port: 5173, sameProject: true };
+        await act(async () => {
+            await value.current?.run({ id: 'open-again', failureTitle: 'Open again', serviceName: 'Lumen web', serviceTarget,
+                action: async () => ({ status: 'failed', reasonCode: 'plugin_managed_service_establishment_failed', establishmentFailure: portFailure }) });
+        });
+        expect(value.current?.failure?.body).toBe('Lumen web stopped before it was ready.');
+        expect(value.current?.failure?.details).toContain(resolveReasonCopy({ kind: 'localServiceAction',
+            reasonCode: 'plugin_managed_service_establishment_failed', establishmentFailure: portFailure }).body);
+    });
 
     it('does not settle an unknown Stop from the binding that was already running', async () => {
         const value: { current: ReturnType<typeof useLocalServiceActionRunner> | null } = { current: null };
@@ -249,6 +363,89 @@ describe('useLocalServiceActionRunner', () => {
         expect(body).toContain('Services');
         expect(body).not.toContain(reasonCode);
         expect(value.current?.pendingId).toBeNull();
+    });
+
+    it('reprojects a retained refusal when the offered Services action changes', async () => {
+        const value: { current: ReturnType<typeof useLocalServiceActionRunner> | null } = { current: null };
+        function Harness({ servicesActionOffered }: { servicesActionOffered: boolean }) {
+            value.current = useLocalServiceActionRunner({ presentation: 'inline', servicesActionOffered });
+            return null;
+        }
+        const screen = await renderScreen(<Harness servicesActionOffered={false} />);
+        const action = vi.fn(async () => ({ status: 'denied', reasonCode: 'preview_registration_failed' }));
+        await act(async () => {
+            await value.current?.run({ id: 'open-again', failureTitle: 'Open again', serviceName: 'Reading desk', action });
+        });
+        expect(value.current?.failure?.body).toContain('Services');
+        await screen.update(<Harness servicesActionOffered />);
+        expect(value.current?.failure?.body).toBe('Reading desk: The preview could not be opened.');
+        expect(value.current?.failure?.reasonCode).toBe('preview_registration_failed');
+        expect(value.current?.failure?.details).toContain('preview_registration_failed');
+        await screen.update(<Harness servicesActionOffered={false} />);
+        expect(value.current?.failure?.body).toContain('Services');
+        expect(action).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        'preview_target_unresolved', 'unknown_managed_service', 'service_not_listening',
+        'requester_credentials_unavailable', 'wrong_machine', 'preview_session_mismatch',
+        'inventory_unavailable', 'unknown_inventory_entry', 'endpoint_scheme_unknown',
+        'non_loopback_target', 'preview_account_unavailable', 'preview_server_unavailable',
+        'invalid_resource', 'preview_registration_failed',
+        'preview_runtime_unavailable', 'invalid_preview_resource', 'session_not_authorized',
+        'preview_token_secret_missing', 'preview_public_base_url_missing', 'preview_hostname_collision',
+    ])('keeps the Open again refusal typed and Service-named through the real outcome owner (%s)', async reasonCode => {
+        previewRpc.mockReset();
+        previewRpc.mockRejectedValue(new Error(`local_service_preview_lifecycle_refused:${reasonCode}`));
+        const managedTarget = LocalServiceLaunchTargetV1Schema.parse({
+            id: 'managed:reading-desk', source: 'managed_service', machineId: 'machine', title: 'Reading desk',
+            sourceClass: { kind: 'managed_service', managedServiceId: 'reading-desk' },
+            workspaceId: 'checkout', cwd: '/repo', declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'web' } },
+            confidence: 'high', state: 'available', actions: ['register_preview'],
+        });
+        // Use the real request intent that can receive each refusal: inventory
+        // observation, retained Session registration, or exact Project custody.
+        const target = LocalServiceLaunchTargetV1Schema.parse([
+            'inventory_unavailable', 'unknown_inventory_entry', 'endpoint_scheme_unknown',
+            'non_loopback_target', 'preview_account_unavailable',
+        ].includes(reasonCode) ? {
+            ...managedTarget, id: 'inventory:reading-desk', source: 'inventory_entry',
+            sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'reading-desk' },
+            declaration: undefined, cwd: undefined,
+        } : reasonCode === 'preview_session_mismatch' ? {
+            ...managedTarget, sessionId: 'session', browserTarget: {
+                kind: 'localServicePreview', targetId: 'reading-desk', machineId: 'machine', sessionId: 'session',
+            },
+        } : managedTarget);
+        const fixture = createBrowserWorkspaceOpeningFixture({ scope: 'sessionDetails', platform: 'web', openDetailsTab: () => {} }, {
+            runtimeActionExecute: createLocalServicesRuntimeActionExecutor({ fallback: createBrowserRuntimeActionExecutor({}) }),
+        });
+        const deps = { platform: 'web' as const, serverId: fixture.context.serverId,
+            onOpenTarget: () => { throw new Error('A refused preview must not open a tab'); },
+            actionExecute: (...args: Parameters<typeof fixture.executor.execute>) => fixture.executor.execute(args[0], args[1],
+                { ...args[2], ...fixture.context }) };
+        const openAgain = bindServicesOpenInBrowser(deps);
+        const value: { current: ReturnType<typeof useLocalServiceActionRunner> | null } = { current: null };
+        function Harness() { value.current = useLocalServiceActionRunner({ presentation: 'inline' }); return null; }
+        await renderScreen(<Harness />);
+        await act(async () => {
+            expect(await value.current?.run({ id: 'open-again', failureTitle: 'Open again', serviceName: target.title,
+                action: () => openAgain(target) })).toBe(false);
+        });
+        expect(value.current?.failure?.reasonCode).toBe(reasonCode);
+        expect(value.current?.failure?.details).toContain(reasonCode);
+        expect(value.current?.failure?.body).toContain(target.title);
+        expect(value.current?.failure?.body).not.toContain(reasonCode);
+        expect(value.current?.failure?.body).not.toContain(resolveReasonCopy({ reasonCode: null, kind: 'localServiceAction' }).body);
+        if (reasonCode === 'preview_target_unresolved') {
+            expect(value.current?.failure?.body).toContain(t('localServices.actions.failure.previewNotReady', {}));
+            expect(value.current?.failure?.body).toContain('Services');
+        }
+        expect(value.current?.pendingId).toBeNull();
+        // A refusal settles once; the owner does not automatically repeat admission.
+        expect(previewRpc).toHaveBeenCalledTimes(1);
+        expect(modalSpies.alert).not.toHaveBeenCalled();
+        fixture.dispose();
     });
 
     it.each([

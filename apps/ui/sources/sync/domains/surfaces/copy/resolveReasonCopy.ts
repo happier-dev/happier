@@ -232,7 +232,25 @@ const LOCAL_SERVICE_INVENTORY_KEYS = {
  */
 const LOCAL_SERVICE_ACTION_KEYS = {
     action_outcome_unknown: 'localServices.actions.failure.outcomeUnknown',
+    // Preview admission can race Stop before custody is removed. No endpoint
+    // is admissible then; this is not an attempted action that needs retrying.
+    preview_target_unresolved: 'localServices.actions.failure.previewNotReady',
+    service_not_listening: 'localServices.actions.failure.serviceNotRunning',
+    preview_service_not_listening: 'localServices.actions.failure.serviceNotRunning',
+    unknown_managed_service: 'localServices.actions.failure.serviceNotRunning',
+    preview_unknown_managed_service: 'localServices.actions.failure.serviceNotRunning',
+    preview_registration_failed: 'localServices.actions.failure.previewFailed',
+    preview_server_unavailable: 'localServices.actions.failure.previewUnavailable',
+    preview_runtime_unavailable: 'localServices.actions.failure.previewUnavailable',
+    preview_token_secret_missing: 'localServices.actions.failure.previewUnavailable',
+    preview_public_base_url_missing: 'localServices.actions.failure.previewUnavailable',
+    preview_hostname_collision: 'localServices.actions.failure.previewFailed',
     // Refused: a policy, a permission, or a confirmation the user can go and change.
+    requester_credentials_unavailable: 'localServices.actions.failure.refused',
+    session_not_authorized: 'localServices.actions.failure.refused',
+    non_loopback_target: 'localServices.actions.failure.refused',
+    permission_denied: 'localServices.actions.failure.refused',
+    forbidden: 'localServices.actions.failure.refused',
     confirmation_nonce_invalid: 'localServices.actions.failure.refused',
     confirmation_required: 'localServices.actions.failure.refused',
     ownership_not_established: 'localServices.actions.failure.refused',
@@ -242,6 +260,18 @@ const LOCAL_SERVICE_ACTION_KEYS = {
     // Unavailable: this machine cannot do this to this service, and retrying will not change it.
     // Services Open refused before any tab was admitted (the target has no browser mapping).
     browser_target_unavailable: 'localServices.actions.failure.unavailable',
+    browser_adapter_unavailable: 'localServices.actions.failure.unavailable',
+    // The in-app browser view is what is missing, not the Service or the Machine.
+    browser_view_unavailable: 'localServices.actions.failure.browserViewUnavailable',
+    inventory_unavailable: 'localServices.actions.failure.unavailable',
+    endpoint_scheme_unknown: 'localServices.actions.failure.unavailable',
+    invalid_resource: 'localServices.actions.failure.unavailable',
+    invalid_preview_resource: 'localServices.actions.failure.unavailable',
+    preview_account_unavailable: 'localServices.actions.failure.unavailable',
+    preview_session_mismatch: 'localServices.actions.failure.unavailable',
+    action_account_scope_changed: 'localServices.actions.failure.unavailable',
+    action_home_signed_out: 'localServices.actions.failure.unavailable',
+    runtime_action_disabled: 'localServices.actions.failure.unavailable',
     identity_changed: 'localServices.actions.failure.unavailable',
     launcher_start_unsupported: 'localServices.actions.failure.unavailable',
     low_signal_process: 'localServices.actions.failure.unavailable',
@@ -296,7 +326,8 @@ type BrowserMessageKey =
     | 'browserShell.unavailable.annotationIframeCaptureUnavailable'
     | 'browserShell.unavailable.annotationCaptureUnavailable'
     | 'browserShell.unavailable.previewEnded'
-    | 'browserShell.unavailable.previewTransportUnavailable';
+    | 'browserShell.unavailable.previewTransportUnavailable'
+    | 'browserShell.unavailable.previewPortNotAllowed';
 
 type BrowserSurfaceMessageKey =
     | 'browserShell.unavailable.surface.disabled'
@@ -648,11 +679,16 @@ type LocalServiceLauncherMessageKey =
 
 type LocalServiceActionMessageKey =
     | 'localServices.actions.failure.outcomeUnknown'
+    | 'localServices.actions.failure.serviceNotRunning'
+    | 'localServices.actions.failure.previewNotReady'
+    | 'localServices.actions.failure.previewFailed'
+    | 'localServices.actions.failure.previewUnavailable'
     | 'localServices.actions.failure.refused'
     | 'localServices.actions.failure.unavailable'
+    | 'localServices.actions.failure.browserViewUnavailable'
     | 'localServices.actions.failure.incomplete';
 
-function resolveGenericMessage(kind: ReasonCopyKind): string {
+function resolveGenericMessage(kind: ReasonCopyKind, servicesActionOffered = false): string {
     switch (kind) {
         case 'browserLaunchpad':
             return t('browserLaunchpad.status.unavailableGeneric');
@@ -665,7 +701,7 @@ function resolveGenericMessage(kind: ReasonCopyKind): string {
         case 'localServiceAction':
             // An unmapped daemon code means the action was attempted and did not finish; the
             // retryable sentence is the honest default, never the raw code.
-            return t('localServices.actions.failure.incomplete');
+            return t('localServices.actions.failure.incomplete', { servicesActionOffered });
         case 'simulatorPreview':
             return t('simulatorPreview.availability.unavailableGeneric');
         case 'streamPlayer':
@@ -708,7 +744,7 @@ function resolveTitle(kind: ReasonCopyKind): string {
     }
 }
 
-function resolveKnownMessage(kind: ReasonCopyKind, reasonCode: string): string | null {
+function resolveKnownMessage(kind: ReasonCopyKind, reasonCode: string, servicesActionOffered = false): string | null {
     switch (kind) {
         case 'widget': {
             const key = WIDGET_KEYS[reasonCode as keyof typeof WIDGET_KEYS];
@@ -737,7 +773,8 @@ function resolveKnownMessage(kind: ReasonCopyKind, reasonCode: string): string |
         }
         case 'localServiceAction': {
             const key = LOCAL_SERVICE_ACTION_KEYS[reasonCode as keyof typeof LOCAL_SERVICE_ACTION_KEYS];
-            return key ? t(key) : null;
+            return key === 'localServices.actions.failure.unavailable' || key === 'localServices.actions.failure.browserViewUnavailable' ? t(key)
+                : key ? t(key, { servicesActionOffered }) : null;
         }
         case 'simulatorPreview': {
             const key = SIMULATOR_PREVIEW_KEYS[reasonCode as keyof typeof SIMULATOR_PREVIEW_KEYS];
@@ -777,43 +814,53 @@ export function resolveReasonCopy(input: Readonly<{
     establishmentFailure?: LocalServiceEstablishmentFailureV1;
     machineName?: string;
     serviceName?: string;
+    /** True only when this presentation offers a Services control. */
+    servicesActionOffered?: boolean;
+    /** The surrounding title already names the Service, so the body does not repeat it as a prefix. */
+    serviceNamedByTitle?: boolean;
 }>): ResolvedReasonCopy {
     const rawCode = input.reasonCode ?? null;
     const frameTitleKey = input.kind === 'browserFrame' && rawCode
         ? BROWSER_FRAME_TITLE_KEYS[rawCode as keyof typeof BROWSER_FRAME_TITLE_KEYS] : undefined;
-    const title = frameTitleKey ? t(frameTitleKey) : resolveTitle(input.kind);
-    if (rawCode === null || rawCode === '') {
-        const body = resolveGenericMessage(input.kind);
-        return {
-            title,
-            body,
-            message: body,
-            diagnosticCode: rawCode === '' ? '' : null,
-        };
-    }
-    const known = resolveKnownMessage(input.kind, rawCode);
+    const startFailed = input.kind === 'localServiceAction' && rawCode === 'plugin_managed_service_establishment_failed';
+    const title = startFailed ? t('localServices.actions.failure.startFailedTitle') : frameTitleKey ? t(frameTitleKey) : resolveTitle(input.kind);
+    const known = rawCode ? resolveKnownMessage(input.kind, rawCode, input.servicesActionOffered) : null;
     const prerequisite = input.kind === 'localServiceAction' && rawCode === 'native_tool_unavailable' ? input.prerequisite : undefined;
     const failure = input.kind === 'localServiceAction' && rawCode === 'plugin_managed_service_establishment_failed'
         ? input.establishmentFailure : undefined;
-    const stoppedService = input.kind === 'localServiceAction' && (
-        rawCode === 'service_not_listening' || rawCode === 'preview_service_not_listening'
-        || rawCode === 'unknown_managed_service' || rawCode === 'preview_unknown_managed_service');
-    const body = stoppedService ? input.serviceName
-        ? t('localServices.actions.failure.namedServiceNotRunning', { service: input.serviceName })
-        : t('localServices.actions.failure.serviceNotRunning')
+    const serviceKey = input.kind === 'localServiceAction' && rawCode
+        ? LOCAL_SERVICE_ACTION_KEYS[rawCode as keyof typeof LOCAL_SERVICE_ACTION_KEYS] : undefined;
+    const stoppedService = serviceKey === 'localServices.actions.failure.serviceNotRunning';
+    const body = startFailed && input.serviceName
+        ? t('localServices.actions.failure.namedStartFailed', { service: input.serviceName })
+        : stoppedService ? input.serviceName
+        ? t('localServices.actions.failure.namedServiceNotRunning', { service: input.serviceName, servicesActionOffered: input.servicesActionOffered })
+        : t('localServices.actions.failure.serviceNotRunning', { servicesActionOffered: input.servicesActionOffered })
         : input.kind === 'localServiceLauncher' && rawCode === 'project_service_binding_unavailable' && input.machineName
         ? t('localServices.launcher.unavailableReason.bindingUnavailableOnMachine', { machine: input.machineName })
         : prerequisite ? t(`localServices.actions.failure.docker.${prerequisite.cause}`, { machine: prerequisite.machineName })
         : failure?.cause === 'port_in_use' && failure.port !== undefined ? t(failure.sameProject
             ? 'localServices.actions.failure.portInUseSameProject' : 'localServices.actions.failure.portInUse', { port: failure.port })
         : failure?.exitCode !== undefined ? t('localServices.actions.failure.processExit', { code: String(failure.exitCode) })
-        : known ?? resolveGenericMessage(input.kind);
+        : startFailed ? t('localServices.actions.failure.startFailed')
+        : known ?? resolveGenericMessage(input.kind, input.servicesActionOffered);
+    const namedBody = input.kind === 'localServiceAction' && input.serviceName && !input.serviceNamedByTitle && !stoppedService && !startFailed
+        ? t('localServices.actions.failure.namedReason', { service: input.serviceName, reason: body }) : body;
     return {
         title,
-        body,
-        message: body,
+        body: namedBody,
+        message: namedBody,
         diagnosticCode: rawCode,
     };
+}
+
+/**
+ * A local-service action refused by a policy, permission or confirmation the person can go and change:
+ * the one family of failures that needs them, drawn amber. Every other failure is rose.
+ */
+export function isLocalServiceActionRefusedByPolicy(reasonCode: string | null | undefined): boolean {
+    return Boolean(reasonCode)
+        && LOCAL_SERVICE_ACTION_KEYS[reasonCode as keyof typeof LOCAL_SERVICE_ACTION_KEYS] === 'localServices.actions.failure.refused';
 }
 
 /**

@@ -43,6 +43,8 @@ export type IconWeight = 'regular' | 'fill' | 'bold' | 'light' | 'thin' | 'duoto
  * fix: if a size is not on it, that is a design decision worth making deliberately.
  */
 export const ICON_SIZE = {
+    /** Beside meta text: an in-place disclosure's caret ("Details", "Review output"). */
+    xxs: 12,
     /** Inline with small text: badges, chips, counts. */
     xs: 14,
     /** List rows, menu items, dense toolbars. */

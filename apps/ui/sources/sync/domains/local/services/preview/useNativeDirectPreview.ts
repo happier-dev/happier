@@ -19,6 +19,10 @@ export type NativeDirectPreviewInput = Readonly<{
     fallbackUrl: string | null;
     requestedUrl?: string | null;
     initialPath?: string;
+    /** A real reload retries server admission without replacing a retained native lease. */
+    reloadCommandId?: string;
+    /** A fresh explicit registration may recover a failed view, including a refused iframe. */
+    viewFailed?: boolean;
 }>;
 
 const subscribeCarrierEligibility = (notify: () => void) => subscribeRegisteredStorageState(notify) ?? (() => undefined);
@@ -83,6 +87,19 @@ export function useNativeDirectPreview(input: NativeDirectPreviewInput): Readonl
     const runtimeActive = useSyncExternalStore(subscribeToRuntimeActiveChange, isRuntimeActive, isRuntimeActive);
     const { previewId, machineId, serverId } = input;
     const key = JSON.stringify([previewId, machineId, serverId ?? null]);
+    // Like the frame's navigation key, the last reload identity survives later non-reload
+    // commands. Dropping a transient command prop must not request another admission.
+    const reloadCommandIdRef = useRef(input.reloadCommandId);
+    if (input.reloadCommandId !== undefined) reloadCommandIdRef.current = input.reloadCommandId;
+    const registrationUrlRef = useRef(input.fallbackUrl);
+    const failedRegistrationUrlRef = useRef<string | null>(null);
+    if (registrationUrlRef.current !== input.fallbackUrl) {
+        registrationUrlRef.current = input.fallbackUrl;
+        // The registration owner mints a fresh URL only on explicit Open, never on snapshots.
+        // Failure alone cannot retry; a healthy viewer keeps its admitted document and lease.
+        if (input.viewFailed) failedRegistrationUrlRef.current = input.fallbackUrl;
+    }
+    const fallbackKey = JSON.stringify([key, reloadCommandIdRef.current ?? null, failedRegistrationUrlRef.current]);
     const active = input.enabled && Boolean(previewId && machineId) && runtimeActive;
     const allowed = active && input.nativeDirectEnabled !== false && hasNativePreviewRenderer() && eligibility !== 'standard_only';
     const [state, setState] = useState<LeaseState | null>(null);
@@ -147,18 +164,18 @@ export function useNativeDirectPreview(input: NativeDirectPreviewInput): Readonl
         }
         const controller = new AbortController();
         let cancelled = false;
-        setFallbackState({ key, result: null });
+        setFallbackState({ key: fallbackKey, result: null });
         void acquireServerPreviewAccess({
             previewId, machineId, serverId, signal: controller.signal,
             scope: scope.current?.key === key ? scope.current.value : undefined,
             onScopeCaptured: (value) => { if (!cancelled) scope.current = { key, value }; },
         }).then((result) => {
-            if (!cancelled) setFallbackState({ key, result });
+            if (!cancelled) setFallbackState({ key: fallbackKey, result });
         });
         return () => { cancelled = true; controller.abort(); };
-    }, [needsFallback, key, previewId, machineId, serverId]);
+    }, [needsFallback, key, fallbackKey, previewId, machineId, serverId]);
 
-    const fallback = needsFallback && fallbackState?.key === key ? fallbackState : null;
+    const fallback = needsFallback && fallbackState?.key === fallbackKey ? fallbackState : null;
     const fallbackPending = needsFallback && !fallback?.result;
     const serverAccess = fallback?.result;
     return {

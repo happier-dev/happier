@@ -136,8 +136,8 @@ describe('LocalPreviewTarget web', () => {
         const onOpenAgain = vi.fn();
         const onClose = vi.fn();
         const identity = { browserSessionId: 'bs', viewId: 'v', navigationGeneration: 1, collectorId: 'c', nonce: 'n' };
-        const render = (endedPreview: React.ComponentProps<typeof LocalPreviewTarget>['endedPreview']) => (
-            <LocalPreviewTarget title="Lumen" url="https://preview.example.test/" testID="local-preview" endedPreview={endedPreview}
+        const render = (recovery: React.ComponentProps<typeof LocalPreviewTarget>['recovery']) => (
+            <LocalPreviewTarget title="Lumen" url="https://preview.example.test/" testID="local-preview" recovery={recovery}
                 diagnostics={{ ...identity, collectorVersion: '1.0.0', sourceOrigin: 'https://preview.example.test', webPostMessageTargetOrigin: 'https://app.example.test', onEvents: vi.fn() }} />
         );
         const screen = await renderScreen(render({ lastPage: 'localhost:5173/dashboard', onOpenAgain, onClose }),

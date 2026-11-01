@@ -8,11 +8,13 @@ import type {
     ActionExecutorContext,
     ActionId,
 } from '@happier-dev/protocol';
-import { BrowserWorkspaceOpenResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
-import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { BrowserRuntimeWorkspaceOpeningAdapter } from '@/sync/domains/browser/actions/runtimeActionExecutor';
+import { BrowserCommandDispatchResultV1Schema, BrowserWorkspaceOpenResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, type ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createBrowserRuntimeActionExecutor, type BrowserRuntimeWorkspaceOpeningAdapter } from '@/sync/domains/browser/actions/runtimeActionExecutor';
 import {
     claimBrowserRuntimeWorkspaceOpenRegion,
+    readRegisteredBrowserRuntimeControlAdapter,
+    readRegisteredBrowserRuntimeAutomationAdapter,
     type BrowserWorkspaceOpenerRegion,
 } from '@/sync/domains/browser/actions/runtimeControlRegistry';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -34,10 +36,10 @@ import {
 import type { BrowserViewState } from '@/sync/domains/browser/types';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { selectLocalServicePreviewByBrowserTarget } from '@/sync/domains/local/services/preview/store';
-import { openOrCreateLocalServicePreviewViaMachineRpc } from '@/sync/domains/local/services/preview/machineRpc';
 import { normalizeLocalServicePreviewSnapshotPayload } from '@/sync/domains/local/services/preview/api';
-import { publishLocalServicePreviewSnapshot } from '@/sync/domains/local/services/preview/sharedStore';
-import { LocalServicePreviewServiceTargetV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import { getLocalServicePreviewState } from '@/sync/domains/local/services/preview/sharedStore';
+import { resolveLocalServiceStartFailure } from '@/sync/domains/local/services/serviceFailure';
+import { DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, LocalServicePreviewServiceTargetV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 
 import {
     createBrowserViewDetailsTab,
@@ -349,8 +351,16 @@ export function createOpenBrowserTargetInWorkspace(
             const current = () => deps.accountLifetime?.isCurrent() === true
                 && deps.isCurrent?.() !== false && !context.signal?.aborted;
             if (!current()) return unavailable();
-            const facts = deps.readOpenFacts?.() ?? deps;
             const target = request.target;
+            const workspaceFacts = deps.readOpenFacts?.() ?? deps;
+            // Details can own presentation without mounting a preview feed. An
+            // explicit open still reads the registration already published by
+            // the Service action from its canonical Machine/Home store.
+            const facts = target.kind === 'localServicePreview' && !workspaceFacts.localServicePreviewState
+                ? { ...workspaceFacts, localServicePreviewState: getLocalServicePreviewState({
+                    machineId: target.machineId, serverId: deps.accountLifetime?.scope.serverId,
+                    accountId: deps.accountLifetime?.scope.accountId,
+                }) } : workspaceFacts;
             const resolved = resolveBrowserViewTargetOpenTab(facts, target);
             // Launchpad policy/URL options are presentation hints, not authority. UI and Agent
             // resolve the same current workspace facts after approval, at this one selector.
@@ -368,6 +378,41 @@ export function createOpenBrowserTargetInWorkspace(
                 if (!await openBrowserExternalTabSelection(selection)) return { ok: false,
                     errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_adapter_unavailable' };
             } else {
+                const control = readRegisteredBrowserRuntimeControlAdapter(resolved.browserSessionId, resolved.viewId, deps.accountLifetime?.scope);
+                const view = control?.readState()?.viewsById[resolved.viewId];
+                // Reopening an existing tab is an explicit navigation intent. Its mounted
+                // engine owns the current document, so updating the tab alone cannot return
+                // a page that has navigated away to the Service's freshly resolved address.
+                const retryPreview = target.kind === 'localServicePreview' && view?.loadingState === 'failed';
+                const returnToTarget = view && (retryPreview || view.target.kind !== target.kind || view.target.targetId !== target.targetId
+                    || (resolved.currentUrl
+                        ? view.currentUrl !== resolved.currentUrl || view.pendingUrl !== null
+                        : target.kind === 'localServicePreview' && (view.currentUrl !== null || view.pendingUrl !== null)));
+                if (control && view && returnToTarget) {
+                    const dispatch = createBrowserRuntimeActionExecutor({ control,
+                        automation: readRegisteredBrowserRuntimeAutomationAdapter(resolved.browserSessionId, resolved.viewId, deps.accountLifetime?.scope) ?? undefined });
+                    const reopen = { actionId: 'browser.view.open', input: {
+                        kind: 'openView', commandId: request.commandId, browserSessionId: resolved.browserSessionId,
+                        viewId: resolved.viewId, target, platform: openOptions.platform,
+                        currentUrl: resolved.currentUrl, currentUrlExpiresAt: resolved.currentUrlExpiresAt, focus: true,
+                    } } as const;
+                    // A failed retained preview also owns a latched access refusal. Reuse
+                    // Reload's existing admission reset; healthy opens do not reacquire it.
+                    const reload = { actionId: 'browser.reload', input: { kind: 'reload',
+                        commandId: `${request.commandId}:reload`, browserSessionId: resolved.browserSessionId,
+                        viewId: resolved.viewId } } as const;
+                    for (const command of retryPreview ? [reopen, reload] : [reopen]) {
+                        const result = await dispatch({ ...command, context });
+                        const failure = ActionExecuteFailureSchema.safeParse(result);
+                        if (failure.success) return failure.data;
+                        const dispatched = BrowserCommandDispatchResultV1Schema.safeParse(result);
+                        if (!dispatched.success) return unavailable();
+                        if (dispatched.data.status === 'failed') return { ok: false,
+                            errorCode: dispatched.data.error.code, error: dispatched.data.error.message,
+                            details: { retryable: dispatched.data.error.retryable } };
+                        if (!current()) return unavailable();
+                    }
+                }
                 deps.openDetailsTab(resolved.tab, { intent: 'default',
                     ...(presentation?.openerRegion ? { origin: presentation.openerRegion } : {}) });
                 deps.onRememberRecentTarget?.(target);
@@ -421,16 +466,24 @@ export type ServicesOpenInBrowserResult =
 type ServicesOpenInBrowserDeps = Readonly<{
     onOpenTarget: OpenBrowserViewTarget;
     platform: BrowserPlatformV1;
+    actionExecute?: CreateOpenBrowserTargetInWorkspaceDeps['actionExecute'];
 }> & Readonly<{
     serverId?: string | null;
     sessionId?: string | null;
+    accountLifetime?: ServerAccountScopeLifetime | null;
+    credentialKey?: string;
 }>;
 
 export function bindServicesOpenInBrowser(
     deps: ServicesOpenInBrowserDeps,
 ): (target: LocalServiceLaunchTargetV1) => Promise<ServicesOpenInBrowserResult> {
     const openBrowserViewTarget = deps.onOpenTarget;
+    const serverId = deps.accountLifetime?.scope.serverId ?? deps.serverId;
     return async (target: LocalServiceLaunchTargetV1): Promise<ServicesOpenInBrowserResult> => {
+        if (deps.accountLifetime !== undefined && deps.accountLifetime?.isCurrent() !== true) return { ok: false,
+            errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+        const startFailure = resolveLocalServiceStartFailure(target);
+        if (startFailure) return { status: 'denied', reasonCode: startFailure.reasonCode };
         if (target.state === 'unavailable' || !target.machineId.trim()) {
             return { status: 'denied', reasonCode: 'browser_target_unavailable' };
         }
@@ -458,26 +511,23 @@ export function bindServicesOpenInBrowser(
             const targetReference = serviceTarget ? { serviceTarget } : inventoryEntryId
                 ? { inventoryEntryId }
                 : { launchTargetId: browserTarget?.kind === 'localServicePreview' ? browserTarget.targetId : target.id };
-            const result = await openOrCreateLocalServicePreviewViaMachineRpc({
-                serverId: deps.serverId,
-                request: {
-                    machineId: target.machineId,
-                    ...(sessionId ? { sessionId } : {}),
-                    ...targetReference,
-                },
-            });
-            if (!result.ok) {
-                return {
-                    status: 'denied',
-                    reasonCode: result.reason.startsWith('refused:')
-                        ? result.reason.slice('refused:'.length)
-                        : 'preview_registration_failed',
-                };
-            }
-            const snapshot = normalizeLocalServicePreviewSnapshotPayload(result.response.snapshot, target.machineId);
-            if (!snapshot) return { status: 'denied', reasonCode: 'preview_registration_failed' };
-            publishLocalServicePreviewSnapshot({ machineId: target.machineId, serverId: deps.serverId }, snapshot);
-            const preview = result.response.preview;
+            const execute = deps.actionExecute ?? (await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')).createFrontDoorActionExecute();
+            const result = await execute('localServices.preview.openOrCreate', {
+                machineId: target.machineId,
+                ...(sessionId ? { sessionId } : {}),
+                ...targetReference,
+            }, { surface: 'ui', authority: 'present_user', serverId: serverId ?? undefined,
+                expectedAccountId: deps.accountLifetime?.scope.accountId });
+            if (!result.ok) return result;
+            const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
+            if (approval.success) return approval.data;
+            const response = DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.safeParse(result.result);
+            if (!response.success || !normalizeLocalServicePreviewSnapshotPayload(response.data.snapshot, target.machineId))
+                return { status: 'denied', reasonCode: 'preview_registration_failed' };
+            if (deps.accountLifetime && !deps.accountLifetime.isCurrent()) return { ok: false,
+                errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+            // The admitted local-services runtime publishes through its captured Account owner.
+            const preview = response.data.preview;
             const registeredTarget: BrowserViewTargetV1 = preview.resource.browserTarget ?? {
                 kind: 'localServicePreview',
                 targetId: preview.previewId,
@@ -492,8 +542,8 @@ export function bindServicesOpenInBrowser(
                 ...(preview.accessUrl ? { currentUrl: preview.accessUrl } : {}),
             });
             if (opened && !opened.ok) return opened;
-            const approval = opened && ActionApprovalRequestCreatedResultSchema.safeParse(opened.result);
-            if (approval && approval.success) return approval.data;
+            const openedApproval = opened && ActionApprovalRequestCreatedResultSchema.safeParse(opened.result);
+            if (openedApproval && openedApproval.success) return openedApproval.data;
             return { status: 'succeeded' };
         }
         if (!browserTarget) {

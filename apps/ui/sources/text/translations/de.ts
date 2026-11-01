@@ -10925,12 +10925,36 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             runScriptA11y: 'Skript in einem neuen Terminal-Tab ausführen',
             failure: {
                 title: 'Aktion nicht abgeschlossen',
-                refused: 'Der Rechner hat diese Aktion abgelehnt. Prüf die Berechtigungen für lokale Dienste auf diesem Rechner und versuch es noch mal.',
+                refused: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Der Rechner hat diese Aktion abgelehnt."
+                  : 'Der Rechner hat diese Aktion abgelehnt. Prüf die Berechtigungen für lokale Dienste auf diesem Rechner und versuch es noch mal.',
                 unavailable: 'Diese Aktion ist für diesen Dienst auf diesem Rechner nicht verfügbar.',
-                incomplete: 'Die Aktion wurde nicht zu Ende geführt. Du kannst es noch mal versuchen.',
-                serviceNotRunning: 'Dieser Dienst läuft nicht mehr; sieh unter Dienste nach.',
-                namedServiceNotRunning: ({ service }: { service: string }) => `${service} läuft nicht mehr; sieh unter Dienste nach.`,
-                outcomeUnknown: 'Das Ergebnis der Aktion ist unbekannt. Prüfe diesen Dienst auf dem ausgewählten Rechner, bevor du es erneut versuchst.',
+                incomplete: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Die Aktion wurde nicht zu Ende geführt."
+                  : 'Die Aktion wurde nicht zu Ende geführt. Du kannst es noch mal versuchen.',
+                serviceNotRunning: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Dieser Dienst läuft nicht mehr."
+                  : 'Dieser Dienst läuft nicht mehr; sieh unter Dienste nach.',
+                namedServiceNotRunning: ({ service, servicesActionOffered = false }: { service: string; servicesActionOffered?: boolean }) => servicesActionOffered
+                  ? `${service} läuft nicht mehr.`
+                  : `${service} läuft nicht mehr; sieh unter Dienste nach.`,
+                previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Dieser Dienst ist noch nicht zum Öffnen bereit."
+                  : 'Dieser Dienst ist noch nicht zum Öffnen bereit; sieh unter Dienste nach.',
+                browserViewUnavailable: "Happier konnte seine In-App-Browseransicht nicht öffnen. Versuche es gleich noch einmal.",
+                startFailedTitle: "Dienst konnte nicht starten",
+                startFailed: "Der Dienst wurde beendet, bevor er bereit war.",
+                namedStartFailed: ({ service }: { service: string }): string => `${service} wurde beendet, bevor der Dienst bereit war.`,
+                previewFailed: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Die Vorschau konnte nicht geöffnet werden."
+                  : 'Die Vorschau konnte nicht geöffnet werden; prüfe Dienste und versuche es erneut.',
+                previewUnavailable: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Der Vorschauzugriff ist nicht verfügbar."
+                  : 'Der Vorschauzugriff ist nicht verfügbar; sieh unter Dienste nach.',
+                namedReason: ({ service, reason }: { service: string; reason: string }) => `${service}: ${reason}`,
+                outcomeUnknown: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
+                  ? "Das Ergebnis der Aktion ist unbekannt."
+                  : 'Das Ergebnis der Aktion ist unbekannt. Prüfe diesen Dienst auf dem ausgewählten Rechner, bevor du es erneut versuchst.',
       portInUse: ({ port }: { port: number }) => `Port ${port} wird bereits verwendet. Beende den bestehenden Dienst oder wähle einen anderen Port.`,
       portInUseSameProject: ({ port }: { port: number }) => `Port ${port} wird bereits von diesem Projekt verwendet. Nutze den laufenden Dienst oder wähle einen anderen Port.`,
       processExit: ({ code }: { code: string }) => `Der Dienst wurde mit Code ${code} beendet. Prüfe die Details vor einem erneuten Versuch.`,
@@ -11153,14 +11177,21 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             previewElsewhere: `Dieses Gerät kann ihn nicht direkt öffnen. Teile einen Link unter Dienste, um ihn hier zu öffnen.`,
             previewEndedTitle: `Diese Vorschau ist beendet`,
             previewEnded: `Der Dienst teilt sie nicht mehr, oder der Link wurde widerrufen. Öffne sie erneut unter Dienste.`,
-            previewEndedLastPage: ({ page }: { page: string }) => `Die letzte Seite war ${page}. Der Dienst teilt sie nicht mehr, oder der Link wurde widerrufen. Öffne sie erneut unter Dienste.`,
+            previewEndedLastPageDetail: ({ page }: { page: string }) => `Letzte Seite: ${page}`,
+            previewEndedStopped: `Der Dienst teilt sie nicht mehr, oder der Link wurde widerrufen.`,
+            previewEndedServiceStopped: ({ service }: { service: string }) => `${service} wurde beendet.`,
             previewEndedRunning: `Der Dienst läuft, du kannst sie hier erneut öffnen.`,
-            previewEndedRunningLastPage: ({ page }: { page: string }) => `Die letzte Seite war ${page}. Der Dienst läuft, du kannst sie hier erneut öffnen.`,
+            previewEndedNamed: ({ service }: { service: string }) => `${service} teilt sie nicht mehr, oder der Link wurde widerrufen. Öffne sie erneut unter Dienste.`,
+            previewEndedStoppedNamed: ({ service }: { service: string }) => `${service} teilt sie nicht mehr, oder der Link wurde widerrufen.`,
+            previewEndedRunningNamed: ({ service }: { service: string }) => `${service} läuft, du kannst sie hier erneut öffnen.`,
             openAgain: `Erneut öffnen`,
             openServices: `Zu den Diensten`,
             previewTransportUnavailableTitle: `Vorschau nicht erreichbar`,
-            previewTransportUnavailable: `Der Rechner, auf dem sie läuft, antwortet gerade nicht. Lade neu, um es erneut zu versuchen.`,
+            previewTransportUnavailable: `Der Rechner, auf dem sie läuft, antwortet gerade nicht.`,
             closeTab: `Tab schließen`,
+            previewTransportUnavailableNamed: ({ machine }: { machine: string }) => `${machine} antwortet gerade nicht für diese Vorschau.`,
+            startService: ({ service }: { service: string }) => `${service} starten`,
+            startAgain: `Erneut starten`,
             desktopEngineUnavailable: 'Die In-App-Browser-Engine ist auf diesem Rechner nicht verfügbar.',
             desktopWebView: 'Die In-App-Browser-Engine ist auf diesem Rechner nicht verfügbar. Du kannst diese Seite weiterhin im System-Browser öffnen.',
             desktopWebViewUnsupportedPlatform: "Das Browsen in der App gibt es auf dieser Plattform noch nicht.",

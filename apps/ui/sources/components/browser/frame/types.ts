@@ -164,8 +164,8 @@ export type WebIframeEngineConfig = Readonly<{
     onNavigationStateChange?: (navigationState: BrowserFrameNavigationState) => void;
     /** The relay proxy refused the preview's document; the frame shows that state in place of the page. */
     onPreviewRefused?: (reasonCode: BrowserPreviewRefusalReasonCode) => void;
-    /** What an ended preview offers: its last page, Open again while its Service runs, and Close tab. */
-    endedPreview?: BrowserEndedPreviewRecovery;
+    /** What the preview's card offers in place of the page (see `BrowserFrameRecovery`). */
+    recovery?: BrowserFrameRecovery;
     /**
      * An opaque Artifact guest cannot expose its loaded URL to the host. Its
      * first load is the declared entry; every later load retires the frame.
@@ -226,16 +226,41 @@ export type BrowserFrameEngineConfig =
     | BrowserErrorEngineConfig;
 
 /**
- * The recovery an ended relay preview offers in place of the page. The Browser shell resolves it:
- * the last page as its address reads, the reopen through the Services opener when the same Service
- * runs now, and closing the tab.
+ * The recovery a relay preview's card offers in place of the page. The Browser shell resolves it:
+ * for an ended preview, the last page's title (or display address), the reopen through the Services opener
+ * when the same Service runs now, the scope's way to Services, and closing the tab; for a preview it
+ * cannot reach, trying again through the toolbar's reload.
  */
-export type BrowserEndedPreviewRecovery = Readonly<{
+export type BrowserFrameRecovery = Readonly<{
+    /** The serving Machine's existing display-name projection; absent rows never expose a raw id. */
+    machineName?: string | null;
     lastPage?: string | null;
     onOpenAgain?: () => void | Promise<unknown>;
     /** Why the last Open again was refused, in the Services opener's own words. */
     openAgainFailure?: string | null;
+    /** Current failed-start presentation and the Services row's existing sanitized output recovery. */
+    serviceStartFailure?: Readonly<{
+        reasonCode: string;
+        title: string;
+        body: string;
+        recovery?: import('@/sync/domains/local/services/serviceFailure').LocalServiceOutputRecovery;
+    }>;
+    /** Current matching Service name, or the preview's retained display name after it disappears. */
+    serviceName?: string | null;
+    /** The Service this preview belongs to, when Services knows it has stopped. */
+    stoppedServiceName?: string | null;
+    /**
+     * Start the stopped or failed Service through the Services row's own Start Action. The card binds the
+     * Action admission; `run` settles its outcome under the shell's one Services outcome runner.
+     */
+    startAgain?: Readonly<{
+        target: import('@/sync/domains/local/services/launch').LocalServiceLaunchTarget;
+        serverId: string | null;
+        run: (start: () => Promise<unknown>) => Promise<boolean>;
+    }>;
     /** The scope's own way to its Services surface, when the scope has one. */
     onOpenServices?: () => void;
     onClose?: () => void;
+    /** The toolbar's reload, offered as Try again on a preview the machine is not answering for. */
+    onTryAgain?: () => void;
 }>;
