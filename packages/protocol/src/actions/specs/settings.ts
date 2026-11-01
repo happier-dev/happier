@@ -8,7 +8,7 @@ export const ACTION_POLICY_SPECS = Object.freeze([
   ...(ACTION_POLICY_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
     id, title: id === 'actions.policy.get' ? 'Read Action policy' : id === 'actions.policy.reset' ? 'Reset Action policy' : 'Change Action policy',
     description: 'Read or change one exact Action policy preference. Default and reset restore inherited audience policy; unrelated preferences remain intact. Policy changes require human authority.',
-    approval: { result: 'required' }, originalExecution: { accountRoot: 'allowed', terminalRoot: 'host' },
+    approval: { result: 'required' }, originalExecution: { terminalRoot: 'host' },
     ...(id !== 'actions.policy.get' ? { permissionChanging: true as const, approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
     safety: id === 'actions.policy.get' ? 'safe' : 'danger', sideEffectClass: id === 'actions.policy.get' ? 'read' : 'write',
     requiredAuthority: id === 'actions.policy.get' ? 'account_automation' : 'present_user',
@@ -31,7 +31,7 @@ export const ACTION_POLICY_SPECS = Object.freeze([
 
 export const SETTINGS_ADMINISTRATION_ACTION_SPECS = Object.freeze([
   ...(SETTINGS_DECLARATION_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
-    id, approval: { result: 'required' }, originalExecution: { accountRoot: 'allowed', terminalRoot: 'host' },
+    id, approval: { result: 'required' }, originalExecution: { terminalRoot: 'host' },
     // The operation schema stays behind realtime discovery; the native Agent
     // and Local Voice instructions share its ordinary direct-tool exposure.
     prompting: { voiceHotPath: id !== 'settings.invoke' },

@@ -163,12 +163,11 @@ export const SKILL_ACTION_SPECS_V1 = [
       commands: [{ path: ['skills', 'machine-uninstall'], positionals: ['itemId'], visibility: 'canonical' }] } },
   // The app's plugin-library supplier reads these Account Actions through a
   // Machine executor; it is an interactive Account root, not a Session caller.
-  { ...skillSpec('skills.list', 'List skills', true), originalExecution: { accountRoot: 'allowed' }, cli: { acceptsServerId: true,
+  { ...skillSpec('skills.list', 'List skills', true), cli: { acceptsServerId: true,
     inputSchema: z.strictObject({ query: z.optional(z.string()), state: z.optional(z.enum(['in-use', 'off', 'updates', 'attention'])) }),
     bindInput: (raw: unknown) => { const input = readRecord(raw); return { ...input, ...(input.state ? { state: input.state === 'in-use' ? 'in_use' : input.state === 'attention' ? 'needs_attention' : input.state } : {}) }; },
     commands: [{ path: ['skills', 'list'], visibility: 'canonical' as const }] } },
   { id: 'skills.read', title: 'Read a skill', description: 'Read a library skill and its supporting files. By name, read only a skill delivered to the selected session.',
-    originalExecution: { accountRoot: 'allowed' },
     contextualDefaults: { sessionId: 'current_session' },
     approval: { result: 'none' }, approvalPolicy: {}, safety: 'safe', sideEffectClass: 'read', requiredAuthority: 'account_automation', executionPlacement: 'account', executionPlacements: ['account', 'session'],
     executionPlacementForInput: (raw: unknown) => SkillReadInputV1Schema.parse(raw).sessionId ? 'session' : 'account', placements: [],

@@ -40,7 +40,7 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     title: 'Set Project deployment defaults',
     description: 'Save or clear one shared Project defaults leaf under Source and content revisions. Existing Environments keep their configured values.',
     safety: 'danger', sideEffectClass: 'write', approvalPolicy: { uiConfirmation: 'direct' },
-    requiredAuthority: 'account_automation', originalExecution: { accountRoot: 'allowed' },
+    requiredAuthority: 'account_automation',
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     bindings: { mcpToolName: 'projects_deployment_defaults_set' },
     cli: { acceptsServerId: true, commands: [{ path: ['projects', 'deployment-defaults', 'set'], visibility: 'canonical' }] },

@@ -43,7 +43,7 @@ export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((a
     || actionId === 'machines.managed.list' || actionId === 'machines.managed.get'
     || actionId === 'machines.managed.cancel' || actionId === 'machines.managed.references.get' || actionId === 'machines.managed.setup.skip';
   return {
-    id: actionId, approval: { result: 'required' }, originalExecution: { accountRoot: 'allowed', terminalRoot: 'allowed' },
+    id: actionId, approval: { result: 'required' }, originalExecution: { terminalRoot: 'allowed' },
     ...(actionId === 'machines.managed.acquire' || actionId === 'machines.managed.bootstrap.retry'
       || actionId === 'machines.managed.power.set'
       || actionId === 'machines.managed.retention.update' || actionId === 'machines.managed.controller.update'

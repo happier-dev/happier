@@ -16,7 +16,7 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
       return parsed.success && parsed.data.intent === 'preview' ? 'safe' as const : 'danger' as const;
     },
     approval: { result: 'optional', flow: 'deferred' }, approvalPolicy: { uiConfirmation: 'direct' },
-    originalExecution: { accountRoot: 'allowed' }, placements: [],
+    placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     bindings: { mcpToolName: 'discussion_second_opinion_start', voiceClientToolName: 'discussion_second_opinion_start' },
     inputSchema: DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.second_opinion.start'],
@@ -35,7 +35,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.list', executionPlacement: 'account', approval: {result: 'required'},
-    originalExecution: { accountRoot: 'allowed' },
     title: 'List Discussions',
     description: 'List the human discussions in the captured Home, newest activity first. Titles are opened locally; unread and mention counts are the caller’s own private facts.',
     safety: 'safe',
@@ -61,7 +60,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.get', executionPlacement: 'account', approval: {result: 'required'},
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Read one Discussion',
     description: 'Read one human discussion’s opened title, activity, capabilities and the caller’s private unread facts. It returns no message bodies.',
     safety: 'safe',
@@ -85,7 +83,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.read', executionPlacement: 'account', approval: {result: 'required'},
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Read discussion messages',
     description: 'Read one committed message or a bounded history page, opened locally. Local IDs select only the caller’s authored messages. Reading never advances the caller’s private read cursor.',
     safety: 'safe',
@@ -114,7 +111,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.attachment.read', executionPlacement: 'account', approval: { result: 'required' },
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Read a Discussion attachment',
     description: 'Open one file from its committed Discussion message under current access. The executing client verifies the bytes with the Discussion key. Reading never advances a private read cursor.',
     safety: 'safe',
@@ -140,7 +136,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   {
     id: 'discussion.create', executionPlacement: 'account', approvalPolicy: { uiConfirmation: 'direct' }, approval: {result: 'optional',flow: 'deferred'},
     sessionTarget: { field: 'participants.*.sessionId', cardinality: 'one' },
-    originalExecution: { accountRoot: 'allowed' },
     requiredAuthority: 'present_user',
     title: 'Start a Discussion',
     description: 'Start one human discussion with its title and first message in a single atomic write. Agent and MCP callers request present-user approval. To upload attachment leaves in firstMessage.content, supply attachmentSources as [{blobId,path}] with absolute file paths on the invoking Machine; the CLI host verifies the declared size and SHA-256 before upload.',
@@ -163,7 +158,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.post', executionPlacement: 'account', approvalPolicy: { uiConfirmation: 'direct' }, approval: {result: 'optional',flow: 'deferred'},
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Post a discussion message',
     description: 'Post one authored message to a human discussion. Every currently admitted Discussion reader sees it. An Agent posts under its own authenticated execution Account with visible “via agent” attribution; it never posts as the person who asked. Pair attachment leaves in content with attachmentSources: [{blobId,path}], using absolute file paths on the invoking Machine. The host verifies size and SHA-256 and uploads through the same admitted writer.',
     safety: 'danger',
@@ -190,7 +184,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.rename', executionPlacement: 'account', approval: {result: 'optional',flow: 'deferred'},
-    originalExecution: { accountRoot: 'allowed' },
     requiredAuthority: 'present_user',
     title: 'Rename a discussion',
     description: 'Change one human discussion’s title. It does not reorder the discussion or touch its messages.',
@@ -213,7 +206,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.archive', executionPlacement: 'account', approval: {result: 'optional',flow: 'deferred'},
-    originalExecution: { accountRoot: 'allowed' },
     requiredAuthority: 'present_user',
     title: 'Archive a discussion',
     description: 'Archive one human discussion. It stays readable and restorable; new posts and title changes stop.',
@@ -235,7 +227,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.restore', executionPlacement: 'account', approval: {result: 'optional',flow: 'deferred'},
-    originalExecution: { accountRoot: 'allowed' },
     requiredAuthority: 'present_user',
     title: 'Restore a discussion',
     description: 'Restore one archived human discussion so it accepts posts again.',
@@ -257,7 +248,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.read_state.set', executionPlacement: 'account', approval: {result: 'optional',flow: 'deferred'},
-    originalExecution: { accountRoot: 'allowed' },
     requiredAuthority: 'present_user',
     title: 'Mark a discussion read',
     description: 'Advance the executing Account’s own private read position in a discussion. Agent and MCP callers request present-user approval.',
@@ -280,7 +270,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.reply', executionPlacement: 'account', approvalPolicy: { uiConfirmation: 'direct' }, approval: { result: 'optional', flow: 'deferred' },
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Reply in a discussion',
     description: 'Reply to one committed message in this Discussion through the same admitted message writer. A reply to an Agent-produced message can address that participant and start a turn, subject to its answer policy and current delivery admission. Replying grants no source access or additional authority. Attachment leaves accept attachmentSources: [{blobId,path}], using absolute file paths on the invoking Machine and the same verified upload as discussion.post.',
     safety: 'danger', sideEffectClass: 'danger', placements: [],
@@ -300,7 +289,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.participants.list', executionPlacement: 'account', approval: { result: 'required' },
-    originalExecution: { accountRoot: 'allowed' },
     title: 'List discussion participants',
     description: 'Inspect the authorized Discussion roster through its current grants. Membership and private Follow choices remain separate.',
     safety: 'safe', sideEffectClass: 'read', placements: [],
@@ -314,7 +302,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.candidates.list', executionPlacement: 'account', approval: { result: 'required' },
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Find discussion participants',
     description: 'Search eligible people or page accessible Sessions on this Home. Models project only supplied ordinary authoring selections; this read never probes, starts or invites a participant.',
     safety: 'safe', sideEffectClass: 'read', placements: [],
@@ -333,7 +320,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.settings.get', executionPlacement: 'account', approval: { result: 'required' },
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Read discussion settings',
     description: 'Read the Discussion check-in override. An absent override inherits the Account setting; null never pauses.',
     safety: 'safe', sideEffectClass: 'read', placements: [],
@@ -348,7 +334,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.settings.set', executionPlacement: 'account', approvalPolicy: { uiConfirmation: 'direct' }, approval: { result: 'optional', flow: 'deferred' },
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Set discussion settings',
     description: 'Set this Discussion’s check-in override through its current owner or admin authority. Empty settings restore Account inheritance; null never pauses.',
     safety: 'danger', sideEffectClass: 'write', placements: [],
@@ -366,7 +351,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   {
     id: 'discussion.invite', executionPlacement: 'account', approvalPolicy: { uiConfirmation: 'direct' }, approval: { result: 'optional', flow: 'deferred' },
     sessionTarget: { field: 'participant.sessionId', cardinality: 'one' },
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Invite a participant to a discussion',
     description: 'Invite a person, bind an existing Session, or reserve a model slot and start its ordinary Session without an initial prompt. Retain the same slot on an uncertain start. This grants no access to an anchored source.',
     safety: 'danger', sideEffectClass: 'write', placements: [],
@@ -386,7 +370,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
     id: 'discussion.participant.policy.set', executionPlacement: 'account', approvalPolicy: { uiConfirmation: 'direct' },
     sessionTarget: { field: 'participant.sessionId', cardinality: 'one' },
     approval: { result: 'optional', flow: 'deferred' },
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Set a discussion participant answer policy',
     description: 'Choose when addressed, reads only, private drafts for review, or watch and speak up. Watching spends model turns even when the agent stays silent. Changing Action confirmation does not waive private draft review.',
     safety: 'danger', sideEffectClass: 'write', placements: [],
@@ -405,7 +388,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   {
     id: 'discussion.participant.remove', executionPlacement: 'account', approvalPolicy: { uiConfirmation: 'direct' },
     approval: { result: 'optional', flow: 'deferred' },
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Remove a discussion invitation',
     description: 'Remove a person’s direct grant, detach an existing Session, or archive a Discussion-owned model Session through ordinary Session lifecycle. Inherited Team and Group access remains explicit.',
     safety: 'danger', sideEffectClass: 'write', placements: [],
@@ -422,7 +404,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.leave', executionPlacement: 'account', approval: { result: 'optional', flow: 'deferred' }, requiredAuthority: 'present_user',
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Leave a discussion',
     description: 'Remove only the present person’s direct invitation. An owner must transfer ownership or choose the existing archive operation; inherited access is not removed.',
     safety: 'safe', sideEffectClass: 'write', placements: [],
@@ -437,7 +418,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   {
     id: 'discussion.owner.transfer', executionPlacement: 'account', approval: { result: 'optional', flow: 'deferred' }, requiredAuthority: 'present_user',
     irreversible: true,
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Transfer discussion ownership',
     description: 'The current owner transfers ownership to an eligible person in the same grant transaction. Cancelling approval preserves ownership.',
     safety: 'danger', sideEffectClass: 'write', placements: [],
@@ -454,7 +434,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.access.grants.list', executionPlacement: 'account', approval: { result: 'required' },
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Inspect discussion sharing',
     description: 'Read the Discussion’s effective access and explicit Account, Team and Group grants through the shared resource grant owner.',
     safety: 'safe', sideEffectClass: 'read', placements: [],
@@ -468,7 +447,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'discussion.access.grants.set', executionPlacement: 'account', approvalPolicy: { uiConfirmation: 'direct' }, approval: { result: 'optional', flow: 'deferred' },
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Share a discussion',
     description: 'Set an explicit resource grant using the shared PrincipalRef and view/edit/admin policy. Source grants remain separate.',
     safety: 'danger', sideEffectClass: 'write', placements: [],
@@ -487,7 +465,6 @@ export const DISCUSSION_ACTION_SPECS_V1 = Object.freeze(defineActionSpecs([
   {
     id: 'discussion.access.grants.remove', executionPlacement: 'account', approval: { result: 'optional', flow: 'deferred' },
     irreversible: true,
-    originalExecution: { accountRoot: 'allowed' },
     title: 'Remove discussion sharing',
     description: 'Remove an explicit resource grant through the same shared resource grant owner and current access checks.',
     safety: 'danger', sideEffectClass: 'write', placements: [],

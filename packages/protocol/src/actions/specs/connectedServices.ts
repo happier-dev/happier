@@ -118,7 +118,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
     bindings: { mcpToolName: 'connected_services_billing_open' }, inputSchema: inputs['connectedServices.billing.open'], outputSchema: outputs['connectedServices.billing.open'], inputHints: { fields: [
       { path: 'account', title: 'Qualified account', widget: 'json', required: true }, { path: 'machineId', title: 'Catalog machine', widget: 'text', required: true },
     ] } },
-  { ...common, id: 'connectedServices.quota.get', originalExecution: { accountRoot: 'allowed', nativePurpose: 'quota_read' }, approval: {result: 'none'}, safety: 'safe', sideEffectClass: 'read', title: 'Read connected-service quota', description: 'Read the current accepted quota, requested history, witnessed pace and advisory targets without refreshing the provider.', bindings: { mcpToolName: 'connected_services_quota_get' }, inputSchema: inputs['connectedServices.quota.get'], outputSchema: outputs['connectedServices.quota.get'], inputHints: { fields: [
+  { ...common, id: 'connectedServices.quota.get', originalExecution: { nativePurpose: 'quota_read' }, approval: {result: 'none'}, safety: 'safe', sideEffectClass: 'read', title: 'Read connected-service quota', description: 'Read the current accepted quota, requested history, witnessed pace and advisory targets without refreshing the provider.', bindings: { mcpToolName: 'connected_services_quota_get' }, inputSchema: inputs['connectedServices.quota.get'], outputSchema: outputs['connectedServices.quota.get'], inputHints: { fields: [
     { path: 'source', title: 'Qualified usage source', widget: 'json', required: true },
     { path: 'history', title: 'Requested history range and page', widget: 'json' },
   ] } },
