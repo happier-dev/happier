@@ -1396,6 +1396,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     modelMode: mergedModelMode,
                     modelModeUpdatedAt: mergedModelModeUpdatedAt,
                 };
+                // Preserve the full response clock independently of merged compact-list lifecycle facts.
+                const publicationAddress = normalizeSessionAddress(nextSession.serverId, nextSession.id);
+                if (publicationAddress) {
+                    sessionRuntimeObservations.recordFullPublication(publicationAddress, incomingSession.updatedAt, nextSession);
+                }
                 const mergedSession = previousSession && areStoredSessionsEqual(previousSession, nextSession)
                     ? previousSession
                     : reuseEqualSessionObjectFields(previousSession, nextSession);

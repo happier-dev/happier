@@ -48,7 +48,8 @@ export function isHydratedSessionCurrentForListState(
     if ((observedAdmission?.observedMetadataVersion ?? currentRenderable.metadataVersion) > session.metadataVersion) return false;
     if ((observedAdmission?.observedAgentStateVersion ?? currentRenderable.agentStateVersion) > session.agentStateVersion) return false;
     if (currentRenderable.seq > session.seq) return false;
-    if (readSessionFullPublicationUpdatedAt(currentRenderable) > sessionPublicationUpdatedAt) return false;
+    if (readSessionFullPublicationUpdatedAt({ id: currentRenderable.id, serverId: currentRenderable.serverId })
+        > sessionPublicationUpdatedAt) return false;
     if (!classifySessionTupleApplyCurrentness(currentRenderable, session).fullyCurrent) return false;
     return (currentRenderable.archivedAt ?? null) === (session.archivedAt ?? null);
 }

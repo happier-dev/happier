@@ -255,7 +255,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                 if (order === 'list-first' && !storedWitness) {
                     publishList(row.updatedAt + 1);
                     await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false }))
-                        .resolves.toMatchObject({ kind: 'awaiting_push', errorCode: 'stale_response' });
+                        .resolves.toMatchObject({ kind: 'available' });
                     row = { ...row, updatedAt: row.updatedAt + 1 };
                     await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false }))
                         .resolves.toMatchObject({ kind: 'available' });
@@ -267,6 +267,35 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
 
 
+
+    it('keeps a newly created Session route available while its first turn advances the compact list', async () => {
+        const { sync } = await import('./sync');
+        const sessionId = 'spawned-first-turn-list-advance';
+        const row = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, updatedAt: 20, seq: 1 });
+        const credentials = { token: tokenForSub('account-a') };
+        const currentness = createPlainAccountEncryptionCurrentnessFixture();
+        Reflect.set(sync, 'credentials', credentials);
+        const serverId = getActiveServerSnapshot().serverId!;
+        const requested = createDeferred<void>();
+        const response = createDeferred<void>();
+        requestMock.mockImplementation(async (path: string) => {
+            if (path !== `/v2/sessions/${sessionId}`) return undefined;
+            requested.resolve();
+            await response.promise;
+            return Response.json({ session: row });
+        });
+        const hydration = sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false });
+        await requested.promise;
+        storage.getState().applyServerScopedSessionListRows(serverId,
+            [buildRenderableFromRowAndCache(createCompactSessionListRowFixture({ ...row, updatedAt: 21, seq: 2 }), credentials,
+                currentness, undefined, undefined, undefined,
+                createSessionListDocumentAdmission({ row, serverId, credentials, accountCurrentness: currentness }).scope)],
+            { source: 'ordinary', mode: 'append' });
+        expect(readSessionFullPublicationUpdatedAt({ id: sessionId, serverId })).toBe(0);
+        response.resolve();
+        await expect(hydration).resolves.toMatchObject({ kind: 'available', sessionId });
+        expect(hasAuthoritativeSessionRouteData(storage.getState().sessions[sessionId])).toBe(true);
+    });
 
     it('presents an unchanged encrypted row on its first authoritative publication and then needs no route refetch', async () => {
         const sessionId = 'postsend_publication_retained_content';
