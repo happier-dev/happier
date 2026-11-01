@@ -487,7 +487,7 @@ resolveServerFeaturesSnapshot?: () =>
       if (isDeploymentAction && !deploymentHomeId) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
-      const deploymentDeps = isDeploymentAction && deploymentHomeId ? createDaemonDeploymentActionDeps({
+      const deploymentDeps = (isDeploymentAction || actionId === 'approval.request.decide') && deploymentHomeId ? createDaemonDeploymentActionDeps({
         credentials, serverId: deploymentHomeId,
         ...(requesterAccountContext ? { savedSecretOperationContext: requesterAccountContext.savedSecretOperationContext }
           : requesterRuntime ? { savedSecretOperationContext: requesterRuntime.bootstrap.savedSecretOperationContext } : {}),
