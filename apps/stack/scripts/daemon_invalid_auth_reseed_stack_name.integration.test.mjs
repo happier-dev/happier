@@ -254,7 +254,8 @@ test('invalid-auth auto-reseed uses resolved stack name instead of null placehol
   }
 });
 
-test('invalid-auth auto-reseed overwrites stale target credentials', async () => {
+for (const policy of ['defer', 'refuse', 'reseed']) {
+test(policy === 'reseed' ? 'invalid-auth auto-reseed overwrites stale target credentials' : `native runtime revoked enrollment ${policy}`, async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-reseed-force-'));
   let profileServer = null;
   try {
@@ -320,6 +321,32 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
 
     profileServer = await startProfileAuthServer({ port: 4201, allowToken: seedToken });
 
+    if (policy !== 'reseed') {
+      env.HAPPIER_STACK_AUTO_AUTH_SEED = '0';
+      const authPath = join(targetCliHome, 'access.key');
+      const before = await readFile(authPath, 'utf8');
+      const start = () => startLocalDaemonWithAuth({
+        cliBin, cliHomeDir: targetCliHome, isShuttingDown: () => false,
+        internalServerUrl: profileServer.url,
+        publicServerUrl: profileServer.url,
+        forceRestart: true, env,
+        ...(policy === 'defer' ? { allowSignInRequired: true } : {}),
+      });
+      if (policy === 'defer') {
+        const result = await start();
+        assert.equal(result.ok, false);
+        assert.equal(result.reason, 'sign-in-required');
+      } else {
+        await assert.rejects(start);
+      }
+      assert.equal((await readFile(authPath, 'utf8')) === before, true,
+        'a sign-in refusal cannot replace the native enrollment');
+      const attemptsPath = join(targetCliHome, 'start-attempt.txt');
+      const attempts = existsSync(attemptsPath) ? Number(await readFile(attemptsPath, 'utf8')) : 0;
+      assert.ok(attempts <= 1,
+        'a refused enrollment waits for recovery instead of another daemon launch');
+      return;
+    }
     await assert.doesNotReject(async () => {
       await startLocalDaemonWithAuth({
         cliBin,
@@ -352,6 +379,7 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
     await rm(tmp, { recursive: true, force: true });
   }
 });
+}
 
 test('invalid-auth auto-reseed falls back to the next usable seed when the configured seed has no auth material', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-reseed-empty-seed-'));

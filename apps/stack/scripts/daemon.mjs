@@ -1953,6 +1953,7 @@ export async function startLocalDaemonWithAuth({
   admittedDistClosureFingerprint = null,
   sourceRuntimeLaunchUpdate = null,
   preserveSessionsOnRestart = false,
+  allowSignInRequired = false,
 }) {
   // Recovery consumes the same selected source launch as explicit reloads.
   // A long-lived runner may still hold its original launch arguments.
@@ -2422,6 +2423,7 @@ export async function startLocalDaemonWithAuth({
         env: daemonEnv,
         skippedReason: reseedResult?.reason ?? 'unknown',
       });
+      if (allowSignInRequired) return { ok: false, started: false, reason: 'sign-in-required' };
       throw new Error(`Failed to auto re-seed daemon credentials (${reseedResult?.reason ?? 'unknown'})`);
     }
 
@@ -2444,6 +2446,7 @@ export async function startLocalDaemonWithAuth({
         env: daemonEnv,
         staleSeed: reseedResult.seed,
       });
+      if (allowSignInRequired) return { ok: false, started: false, reason: 'sign-in-required' };
       throw new Error('Failed to start daemon (after auth re-seed)');
     }
   }
@@ -2813,6 +2816,7 @@ export async function startLocalDaemonWithAuth({
           env: baseEnv,
           skippedReason,
         });
+        if (allowSignInRequired) return { ok: false, started: false, reason: 'sign-in-required' };
         throw new Error(`Failed to auto re-seed daemon credentials (${skippedReason})`);
       }
 
@@ -2828,6 +2832,7 @@ export async function startLocalDaemonWithAuth({
             env: baseEnv,
             staleSeed: reseedResult.seed,
           });
+          if (allowSignInRequired) return { ok: false, started: false, reason: 'sign-in-required' };
         }
 
         if (second.excerpt) {

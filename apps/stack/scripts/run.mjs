@@ -34,6 +34,7 @@ import {
 } from './utils/stack/runtime_state.mjs';
 import { STACK_RUNTIME_DAEMON_MEMBERSHIP_INTERVAL_MS, syncStackRuntimeDaemonPidFromDaemonState } from './utils/stack/runtime_daemon_state.mjs';
 import { startOwnerDaemonLifecycleReconciler } from './utils/dev/daemonLifecycleReconciler.mjs';
+import { formatDaemonReadinessLine } from './utils/dev_targets/daemon_readiness.mjs';
 import { resolveStackContext } from './utils/stack/context.mjs';
 import { getPublicServerUrlEnvOverride, resolveServerUrls, resolveStackCanonicalServerUrl } from './utils/server/urls.mjs';
 import { preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
@@ -939,11 +940,15 @@ async function main() {
       isShuttingDown: () => shuttingDown,
       forceRestart,
       preserveExistingRunning,
+      allowSignInRequired: true,
       env: daemonScopeEnv,
               stackName,
               cliIdentity: 'default',
               ...cliRuntimeProvenance,
     });
+    if (startResult?.ok === false && startResult.reason === 'sign-in-required') {
+      process.stdout.write(formatDaemonReadinessLine({ state: 'sign-in-required' }));
+    }
     const daemonEnvForState = getDaemonEnv({
       baseEnv: daemonScopeEnv,
       cliHomeDir,
