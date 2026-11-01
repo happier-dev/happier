@@ -1,15 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 import * as processBoundary from '@happier-dev/cli-common/process';
 import { GH_DEP_ID } from '@happier-dev/protocol/installables';
 
-import { getGhDepStatus, resolveGhNativeToken } from './gh';
+import { getGhDepStatus, ghBinPath, resolveGhNativeToken } from './gh';
 
 describe('getGhDepStatus', () => {
   it('checks authentication against the requested GitHub host', async () => {
     const runGhCommand = vi.fn(async ({ args }: { args: readonly string[] }) => ({
       ok: args[0] === '--version' || args[3] === 'github.example.com',
-      stdout: args[0] === '--version' ? 'gh version 2.75.0' : '',
+      stdout: args[0] === '--version' ? 'gh version 2.75.0' : 'local-token-fixture',
       stderr: '',
       exitCode: args[0] === '--version' || args[3] === 'github.example.com' ? 0 : 1,
     }));
@@ -21,6 +24,7 @@ describe('getGhDepStatus', () => {
       readLastBackgroundUpdateCheckAtMs: async () => null,
     });
     expect(result.authenticated).toBe(true);
+    expect(runGhCommand.mock.calls.filter(([command]) => command.args[1] === 'status')).toHaveLength(0);
   });
 
   it('prefers an authenticated system gh over managed gh', async () => {
@@ -57,8 +61,9 @@ describe('getGhDepStatus', () => {
 
     expect(runGhCommand).toHaveBeenCalledWith(expect.objectContaining({
       binPath: '/usr/local/bin/gh',
-      args: ['auth', 'status', '--hostname', 'github.com'],
+      args: ['auth', 'token', '--hostname', 'github.com'],
     }));
+    expect(runGhCommand.mock.calls.filter(([command]) => command.args[1] === 'status')).toHaveLength(0);
   });
 
   it('distinguishes installed but unauthenticated system gh from missing gh', async () => {
@@ -211,15 +216,17 @@ describe('resolveGhNativeToken', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it.each([
-    { systemAuthenticated: true, expectedPath: '/usr/local/bin/gh' },
-    { systemAuthenticated: false, expectedPath: '/managed/gh/current/bin/gh' },
-  ])('retrieves an ephemeral host token from the authenticated owner ($expectedPath)', async ({ systemAuthenticated, expectedPath }) => {
+    { systemToken: 'available', expectedPath: '/usr/local/bin/gh' },
+    { systemToken: 'missing', expectedPath: '/managed/gh/current/bin/gh' },
+    { systemToken: 'empty', expectedPath: '/managed/gh/current/bin/gh' },
+  ])('retrieves an ephemeral host token with system token $systemToken ($expectedPath)', async ({ systemToken, expectedPath }) => {
     const runGhCommand = vi.fn(async ({ binPath, args }: { binPath: string; args: readonly string[] }) => {
-      if (args[1] === 'token') {
-        return { ok: true, stdout: '  ephemeral-token\n', stderr: 'private diagnostic', exitCode: 0 };
-      }
-      const ok = binPath.includes('/managed/') || systemAuthenticated;
-      return { ok, stdout: '', stderr: 'private auth diagnostic', exitCode: ok ? 0 : 1 };
+      const managed = binPath.includes('/managed/');
+      const ok = managed || systemToken !== 'missing';
+      return {
+        ok, stdout: ok && (managed || systemToken === 'available') && args[1] === 'token' ? '  ephemeral-token\n' : '',
+        stderr: 'private diagnostic', exitCode: ok ? 0 : 1,
+      };
     });
     const result = await resolveGhNativeToken({ hostname: 'github.example.com' }, {
       resolveSystemGhBinPath: async () => '/usr/local/bin/gh',
@@ -232,9 +239,29 @@ describe('resolveGhNativeToken', () => {
       args: ['auth', 'token', '--hostname', 'github.example.com'],
     }));
     for (const [command] of runGhCommand.mock.calls) {
-      expect(command.args).toEqual(['auth', expect.stringMatching(/^(status|token)$/), '--hostname', 'github.example.com']);
+      expect(command.args).toEqual(['auth', 'token', '--hostname', 'github.example.com']);
       expect(command).not.toHaveProperty('timeoutMs');
     }
+  });
+
+  it.each(['system', 'managed'] as const)('82 acquisitions use 82 local token reads and zero network status probes (%s)', async (source) => {
+    const binPath = source === 'system' ? '/usr/local/bin/gh' : '/managed/gh/current/bin/gh';
+    const runGhCommand = vi.fn(async (_command: { binPath: string; args: readonly string[] }) => ({ ok: true, stdout: 'ephemeral-token\n', stderr: '', exitCode: 0 }));
+    for (let acquisition = 0; acquisition < 82; acquisition++) {
+      const result = await resolveGhNativeToken({}, {
+        resolveSystemGhBinPath: async () => source === 'system' ? binPath : null,
+        resolveManagedGhBinPath: async () => '/managed/gh/current/bin/gh',
+        runGhCommand,
+      });
+      expect(result).toEqual({ ok: true, token: 'ephemeral-token' });
+    }
+    expect(runGhCommand.mock.calls.filter(([command]) => command.args[1] === 'status')).toHaveLength(0);
+    expect(runGhCommand.mock.calls.filter(([command]) => command.args[1] === 'token')).toHaveLength(82);
+    // This is the subprocess-cost contract, measured at the OS command adapter.
+    expect(runGhCommand).toHaveBeenCalledWith(expect.objectContaining({
+      binPath, args: ['auth', 'token', '--hostname', 'github.com'],
+    }));
+    expect(runGhCommand.mock.calls).toHaveLength(82);
   });
 
   it.each(['missing', 'logged_out', 'token_failed', 'empty_token'] as const)('returns only remediation when gh is %s', async (failure) => {
@@ -266,29 +293,68 @@ describe('resolveGhNativeToken', () => {
     })).rejects.toBe(cancellation);
   });
 
-  it.each(['linux', 'darwin', 'win32'] as const)('runs native token retrieval through the cancellable process boundary on %s', async (platform) => {
+  it.each([
+    { platform: 'linux', source: 'system' }, { platform: 'linux', source: 'managed' },
+    { platform: 'darwin', source: 'system' }, { platform: 'darwin', source: 'managed' },
+    { platform: 'win32', source: 'system' }, { platform: 'win32', source: 'managed' },
+  ] as const)('keeps acquisition and repeated capability checks local with $source gh on $platform', async ({ platform, source }) => {
     const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
     if (!originalPlatform) throw new Error('Expected process.platform descriptor');
     const controller = new AbortController();
-    const binPath = platform === 'win32' ? 'C:\\tools\\gh.exe' : '/tools/gh';
+    const home = await mkdtemp(join(tmpdir(), 'gh-native-path-'));
+    const systemDir = join(home, 'system');
+    const env = { HAPPIER_HOME_DIR: home, PATH: systemDir, PATHEXT: '.EXE' };
+    const systemBinPath = join(systemDir, platform === 'win32' ? 'gh.exe' : 'gh');
+    let binPath = systemBinPath;
+    let signedIn = true;
     // The subprocess is the OS boundary; selection and command construction remain real.
     const execute = vi.spyOn(processBoundary, 'execFileWithDeadline').mockImplementation(async (command, args, options) => {
-      expect(command).toBe(binPath);
+      expect([systemBinPath, ghBinPath(env)]).toContain(command);
       expect(options.signal).toBe(controller.signal);
-      expect(options).not.toHaveProperty('timeout');
       expect(options.windowsHide).toBe(true);
+      if (args[0] === '--version') return { stdout: 'gh version 2.75.0\n', stderr: '' };
       expect(args.slice(-2)).toEqual(['--hostname', 'github.example.com']);
+      if (!signedIn) throw Object.assign(new Error('not logged in'), { code: 1 });
       return { stdout: args[1] === 'token' ? 'ephemeral-token\n' : '', stderr: '' };
     });
     try {
       Object.defineProperty(process, 'platform', { ...originalPlatform, value: platform });
-      await expect(resolveGhNativeToken({ hostname: 'github.example.com', signal: controller.signal }, {
-        resolveSystemGhBinPath: async () => binPath,
-        resolveManagedGhBinPath: async () => null,
-      })).resolves.toEqual({ ok: true, token: 'ephemeral-token' });
-      expect(execute).toHaveBeenCalled();
+      const managedBinPath = ghBinPath(env);
+      await mkdir(dirname(managedBinPath), { recursive: true });
+      await writeFile(managedBinPath, 'fixture');
+      if (platform !== 'win32') await chmod(managedBinPath, 0o755);
+      if (source === 'system') {
+        await mkdir(systemDir);
+        await writeFile(systemBinPath, 'fixture');
+        if (platform !== 'win32') await chmod(systemBinPath, 0o755);
+      } else {
+        binPath = managedBinPath;
+      }
+      await expect(resolveGhNativeToken({ hostname: 'github.example.com', signal: controller.signal, env }))
+        .resolves.toEqual({ ok: true, token: 'ephemeral-token' });
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(execute.mock.calls[0]?.[2]).not.toHaveProperty('timeout');
+      expect(execute.mock.calls[0]?.[1]).toEqual(['auth', 'token', '--hostname', 'github.example.com']);
+      execute.mockClear();
+      for (let check = 0; check < 82; check++) {
+        await expect(getGhDepStatus({ hostname: 'github.example.com', signal: controller.signal, env }))
+          .resolves.toEqual(expect.objectContaining({ installed: true, authenticated: true, binPath }));
+      }
+      expect(execute.mock.calls.filter(([, args]) => args[1] === 'status')).toHaveLength(0);
+      expect(execute.mock.calls.filter(([, args]) => args[1] === 'token')).toHaveLength(82);
+
+      signedIn = false;
+      await expect(getGhDepStatus({ hostname: 'github.example.com', signal: controller.signal, env }))
+        .resolves.toEqual(expect.objectContaining({ installed: true, authenticated: false, authStatus: 'missing_auth', remediationReason: 'auth_required' }));
+      await rm(managedBinPath);
+      if (source === 'system') await rm(systemBinPath);
+      execute.mockClear();
+      await expect(getGhDepStatus({ hostname: 'github.example.com', signal: controller.signal, env }))
+        .resolves.toEqual(expect.objectContaining({ installed: false, authenticated: null, remediationReason: 'install_required' }));
+      expect(execute).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(process, 'platform', originalPlatform);
+      await rm(home, { recursive: true, force: true });
     }
   });
 
@@ -296,8 +362,7 @@ describe('resolveGhNativeToken', () => {
     const controller = new AbortController();
     const cancellation = new Error('caller cancelled');
     const commandFailure = Object.assign(new Error('private token diagnostic'), { stdout: 'private-token', stderr: 'private-token' });
-    const execute = vi.spyOn(processBoundary, 'execFileWithDeadline').mockImplementation(async (_command, args) => {
-      if (args[1] === 'status') return { stdout: '', stderr: '' };
+    const execute = vi.spyOn(processBoundary, 'execFileWithDeadline').mockImplementation(async () => {
       throw commandFailure;
     });
     const deps = {
@@ -307,8 +372,7 @@ describe('resolveGhNativeToken', () => {
     await expect(resolveGhNativeToken({}, deps)).resolves.toEqual({
       ok: false, reason: 'unavailable', remediation: 'sign in with gh CLI',
     });
-    execute.mockImplementation(async (_command, args) => {
-      if (args[1] === 'status') return { stdout: '', stderr: '' };
+    execute.mockImplementation(async () => {
       controller.abort(cancellation);
       throw commandFailure;
     });

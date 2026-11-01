@@ -44,6 +44,11 @@ export type {
 export { prepareAgentCliForRuntime } from './prepareForRuntime.js';
 export { resolveManagedToolsRoot } from './managedToolsRoot.js';
 export {
+  resolveGhNativeToken, resolveGhSelection, resolveSystemGhBinPath, resolveManagedGhBinPath,
+  runGhCommand, ghInstallDir, ghBinPath,
+  type GhNativeTokenResult, type GhCommandDeps, type GhCommandParams, type GhCommandResult,
+} from './gh.js';
+export {
   isAgentCliPathRunnable,
   readBackendCliSourcePreferenceForAgent,
   agentCliPathRequiresJavaScriptRuntime,
