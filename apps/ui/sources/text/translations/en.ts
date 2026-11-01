@@ -2565,6 +2565,8 @@ export const en = {
         },
         quota: {
             refreshing: 'Refreshing usage…',
+            refreshTimedOut: 'Refresh did not finish. The machine that refreshes this data may be offline.',
+            refreshRateLimited: 'The provider rate-limited this refresh. Showing last known usage.',
             loading: 'Loading…',
             error: ({ message }: { message: string }) => `Error: ${message}`,
             lastUpdated: ({ time }: { time: string }) => `Last updated: ${time}`,

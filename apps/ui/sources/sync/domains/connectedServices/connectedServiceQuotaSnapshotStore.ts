@@ -89,6 +89,7 @@ type InternalEntry = {
     loadPromise: Promise<ConnectedServiceQuotaSnapshotV1 | null> | null;
     refreshPromise: Promise<void> | null;
     refreshSinceFetchedAt: number | null;
+    refreshStartedAtMs: number | null;
     pollRetainCount: number;
     pollTimer: ReturnType<typeof setTimeout> | null;
     pollContext: QuotaSnapshotLoadContext | null;
@@ -100,6 +101,15 @@ const QUOTA_SNAPSHOT_POLL_MS = 30_000;
 const QUOTA_SNAPSHOT_MISS_RETRY_MS = 30_000;
 const QUOTA_SNAPSHOT_ERROR_BACKOFF_MIN_MS = 30_000;
 const QUOTA_SNAPSHOT_ERROR_BACKOFF_MAX_MS = 5 * 60_000;
+/**
+ * Bound on the "Refreshing…" state after the server accepts a refresh request.
+ * The end-to-end path is the daemon quota-loop tick (default 60 s) + provider
+ * fetch + persistence + this store's 30 s poll; the UI cannot observe the
+ * daemon, so once the healthy path has had ample time it stops presenting work
+ * as active and surfaces a notice instead of spinning forever (for example
+ * while no daemon with the quota loop is connected).
+ */
+const QUOTA_SNAPSHOT_REFRESH_DEADLINE_MS = 5 * 60_000;
 
 const EMPTY_VIEW: QuotaSnapshotStoreEntry = { snapshot: null, loading: false, error: null, refreshing: false };
 
@@ -121,6 +131,15 @@ export function buildQuotaSnapshotScopeKey(
     return [credentialScope, connectedServiceProfileKey({ serviceId, profileId })].join('\u0000');
 }
 
+/**
+ * True when every meter of the snapshot carries the daemon's rate-limit annotation
+ * (the provider refused the forced refresh with 429 and last-known data persisted).
+ */
+function isRateLimitedQuotaSnapshot(snapshot: ConnectedServiceQuotaSnapshotV1 | null): boolean {
+    const meters = snapshot?.meters ?? [];
+    return meters.length > 0 && meters.every((meter) => meter.details?.code === 'provider_rate_limited');
+}
+
 function getOrCreateEntry(key: string): InternalEntry {
     const existing = entries.get(key);
     if (existing) return existing;
@@ -132,9 +151,10 @@ function getOrCreateEntry(key: string): InternalEntry {
         loadAttempted: false,
         nextFetchAtMs: 0,
         consecutiveErrors: 0,
-        loadPromise: null,
-        refreshPromise: null,
-        refreshSinceFetchedAt: null,
+            loadPromise: null,
+            refreshPromise: null,
+            refreshSinceFetchedAt: null,
+            refreshStartedAtMs: null,
         pollRetainCount: 0,
         pollTimer: null,
         pollContext: null,
@@ -380,6 +400,23 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext): Promise<Conn
                     if (entry.error || (entry.snapshot && entry.snapshot.fetchedAt > entry.refreshSinceFetchedAt)) {
                         entry.refreshing = false;
                         entry.refreshSinceFetchedAt = null;
+                        entry.refreshStartedAtMs = null;
+                        if (!entry.error && isRateLimitedQuotaSnapshot(entry.snapshot)) {
+                            // The daemon honored the refresh but the provider refused it with 429;
+                            // the landed snapshot carries last-known meters annotated rate-limited.
+                            entry.error = t('connectedServices.quota.refreshRateLimited');
+                        }
+                    } else if (
+                        entry.refreshStartedAtMs !== null
+                        && Date.now() - entry.refreshStartedAtMs >= QUOTA_SNAPSHOT_REFRESH_DEADLINE_MS
+                    ) {
+                        // The refresh was accepted but no newer snapshot or error arrived within the
+                        // deadline (for example no daemon with the quota loop is connected); stop
+                        // presenting the refresh as active and say so instead of spinning forever.
+                        entry.error = t('connectedServices.quota.refreshTimedOut');
+                        entry.refreshing = false;
+                        entry.refreshSinceFetchedAt = null;
+                        entry.refreshStartedAtMs = null;
                     } else {
                         // An accepted refresh is still pending, regardless of the old snapshot's freshness.
                         entry.nextFetchAtMs = Date.now() + QUOTA_SNAPSHOT_POLL_MS;
@@ -430,6 +467,7 @@ export function retainQuotaSnapshotPolling(key: string, ctx: QuotaSnapshotLoadCo
             current.pollContext = null;
             clearPollTimer(current);
             current.refreshSinceFetchedAt = null;
+            current.refreshStartedAtMs = null;
             current.refreshing = false;
             publish(key, current);
         }
@@ -459,6 +497,7 @@ export async function refreshQuotaSnapshot(key: string, ctx: QuotaSnapshotLoadCo
             .catch(() => 0)) ?? 0;
         if (entry.refreshPromise !== promise || !isCurrentEntry() || !entry.refreshing) return;
         entry.refreshSinceFetchedAt = Math.max(entry.snapshot?.fetchedAt ?? 0, inFlightFetchedAt);
+        entry.refreshStartedAtMs = Date.now();
         try {
             const mode = await ctx.resolveAccountMode();
             if (entry.refreshPromise !== promise || !isCurrentEntry() || !entry.refreshing) return;
@@ -475,6 +514,7 @@ export async function refreshQuotaSnapshot(key: string, ctx: QuotaSnapshotLoadCo
             if (entry.refreshPromise !== promise || !isCurrentEntry() || !entry.refreshing) return;
             entry.error = sanitizeEndpointErrorMessage(error) ?? t('common.error');
             entry.refreshSinceFetchedAt = null;
+            entry.refreshStartedAtMs = null;
             entry.refreshing = false;
         }
     });
@@ -487,6 +527,7 @@ export async function refreshQuotaSnapshot(key: string, ctx: QuotaSnapshotLoadCo
             entry.refreshPromise = null;
             if (!isCurrentEntry() || entry.pollRetainCount === 0) {
                 entry.refreshSinceFetchedAt = null;
+                entry.refreshStartedAtMs = null;
                 entry.refreshing = false;
             }
             publish(key, entry);

@@ -752,21 +752,31 @@ export function defaultSleepMs(ms: number): Promise<void> {
 /**
  * X8 — Stale-but-usable quota.
  *
- * Returns a copy of the snapshot with all meters annotated as stale_quota so
- * the UI can show "last known data (refresh failed)" rather than a blank.
- * The meter data (utilizationPct, resetsAt, etc.) is preserved.
+ * Returns a copy of the snapshot with all meters annotated with the given
+ * staleness code so the UI can show "last known data (refresh failed)" rather
+ * than a blank. The meter data (utilizationPct, resetsAt, etc.) is preserved.
+ * `provider_rate_limited` marks a refresh the provider refused with 429.
  */
-export function annotateSnapshotAsStale(snapshot: ConnectedServiceQuotaSnapshotV1): ConnectedServiceQuotaSnapshotV1 {
+export function annotateSnapshotAsStale(
+  snapshot: ConnectedServiceQuotaSnapshotV1,
+  code: 'stale_quota' | 'provider_rate_limited' = 'stale_quota',
+): ConnectedServiceQuotaSnapshotV1 {
   return {
     ...snapshot,
     meters: snapshot.meters.map((meter) => ({
       ...meter,
       details: {
         ...meter.details,
-        code: 'stale_quota',
+        code,
       },
     })),
   };
+}
+
+/** A provider 429 refusal of a quota fetch. */
+export function isQuotaRateLimitError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  return (error as Readonly<{ status?: unknown }>).status === 429;
 }
 
 export function isQuotaUnknownFallbackSnapshot(snapshot: ConnectedServiceQuotaSnapshotV1): boolean {

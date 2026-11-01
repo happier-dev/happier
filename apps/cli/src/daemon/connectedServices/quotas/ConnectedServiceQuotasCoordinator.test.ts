@@ -11617,7 +11617,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getConnectedServiceCredentialSealed: vi.fn(async () => sealedCredential),
     } satisfies QuotaApi;
 
-    const fetcher: ConnectedServiceQuotaFetcher = { serviceId: 'openai-codex', fetch: vi.fn(async (_args: FetchArgs) => null) };
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      fetch: vi.fn(async (_args: FetchArgs) => null),
+    };
 
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api,
@@ -11637,6 +11640,115 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     await coordinator.tickOnce();
     expect(fetcher.fetch).toHaveBeenCalledTimes(1);
+    expect(fetcher.fetch).toHaveBeenCalledWith(expect.objectContaining({ force: true }));
+  });
+
+  it('persists a rate-limit-annotated snapshot when a forced refresh is refused with 429', async () => {
+    const now = 2_000_000;
+    const accountUsageStore = createProviderAccountUsageStore();
+    const accountUsagePersistence = {
+      recordInBandSnapshot: vi.fn(async () => ({ status: 'enqueued' as const, enqueue: 'accepted' as const })),
+    };
+    const credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    } satisfies Credentials;
+    const existingSnapshot: ConnectedServiceQuotaSnapshotV1 = {
+      v: 1,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      fetchedAt: now - 60_000,
+      staleAfterMs: 300_000,
+      planLabel: 'pro',
+      accountLabel: 'user@example.com',
+      meters: [{
+        meterId: 'primary',
+        label: 'Primary',
+        used: 50,
+        limit: 100,
+        unit: 'requests',
+        utilizationPct: 50,
+        remainingPct: 50,
+        resetsAt: 10_000,
+        status: 'ok',
+        details: {},
+      }],
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => ({
+        content: { t: 'plain' as const, v: existingSnapshot },
+        metadata: {
+          fetchedAt: existingSnapshot.fetchedAt,
+          staleAfterMs: existingSnapshot.staleAfterMs,
+          status: 'ok' as const,
+          refreshRequestedAt: now,
+        },
+      })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async () => {}),
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      fetch: vi.fn(async () => {
+        throw new ConnectedServiceQuotaFetchError('usage fetch rate limited', {
+          status: 429,
+          retryAfterMs: 120_000,
+          quotaFetchErrorCode: 'provider_backoff',
+        });
+      }),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      accountUsageStore,
+      accountUsagePersistence,
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(fetcher.fetch).toHaveBeenCalledTimes(1);
+    expect(accountUsagePersistence.recordInBandSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fetchedAtMs: now,
+        meters: [expect.objectContaining({
+          meterId: 'primary',
+          details: expect.objectContaining({ code: 'provider_rate_limited' }),
+        })],
+      }),
+      expect.anything(),
+    );
   });
 
   it('honors a refresh request for an inactive profile between discovery passes', async () => {

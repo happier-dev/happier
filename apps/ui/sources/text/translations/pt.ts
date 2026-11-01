@@ -2815,6 +2815,8 @@ export const pt: TranslationStructure = {
     },
     quota: {
       refreshing: "Atualizando uso…",
+      refreshTimedOut: "A atualização não foi concluída. A máquina que atualiza esses dados pode estar offline.",
+      refreshRateLimited: "O provedor limitou esta atualização. Exibindo o último uso conhecido.",
       loading: "Carregando…",
       error: ({ message }: { message: string }) => `Erro: ${message}`,
       lastUpdated: ({ time }: { time: string }) => `Última atualização: ${time}`,

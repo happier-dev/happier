@@ -1361,6 +1361,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         quota: {
             refreshing: '正在重新整理用量…',
+            refreshTimedOut: '重新整理未完成。重新整理這項資料的機器可能處於離線狀態。',
+            refreshRateLimited: '供應商限制了此次重新整理。正在顯示上次已知用量。',
             loading: '載入中…',
             error: ({ message }: { message: string }) => `錯誤：${message}`,
             lastUpdated: ({ time }: { time: string }) => `最後更新：${time}`,

@@ -102,6 +102,61 @@ describe('connectedServiceQuotaSnapshotStore polling lifecycle', () => {
     });
 
 
+    it('ends a pending refresh with a notice when no newer snapshot or error arrives before the deadline', async () => {
+        const snapshot = {
+            v: 1 as const, serviceId: ctx.serviceId, profileId: ctx.profileId,
+            fetchedAt: 1, staleAfterMs: 30 * 60_000, planLabel: null, accountLabel: null, meters: [],
+        };
+        getSnapshotPlain.mockResolvedValue(snapshot);
+        const key = buildQuotaSnapshotScopeKey(ctx.credentialScope, ctx.serviceId, ctx.profileId);
+        const release = retainQuotaSnapshotPolling(key, ctx);
+        await vi.advanceTimersByTimeAsync(0);
+        void refreshQuotaSnapshot(key, ctx);
+        await vi.advanceTimersByTimeAsync(11_000);
+        expect(getQuotaSnapshotEntry(key)).toMatchObject({ refreshing: true, error: null });
+
+        // Healthy end-to-end refresh spans daemon tick + fetch + persist + this poll
+        // cadence; the pending state must survive that horizon untouched.
+        await vi.advanceTimersByTimeAsync(4 * 60_000);
+        expect(getQuotaSnapshotEntry(key).refreshing).toBe(true);
+
+        await vi.advanceTimersByTimeAsync(2 * 60_000);
+        expect(getQuotaSnapshotEntry(key)).toMatchObject({ refreshing: false, snapshot });
+        expect(typeof getQuotaSnapshotEntry(key).error).toBe('string');
+        expect(getQuotaSnapshotEntry(key).error).not.toBe('');
+        release();
+    });
+
+
+    it('resolves a pending refresh with a rate-limit notice when the poll lands a rate-limit-annotated snapshot', async () => {
+        const snapshot = {
+            v: 1 as const, serviceId: ctx.serviceId, profileId: ctx.profileId,
+            fetchedAt: 1, staleAfterMs: 30 * 60_000, planLabel: null, accountLabel: null,
+            meters: [{
+                meterId: 'five_hour', label: '5-hour', used: 5, limit: 10, unit: 'requests' as const,
+                utilizationPct: 50, resetsAt: null, status: 'ok' as const, details: {},
+            }],
+        };
+        getSnapshotPlain.mockResolvedValue(snapshot);
+        const key = buildQuotaSnapshotScopeKey(ctx.credentialScope, ctx.serviceId, ctx.profileId);
+        const release = retainQuotaSnapshotPolling(key, ctx);
+        await vi.advanceTimersByTimeAsync(0);
+        void refreshQuotaSnapshot(key, ctx);
+        await vi.advanceTimersByTimeAsync(11_000);
+        expect(getQuotaSnapshotEntry(key).refreshing).toBe(true);
+
+        getSnapshotPlain.mockResolvedValue({
+            ...snapshot,
+            fetchedAt: 2,
+            meters: snapshot.meters.map((meter) => ({ ...meter, details: { code: 'provider_rate_limited' as const } })),
+        });
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(getQuotaSnapshotEntry(key)).toMatchObject({ refreshing: false, snapshot: { fetchedAt: 2 } });
+        expect(typeof getQuotaSnapshotEntry(key).error).toBe('string');
+        expect(getQuotaSnapshotEntry(key).error).not.toBe('');
+        release();
+    });
+
     it('retains the last snapshot when a pending refresh read temporarily has no data', async () => {
         const snapshot = {
             v: 1 as const, serviceId: ctx.serviceId, profileId: ctx.profileId,

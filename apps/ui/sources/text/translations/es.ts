@@ -2789,6 +2789,8 @@ export const es: TranslationStructure = {
     },
     quota: {
       refreshing: "Actualizando uso…",
+      refreshTimedOut: "La actualización no finalizó. Es posible que la máquina que actualiza estos datos esté desconectada.",
+      refreshRateLimited: "El proveedor limitó esta actualización. Se muestra el último uso conocido.",
       loading: "Cargando…",
       error: ({ message }: { message: string }) => `Error: ${message}`,
       lastUpdated: ({ time }: { time: string }) =>

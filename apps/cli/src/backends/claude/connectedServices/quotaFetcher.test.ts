@@ -649,7 +649,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
     expect(String(fetchMock.mock.calls[0]?.[0] ?? '')).toContain('/anthropic/oauth/usage');
   });
 
-  it('backs off after 429 Retry-After and leaves existing snapshots stale until polling is allowed again', async () => {
+  it('signals 429 as a provider_backoff error with Retry-After and keeps the cooldown for later polls', async () => {
     const now = 5_000_000;
     const fetchMock = vi.fn(async (input: unknown) => {
       const url = String(input ?? '');
@@ -690,7 +690,11 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
       nowMs: () => clock,
     });
 
-    await expect(fetcher.fetch({ record, now: clock, signal: new AbortController().signal })).resolves.toBeNull();
+    await expect(fetcher.fetch({ record, now: clock, signal: new AbortController().signal })).rejects.toMatchObject({
+      quotaFetchErrorCode: 'provider_backoff',
+      status: 429,
+      retryAfterMs: 120_000,
+    });
     clock += 60_000;
     await expect(fetcher.fetch({ record, now: clock, signal: new AbortController().signal })).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -772,12 +776,70 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
       nowMs: () => clock,
     });
 
-    await expect(fetcher.fetch({ record: staleRecord, now: clock, signal: new AbortController().signal })).resolves.toBeNull();
+    await expect(fetcher.fetch({ record: staleRecord, now: clock, signal: new AbortController().signal })).rejects.toMatchObject({
+      quotaFetchErrorCode: 'provider_backoff',
+      status: 429,
+    });
     clock += 60_000;
     await expect(fetcher.fetch({ record: reconnectedRecord, now: clock, signal: new AbortController().signal }))
       .resolves
       .toMatchObject({ profileId: 'work' });
     expect(usageCalls).toBe(2);
+  });
+
+  it('bypasses the Retry-After cooldown for a forced refresh attempt', async () => {
+    const now = 5_100_000;
+    const fetchMock429 = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      headers: { get: (name: string) => (name.toLowerCase() === 'retry-after' ? '120' : null) },
+      text: async () => 'rate limited',
+    }));
+    const fetchMock = vi.fn(async (_input: unknown) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        five_hour: { utilization: 10, resets_at: '2026-02-16T00:00:00Z' },
+      }),
+    }));
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'at',
+        refreshToken: 'rt',
+        idToken: null,
+        scope: claudeCodeScope,
+        tokenType: null,
+        providerAccountId: null,
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    let clock = now;
+    const fetcher = createClaudeSubscriptionQuotaFetcher({
+      usageUrl: 'https://api.anthropic.com/api/oauth/usage',
+      staleAfterMs: 300_000,
+      nowMs: () => clock,
+    });
+
+    vi.stubGlobal('fetch', fetchMock429 as unknown as typeof fetch);
+    await expect(fetcher.fetch({ record, now: clock, signal: new AbortController().signal })).rejects.toMatchObject({
+      quotaFetchErrorCode: 'provider_backoff',
+      status: 429,
+      retryAfterMs: 120_000,
+    });
+    clock += 60_000;
+
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    const forced = await fetcher.fetch({ record, now: clock, signal: new AbortController().signal, force: true });
+    expect(forced).toMatchObject({ serviceId: 'claude-subscription', profileId: 'work' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0] ?? '')).toContain('/api/oauth/usage');
   });
 
   it('records cooldown before fetching so repeated provider failures do not immediately refetch', async () => {

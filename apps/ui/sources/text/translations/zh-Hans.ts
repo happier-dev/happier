@@ -2618,6 +2618,8 @@ export const zhHans: TranslationStructure = {
     },
     quota: {
       refreshing: "正在刷新用量…",
+      refreshTimedOut: "刷新未完成。刷新此数据的机器可能处于离线状态。",
+      refreshRateLimited: "提供商限制了此次刷新。正在显示上次已知用量。",
       loading: "加载中…",
       error: ({ message }: { message: string }) => `错误：${message}`,
       lastUpdated: ({ time }: { time: string }) => `最后更新：${time}`,

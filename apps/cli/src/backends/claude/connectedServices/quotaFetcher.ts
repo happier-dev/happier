@@ -796,7 +796,7 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
       throw new ConnectedServiceQuotaFetchError('Claude reset returned an unknown outcome.', {
         quotaFetchErrorCode: 'malformed', recoveryCreditConsumeOutcomeUnknown: true });
     },
-    fetch: async ({ record, now, signal }) => {
+    fetch: async ({ record, now, signal, force }) => {
       if (record.kind !== 'oauth') return null;
       const planLabel = resolveClaudeSubscriptionPlanLabel(record);
       const providerAccountId = record.oauth.providerAccountId?.trim() || null;
@@ -823,7 +823,9 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
       }
       const backoffKey = buildCredentialBackoffKey(record);
       const backoffUntil = backoffKey ? (retryAfterBackoffByCredentialKey.get(backoffKey) ?? 0) : 0;
-      if (backoffUntil > now) {
+      // A user-requested refresh makes one attempt past the cooldown; a fresh 429
+      // re-arms it below via observeRateLimit.
+      if (backoffUntil > now && force !== true) {
         return null;
       }
       if (backoffKey) providerBackoffCredentialKeys.delete(backoffKey);
@@ -841,7 +843,18 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
 
       if (!response.ok && response.status === 429) {
         observeRateLimit(response, record, now);
-        return null;
+        const retryAfter = parseRetryAfterHeader(response.headers?.get?.('retry-after'), { nowMs: now });
+        // Same contract as the codex fetcher: surface provider rate limits to the
+        // coordinator (Retry-After backoff + user-visible refresh outcome) instead of
+        // silently swallowing them.
+        throw new ConnectedServiceQuotaFetchError(
+          `Anthropic usage fetch rate limited (429)${retryAfter.retryAfterMs != null ? `; retry after ${retryAfter.retryAfterMs}ms` : ''}`,
+          {
+            status: 429,
+            retryAfterMs: retryAfter.retryAfterMs,
+            quotaFetchErrorCode: 'provider_backoff',
+          },
+        );
       }
 
       if (!response.ok && response.status >= 500 && response.status < 600) {

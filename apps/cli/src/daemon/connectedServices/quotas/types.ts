@@ -31,6 +31,8 @@ export type ConnectedServiceQuotaFetcher = Readonly<{
     record: ConnectedServiceCredentialRecordV1;
     now: number;
     signal: AbortSignal;
+    /** User-requested refresh: bypass fetcher-internal cooldowns for one attempt. */
+    force?: boolean;
   }>) => Promise<ConnectedServiceQuotaSnapshotV1 | null>;
   consumeRecoveryCredit?: (params: Readonly<{
     record: ConnectedServiceCredentialRecordV1;

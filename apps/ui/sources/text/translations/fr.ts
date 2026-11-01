@@ -2564,6 +2564,8 @@ export const fr: TranslationStructure = {
         },
         quota: {
             refreshing: 'Actualisation de l’utilisation…',
+            refreshTimedOut: 'L’actualisation ne s’est pas terminée. La machine qui actualise ces données est peut-être hors ligne.',
+            refreshRateLimited: 'Le fournisseur a limité cette actualisation. Dernière utilisation connue affichée.',
             loading: 'Chargement…',
             error: ({ message }: { message: string }) => `Erreur : ${message}`,
             lastUpdated: ({ time }: { time: string }) => `Dernière mise à jour : ${time}`,
