@@ -426,6 +426,67 @@ async function runSetupSubcommand(argsRaw: string[], deps: MachineCommandDeps): 
   }
 }
 
+async function runListSubcommand(args: string[]): Promise<void> {
+  const json = wantsJson(args);
+  
+  try {
+    if (!configuration.credentials) {
+      throw Object.assign(new Error('Not authenticated. Run: happier auth login'), { code: 'not_authenticated' });
+    }
+
+    const { fetchAccountMachines } = await import('@/api/machine/fetchAccountMachines');
+    const machines = await fetchAccountMachines({ credentials: configuration.credentials });
+    
+    if (!machines) {
+      throw Object.assign(new Error('The current machine inventory is unavailable.'), { code: 'machine_inventory_unavailable' });
+    }
+
+    const activeMachines = machines.filter(m => m.revokedAt == null && m.replacedByMachineId == null);
+
+    if (json) {
+      await writeJsonStdout({
+        ok: true,
+        kind: 'machine_list',
+        data: {
+          machines: activeMachines.map(m => ({
+            id: m.id,
+            active: m.active === true,
+            serverId: configuration.activeServerId,
+            serverUrl: configuration.serverUrl,
+          })),
+        },
+      });
+      return;
+    }
+
+    if (activeMachines.length === 0) {
+      console.log('No machines registered.');
+      console.log(`Run ${chalk.cyan('happier auth login')} to register this machine.`);
+      return;
+    }
+
+    console.log(`${activeMachines.length} machine${activeMachines.length === 1 ? '' : 's'} registered:\n`);
+    for (const machine of activeMachines) {
+      const indicator = machine.active ? chalk.green('●') : chalk.dim('○');
+      console.log(`  ${indicator} ${machine.id}`);
+    }
+  } catch (error) {
+    if (json) {
+      const mapped = mapUnknownErrorToControlError(error);
+      await printJsonEnvelope(
+        {
+          ok: false,
+          kind: 'machine_list',
+          error: { code: mapped.code, ...(mapped.message ? { message: mapped.message } : {}) },
+        },
+        { exitCode: mapped.unexpected ? 2 : 1 },
+      );
+      return;
+    }
+    throw error;
+  }
+}
+
 export async function handleMachineCommand(args: string[], deps: Partial<MachineCommandDeps> = {}): Promise<void> {
   const effectiveDeps: MachineCommandDeps = {
     ...DEFAULT_DEPS,
@@ -440,18 +501,24 @@ export async function handleMachineCommand(args: string[], deps: Partial<Machine
       return;
     }
 
-    if (subcommand !== 'setup') {
-      throw new Error(`Unknown machine subcommand: ${subcommand}`);
+    if (subcommand === 'list') {
+      await runListSubcommand(args.slice(1));
+      return;
     }
 
-    await runSetupSubcommand(args.slice(1), effectiveDeps);
+    if (subcommand === 'setup') {
+      await runSetupSubcommand(args.slice(1), effectiveDeps);
+      return;
+    }
+
+    throw new Error(`Unknown machine subcommand: ${subcommand}`);
   } catch (error) {
     if (json) {
       const mapped = mapUnknownErrorToControlError(error);
       await printJsonEnvelope(
         {
           ok: false,
-          kind: 'machine_setup',
+          kind: subcommand === 'list' ? 'machine_list' : 'machine_setup',
           error: { code: mapped.code, ...(mapped.message ? { message: mapped.message } : {}) },
         },
         { exitCode: mapped.unexpected ? 2 : 1 },
