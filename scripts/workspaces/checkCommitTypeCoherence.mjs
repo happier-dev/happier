@@ -22,6 +22,7 @@ import { existsSync } from 'node:fs';
 import { posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { API } from '@typescript/native/sync';
+import ts from 'typescript';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 
 const TYPESCRIPT_SOURCE = /\.(?:[cm]?ts|tsx)$/u;
@@ -37,6 +38,35 @@ const redirectDist = (target) =>
     '$1$2/src/$3',
   );
 const keyOf = (row) => `${row.file}\0${row.line}\0${row.code}`;
+
+// Parse only grep candidates: imports in comments or fixture strings are not consumers.
+function importSpecifiers(file, text) {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false);
+  const values = new Set();
+  const visit = node => {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+      && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      values.add(node.moduleSpecifier.text);
+    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)
+      && ts.isStringLiteral(node.argument.literal)) {
+      values.add(node.argument.literal.text);
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)
+      && node.moduleReference.expression && ts.isStringLiteral(node.moduleReference.expression)) {
+      values.add(node.moduleReference.expression.text);
+    } else if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (callee.kind === ts.SyntaxKind.ImportKeyword
+        || ts.isIdentifier(callee) && callee.text === 'require'
+        || ts.isPropertyAccessExpression(callee) && callee.name.text === 'mock') {
+        const value = node.arguments[0];
+        if (value && ts.isStringLiteral(value)) values.add(value.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return values;
+}
 
 function repository(repo) {
   const git = (args, options = {}) =>
@@ -170,14 +200,21 @@ function repository(repo) {
     } catch (error) {
       if (error.status !== 1) throw error; // 1: no match
     }
+    const candidates = output.split('\n').flatMap(line => {
+      const [location, match] = line.split('\0');
+      return match ? [{ importer: location.slice(location.indexOf(':') + 1), match }] : [];
+    });
+    const entries = treeEntries(tree);
+    const blobs = readBlobs([...new Set(candidates.map(({ importer }) => entries.get(importer).oid))]);
+    const specifiers = new Map();
     const exact = new Set(targets);
     const importers = new Set();
-    for (const line of output.split('\n')) {
-      const [location, match] = line.split('\0');
-      if (!match) continue;
-      const importer = location.slice(location.indexOf(':') + 1);
-      const value = match
-        .slice(match.search(/['"]/u) + 1, -1)
+    for (const { importer, match } of candidates) {
+      if (!specifiers.has(importer)) specifiers.set(importer,
+        importSpecifiers(importer, blobs.get(entries.get(importer).oid)));
+      const raw = match.slice(match.search(/['"]/u) + 1, -1);
+      if (!specifiers.get(importer).has(raw)) continue;
+      const value = raw
         .replace(/\.[cm]?[jt]sx?$/u, '')
         .replace(/\/index$/u, '');
       if (value.startsWith('.')) {

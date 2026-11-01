@@ -110,6 +110,23 @@ test('a slice that carries its producer is coherent although the worktree differ
   );
 });
 
+test('importer discovery ignores fixture text and comments while retaining real imports', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await write('fixture.ts', "export const source = `import { original } from './producer';`;\n// import { original } from './producer';\n/* require('./producer') */\n");
+  await write('dynamic.ts', "export const load = () => import('./producer');\n");
+  await write('reexport.ts', "export { original } from './producer';\n");
+  await write('type.ts', "export type Module = typeof import('./producer');\n");
+  await write('equals.ts', "import producer = require('./producer');\nexport const value = producer.original;\n");
+  await write('require.ts', "declare function require(id: string): unknown;\nexport const value = require('./producer');\n");
+  await write('mock.ts', "declare const vi: { mock(id: string): void };\nvi.mock('./producer');\n");
+  const base = commitOnly('fixture.ts', 'dynamic.ts', 'reexport.ts', 'require.ts', 'mock.ts', 'type.ts', 'equals.ts');
+  await write('producer.ts', 'export const original = 2;\n');
+  const tree = commitOnly('producer.ts');
+  const result = checkCommitTypeCoherence({ repo, base, tree });
+  assert.deepEqual(result.fresh, []);
+  assert.equal(result.roots, 8, 'producer plus seven real importers; fixture text has no importer root');
+});
+
 test('diagnostics already present at the base are not attributed to the slice', async (t) => {
   const { repo, write, commitOnly } = await checkout(t);
   await write(
