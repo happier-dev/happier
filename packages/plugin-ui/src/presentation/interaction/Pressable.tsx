@@ -158,6 +158,8 @@ export type HappierPressableProps = Readonly<{
   accessibilityLevel?: number;
   accessibilityLabel?: string;
   accessibilityHint?: string;
+  /** The control's current value, announced by native assistive technology and RNW ARIA. */
+  accessibilityValue?: Readonly<{ min?: number; max?: number; now?: number; text?: string }>;
   /** Native assistive actions, supplied by the owning domain operation. */
   accessibilityActions?: readonly Readonly<{ name: string; label?: string }>[];
   onAccessibilityAction?: (event: Readonly<{ nativeEvent: Readonly<{ actionName: string }> }>) => void;
@@ -279,6 +281,7 @@ export function HappierPressable({
   accessibilityLevel,
   accessibilityLabel,
   accessibilityHint,
+  accessibilityValue,
   accessibilityActions,
   onAccessibilityAction,
   hitSlop,
@@ -506,6 +509,12 @@ export function HappierPressable({
       {...platformRoleProps}
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
+      accessibilityValue={accessibilityValue}
+      // RNW ignores the native value object; project its fields from the same caller-owned value.
+      aria-valuemin={accessibilityValue?.min}
+      aria-valuemax={accessibilityValue?.max}
+      aria-valuenow={accessibilityValue?.now}
+      aria-valuetext={accessibilityValue?.text}
       accessibilityActions={accessibilityActions}
       onAccessibilityAction={isDisabled ? undefined : onAccessibilityAction}
       // Emitted in BOTH prop shapes on purpose, from one computed fact.

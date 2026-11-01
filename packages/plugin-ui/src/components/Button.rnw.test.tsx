@@ -82,6 +82,23 @@ async function activateWithEnter(button: HTMLElement): Promise<void> {
 }
 
 describe('plugin-ui Button renders real React Native pressable semantics', () => {
+  it('announces the pressable value on the real web element and updates it', async () => {
+    const mount = mountThroughReactNativeWeb(<HappierPressable testID="scope" onPress={() => {}}
+      accessibilityLabel="Comparison scope" accessibilityValue={{ min: 0, max: 5, now: 0, text: 'All changes' }} />);
+    try {
+      const control = findButton(mount.container);
+      expect(control.getAttribute('aria-valuemin')).toBe('0');
+      expect(control.getAttribute('aria-valuemax')).toBe('5');
+      expect(control.getAttribute('aria-valuenow')).toBe('0');
+      expect(control.getAttribute('aria-valuetext')).toBe('All changes');
+      await mount.render(<HappierPressable onPress={() => {}} accessibilityValue={{ text: 'Working tree' }} />);
+      expect(control.getAttribute('aria-valuetext')).toBe('Working tree');
+      expect(control.hasAttribute('aria-valuenow')).toBe(false);
+      await mount.render(<HappierPressable onPress={() => {}} />);
+      expect(control.hasAttribute('aria-valuetext')).toBe(false);
+    } finally { mount.unmount(); }
+  });
+
   it('exposes none, mixed, all, then none for a controlled checkbox group', () => {
     function GroupCheckbox() {
       const states = [false, 'mixed', true] as const;
