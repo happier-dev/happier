@@ -57,6 +57,7 @@ import {
   type VoiceRuntimeFailureOutcome,
 } from '@/voice/runtime/voiceRuntimeFailureCode';
 import { VoiceRawCredentialAccessReview } from './VoiceRawCredentialAccessReview';
+import { projectVoiceCredentialAccessReviewRequirement } from './credentialReadiness';
 import { awaitActionApprovalResult, type ActionApprovalResultCallbacks } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
@@ -765,6 +766,7 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
         <VoiceRawCredentialAccessReview
           key={JSON.stringify(rawGrant)}
           contribution={props.contribution!}
+          grantRequirement={projectVoiceCredentialAccessReviewRequirement(credentialStatus)}
           rawGrant={rawGrant}
           testID={props.testID
             ? `${props.testID}-raw-credential-access${index === 0 ? '' : `-${index}`}`

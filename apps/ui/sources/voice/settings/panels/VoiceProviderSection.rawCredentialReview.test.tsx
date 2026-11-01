@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import 'fake-indexeddb/auto';
 import { PluginContributesV2Schema, createVoiceProviderRecipientContractFromCredentialsV1 } from '@happier-dev/protocol';
+import { SavedSecretResourceMaterialV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { renderScreen as renderTestScreen, waitForTestEvent } from '@/dev/testkit';
@@ -242,6 +243,36 @@ async function activateRawCredentialOnlyProvider(
 }
 
 describe('VoiceProviderSection raw credential review reachability', () => {
+  it.each(['owner', 'recipient'] as const)('keeps only the %s linked-secret review appropriate when inspect is unavailable', async (relationship) => {
+    const pluginId = 'acme.linked-review-voice';
+    const fixture = await activateRawCredentialOnlyProvider(pluginId, [{ kind: 'savedSecret' }]);
+    onTestFinished(fixture.cleanup);
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    account.replaceSettings(await withVoiceSettingsCredentialResource(account, {
+      settings: settingsParse({}), declaration: fixture.declaration, pluginId, resourceId: 'linked-review-secret',
+    }));
+    if (relationship === 'recipient') {
+      const resource = account.resources[0]!;
+      account.resources[0] = SavedSecretResourceMaterialV1Schema.parse({ ...resource, entry: { ...resource.entry, relationship: 'recipient',
+        ownerAccountId: 'other-person', capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } } });
+    }
+    const rawGrant = fixture.declaration.credentials!.sources.flatMap(source => source.rawGrants ?? [])[0]!;
+    const { rawCredentialAuthorizationClient } = await import('@/voice/credentials/rawCredentialAuthorizationClient');
+    await expect(rawCredentialAuthorizationClient.inspect(fixture.contribution, rawGrant)).rejects.toMatchObject({ code: 'machine_unavailable' });
+    const screen = await renderScreen(<VoiceCredentialItem contribution={fixture.contribution}
+      credentialSlotId={fixture.declaration.credentials!.slot.id}
+      credentialSourcePurpose={fixture.declaration.credentials!.slot.purpose}
+      credentialSourceDeclaration={fixture.declaration} rawCredentialReviewGrants={[rawGrant]}
+      title="API key" promptTitle="API key" promptDescription="API key" disclosePlainStorage
+      testID="linked-secret" />);
+    if (relationship === 'owner') {
+      expect(screen.findHostByTestId('linked-secret-raw-credential-access') === null).toBe(true);
+    } else {
+      await waitForTestEvent(screen.subscribe, () => screen.getTextContent(), text => text.includes(t('settingsVoice.externalCredentials.unavailable')));
+      expect(screen.findHostByTestId('linked-secret-raw-credential-access') === null).toBe(false);
+    }
+  });
+
   it('retains the Account resource but requires review before an external package change can use its credential', async () => {
     const pluginId = 'acme.review-voice';
     const sources = [{ kind: 'savedSecret', access: 'mediated' }] as const;

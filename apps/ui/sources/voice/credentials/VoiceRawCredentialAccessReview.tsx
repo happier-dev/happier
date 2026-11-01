@@ -31,6 +31,7 @@ import {
   rawCredentialAuthorizationClient,
   type RawCredentialAuthorizationClient,
 } from './rawCredentialAuthorizationClient';
+import type { projectVoiceCredentialAccessReviewRequirement } from './credentialReadiness';
 
 type AuthorizationInspection = Readonly<{
   authorization: DaemonVoiceClientRawCredentialAuthorizationV1;
@@ -40,6 +41,7 @@ type AuthorizationInspection = Readonly<{
 export type VoiceRawCredentialAccessReviewProps = Readonly<{
   contribution: PluginContributionIdentityV1;
   rawGrant: VoiceRawCredentialGrantDeclaration;
+  grantRequirement?: ReturnType<typeof projectVoiceCredentialAccessReviewRequirement>;
   client?: Pick<RawCredentialAuthorizationClient, 'inspect' | 'request'>;
   actions?: PluginPermissionGrantActions;
   testID?: string;
@@ -150,11 +152,13 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
   const purposes = React.useSyncExternalStore(subscribeConnectedAccountCatalogSnapshots, readPurposes, readPurposes);
   const readSavedSecrets = React.useCallback(() => getSavedSecretCatalogSnapshot(scope), [scope]);
   const savedSecrets = React.useSyncExternalStore(subscribeSavedSecretCatalogSnapshots, readSavedSecrets, readSavedSecrets);
+  const linked = props.grantRequirement === 'linked';
   const [inspection, setInspection] = React.useState<AuthorizationInspection | null>(null);
   const [unavailable, setUnavailable] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
 
   const inspect = React.useCallback(async (signal?: AbortSignal): Promise<AuthorizationInspection | null> => {
+    if (linked) return null;
     try {
       const response = await client.inspect(props.contribution, props.rawGrant, signal);
       const next = Object.freeze({
@@ -170,7 +174,7 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
       setUnavailable(true);
       return null;
     }
-  }, [client, props.contribution, props.rawGrant]);
+  }, [client, linked, props.contribution, props.rawGrant]);
 
   // The selected credential and target determine authorization. Whole-document
   // CAS revisions include unrelated preferences; the credential owners provide
@@ -181,7 +185,7 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
     return () => controller.abort();
   }, [inspect, scope, voice, voiceSettingsV1, secrets, purposes, savedSecrets]);
 
-  const listInput = React.useMemo(() => inspection ? ({
+  const listInput = React.useMemo(() => !linked && inspection ? ({
     pluginId: inspection.authorization.pluginId,
     capability: inspection.authorization.capability,
     targetScope: inspection.authorization.targetScope,
@@ -189,10 +193,10 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
     includeRevoked: false,
     includeResolvedRequests: false,
     limit: 200,
-  } as const) : null, [inspection]);
+  } as const) : null, [inspection, linked]);
   const permissionGrants = usePluginPermissionGrants({
     actions,
-    enabled: inspection !== null,
+    enabled: listInput !== null,
     listInput,
   });
   /**
@@ -286,6 +290,7 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
     await decide();
   }, [inspect, inspection]);
 
+  if (linked) return null;
   const details = inspection ? createVoiceRawCredentialReviewDetailRows(inspection) : [];
   return (
     <View>
