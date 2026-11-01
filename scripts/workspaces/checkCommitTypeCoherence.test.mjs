@@ -146,6 +146,19 @@ test('an exact same-directory rename retains its diagnostic baseline without hid
   assert.deepEqual(result.fresh.map(({ file, code }) => [file, code]), [['consumer.ts', 2307]]);
 });
 
+test('excluded unmodified importers do not inject globals into the owner, while included importers are checked', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await write('tsconfig.json', JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] }, include: ['*.ts'], exclude: ['*.composed.ts'] }));
+  await write('excluded.composed.ts', "import { original } from './producer';\ndeclare global { interface Error { rendererOnly: true } }\n");
+  const base = commitOnly('tsconfig.json', 'excluded.composed.ts');
+  await write('producer.ts', "export const original = 'changed';\nexport const error: Error = { name: 'Error', message: 'fixture' };\n");
+  const tree = commitOnly('producer.ts');
+  assert.deepEqual(checkCommitTypeCoherence({ repo, base, tree }).fresh.map(({ file, code }) => [file, code]), [['consumer.ts', 2322]]);
+  await write('excluded.composed.ts', "import { original } from './producer';\ndeclare global { interface Error { rendererOnly: true } }\nexport const invalid: number = 'invalid';\n");
+  const changedExcluded = commitOnly('excluded.composed.ts');
+  assert.deepEqual(checkCommitTypeCoherence({ repo, base: tree, tree: changedExcluded }).fresh.map(({ file, code }) => [file, code]), [['excluded.composed.ts', 2322]]);
+});
+
 test('a new diagnostic location is not hidden by an identical message elsewhere in the base', async (t) => {
   const { repo, write, commitOnly } = await checkout(t);
   await write(

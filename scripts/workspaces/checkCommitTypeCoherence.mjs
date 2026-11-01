@@ -303,7 +303,7 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
   const result = { changed: changed.length, roots: 0, unowned: [], fresh: [] };
   if (changed.length === 0) return { ...result, ms: Date.now() - started };
   const treeIndex = git.treeEntries(tree);
-  const roots = [
+  let roots = [
     ...new Set([
       ...changed.filter(({ status }) => status !== 'D').map(({ path }) => path),
       ...git.importersOf(tree, changed),
@@ -314,6 +314,20 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
   const api = new API({ cwd: repo });
   try {
     const layer = git.layerFor(tree, treeIndex);
+    // Discovered importers belong to their configured program. Forcing an excluded
+    // composed test into a Node project can inject a second platform's globals.
+    // Explicitly changed files remain roots even when their config excludes them.
+    const membership = api.createSnapshot({
+      openProjects: [...groups.keys()].map(dir => git.abs(dir === '.' ? 'tsconfig.json' : `${dir}/tsconfig.json`)),
+      fileSystem: layer,
+    });
+    const included = new Set(membership.getProjects().flatMap(project => project.parsedCommandLine.fileNames));
+    const explicit = new Set(changed.filter(({ status }) => status !== 'D').map(({ path }) => path));
+    for (const [dir, files] of groups)
+      groups.set(dir, files.filter(file => explicit.has(file) || included.has(git.abs(file))));
+    roots = roots.filter(file => explicit.has(file) || included.has(git.abs(file)));
+    result.roots = roots.length;
+    membership.dispose();
     const head = git.virtualConfigs(api, groups);
     Object.assign(layer.files, head.files);
     const headSnapshot = api.createSnapshot({
