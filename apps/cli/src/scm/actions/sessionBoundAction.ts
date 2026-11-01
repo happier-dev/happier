@@ -18,11 +18,10 @@ import type { resolveFilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/ac
 import type { resolveCwd } from '@/scm/runtime';
 import type { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { isStoredScmReviewEvidenceAction, type bindScmActionToSessionWorkspace, type isRetainedScmReviewAction } from '@/scm/actions/placement';
-import { requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
 import type { ActionExecutorDeps, ActionExecutorContext, ScmDiffSummaryGenerateInput } from '@happier-dev/protocol';
 import { BackendTargetRefV2Schema, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -35,7 +34,8 @@ import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encrypti
 import type { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { readMachineRpcRequestDisposition } from '@/session/transport/rpc/machineRpc';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { isRpcError, isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import type { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
 import type { sendFileReviewNoteToSession } from '@/session/services/sendFileReviewNote';
@@ -332,10 +332,14 @@ export function createSessionBoundScmAction(
       } catch (error) {
         if (actionId !== 'scm.change.discard') throw error;
         const { readMachineRpcRequestDisposition } = await import("@/session/transport/rpc/machineRpc");
-        if (readMachineRpcRequestDisposition(error) === 'notSent'
+        const disposition = readMachineRpcRequestDisposition(error);
+        if (disposition === 'notSent'
           || isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error)) {
           return { success: false, errorCode: 'COMPARISON_UNAVAILABLE', error: 'Prepared Undo delivery is unavailable' };
         }
+        // Receiver failures already carry the Action executor's typed error.
+        if (isRpcError(error) && !isActionOutcomeUnknownErrorCodeV1(error.rpcErrorCode)
+          && disposition !== 'outcomeUnknown') throw error;
         // A lost acknowledgement must never trigger a local mutation/replay.
         return { success: false, errorCode: 'COMMAND_OUTCOME_UNKNOWN', error: 'The Machine discard outcome could not be established' };
       }

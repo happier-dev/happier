@@ -1,3 +1,6 @@
+import { buildReviewUnits } from '@happier-dev/protocol/scm/comparisonOccurrences';
+import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import axios from 'axios';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -373,5 +376,30 @@ describe('exact-machine SCM Action targeting', () => {
         expect(methods).toEqual(supported ? ['scm.backend.describe', item.id] : ['scm.backend.describe']);
       }
     }
+  });
+});
+
+describe('SCM discard Machine failures', () => {
+  it.each(['refused', 'lost-acknowledgement', 'unknown-code'] as const)('preserves the receiver outcome (%s)', async scenario => {
+    await withTempDir('scm-discard-failure-', async cwd => {
+      const machineId = 'discard-machine';
+      // Machine RPC is a network boundary. Preserve the observed daemon refusal
+      // envelope and substitute transport-owned lost acknowledgement errors.
+      vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async () => {
+        if (scenario === 'lost-acknowledgement') throw markRpcRequestDisposition(
+          new RpcError('Socket disconnected', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE), 'outcomeUnknown');
+        if (scenario === 'unknown-code') throw new RpcError('Acknowledgement lost', RPC_ERROR_CODES.OUTCOME_UNKNOWN);
+        return { errorCode: 'agent_isolation_unavailable', error: 'Requester execution protection is unavailable' };
+      });
+      const executor = createActionExecutor(createCliActionDeps({ token: 'discard-token',
+        credentials: { token: 'discard-token', encryption: null }, sessionId: '', mode: 'plain', ctx: null }));
+      const diff = 'diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new\n';
+      const result = await executor.execute('scm.change.discard', { cwd, entries: [{ path: 'a.ts', kind: 'comparison',
+        against: { source: { kind: 'workingTree' } }, changeKeys: buildReviewUnits('a.ts', 'combined', diff).map(unit => unit.key) }] },
+        { surface: 'rpc', authority: 'account_automation', externalActionTarget: { kind: 'machine', machineId } });
+      expect(result).toMatchObject(scenario === 'refused'
+        ? { ok: false, errorCode: 'agent_isolation_unavailable' }
+        : { ok: true, result: { success: false, errorCode: 'COMMAND_OUTCOME_UNKNOWN' } });
+    });
   });
 });
