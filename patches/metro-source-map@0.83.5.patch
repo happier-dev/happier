@@ -1,0 +1,50 @@
+diff --git a/src/source-map.js b/src/source-map.js
+--- a/src/source-map.js
++++ b/src/source-map.js
+@@ -75,9 +75,22 @@
+     if (Array.isArray(map)) {
+       addMappingsForFile(generator, map, mod, carryOver);
+     } else if (map != null) {
+-      throw new Error(
+-        `Unexpected module with full source map found: ${mod.path}`,
+-      );
++      generator.startFile(mod.path, mod.source, mod.functionMap, {
++        addToIgnoreList: mod.isIgnored,
++      });
++      // Decode one module for this serialization only, never back into Graph.
++      for (const mapping of new _Consumer.default(map).generatedMappings()) {
++        const line = mapping.generatedLine + carryOver;
++        const column = mapping.generatedColumn;
++        if (mapping.originalLine == null || mapping.originalColumn == null) {
++          generator.addSimpleMapping(line, column);
++        } else if (mapping.name == null) {
++          generator.addSourceMapping(line, column, mapping.originalLine, mapping.originalColumn);
++        } else {
++          generator.addNamedSourceMapping(line, column, mapping.originalLine, mapping.originalColumn, mapping.name);
++        }
++      }
++      generator.endFile();
+     }
+     carryOver = carryOver + countLines(code);
+     return false;
+diff --git a/src/source-map.d.ts b/src/source-map.d.ts
+--- a/src/source-map.d.ts
++++ b/src/source-map.d.ts
+@@ -86,7 +86,7 @@
+  */
+ declare function fromRawMappings(
+   modules: ReadonlyArray<{
+-    readonly map: null | undefined | ReadonlyArray<MetroSourceMapSegmentTuple>;
++    readonly map: null | undefined | ReadonlyArray<MetroSourceMapSegmentTuple> | BasicSourceMap;
+     readonly functionMap: null | undefined | FBSourceFunctionMap;
+     readonly path: string;
+     readonly source: string;
+@@ -98,7 +98,7 @@
+ ): Generator;
+ declare function fromRawMappingsNonBlocking(
+   modules: ReadonlyArray<{
+-    readonly map: null | undefined | ReadonlyArray<MetroSourceMapSegmentTuple>;
++    readonly map: null | undefined | ReadonlyArray<MetroSourceMapSegmentTuple> | BasicSourceMap;
+     readonly functionMap: null | undefined | FBSourceFunctionMap;
+     readonly path: string;
+     readonly source: string;

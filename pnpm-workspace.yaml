@@ -136,6 +136,7 @@ patchedDependencies:
   libmime@5.4.7: patches/libmime@5.4.7.patch
   metro-runtime@0.83.5: patches/metro-runtime@0.83.5.patch
   metro@0.83.5: patches/metro@0.83.5.patch
+  metro-source-map@0.83.5: patches/metro-source-map@0.83.5.patch
   react-native-audio-api@0.8.4: patches/react-native-audio-api@0.8.4.patch
   react-native-enriched-markdown@0.5.0: patches/react-native-enriched-markdown@0.5.0.patch
   react-native-reanimated@4.3.0: patches/react-native-reanimated@4.3.0.patch

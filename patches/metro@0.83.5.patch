@@ -65,3 +65,117 @@ index 342bbce6374a9cfdf338ba72ca3d2afad4b50dd4..4b16f01c3469fd40bbabd531f1d1a6ef
      const result = await this._fileSystem.getOrComputeSha1(mixedPath);
      if (!result || !result.sha1) {
        throw new Error(`Failed to get the SHA-1 for: ${mixedPath}.
+diff --git a/src/DeltaBundler/Graph.js b/src/DeltaBundler/Graph.js
+--- a/src/DeltaBundler/Graph.js
++++ b/src/DeltaBundler/Graph.js
+@@ -8,6 +8,7 @@
+ var _CountingSet = _interopRequireDefault(require("../lib/CountingSet"));
+ var _isResolvedDependency = require("../lib/isResolvedDependency");
+ var _buildSubgraph = require("./buildSubgraph");
++var _metroSourceMap = require("metro-source-map");
+ var _invariant = _interopRequireDefault(require("invariant"));
+ var _nullthrows = _interopRequireDefault(require("nullthrows"));
+ function _interopRequireDefault(e) {
+@@ -175,7 +176,31 @@
+           options.onDependencyAdd();
+           const result = await options.transform(absolutePath, requireContext);
+           options.onDependencyAdded();
+-          return result;
++          // Retain compact maps in both the in-flight subgraph and live graph.
++          // Admission also covers raw tuples read from existing transform caches.
++          return {
++            ...result,
++            output: result.output.map((output) => {
++              if (
++                typeof output?.type !== "string" ||
++                !output.type.startsWith("js/") ||
++                !Array.isArray(output.data?.map)
++              ) {
++                return output;
++              }
++              return {
++                ...output,
++                data: {
++                  ...output.data,
++                  map: (0, _metroSourceMap.fromRawMappings)([{
++                    ...output.data,
++                    path: absolutePath,
++                    source: "",
++                  }]).toMap(undefined, { excludeSource: true }),
++                },
++              };
++            }),
++          };
+         },
+       },
+     );
+diff --git a/src/Server/symbolicate.js b/src/Server/symbolicate.js
+--- a/src/Server/symbolicate.js
++++ b/src/Server/symbolicate.js
+@@ -4,6 +4,7 @@
+   value: true,
+ });
+ exports.default = symbolicate;
++var _metroSourceMap = require("metro-source-map");
+ var _search = require("metro-source-map/private/Consumer/search");
+ var _Symbolication = require("metro-symbolicate/private/Symbolication");
+ function createFunctionNameGetter(module) {
+@@ -30,6 +31,7 @@
+     mapsByUrl.set(url, map);
+   }
+   const functionNameGetters = new Map();
++  const mapConsumers = new Map();
+   function findModule(frame) {
+     const map = mapsByUrl.get(frame.file);
+     if (!map || frame.lineNumber == null) {
+@@ -57,6 +59,20 @@
+       line1Based: frame.lineNumber - module.firstLine1Based + 1,
+       column0Based: frame.column,
+     };
++    if (!Array.isArray(module.map)) {
++      let consumer = mapConsumers.get(module);
++      if (consumer == null) {
++        consumer = new _metroSourceMap.Consumer(module.map);
++        mapConsumers.set(module, consumer);
++      }
++      const original = consumer.originalPositionFor({
++        line: generatedPosInModule.line1Based,
++        column: generatedPosInModule.column0Based,
++      });
++      return original.line == null || original.column == null
++        ? null
++        : { line1Based: original.line, column0Based: original.column };
++    }
+     const mappingIndex = (0, _search.greatestLowerBound)(
+       module.map,
+       generatedPosInModule,
+@@ -97,11 +113,6 @@
+         ...frame,
+       };
+     }
+-    if (!Array.isArray(module.map)) {
+-      throw new Error(
+-        `Unexpected module with serialized source map found: ${module.path}`,
+-      );
+-    }
+     const originalPos = findOriginalPos(frame, module);
+     if (!originalPos) {
+       return {
+diff --git a/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts b/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
+--- a/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
++++ b/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
+@@ -10,12 +10,13 @@
+ 
+ import type {Module} from '../types';
+ import type {
++  BasicSourceMap,
+   FBSourceFunctionMap,
+   MetroSourceMapSegmentTuple,
+ } from 'metro-source-map';
+ 
+ export type ExplodedSourceMap = ReadonlyArray<{
+-  readonly map: Array<MetroSourceMapSegmentTuple>;
++  readonly map: Array<MetroSourceMapSegmentTuple> | BasicSourceMap;
+   readonly firstLine1Based: number;
+   readonly functionMap: null | undefined | FBSourceFunctionMap;
+   readonly path: string;
