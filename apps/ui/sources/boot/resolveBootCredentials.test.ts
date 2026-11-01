@@ -62,7 +62,8 @@ const runtime = await vi.hoisted(async () => {
         storage, locks, backend, navigator, window, document, sessionStorage, sessionValues,
         secureValues: new Map<string, string>(),
         invoke: vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(),
-        bootCredentials: null as AuthCredentials | { token: string; encryption: null } | null,
+        // Desktop hosts pass the CLI's access.key JSON through unread; the UI decodes it.
+        bootCredentials: null as unknown,
         refuseCredentialWrite: false,
         onCredentialWrite: undefined as (() => void) | undefined,
     };
@@ -337,6 +338,28 @@ describe('resolveBootCredentials', () => {
         await expectStoredCredentials(stackUrl, { token: 'stack-token-only' });
         const credentialBytes = [...runtime.secureValues.entries()].filter(([key]) => key.startsWith('auth_credentials')).map(([, value]) => JSON.parse(value));
         expect(credentialBytes).toEqual([{ token: 'stack-token-only' }]);
+    });
+
+    it('adopts the legacy secret a stack Home access.key carries', async () => {
+        stubWebRuntime('http://localhost:8081/');
+        // Same shape as the CLI's writeCredentialsLegacy: standard base64 secret beside the bearer.
+        const cliLegacy = { secret: encodeBase64(new Uint8Array(32).fill(0xfb)), token: 'stack-legacy-token' };
+        enableStackDesktop(cliLegacy);
+        await expect(resolveBootCredentials('web')).resolves.toEqual({ token: 'stack-legacy-token', secret: cliLegacy.secret });
+        await expectStoredCredentials(stackUrl, { token: 'stack-legacy-token', secret: cliLegacy.secret });
+    });
+
+    it.each([
+        ['keys the CLI marked historical', { ...stackCredentials, custody: 'historical' }],
+        ['a half-filled key pair', { token: 'stack-token', encryption: { publicKey: stackCredentials.encryption.publicKey } }],
+        ['a token-less key file', { encryption: stackCredentials.encryption }],
+        ['no key file', null],
+    ])('settles to ordinary sign-in for %s', async (_case, hostValue) => {
+        stubWebRuntime('http://localhost:8081/');
+        enableStackDesktop(hostValue);
+        await expect(resolveBootCredentials('web')).resolves.toBeNull();
+        expect(runtime.invoke).toHaveBeenCalledWith('desktop_read_stack_boot_credentials', undefined);
+        await expectStoredCredentials(stackUrl, null);
     });
 
     it('does not adopt imported desktop credentials when marked first-key custody refuses replacement', async () => {

@@ -1,5 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { parseAuthCredentials, TokenStorage } from '@/auth/storage/tokenStorage';
 import { isTerminalConnectWebPathname, parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
 import { TERMINAL_CONNECT_WEB_BOOTSTRAP_STORAGE_KEY } from '@/utils/path/terminalConnectWebBootstrap';
 import {
@@ -41,35 +41,21 @@ function resolveBootServerUrlFromTerminalConnectHash(): string | null {
     }
 }
 
+/**
+ * The only decoder for the CLI's `servers/<id>/access.key` JSON, which both desktop hosts pass
+ * through unread. Keys the CLI marked historical are not active E2EE material on this device, so
+ * they, like a missing or invalid file, settle to ordinary sign-in.
+ */
 function parseDesktopBootCredentials(value: unknown): AuthCredentials | null {
-    if (!value || typeof value !== 'object') return null;
-    const record = value as Record<string, unknown>;
-    if (typeof record.token !== 'string' || record.token.trim().length === 0) return null;
-    const token = record.token;
-    if (Object.prototype.hasOwnProperty.call(record, 'secret')) {
-        return typeof record.secret === 'string' && record.secret.trim().length > 0
-            ? { token, secret: record.secret }
-            : null;
-    }
-    const encryption = record.encryption;
-    if (encryption == null) return { token };
-    if (typeof encryption !== 'object') return null;
-    const encryptionRecord = encryption as Record<string, unknown>;
-    if (
-        typeof encryptionRecord.publicKey === 'string'
-        && encryptionRecord.publicKey.trim().length > 0
-        && typeof encryptionRecord.machineKey === 'string'
-        && encryptionRecord.machineKey.trim().length > 0
-    ) {
-        return {
-            token,
-            encryption: {
-                publicKey: encryptionRecord.publicKey,
-                machineKey: encryptionRecord.machineKey,
-            },
-        };
-    }
-    return null;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const { secret, encryption, ...record } = value as Record<string, unknown>;
+    if (record.custody === 'historical') return null;
+    // Released CLIs write `null` for absent material (0.2 token-only: `encryption: null`).
+    return parseAuthCredentials({
+        ...record,
+        ...(secret !== null && secret !== undefined ? { secret } : {}),
+        ...(encryption !== null && encryption !== undefined ? { encryption } : {}),
+    });
 }
 
 function canUseStackDesktopBootCredentials(bootServerUrl?: string | null): boolean {
