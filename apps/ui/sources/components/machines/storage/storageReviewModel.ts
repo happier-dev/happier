@@ -186,7 +186,10 @@ export function selectStorageReviewApply(
         : [],
     count: items.length,
     allocatedBytes: acting.reduce((sum, row) => sum + row.allocatedBytes, 0),
-    freesBytes: Math.min(frees, review.totalFreesBytes),
+    // Per-root exclusivity omits a hardlink whose other name is in another
+    // selected root. The daemon measured that full union, so reuse it when
+    // the selection still contains every reviewed root.
+    freesBytes: acting.length === review.going.length ? review.totalFreesBytes : Math.min(frees, review.totalFreesBytes),
     holders: holdingSessions(acting),
   };
 }

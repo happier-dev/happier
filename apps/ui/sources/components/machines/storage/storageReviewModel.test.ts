@@ -254,6 +254,15 @@ describe('the review sheet model (plan 40 STO-12, lab rs R)', () => {
       ).freesBytes,
     ).toBe(10_000);
   });
+
+  it('uses the measured union when every reviewed root is selected, including cross-root hardlinks', () => {
+    const value = { ...review(), items: [check('a', '/cache/a', 10), check('b', '/cache/b', 20)],
+      staying: [], totalFreesBytes: 100 };
+    const model = buildStorageReview(value, volumes);
+    expect(selectStorageReviewApply(model, new Set(['a', 'b']), 'delete').freesBytes).toBe(100);
+    // A subset has only the conservative per-root measurement from this review.
+    expect(selectStorageReviewApply(model, new Set(['a']), 'delete').freesBytes).toBe(10);
+  });
 });
 
 describe('the apply result (lab rs RD)', () => {
