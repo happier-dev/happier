@@ -25,12 +25,6 @@ type KeyStats = {
   lastTouchedAt: number;
 };
 
-type FailureLogStats = {
-  loggedAt: number;
-};
-
-const DEFAULT_FAILURE_LOG_SAMPLE_INTERVAL_MS = 60_000;
-
 const COUNTERS: readonly DaemonServerWorkCounter[] = [
   'accepted',
   'coalesced',
@@ -86,7 +80,6 @@ export function createDaemonServerWorkScheduler(params: Readonly<{
   budget: DaemonServerWorkBudget;
   gate?: DaemonServerWorkGate;
   logger?: DaemonServerWorkLogger;
-  failureLogSampleIntervalMs?: number;
   maxTrackedKeys?: number;
   now?: () => number;
 }>): DaemonServerWorkScheduler {
@@ -94,12 +87,7 @@ export function createDaemonServerWorkScheduler(params: Readonly<{
   const keyStats = new Map<string, KeyStats>();
   const pendingByKey = new Map<string, { count: number; payloadBytes: number }>();
   const activeOutcomes = new Set<Promise<DaemonServerWorkOutcome>>();
-  const failureLogByKeyReason = new Map<string, FailureLogStats>();
   const now = params.now ?? Date.now;
-  const failureLogSampleIntervalMs = Math.max(
-    0,
-    Math.floor(params.failureLogSampleIntervalMs ?? DEFAULT_FAILURE_LOG_SAMPLE_INTERVAL_MS),
-  );
   const maxTrackedKeys = Math.max(1, Math.trunc(params.maxTrackedKeys ?? 256));
 
   function getPurposeStats(purpose: string): PurposeStats {
@@ -108,15 +96,6 @@ export function createDaemonServerWorkScheduler(params: Readonly<{
     const created = { counters: createEmptyCounters() };
     purposeStats.set(purpose, created);
     return created;
-  }
-
-  function deleteFailureLogStateForKey(key: string): void {
-    const prefix = `${key}\u0000`;
-    for (const logKey of failureLogByKeyReason.keys()) {
-      if (logKey.startsWith(prefix)) {
-        failureLogByKeyReason.delete(logKey);
-      }
-    }
   }
 
   function evictTrackedKeys(protectedKey?: string): void {
@@ -133,7 +112,6 @@ export function createDaemonServerWorkScheduler(params: Readonly<{
       }
       if (!oldestKey) return;
       keyStats.delete(oldestKey);
-      deleteFailureLogStateForKey(oldestKey);
     }
   }
 
@@ -178,16 +156,6 @@ export function createDaemonServerWorkScheduler(params: Readonly<{
       pendingByKey.delete(key);
       evictTrackedKeys();
     }
-  }
-
-  function shouldLogFailure(key: string, reason: string, timestampMs: number): boolean {
-    const logKey = `${key}\u0000${reason}`;
-    const previous = failureLogByKeyReason.get(logKey);
-    if (!previous || timestampMs - previous.loggedAt >= failureLogSampleIntervalMs) {
-      failureLogByKeyReason.set(logKey, { loggedAt: timestampMs });
-      return true;
-    }
-    return false;
   }
 
   async function waitForActiveOutcomes(timeoutMs: number): Promise<Readonly<{ timedOut: boolean }>> {
@@ -278,14 +246,12 @@ export function createDaemonServerWorkScheduler(params: Readonly<{
         stats.backoffReason = classification.kind;
         stats.nextEligibleAt = failedAt + (classification.retryAfterMs ?? 0);
       }
-      if (shouldLogFailure(key, classification.kind, failedAt)) {
-        params.logger?.warn?.('[DAEMON SERVER WORK] Background server work failed', {
-          purpose,
-          kind: work.kind,
-          key,
-          classification,
-        });
-      }
+      params.logger?.warn?.('[DAEMON SERVER WORK] Background server work failed', {
+        purpose,
+        kind: work.kind,
+        key,
+        classification,
+      });
       return { status: 'failed', classification };
     } finally {
       removePending(key, payloadBytes);

@@ -86,7 +86,7 @@ describe('createDaemonServerWorkScheduler', () => {
     expect(outcome).toEqual({ status: 'deferred', reason: 'offline', retryAfterMs: undefined });
   });
 
-  it('samples repeated failure logs for the same key and reason', async () => {
+  it('reports each failed operation without a separate sampling policy', async () => {
     const budgetMod = await import('./createDaemonServerWorkBudget').catch(() => null);
     const schedulerMod = await import('./createDaemonServerWorkScheduler').catch(() => null);
     expect(budgetMod?.createDaemonServerWorkBudget).toBeTypeOf('function');
@@ -115,11 +115,11 @@ describe('createDaemonServerWorkScheduler', () => {
     await scheduler.enqueue(failingWork);
     await scheduler.enqueue(failingWork);
 
-    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledTimes(2);
 
     now = 62_000;
     await scheduler.enqueue(failingWork);
 
-    expect(logger.warn).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledTimes(3);
   });
 });
