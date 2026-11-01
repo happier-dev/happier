@@ -34,7 +34,8 @@ export type RecoverableTurnFailureSecondFailureDecision = Readonly<{
 
 export function resolveRecoverableTurnFailureRetryDecision(input: Readonly<{
     attemptCount: number;
-    maxRetries: number;
+    /** null delegates the bound to the containing operation's lifecycle/deadline. */
+    maxRetries: number | null;
     providerWillRetry?: boolean | null;
     failureRetryAfterMs?: number | null;
     failedTurnHadMeaningfulActivity: boolean;
@@ -60,7 +61,7 @@ export function resolveRecoverableTurnFailureRetryDecision(input: Readonly<{
         };
     }
 
-    if (normalizeAttemptCount(input.attemptCount) >= normalizeMaxRetries(input.maxRetries)) {
+    if (input.maxRetries !== null && normalizeAttemptCount(input.attemptCount) >= normalizeMaxRetries(input.maxRetries)) {
         return {
             action: 'budget_exhausted',
             suppressBackendError: false,

@@ -318,6 +318,7 @@ import {
   reconcileConnectedServiceDirectCredentialRevisionForRuntimeTarget,
   reconcileConnectedServiceDirectCredentialRevisions,
   reconcileConnectedServiceAuthGroupGenerations,
+  listSessionGenerationRuntimeTargets,
 } from './connectedServices/accountGroups/generation/reconcileConnectedServiceAuthGroupGenerations';
 import { mapCommittedGenerationApplyResult } from './connectedServices/accountGroups/generation/mapCommittedGenerationApplyResult';
 import { createRuntimeGenerationApplicationProofResolver } from './connectedServices/accountGroups/generation/createRuntimeGenerationApplicationProofResolver';
@@ -341,6 +342,7 @@ import { createProviderAccountUsagePersistenceScheduler } from './connectedServi
 import { createProviderAccountUsageStore } from './connectedServices/accountUsage/store';
 import { createDaemonConnectedServiceAuthGroupSwitchCoordinator } from './connectedServices/runtimeAuth/createDaemonConnectedServiceAuthGroupSwitchCoordinator';
 import { resolveConnectedServiceAuthGroupRequiredModelIds } from './connectedServices/runtimeAuth/resolveConnectedServiceAuthGroupRequiredModelIds';
+import { createExecutionRunRuntimeAuthFailureReportIntake } from './connectedServices/runtimeAuth/executionRunReportIntake';
 import {
   authorizeConnectedServiceRuntimeAuthFailureSource,
   handleConnectedServiceRuntimeAuthFailureForSession,
@@ -2487,6 +2489,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           snapshot: ConnectedServiceProjectionSnapshot,
           signal?: AbortSignal,
         ): Promise<void> => {
+          // Run pool truth must never be addressed to the parent session's auth consumer.
+          if (registration.key.kind === 'execution_run') return;
           const consumer = connectedServiceAuthGroupGenerationConsumer;
           const target = connectedServiceRuntimeRegistry.getCurrentTargetForRegistration(registration);
           if (!consumer || !target) return;
@@ -6756,13 +6760,46 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       groupId: classification.groupId,
       explicit,
     });
-    const runtimeAuthFailureReportIntake = createRuntimeAuthFailureReportIntake({
+    const sessionRuntimeAuthFailureReportIntake = createRuntimeAuthFailureReportIntake({
       handleConnectedServiceRuntimeAuthFailure: handleConnectedServiceRuntimeAuthRecovery,
       authorizeConnectedServiceRuntimeAuthFailure: authorizeRuntimeAuthFailureForSession,
       resolveConnectedServiceRuntimeAuthResumePromptMode: resolveRuntimeAuthReportResumePromptMode,
       runtimeAuthRecoveryScheduler: runtimeAuthRecoveryScheduler ?? undefined,
       isShuttingDown: () => shutdownInitiated || connectedServiceQuotaProducersQuiesced,
     });
+    const runtimeAuthFailureReportIntake = createExecutionRunRuntimeAuthFailureReportIntake({
+      runtimeRegistry: connectedServiceRuntimeRegistry,
+      sessionIntake: sessionRuntimeAuthFailureReportIntake,
+      resolveResumePromptMode: resolveRuntimeAuthReportResumePromptMode,
+      isShuttingDown: () => shutdownInitiated || connectedServiceQuotaProducersQuiesced,
+      switchCoordinator: createDaemonConnectedServiceAuthGroupSwitchCoordinator({
+        resolveRequiredModelIdsForGroup: (input) => resolveConnectedServiceAuthGroupRequiredModelIds({
+          ...input, targets: connectedServiceRuntimeRegistry.listTargets(), sessions: getCurrentChildren(),
+        }),
+        api,
+        runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots,
+        accountUsageStore: providerAccountUsageStore,
+        leases: connectedServiceAuthGroupSwitchLeases,
+        quotaFreshnessMs: resolvePositiveIntEnv(
+          process.env.HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_QUOTA_FRESHNESS_MS,
+          5 * 60_000,
+          { min: 1_000, max: 60 * 60_000 },
+        ),
+        nowMs: () => Date.now(),
+        resolveCredentialRevision: (serviceId, profileId) => profileId
+          ? latestConnectedServiceProjectionSnapshot?.resolveCredentialRevision(serviceId, profileId) ?? null
+          : null,
+        resolveCurrentCredentialRevision: resolveCurrentConnectedServiceCredentialRevision,
+        prepareCandidateForSwitch: prepareAuthGroupCandidateForSwitch,
+        consumeAvailableRecoveryCreditForProfile: async (input) => connectedServiceQuotasCoordinator
+          ? await connectedServiceQuotasCoordinator.consumeAvailableRecoveryCreditForProfile(input)
+          : { ok: false, errorCode: 'connected_service_quota_recovery_credit_unavailable', error: 'Quota coordinator unavailable' },
+        probeQuotaSnapshotsForGroup: async (input) => await connectedServiceQuotasCoordinator?.probeGroupQuotaSnapshots(input),
+        // A run consumes only the pool decision; its controller owns rematerialization/continuation.
+        restartSession: async () => {},
+      }),
+    });
+
     // Start control server
     const { port: controlPort, stop: stopControlServer } = await startDaemonControlServer({
       getChildren: getCurrentChildren,
@@ -8510,7 +8547,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       consumer: connectedServiceAuthGroupGenerationConsumer,
                       listCurrentGroups: async (serviceId) => projectionSnapshot.groups.filter((group) => group.serviceId === serviceId),
                       resolveCredentialRevision: projectionSnapshot.resolveCredentialRevision,
-                      listRuntimeTargets: () => projectionRegistrations.map((registration) => registration.target),
+                      listRuntimeTargets: () => listSessionGenerationRuntimeTargets(projectionRegistrations),
                       isCurrentRuntimeTarget: (target) => projectionRegistrations.some((registration) => (
                         registration.target === target
                         && connectedServiceRuntimeRegistry.isCurrentTargetRegistration(registration)

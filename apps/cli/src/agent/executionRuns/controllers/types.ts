@@ -25,6 +25,8 @@ export type ExecutionRunBackendController = {
   turnCount: number;
   turnEpoch: number;
   turnInFlight: boolean;
+  turnHadMeaningfulActivity?: boolean;
+  recoveryAbortController?: AbortController;
   turnCancelReason: 'steer' | 'stop' | 'timeout' | 'outcome_unknown' | null;
   turnCancelEpoch: number | null;
   pendingExternalMessages: ExecutionRunExternalMessage[];
@@ -61,6 +63,7 @@ export type ExecutionRunVoiceAgentController = {
 export type ExecutionRunController = ExecutionRunBackendController | ExecutionRunVoiceAgentController;
 
 export function resetExecutionRunBackendOutput(ctrl: ExecutionRunBackendController): void {
+  ctrl.turnHadMeaningfulActivity = false;
   ctrl.buffer = '';
   ctrl.modelOutputSegmentSnapshot = undefined;
   ctrl.sidechainStreamBuffer = '';

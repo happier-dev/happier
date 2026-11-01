@@ -1,6 +1,7 @@
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 
 export function disposeExecutionRunBackendController(controller: ExecutionRunBackendController): Promise<void> {
+  controller.recoveryAbortController?.abort();
   controller.disposalPromise ??= Promise.resolve().then(() => controller.backend.dispose());
   return controller.disposalPromise;
 }

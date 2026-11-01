@@ -20,6 +20,7 @@ export async function stopExecutionRun(args: Readonly<{
   if (!ctrl) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
 
   ctrl.cancelled = true;
+  if (ctrl.kind === 'backend') ctrl.recoveryAbortController?.abort();
   const leafCancellation = Promise.resolve().then(async () => {
     if (ctrl.kind === 'backend') {
       if (ctrl.childSessionId && !ctrl.disposalPromise) {

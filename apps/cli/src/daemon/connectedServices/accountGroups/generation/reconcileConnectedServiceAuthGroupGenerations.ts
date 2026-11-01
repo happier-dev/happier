@@ -7,6 +7,7 @@ import {
   type ConnectedServiceProviderAdoptedGenerationTarget,
 } from '../../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import type { ConnectedServiceAuthGroupGenerationConsumer } from './ConnectedServiceAuthGroupGenerationConsumer';
+import type { ConnectedServiceRuntimeTargetRegistration } from '../../runtimeRegistry/registry';
 import type { ConnectedServiceGenerationExecutionAuthority } from '../../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import type {
   ConnectedServiceProjectedAuthGroup,
@@ -43,6 +44,13 @@ export type ConnectedServiceGenerationRuntimeTarget = Readonly<{
   revision?: number;
   connectedServiceMaterializationIdentityV1?: Readonly<{ id: string }> | null;
 }>;
+
+export function listSessionGenerationRuntimeTargets(
+  registrations: readonly ConnectedServiceRuntimeTargetRegistration[],
+): ConnectedServiceGenerationRuntimeTarget[] {
+  // Runs retain their parent's sessionId, but cannot receive a session auth application.
+  return registrations.flatMap((registration) => registration.key.kind === 'session' ? [registration.target] : []);
+}
 
 type ConnectedServiceAuthGroupRuntimeScope = Readonly<{
   sessionId: string;

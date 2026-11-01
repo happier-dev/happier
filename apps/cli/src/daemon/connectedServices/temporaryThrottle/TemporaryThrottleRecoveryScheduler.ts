@@ -10,6 +10,7 @@ import {
   ConnectedServiceRuntimeAuthFailureKindSchema,
   type ConnectedServiceRuntimeAuthFailureKind,
 } from '../runtimeAuth/types';
+import { computeCapacityBackoffMs } from './capacityBackoff';
 
 type TemporaryThrottleStatus = 'waiting' | 'checking' | 'awaiting_outcome' | 'exhausted' | 'cancelled';
 
@@ -322,7 +323,7 @@ export class TemporaryThrottleRecoveryScheduler {
         capacityFailureCount,
         attemptCount: previous?.attemptCount ?? 0,
         nextRetryAtMs: Math.max(
-          next.armedAtMs + this.computeCapacityBackoffMs(capacityFailureCount),
+          next.armedAtMs + computeCapacityBackoffMs(capacityFailureCount, this.deps.random),
           next.armedAtMs + (next.retryAfterMs ?? 0),
           next.resetAtMs ?? 0,
         ),
@@ -523,14 +524,8 @@ export class TemporaryThrottleRecoveryScheduler {
 
   private computeRetryBackoffMs(intent: TemporaryThrottleRecoveryIntent): number {
     return intent.continuation?.recoveryKind === 'capacity'
-      ? this.computeCapacityBackoffMs(Math.max(intent.capacityFailureCount ?? 1, intent.attemptCount + 1))
+      ? computeCapacityBackoffMs(Math.max(intent.capacityFailureCount ?? 1, intent.attemptCount + 1), this.deps.random)
       : this.computeBackoffMs(intent.attemptCount);
-  }
-
-  private computeCapacityBackoffMs(failureCount: number): number {
-    const base = Math.min(300_000, 5_000 * (2 ** Math.min(6, Math.max(0, failureCount - 1))));
-    const random = Math.min(1, Math.max(0, (this.deps.random ?? Math.random)()));
-    return Math.round(base * (0.8 + random * 0.4));
   }
 
   private resolveInitialRetryAtMs(input: Readonly<{

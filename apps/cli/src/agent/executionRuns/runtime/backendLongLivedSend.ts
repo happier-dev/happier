@@ -13,8 +13,9 @@ import {
   EXECUTION_RUN_SEND_OUTCOME_UNKNOWN_CODE,
   EXECUTION_RUN_SEND_OUTCOME_UNKNOWN_MESSAGE,
 } from '@/agent/executionRuns/runtime/executionRunErrors';
+import { recoverFailedExecutionRunTurn, readExecutionRunFailureClassification, type ExecutionRunRecoveryContext } from './recoverFailedTurn';
 
-type BackendLongLivedRunSendArgs = Readonly<{
+type BackendLongLivedRunSendArgs = ExecutionRunRecoveryContext & Readonly<{
   runId: string;
   params: Readonly<{ message: string; resume?: boolean; delivery?: unknown }>;
   runs: Map<string, ExecutionRunState>;
@@ -147,6 +148,9 @@ export async function sendPreparedBackendLongLivedRun(
   const isCurrentController = (): boolean => args.controllers.get(args.runId) === ctrl2;
 
   if (ctrl2.turnInFlight) {
+    if (ctrl2.recoveryAbortController) {
+      return { ok: false, errorCode: 'execution_run_busy', error: 'Run is waiting for recovery; stop it to cancel' };
+    }
     // A provider-side failure after invocation cannot prove whether the input was accepted.
     // Keep that exact turn's custody exclusive until completion or explicit stop settles it.
     if (ctrl2.turnCancelReason === 'outcome_unknown') {
@@ -210,11 +214,40 @@ export async function sendPreparedBackendLongLivedRun(
   // outcome-unknown, so replaying the prompt here could execute the same input twice.
   const sendPromise = Promise.resolve().then(() => ctrl2.backend.sendPrompt(childSessionId, args.params.message));
 
-  const runCompletionLoop = async (): Promise<void> => {
-    try {
-      if (ctrl2.backend.waitForResponseComplete) {
-        await ctrl2.backend.waitForResponseComplete();
+  const completeWithRecovery = async (initialFailure?: Readonly<{ error: unknown }>): Promise<void> => {
+    let failure = initialFailure;
+    let prompt = args.params.message;
+    let attemptCount = 0;
+    while (isCurrentController() && !ctrl2.cancelled && ctrl2.turnEpoch === thisEpoch) {
+      try {
+        if (failure) throw failure.error;
+        await ctrl2.backend.waitForResponseComplete?.();
+        return;
+      } catch (error) {
+        const retryPrompt = await recoverFailedExecutionRunTurn({
+          ...args, controller: ctrl2, error, originalPrompt: prompt, attemptCount,
+          isCurrentTurn: () => isCurrentController() && ctrl2.turnEpoch === thisEpoch,
+          announceWaiting: (message) => args.sendAcp(args.parentProvider, { type: 'message', message, sidechainId: run.sidechainId }),
+        });
+        if (retryPrompt === null) throw error;
+        if (!isCurrentController() || ctrl2.cancelled || ctrl2.turnEpoch !== thisEpoch) return;
+        prompt = retryPrompt;
+        attemptCount += 1;
+        resetExecutionRunBackendOutput(ctrl2);
+        try {
+          await ctrl2.backend.sendPrompt(childSessionId, prompt);
+          failure = undefined;
+        } catch (sendError) {
+          failure = { error: sendError };
+        }
       }
+    }
+  };
+
+  const runCompletionLoop = async (initialFailure?: Readonly<{ error: unknown }>): Promise<void> => {
+    try {
+      await completeWithRecovery(initialFailure);
+      if (ctrl2.cancelled || !isCurrentController() || ctrl2.turnEpoch !== thisEpoch) return;
 
       if (ctrl2.turnEpoch === thisEpoch) {
         ctrl2.turnInFlight = false;
@@ -239,6 +272,7 @@ export async function sendPreparedBackendLongLivedRun(
         args.sendAcp(args.parentProvider, { type: 'message', message: rawText, sidechainId: run.sidechainId });
       }
     } catch (e: any) {
+      if (ctrl2.cancelled || !isCurrentController() || ctrl2.turnEpoch !== thisEpoch) return;
       if (
         ctrl2.turnCancelReason === 'steer'
         && ctrl2.turnCancelEpoch === thisEpoch
@@ -275,12 +309,13 @@ export async function sendPreparedBackendLongLivedRun(
       }
 
       const message = e instanceof Error ? e.message : 'Execution failed';
+      const errorCode = readExecutionRunFailureClassification(e)?.kind ?? 'execution_run_failed';
       await ctrl2.streamWriter?.flushAll({ reason: 'abort', interruptedReason: message });
       if (isCurrentController()) {
         const finishedAtMs = args.getNowMs();
         await args.finishRun(
           args.runId,
-          { status: 'failed', summary: message, finishedAtMs, error: { code: 'execution_run_failed', message } },
+          { status: 'failed', summary: message, finishedAtMs, error: { code: errorCode, message } },
           {
             output: {
               status: 'failed',
@@ -290,7 +325,7 @@ export async function sendPreparedBackendLongLivedRun(
               sidechainId: run.sidechainId,
               finishedAtMs,
               startedAtMs: run.startedAtMs,
-              error: { code: 'execution_run_failed', message },
+              error: { code: errorCode, message },
             },
             isError: true,
           },
@@ -309,7 +344,7 @@ export async function sendPreparedBackendLongLivedRun(
       ctrl2.resolveTerminal();
       if (isCurrentController()) args.controllers.delete(args.runId);
     } finally {
-      if (isCurrentController()) {
+      if (isCurrentController() && ctrl2.turnEpoch === thisEpoch) {
         args.onPublicStateUpdated?.(args.runId);
         await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true }).catch(() => {});
       }
@@ -329,7 +364,11 @@ export async function sendPreparedBackendLongLivedRun(
     if (isCurrentController()) {
       await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true }).catch(() => {});
     }
-  } catch {
+  } catch (error) {
+    if (readExecutionRunFailureClassification(error)) {
+      void runCompletionLoop({ error });
+      return { ok: true };
+    }
     const stillOwnsTurn = (
       isCurrentController()
       && ctrl2.turnEpoch === thisEpoch

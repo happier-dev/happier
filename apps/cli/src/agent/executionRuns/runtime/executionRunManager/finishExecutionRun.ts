@@ -69,7 +69,7 @@ export function finishExecutionRun(args: Readonly<{
     status: args.next.status,
     summary: args.next.summary ?? existing.summary,
     finishedAtMs: args.next.finishedAtMs,
-    ...(args.next.error ? { error: args.next.error } : {}),
+    error: args.next.error,
     ...(args.structuredMeta ? { structuredMeta: args.structuredMeta } : {}),
     latestToolResult: args.toolResult.output,
     ...(existing.retentionPolicy === 'resumable' ? { resumeHandle } : {}),

@@ -118,6 +118,8 @@ function pruneStaleRuntimeAuthFailureReportDedupeEntries(nowMs: number): void {
 
 export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Readonly<{
 	  sessionId: string;
+  /** Runs retain recovery custody in-process; session reports use the durable outbox by default. */
+  delivery?: 'caller_owned' | 'durable';
 	  switchesThisTurn?: number;
 	  resumePromptMode?: unknown;
 	  classification: unknown;
@@ -158,6 +160,7 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
     scheduleDrain: boolean;
     incrementAttemptCount?: boolean;
   }>): Promise<RuntimeAuthFailureReportOutboxItem | null> {
+    if (input.delivery === 'caller_owned') return null;
     try {
       const result = await enqueueRuntimeAuthFailureReportOutboxItem({
         ...(input.reportOutboxDir ? { outboxDir: input.reportOutboxDir } : {}),

@@ -2018,7 +2018,7 @@ The strict account-profile group projection remains unchanged.
 
 ### Model-capacity recovery (development)
 
-`TemporaryThrottleRecoveryScheduler` owns scheduling after a terminal capacity failure.
+`TemporaryThrottleRecoveryScheduler` owns session scheduling after a terminal capacity failure.
 The Codex adapter reports that terminal failure to host recovery without an extra
 immediate retry; native Codex retry-in-progress notifications remain nonterminal.
 Consecutive capacity failures wait 5, 10, 20, 40, 80, 160, then 300 seconds before
@@ -2031,6 +2031,24 @@ turn resets the streak. A handed-off continuation has no second retry timer whil
 its outcome is pending; user cancellation remains authoritative. Authentication,
 quota, and non-capacity transport recovery retain their own classifications and
 policies.
+
+Execution runs recover inside the parent runner process, through their own controller.
+Bounded and long-lived runs consume the same recovery policy, capacity backoff and
+activity-aware retry rules: a failure before meaningful output can retry its prompt,
+while a turn that already produced text or tool activity receives the configured
+continuation. The existing automatic-continuation setting, custom prompt and Off
+choice apply. The run publishes a waiting message and typed recovery reason; Stop
+cancels its wait, and a bounded run retains its existing timeout.
+
+Account failures report through the existing daemon failure transport, addressed by
+the run's registered materialization key. The daemon calls the existing pool
+coordinator without entering session recovery scheduling, accounting or continuation.
+An exhausted pool's shared reset disposition controls the run's wait. Pool-generation
+pushes exclude run registrations so a child pool cannot fence or apply auth to its
+parent Session; ordinary credential refresh still reaches run materializations.
+A selected replacement member is used when the run is explicitly resumed from its
+persisted pool selection. Applying another account inside a running run is not yet
+implemented in this development path.
 
 In current development source, reconnect readiness uses a fresh authenticated
 feature observation and inherits that request owner's attempt deadline. A separate

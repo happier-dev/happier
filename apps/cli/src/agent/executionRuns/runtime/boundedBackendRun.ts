@@ -16,6 +16,7 @@ import {
 import { buildReviewGuidanceBlock } from '@/agent/reviews/prompt/buildStandardReviewPrompt';
 import { logger } from '@/ui/logger';
 import { disposeExecutionRunBackendController, settleExecutionRunControllerOccurrence } from './settleExecutionRunControllerOccurrence';
+import { recoverFailedExecutionRunTurn, readExecutionRunFailureClassification, type ExecutionRunRecoveryContext } from './recoverFailedTurn';
 
 function stripTrailingJsonObjectFromText(text: string): string {
   const trimmed = String(text ?? '');
@@ -50,7 +51,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
   getNowMs: () => number;
   boundedTimeoutMs: number | null;
   finishRun: FinishExecutionRun;
-}>): Promise<void> {
+}> & ExecutionRunRecoveryContext): Promise<void> {
   const { runId, callId, sidechainId, startedAtMs, params } = args;
   const profile = resolveExecutionRunIntentProfile(params.intent);
   const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
@@ -82,6 +83,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
     } as const;
     let effectiveInstructions = start.instructions;
     const prompt = profile.buildPrompt({ ...start, instructions: effectiveInstructions });
+    let activeTurnPrompt = prompt;
 
     function waitForExternalMessage(): Promise<void> {
       if (backendCtrl.pendingExternalMessages.length > 0) return Promise.resolve();
@@ -96,6 +98,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
     }
 
     function sendTurnPrompt(turnPrompt: string): Promise<void> {
+      activeTurnPrompt = turnPrompt;
       backendCtrl.turnCount += 1;
       backendCtrl.turnEpoch += 1;
       backendCtrl.turnInFlight = true;
@@ -213,7 +216,30 @@ export async function executeBoundedBackendRun(args: Readonly<{
       await backendCtrl.streamWriter?.flushAll({ reason: 'turn-end' });
     }
 
-    const runPromise = runTurnWithExternalMessages(prompt);
+    async function runTurnWithRecovery(initialPrompt: string): Promise<void> {
+      let turnPrompt = initialPrompt;
+      let attemptCount = 0;
+      while (!backendCtrl.cancelled) {
+        try {
+          await runTurnWithExternalMessages(turnPrompt);
+          return;
+        } catch (error) {
+          const failedEpoch = backendCtrl.turnEpoch;
+          const retryPrompt = await recoverFailedExecutionRunTurn({
+            ...args, controller: backendCtrl, error, originalPrompt: activeTurnPrompt, attemptCount,
+            isCurrentTurn: () => args.controllers.get(runId) === backendCtrl && backendCtrl.turnEpoch === failedEpoch,
+            registration: params.connectedServicesRegistration,
+            accountSettings: params.accountSettings,
+            announceWaiting: (message) => args.sendAcp(args.parentProvider, { type: 'message', message, sidechainId }),
+          });
+          if (retryPrompt === null) throw error;
+          turnPrompt = retryPrompt;
+          attemptCount += 1;
+        }
+      }
+    }
+
+    const runPromise = runTurnWithRecovery(prompt);
 
     async function probeTurnLiveness(): Promise<unknown> {
       if (!backendCtrl.childSessionId || typeof backendCtrl.backend.probeTurnLiveness !== 'function') {
@@ -227,7 +253,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
       }
     }
 
-    async function waitForRunPromise(): Promise<void> {
+    async function waitForRunPromise(runPromise: Promise<void>): Promise<void> {
       const timeoutMs = args.boundedTimeoutMs;
       if (typeof timeoutMs !== 'number') {
         await runPromise;
@@ -299,7 +325,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
       }
     }
 
-    await waitForRunPromise();
+    await waitForRunPromise(runPromise);
 
     if (backendCtrl.cancelled) {
       return;
@@ -373,7 +399,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
       resetExecutionRunBackendOutput(backendCtrl);
       backendCtrl.turnInFlight = false;
 
-      await runTurnWithExternalMessages(repairPrompt);
+      await waitForRunPromise(runTurnWithRecovery(repairPrompt));
 
       const repairedRawText = backendCtrl.buffer.trim();
       completion = profile.onBoundedComplete({
@@ -424,8 +450,10 @@ export async function executeBoundedBackendRun(args: Readonly<{
   } catch (e: any) {
     if (backendCtrl.cancelled) return;
     const message = e instanceof Error ? e.message : 'Execution failed';
-    const executionRunErrorCode = readExecutionRunErrorCode(e) ?? 'execution_run_failed';
+    const executionRunErrorCode = readExecutionRunErrorCode(e) ?? readExecutionRunFailureClassification(e)?.kind ?? 'execution_run_failed';
     if (isExecutionRunTimeoutError(e)) {
+      backendCtrl.cancelled = true;
+      backendCtrl.recoveryAbortController?.abort();
       try {
         if (backendCtrl.childSessionId) await backendCtrl.backend.cancel(backendCtrl.childSessionId);
       } catch {

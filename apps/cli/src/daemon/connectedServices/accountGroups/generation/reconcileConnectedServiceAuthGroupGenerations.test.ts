@@ -9,6 +9,7 @@ import { ConnectedServiceAuthGroupGenerationConsumer } from './ConnectedServiceA
 import {
   reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget,
   reconcileConnectedServiceAuthGroupGenerations,
+  listSessionGenerationRuntimeTargets,
   reconcileConnectedServiceDirectCredentialRevisionForRuntimeTarget,
   reconcileConnectedServiceDirectCredentialRevisions,
   type ConnectedServiceGenerationRuntimeTarget,
@@ -96,6 +97,53 @@ function createConsumer(
 }
 
 describe('reconcileConnectedServiceAuthGroupGenerations', () => {
+  it('isolates child pool generation changes from the parent session while applying its own pool', async () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const bindings = (groupId: string) => ({
+      v: 1,
+      bindingsByServiceId: {
+        'openai-codex': { source: 'connected', selection: 'group', groupId },
+      },
+    });
+    registry.registerTarget({
+      pid: 42, sessionId: 'parent', agentId: 'codex',
+      connectedServicesBindingsRaw: bindings('parent-pool'),
+    });
+    registry.registerRunTarget({
+      runKey: 'execution_run:child', pid: 42, sessionId: 'parent', agentId: 'codex',
+      connectedServicesBindingsRaw: bindings('child-pool'),
+    });
+    const notifyCurrentGroupTruth = vi.fn(async () => ({ ok: true as const }));
+    const { consumer, applyCommittedGeneration } = createConsumer(undefined, { notifyCurrentGroupTruth });
+    const reconcile = (groupId: string, activeProfileId: string | null) => reconcileConnectedServiceAuthGroupGenerations({
+      consumer,
+      listCurrentGroups: async () => [{ ...group({ activeProfileId }), groupId }],
+      resolveCredentialRevision: () => credentialRevision,
+      listRuntimeTargets: () => listSessionGenerationRuntimeTargets(registry.listTargetRegistrations()),
+      executionAuthority: 'passive_projection',
+      groupScopes: [{ serviceId: 'openai-codex', groupId }],
+    });
+
+    await reconcile('child-pool', null);
+    expect(notifyCurrentGroupTruth).not.toHaveBeenCalled();
+    expect(applyCommittedGeneration).not.toHaveBeenCalled();
+    await reconcile('child-pool', 'child-backup');
+    expect(notifyCurrentGroupTruth).not.toHaveBeenCalled();
+    expect(applyCommittedGeneration).not.toHaveBeenCalled();
+    await reconcile('parent-pool', 'parent-backup');
+    expect(applyCommittedGeneration).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'parent',
+      committedGeneration: expect.objectContaining({
+        decisionCommittedTarget: expect.objectContaining({ groupId: 'parent-pool', profileId: 'parent-backup' }),
+      }),
+    }));
+    await reconcile('parent-pool', null);
+    expect(notifyCurrentGroupTruth).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'parent',
+      currentTruth: expect.objectContaining({ kind: 'current_auth_group_unavailable', groupId: 'parent-pool' }),
+    }));
+  });
+
   function registerRecoveredRecipient(registry: ConnectedServiceRuntimeRegistry, withSelection: boolean) {
     // A replacement daemon has a fresh registry and the recovered declarative pool binding.
     const target = registerConnectedServiceRuntimeTargetForDaemon({

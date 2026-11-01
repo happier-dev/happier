@@ -663,6 +663,10 @@ export class ExecutionRunManager {
       getNowMs: this.getNowMs,
       boundedTimeoutMs: this.resolveBoundedTimeoutMs(args.params),
       finishRun: this.finishRun.bind(this),
+      runs: this.runs,
+      resolveAccountSettings: this.resolveAccountSettings,
+      onPublicStateUpdated: (runId) => this.emitPublicStateUpdated(runId),
+      writeActivityMarker: this.writeActivityMarker.bind(this),
     });
   }
 
@@ -720,6 +724,7 @@ export class ExecutionRunManager {
       const sendArgs = {
         runId,
         params,
+        resolveAccountSettings: this.resolveAccountSettings,
         runs: this.runs,
         controllers: this.controllers,
         budgetRegistry: this.budgetRegistry,
@@ -843,6 +848,7 @@ export class ExecutionRunManager {
     return sendBackendLongLivedRun({
       runId,
       params,
+      resolveAccountSettings: this.resolveAccountSettings,
       runs: this.runs,
       controllers: this.controllers,
       budgetRegistry: this.budgetRegistry,

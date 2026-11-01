@@ -92,6 +92,11 @@ export function createBackendControllerMessageHandler(args: Readonly<{
     }
 
     const shouldWriteActivityMarker = isExecutionRunActivityMessage(msg);
+    if (msg.type === 'tool-call' || msg.type === 'tool-result' || msg.type === 'fs-edit'
+      || msg.type === 'terminal-output'
+      || (msg.type === 'model-output' && Boolean((msg.textDelta ?? msg.fullText ?? '').trim()))) {
+      args.ctrl.turnHadMeaningfulActivity = true;
+    }
 
     const segmentBoundary = isModelOutputSegmentBoundary(msg);
     if (segmentBoundary) {

@@ -6,6 +6,12 @@ import {
 } from './recoverableTurnFailurePolicy';
 
 describe('recoverable turn failure retry policy', () => {
+    it('leaves retries to the containing lifecycle when no retry-count budget is specified', () => {
+        expect(resolveRecoverableTurnFailureRetryDecision({
+            attemptCount: 40, maxRetries: null, failedTurnHadMeaningfulActivity: true,
+            promptMode: 'activity_aware', originalPrompt: 'original', continuationPrompt: 'continue',
+        })).toMatchObject({ action: 'retry', prompt: 'continue' });
+    });
     it('trusts provider willRetry by suppressing backend errors without consuming host retry budget', () => {
         const decision = resolveRecoverableTurnFailureRetryDecision({
             attemptCount: 0,

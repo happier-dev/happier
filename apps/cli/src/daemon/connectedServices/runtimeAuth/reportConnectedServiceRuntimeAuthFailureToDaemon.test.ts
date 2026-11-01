@@ -26,6 +26,27 @@ const classifiedFailure = {
 } as const;
 
 describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
+  it.each([false, true])('leaves retry ownership with the calling run instead of the session outbox (transport failure: %s)', async (transportFails) => {
+    const outboxDir = await createTempDir('happier-run-owned-report-');
+    const scheduleOutboxDrain = vi.fn();
+    const response = { ok: true, result: { status: 'switch_attempted', result: { status: 'switched', activeProfileId: 'backup' } } };
+    try {
+      const result = await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: `execution_run:caller-owned-${transportFails}`,
+        classification: classifiedFailure,
+        delivery: 'caller_owned',
+        reportOutboxDir: outboxDir,
+        scheduleOutboxDrain,
+        notify: async () => {
+          if (transportFails) throw new Error('daemon unavailable');
+          return response;
+        },
+      });
+      expect(result.report).toEqual(transportFails ? null : response);
+      expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir })).toEqual([]);
+      expect(scheduleOutboxDrain).not.toHaveBeenCalled();
+    } finally { await removeTempDir(outboxDir); }
+  });
   it.each(['usage_limit', 'auth_expired', 'refresh_failed', 'account_changed', 'account_disabled', 'permission_denied'] as const)('delivers unattributed %s failures for daemon-owned session binding authorization', async (kind) => {
     const outboxDir = await createTempDir('happier-native-quota-report-');
     const notify = vi.fn(async () => ({ ok: true, result: { status: 'not_applicable', reason: 'no_connected_service_binding' } }));
