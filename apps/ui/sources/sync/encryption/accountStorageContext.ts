@@ -119,7 +119,8 @@ export async function resolveAccountStorageContext(
                 : error instanceof AccountEncryptionCurrentnessReadinessError
                     || (error instanceof HappyError && error.status === 200 && error.kind === 'server'
                         && error.code === 'account-encryption-currentness-unavailable')
-                    ? 'encryption-material-unavailable' : 'unreachable');
+                    ? 'encryption-material-unavailable'
+                    : classifyAccountStorageReadFailure(error) === 'scope-retired' ? 'scope-retired' : 'unreachable');
         throw new AccountStorageCurrentnessUnavailableError(error, reason);
     }
 }

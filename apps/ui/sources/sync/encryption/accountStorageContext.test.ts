@@ -239,6 +239,15 @@ describe('Account storage currentness failure fidelity', () => {
         },
     );
 
+    it('preserves scope retirement while wrapping a currentness read failure', async () => {
+        const cause = new Error('action_account_scope_changed');
+        await withCurrentnessHome({ select: () => { throw cause; } }, async request => {
+            const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request }));
+            expect(error).toMatchObject({ reason: 'scope-retired', cause });
+            expect(classifyAccountStorageReadFailure(error)).toBe('scope-retired');
+        });
+    });
+
     it('refuses an unsupported currentness operation instead of treating HTTP 404 as offline', async () => {
         await withCurrentnessHome({ status: 404, body: { error: 'not_found' } }, async request => {
             const error = await captureCurrentnessFailure(resolveAccountStorageContext({ token }, { encryption: null, request }));
