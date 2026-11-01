@@ -30,10 +30,9 @@ const SOURCE_RUNTIME = join(REPO, 'packages', 'cli-common', 'registerSourceRunti
 export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'plugins', 'bundled.mdx');
 
 /**
- * Categories are matched in order, so `happier.scm.forge.` has to be tested
- * before `happier.scm.` would be. Longest-prefix-first is the invariant; the
- * guard below catches an id that matches nothing rather than letting it drop
- * silently out of the page.
+ * Categories use declared contribution families or bundled id prefixes. The
+ * guard below catches a plugin that matches nothing rather than letting it
+ * drop silently out of the page.
  */
 const CATEGORIES = [
   {
@@ -81,6 +80,11 @@ const CATEGORIES = [
     title: 'Language intelligence',
     blurb: 'On-demand language servers in the 0.3 development source.',
   },
+  },
+  {
+    family: 'secretSources',
+    title: 'Secret sources',
+    blurb: 'External secret sources in the 0.3 development source.',
 ];
 
 /** Everything that is not part of a family. Named explicitly so a new one fails the build. */
@@ -97,7 +101,9 @@ export async function readBundledPluginRegistry() {
 export function categorize(plugins) {
   const sections = CATEGORIES.map((category) => ({
     ...category,
-    plugins: plugins.filter((p) => p.id.startsWith(category.prefix)),
+    plugins: plugins.filter((p) => category.family
+      ? p.families.includes(category.family)
+      : p.id.startsWith(category.prefix)),
   }));
   const claimed = new Set(sections.flatMap((s) => s.plugins.map((p) => p.id)));
   const standalone = plugins.filter((p) => STANDALONE.ids.includes(p.id));
@@ -106,7 +112,7 @@ export function categorize(plugins) {
   const unplaced = plugins.filter((p) => !claimed.has(p.id)).map((p) => p.id);
   if (unplaced.length > 0) {
     throw new Error(
-      `bundled plugins in no category: ${unplaced.join(', ')} — add a prefix to CATEGORIES or an id to STANDALONE`,
+      `bundled plugins in no category: ${unplaced.join(', ')} — add a contribution family or prefix to CATEGORIES or an id to STANDALONE`,
     );
   }
   const missing = STANDALONE.ids.filter((id) => !plugins.some((p) => p.id === id));

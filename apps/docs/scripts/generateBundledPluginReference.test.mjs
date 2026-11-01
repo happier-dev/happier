@@ -15,6 +15,25 @@ import {
 
 const plugin = (id, name, families = []) => ({ id, name, description: '', families, dir: id });
 
+async function bundledPlugins() {
+  const registry = await readBundledPluginRegistry();
+  return registry.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.map((entry) => {
+    const manifest = JSON.parse(fs.readFileSync(new URL(`../../cli/${entry.manifestRelativePath}`, import.meta.url), 'utf8'));
+    return plugin(entry.pluginId, entry.pluginId, contributedFamilies(manifest.contributes));
+  });
+}
+
+test('secret sources are categorized by their declared contribution family regardless of plugin id', async () => {
+  const plugins = await bundledPlugins();
+  const custom = plugin('example.vault', 'Vault', ['secretSources']);
+  plugins.push(custom);
+  const members = plugins.filter((entry) => entry.families.includes('secretSources'));
+  assert.ok(members.length > 1);
+  const sections = categorize(plugins);
+  const section = sections.find((entry) => entry.plugins.includes(custom));
+  assert.deepEqual(section?.plugins, members);
+});
+
 test('the projected manifest carries every family, so only the used ones are rendered', () => {
   // `contributes` is projected with all ~38 families present and mostly empty.
   // Rendering the keys directly would claim every plugin contributes everything.
@@ -69,9 +88,7 @@ test('the admitted bundled registry contains projected plugin ids', async () => 
 });
 
 test('the bundled Machine and language families are categorized without dropping their plugins', async () => {
-  const registry = await readBundledPluginRegistry();
-  const plugins = registry.BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map((entry) => entry.pluginId)
-    .map((id) => plugin(id, id));
+  const plugins = await bundledPlugins();
   for (const prefix of ['happier.machine.', 'happier.language.']) {
     const members = plugins.filter((entry) => entry.id.startsWith(prefix));
     assert.ok(members.length > 0);
