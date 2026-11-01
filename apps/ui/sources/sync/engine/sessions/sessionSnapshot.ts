@@ -30,7 +30,7 @@ import {
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/reportNewAgentRequestsFromSessionTransition';
 import { classifySessionTupleApplyCurrentness } from '@/sync/domains/session/sessionTupleApplyCurrentness';
-import { readSessionFullPublicationUpdatedAt } from '@/sync/domains/session/sessionRuntimeObservation';
+import { readSessionFullPublicationUpdatedAt, type SessionPublicationSource } from '@/sync/domains/session/sessionRuntimeObservation';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import type {
@@ -1518,7 +1518,7 @@ export async function fetchAndApplySessions(params: {
     sessionDataKeyEnvelopes?: SessionDataKeyEnvelopeCache;
     request?: (path: string, init: RequestInit) => Promise<Response>;
     readTransport?: CapturedServerReadTransport;
-    applySessions: (sessions: HydratedSession[]) => void;
+    applySessions: (sessions: HydratedSession[], source?: SessionPublicationSource) => void;
     onSnapshotFetched?: (sessionIds: string[]) => void;
     applySessionListRenderables?: (sessions: SessionListRenderableSession[], options?: { replace?: boolean }) => void;
     cachedSessionListEntries?: Record<string, SessionListCacheEntryV1>;
@@ -1906,7 +1906,7 @@ export async function fetchAndApplySessions(params: {
         return [{ ...existing, [SESSION_LIST_DOCUMENT_ADMISSION]: observed }];
     });
     // Descriptor demand changes no opened document, tuple, or publication clock.
-    if (observedSessions.length) params.applySessions(observedSessions);
+    if (observedSessions.length) params.applySessions(observedSessions, 'projection');
     if (shouldApplyRenderables) {
         const renderables = syncPerformanceTelemetry.measure(
             'sync.sessions.snapshot.renderableBuild',

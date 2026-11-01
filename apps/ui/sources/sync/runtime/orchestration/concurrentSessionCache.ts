@@ -1611,7 +1611,7 @@ async function connectManagedServer(
                             // pending projection as the focused socket for an open Session;
                             // its lightweight list refresh does not hydrate that store row.
                             if (session && areServerProfileIdentifiersEquivalent(session.serverId, entry.id)) {
-                                storage.getState().applySessions([{ ...session, ...buildPendingChangedSessionPatch(body) }]);
+                                storage.getState().applySessions([{ ...session, ...buildPendingChangedSessionPatch(body) }], 'projection');
                             }
                         }
                     }

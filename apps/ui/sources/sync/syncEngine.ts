@@ -198,7 +198,7 @@ import {
     type SessionMessagesWindowState,
 } from '@/sync/runtime/sessionMessagesWindowState';
 import { ActivityUpdateAccumulator, type ActivityUpdateFlushOptions } from '@/sync/engine/activity/activityUpdateAccumulator';
-import { readSessionFullPublicationUpdatedAt, sessionRuntimeObservations } from '@/sync/domains/session/sessionRuntimeObservation';
+import { readSessionFullPublicationUpdatedAt, sessionRuntimeObservations, type SessionPublicationSource } from '@/sync/domains/session/sessionRuntimeObservation';
 import type { MachineActivityUpdate } from '@/sync/domains/machines/machineActivity';
 import { randomUUID } from '@/platform/randomUUID';
 import {
@@ -2061,7 +2061,7 @@ class Sync {
                       ? this.getSessionMessagesEncryptionForAuthority(authority, sessionId)
                       : encryption?.getSessionEncryption(sessionId);
                   if (currentEncryption !== failedEncryption || session.encryptedContentAvailability === 'encrypted_content_unavailable') return;
-                  this.applySessions([{ ...session, encryptedContentAvailability: 'encrypted_content_unavailable' }]);
+                  this.applySessions([{ ...session, encryptedContentAvailability: 'encrypted_content_unavailable' }], 'projection');
               },
           };
       }
@@ -2867,7 +2867,7 @@ class Sync {
                 const next = applyComposerControlAcknowledgementV1({ sessionId: session.id, options: previous, actionId, result });
                 if (next === previous) return;
                 scope.composerOptionsInput = projectComposerOptionsInputV1(next, scope.composerOptionsGrant ?? null);
-                this.applySessions([{ ...session, composerOptionsInput: scope.composerOptionsInput }]);
+                this.applySessions([{ ...session, composerOptionsInput: scope.composerOptionsInput }], 'projection');
             },
             onRetire: (cancel: () => void) => {
                 if (!isCurrent()) {
@@ -5871,7 +5871,7 @@ class Sync {
                 if (admission) nextSession[SESSION_LIST_DOCUMENT_ADMISSION] = admitOpenedSessionListDisplayMetadata(
                     { ...admission, metadataLayoutVersion: 0 }, nextSession);
                 mutationSession = nextSession;
-                if (!exactAuthority || ownsActiveProjection()) this.applySessions([nextSession]);
+                if (!exactAuthority || ownsActiveProjection()) this.applySessions([nextSession], 'projection');
             },
             acquireTupleSnapshot,
             tupleCrypto: {
@@ -5959,7 +5959,7 @@ class Sync {
                 const nextSession = next.mode === 'owner' && ownerProjection?.kind !== 'owner'
                     ? buildSessionOwnerMetadataUnavailableShell(committedSession) : committedSession;
                 mutationSession = nextSession;
-                if (!exactAuthority || ownsActiveProjection()) this.applySessions([nextSession]);
+                if (!exactAuthority || ownsActiveProjection()) this.applySessions([nextSession], 'projection');
             },
             updater,
             sessionExpectation: options?.sessionExpectation,
@@ -5972,7 +5972,7 @@ class Sync {
         } catch (error) {
             // A refused CAS can still have read the winner's canonical tuple.
             // Publish that read to its current mounted Home before its control settles.
-            if (mutationSession && ownsActiveProjection()) this.applySessions([mutationSession]);
+            if (mutationSession && ownsActiveProjection()) this.applySessions([mutationSession], 'projection');
             throw error;
         }
         } finally {
@@ -5999,7 +5999,7 @@ class Sync {
             ...(metadataLayoutVersion === 1
                 ? { ownerMetadataView: nextMetadata }
                 : { metadata: nextMetadata }),
-        }]);
+        }], 'projection');
     }
 
     private readSessionAtAddress(address: SessionAddress): Session | SessionListRenderableSession | null {
@@ -6027,7 +6027,7 @@ class Sync {
         if (session.lastViewedSessionSeq === effectiveViewedSeq) return;
 
         if (this.isAppliedTransportServer(address.serverId) && state.sessions[address.sessionId] === session) {
-            state.applySessions([{ ...(session as Session), lastViewedSessionSeq: effectiveViewedSeq }]);
+            state.applySessions([{ ...(session as Session), lastViewedSessionSeq: effectiveViewedSeq }], 'projection');
             return;
         }
         state.applyServerScopedSessionListRowPatches(address.serverId, [{
@@ -6073,7 +6073,7 @@ class Sync {
                     };
                     const state = storage.getState();
                     if (this.isAppliedTransportServer(serverId) && state.sessions[sessionId] === current) {
-                        state.applySessions([next as Session]);
+                        state.applySessions([next as Session], 'projection');
                     } else {
                         state.applyServerScopedSessionListRowPatches(serverId, [{
                             sessionId,
@@ -7429,9 +7429,9 @@ class Sync {
             sessionListBackgroundHydrationGate: isAppend ? this.waitForSessionListScrollIdle : undefined,
             sessionListBackgroundHydrationApplyBatchSize: this.syncTuning.sessionListBackgroundHydrationApplyBatchSize,
             sessionListBackgroundHydrationApplyFlushDelayMs: this.syncTuning.sessionListBackgroundHydrationApplyFlushDelayMs,
-            applySessions: (sessions) => {
+            applySessions: (sessions, source) => {
                 if (!shouldContinue()) return;
-                this.applySessions(sessions);
+                this.applySessions(sessions, source);
             },
             log,
         });
@@ -13269,7 +13269,7 @@ class Sync {
                   this.requestChangesCatchUp();
               },
               artifactDataKeys: this.artifactDataKeys,
-              applySessions: (sessions) => this.applySessions(sessions),
+              applySessions: (sessions) => this.applySessions(sessions, parsedUpdate?.body.t === 'new-session' ? 'full' : 'projection'),
 	              fetchSessions: () => {
                       if (this.embedSessionScope || context.sessionId) return;
 	                  fireAndForget(this.fetchSessions(), { tag: 'Sync.handleUpdate.fetchSessions', logError: false });
@@ -13375,7 +13375,7 @@ class Sync {
         flushActivityUpdatesEngine({
             updates,
             ...options,
-            applySessions: (sessions) => this.applySessions(sessions),
+            applySessions: (sessions) => this.applySessions(sessions, 'projection'),
             hydrateSessionById: (sessionId, reason) => {
                 fireAndForget(
                     this.hydrateSessionFromSocketUpdate(sessionId, reason, options?.sourceServerId),
@@ -13985,12 +13985,12 @@ class Sync {
 
     private applySessions = (sessions: (Omit<Session, "presence"> & {
         presence?: "online" | number;
-    })[]) => {
+    })[], source: SessionPublicationSource = 'full') => {
         if (this.embedSessionScope) {
             if (!this.embedSessionScope.isCurrent()) return;
             const admitted = sessions.filter((session) => session.id === this.embedSessionScope?.scope.sessionId);
             for (const session of admitted) this.activeServerSessionIds.add(session.id);
-            storage.getState().applySessions(admitted);
+            storage.getState().applySessions(admitted, source);
             return;
         }
         const active = storage.getState().getActiveSessions();
@@ -14025,7 +14025,7 @@ class Sync {
                 this.activeServerSessionIds.add(session.id);
             }
         }
-        storage.getState().applySessions(sessions);
+        storage.getState().applySessions(sessions, source);
         // Session hydration owns key readiness. Wake observed System Record
         // projections so they reopen their retained bytes from the newly current
         // Session context; this is deliberately not a record refetch.
@@ -14241,7 +14241,7 @@ class Sync {
                         }
                         : {}),
                 },
-            ]);
+            ], 'projection');
         }
     }
 

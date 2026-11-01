@@ -1,3 +1,4 @@
+import type { SessionPublicationSource } from '../domains/session/sessionRuntimeObservation';
 import type { SessionModelOptionsContext } from '@/sync/domains/models/modelOptions';
 import type { TodoState } from '@/sync/domains/todos/todoOps';
 
@@ -115,7 +116,7 @@ export interface SessionsDomainSlice extends Pick<SessionsDomain,
     isSessionDraftsReady: boolean;
     activateSessionLocalStateScope: (scope: ServerAccountScope) => void;
     clearSessionLocalStateScope: () => void;
-    applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
+    applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[], source?: SessionPublicationSource) => void;
     applyServerScopedSessionListRows: SessionsDomain['applyServerScopedSessionListRows'];
     applyServerScopedSessionListRowPatches: (
         serverId: string,

@@ -187,7 +187,7 @@ function applyCatalogSnapshots(
                 ? { ownerMetadataView: metadata }
                 : { metadata }),
         },
-    ]);
+    ], 'projection');
 }
 
 const catalogReads = createScopedResolutionSingleFlight<void>();

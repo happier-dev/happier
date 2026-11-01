@@ -993,7 +993,7 @@ function applySessionThinkingDecisionRecovery(
     storage.getState().clearSessionOptimisticThinking(sessionId);
     storage.getState().clearSessionThinkingGrace(sessionId);
     if (!session || session.thinking !== true) return;
-    storage.getState().applySessions([{ ...session, thinking: false, updatedAt: nowServerMs() }]);
+    storage.getState().applySessions([{ ...session, thinking: false, updatedAt: nowServerMs() }], 'projection');
 }
 
 export async function sessionAbort(sessionId: string, options?: Readonly<{ serverId?: string; signal?: AbortSignal }>): Promise<void> {
@@ -1562,7 +1562,7 @@ async function applyArchivedAtToLocalSession(capturedAddress: SessionAddress, ar
     const session = state.sessions[address.sessionId];
     if (!session || !areServerProfileIdentifiersEquivalent(address.serverId, getActiveServerSnapshot().serverId)
         || (session.serverId && !areServerProfileIdentifiersEquivalent(session.serverId, address.serverId))) return;
-    state.applySessions([{ ...session, archivedAt, updatedAt }]);
+    state.applySessions([{ ...session, archivedAt, updatedAt }], 'projection');
 }
 
 export async function sessionArchiveWithServerScope(

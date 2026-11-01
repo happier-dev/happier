@@ -362,6 +362,33 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect(readSessionFullPublicationUpdatedAt(storage.getState().sessions[sessionId])).toBe(300);
     });
 
+    it('keeps a created Session route available after a socket lifecycle publication advances its shell', async () => {
+        const { sync } = await import('./sync');
+        const sessionId = 'spawned-socket-lifecycle-advance';
+        const row = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, updatedAt: 20, seq: 1 });
+        requestMock.mockImplementation(async (path: string) => path === `/v2/sessions/${sessionId}`
+            ? Response.json({ session: row }) : undefined);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false }))
+            .resolves.toMatchObject({ kind: 'available' });
+        const requested = createDeferred<void>();
+        const response = createDeferred<void>();
+        requestMock.mockImplementation(async (path: string) => {
+            if (path !== `/v2/sessions/${sessionId}`) return undefined;
+            requested.resolve();
+            await response.promise;
+            return Response.json({ session: row });
+        });
+        const hydration = sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, hydrateMessages: false });
+        await requested.promise;
+        const socketOwner = sync as unknown as { handleUpdate(update: unknown): Promise<void> };
+        await socketOwner.handleUpdate({ id: 'socket-lifecycle-advance', seq: 2, createdAt: 21,
+            body: { t: 'update-session', id: sessionId, active: true, activeAt: 21 } });
+        await waitForAssertion(() => expect(storage.getState().sessions[sessionId]?.updatedAt).toBe(21));
+        response.resolve();
+        await expect(hydration).resolves.toMatchObject({ kind: 'available', sessionId });
+        expect(readSessionFullPublicationUpdatedAt({ id: sessionId, serverId: getActiveServerSnapshot().serverId })).toBe(20);
+    });
+
     it('refuses a genuinely stale route tuple even when its publication timestamp is current', async () => {
         const sessionId = 'postsend_publication_stale_tuple';
         const fixture = await createEncryptedSessionFixture(sessionId);

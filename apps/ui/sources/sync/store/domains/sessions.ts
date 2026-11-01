@@ -13,7 +13,7 @@ import { readSessionListRowForServerId, resolveSessionListHomeKey } from '../../
 import { readSessionArchivePending, resolveSessionArchiveAddress, type SessionArchiveOperation, type SessionArchiveOperations } from '../../domains/session/listing/sessionArchiveState';
 import type { SessionListQueryMembership } from '../../domains/session/listing/sessionListQueryController';
 import { readStoredSessionMessagesFromStateLike } from "@happier-dev/session-core/messages";
-import { captureSessionFullPublicationBaseline, sessionRuntimeObservations } from '@/sync/domains/session/sessionRuntimeObservation';
+import { captureSessionFullPublicationBaseline, sessionRuntimeObservations, type SessionPublicationSource } from '@/sync/domains/session/sessionRuntimeObservation';
 import {
     areSessionListRenderablesEqual,
     applySessionListRenderablePatch,
@@ -384,7 +384,7 @@ export type SessionsDomain = {
     activateSessionLocalStateScope: (scope: ServerAccountScope) => void;
     clearSessionLocalStateScope: () => void;
     getActiveSessions: () => Session[];
-    applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
+    applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[], source?: SessionPublicationSource) => void;
     applyServerScopedSessionListRows: (
         serverId: string,
         sessions: SessionListRenderableSession[],
@@ -1176,7 +1176,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 ...nextExpansionState,
             };
         }),
-        applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[]) => syncPerformanceTelemetry.measure(
+        applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[], source = 'full') => syncPerformanceTelemetry.measure(
             'sync.store.sessions.apply',
             { sessions: sessions.length },
             () => set((state) => {
@@ -1398,7 +1398,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 };
                 // Preserve the full response clock independently of merged compact-list lifecycle facts.
                 const publicationAddress = normalizeSessionAddress(nextSession.serverId, nextSession.id);
-                if (publicationAddress) {
+                if (publicationAddress && source === 'full') {
                     sessionRuntimeObservations.recordFullPublication(publicationAddress, incomingSession.updatedAt, nextSession);
                 }
                 const mergedSession = previousSession && areStoredSessionsEqual(previousSession, nextSession)

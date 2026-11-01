@@ -1,6 +1,9 @@
 import { activityInstanceKey, normalizeSessionAddress, type ActivityInstanceAddress } from './sessionAddress';
 import { projectSessionAwarenessRuntimeV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
 
+/** A copied Session shell does not establish a new full-document publication. */
+export type SessionPublicationSource = 'full' | 'projection';
+
 export type SessionRuntimeObservation = Readonly<{
     active: boolean;
     thinking?: boolean;

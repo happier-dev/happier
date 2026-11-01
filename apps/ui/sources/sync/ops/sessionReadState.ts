@@ -158,7 +158,7 @@ function applyReadStateToLocalState(params: Readonly<{
             updatedAt,
         };
 
-        state.applySessions([nextSession]);
+        state.applySessions([nextSession], 'projection');
         return;
     }
 
