@@ -23,11 +23,13 @@ import type { StorageState } from '../../store/types';
 import { registerStorageStateReader, registerStorageStateSubscribe, registerStorageMachineUpdateSubscribe } from './storageStateReaderBridge';
 import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry';
 import { observeStoragePerformance } from '../../store/storagePerformance';
+import { readStorageState, scopeStorageSubscriptions } from './scopedStorage';
 
 export type { KnownEntitlements } from '../../store/types';
 export type { SessionListViewItem } from '../session/listing/sessionListViewData';
 
-export const storage = observeStoragePerformance(create<StorageState>()((set, get) => {
+export const storage = observeStoragePerformance(scopeStorageSubscriptions(create<StorageState>()((set, read) => {
+    const get = () => readStorageState(read());
     const settingsDomain = createSettingsDomain<StorageState>({ set, get });
     const authoringMemoryDomain = createAuthoringMemoryDomain<StorageState>({ set, get });
     const profileDomain = createProfileDomain<StorageState>({ set, get });
@@ -69,7 +71,7 @@ export const storage = observeStoragePerformance(create<StorageState>()((set, ge
         ...transcriptLoadingDomain,
         ...realtimeDomain,
     };
-}), syncPerformanceTelemetry);
+})), syncPerformanceTelemetry);
 
 registerStorageStateReader(() => storage.getState());
 registerStorageStateSubscribe((listener) => storage.subscribe(listener));

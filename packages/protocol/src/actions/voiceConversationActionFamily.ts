@@ -15,6 +15,7 @@ export const VOICE_CONVERSATION_ACTION_IDS = [
   'ui.voice_global.setup.microphone.permission.request', 'ui.voice_global.setup.system_settings.open',
   'ui.voice_global.dictation.start', 'ui.voice_global.dictation.finish',
   'ui.voice_global.dictation.cancel', 'ui.voice_global.dictation.dismiss',
+  'ui.voice_global.conversations.list',
   'ui.voice_global.history.search', 'ui.voice_global.history.load_older',
   'ui.voice_global.history.export', 'ui.voice_global.history.clear',
 ] as const;
@@ -48,6 +49,9 @@ export const VoiceHistorySnapshotSchema = lazyZodSchema(() => z.strictObject({
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const AddressSchema = lazyZodSchema(() => z.strictObject({ serverId: IdSchema, sessionId: IdSchema }));
+const ConversationHistoryCursorSchema = lazyZodSchema(() => z.strictObject({
+  active: z.nullable(IdSchema), archived: z.nullable(IdSchema),
+}));
 export const VoiceConversationTargetSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('global') }),
   z.strictObject({ kind: z.literal('session'), sessionAddress: z.nullable(AddressSchema) }),
@@ -56,6 +60,14 @@ export const VoiceConversationTargetSchema = lazyZodSchema(() => z.discriminated
 const AttemptInputSchema = lazyZodSchema(() => z.strictObject({ expectedAttempt: IdSchema }));
 const BriefInputSchema = lazyZodSchema(() => z.strictObject({ expectedAttemptId: z.optional(IdSchema) }));
 const DictationInputSchema = lazyZodSchema(() => z.strictObject({ commandId: IdSchema }));
+export const VoiceConversationHistoryListSchema = lazyZodSchema(() => z.strictObject({
+  coverage: z.literal('loaded'),
+  coverageComplete: z.optional(z.boolean()),
+  nextCursor: z.optional(z.nullable(ConversationHistoryCursorSchema)),
+  conversations: z.array(z.strictObject({ address: AddressSchema, title: z.string(), lastActivityAt: z.number(),
+    canContinue: z.nullable(z.boolean()), hasBlockedInputs: z.boolean(),
+    pendingInputs: z.array(z.strictObject({ localId: z.string(), reason: z.nullable(z.string()) })) })),
+}));
 export const VoiceDictationActionResultSchema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('completed'), dictationStatus: z.enum(['idle', 'starting', 'listening', 'transcribing']), inserted: z.boolean() }),
   z.strictObject({ status: z.literal('unavailable'), code: z.enum(['dictation_field_unmounted', 'dictation_field_unavailable',
@@ -64,6 +76,7 @@ export const VoiceDictationActionResultSchema = lazyZodSchema(() => z.discrimina
 ]));
 export type VoiceDictationActionResult = z.infer<typeof VoiceDictationActionResultSchema>;
 export const VoiceConversationActionInputSchemas = {
+  'ui.voice_global.conversations.list': z.strictObject({ conversationSessionAddress: z.optional(AddressSchema), cursor: z.optional(ConversationHistoryCursorSchema) }),
   'ui.voice_global.get': z.strictObject({ target: z.optional(VoiceConversationTargetSchema) }),
   'ui.voice_global.start': z.strictObject({ target: VoiceConversationTargetSchema, expectedAttempt: z.null() }),
   'ui.voice_global.end': AttemptInputSchema,
@@ -131,6 +144,7 @@ const BriefResultSchema = lazyZodSchema(() => z.strictObject({
   status: z.enum(['waiting', 'sent', 'refused', 'stopped', 'closed']), attemptId: z.nullable(IdSchema),
 }));
 export const VoiceConversationActionOutputSchemas = {
+  'ui.voice_global.conversations.list': VoiceConversationHistoryListSchema,
   'ui.voice_global.get': VoiceConversationActionResultSchema,
   'ui.voice_global.start': VoiceConversationActionResultSchema,
   'ui.voice_global.end': VoiceConversationActionResultSchema,
@@ -168,6 +182,7 @@ export const VoiceConversationActionOutputSchemas = {
 
 /** What a person reads in Settings, approvals and the form. Agents read `description`. */
 const VOICE_CONVERSATION_ACTION_SUMMARIES = {
+  'ui.voice_global.conversations.list': 'Read a page of the person’s own active and archived Voice conversations at this Home, including retained and retired custody, with exact addresses, Session titles, meaningful activity and blocked-input flags. Return nextCursor unchanged to read another page; null cursor components are exhausted. Coverage remains loaded; coverageComplete is false while pages or unreadable owner displays remain. canContinue:null means the compact display has not established eligibility; Continue resolves that exact conversation. Supply conversationSessionAddress to read only that conversation’s canonical Pending recovery identities and reasons. Offer cleanup through approval-governed session.pending.markHandled, session.pending.dismiss, session.pending.sendAsNew or session.pending.withdraw with that Home, Session and exact localId; never automatically replay or discard inputs. Send as new may duplicate an effect.',
   'ui.voice_global.get': 'See whether a voice conversation is going on, and what it is attached to.',
   'ui.voice_global.start': 'Start talking with Happier, about everything or about one session.',
   'ui.voice_global.end': 'End the voice conversation that is going on.',
@@ -196,10 +211,10 @@ const VOICE_CONVERSATION_ACTION_SUMMARIES = {
   'ui.voice_global.dictation.finish': 'Finish Dictation and insert recognized words into the same editable field without sending.',
   'ui.voice_global.dictation.cancel': 'Cancel Dictation for the exact mounted field without inserting words.',
   'ui.voice_global.dictation.dismiss': 'Dismiss the exact mounted field’s Dictation failure.',
-  'ui.voice_global.history.search': 'Search loaded direct-media Voice History text and provider names. Discovers the History carrier on first use; refresh explicitly reloads it. Voice Agent and session-scoped conversations remain in ordinary Session history.',
-  'ui.voice_global.history.load_older': 'Load the next older page of direct-media Voice History, optionally filtering the loaded rows.',
-  'ui.voice_global.history.export': 'Export loaded or all direct-media Voice History to this client’s download or share target, optionally filtered. Uses the canonical streaming JSON serializer.',
-  'ui.voice_global.history.clear': 'Delete the direct-media Voice History carrier and retire its local rows. Ordinary Session and Voice Agent history are unaffected.',
+  'ui.voice_global.history.search': 'Search ordinary text in the person’s owned Voice conversations, including archived conversations, at this Home. Discovers conversations on first use; refresh explicitly reloads them. Warm search filters loaded rows.',
+  'ui.voice_global.history.load_older': 'Load older transcript pages from owned Voice conversations, optionally filtering the loaded rows.',
+  'ui.voice_global.history.export': 'Export loaded or all owned Voice conversation text to this client’s download or share target, optionally filtered. Uses the canonical streaming JSON serializer.',
+  'ui.voice_global.history.clear': 'Delete the discovered owned Voice conversations at this Home and retire their local rows. Requires confirmation.',
 } as const satisfies Record<(typeof VOICE_CONVERSATION_ACTION_IDS)[number], string>;
 
 export const VOICE_CONVERSATION_ACTION_SPECS = VOICE_CONVERSATION_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
@@ -210,6 +225,7 @@ export const VOICE_CONVERSATION_ACTION_SPECS = VOICE_CONVERSATION_ACTION_IDS.map
     return parsed.success && parsed.data.muted === true ? 'safe' as const : undefined;
   } } : {}),
   title: {
+    'ui.voice_global.conversations.list': 'List Voice conversations',
     'ui.voice_global.get': 'Read current Voice attempt', 'ui.voice_global.start': 'Start Voice conversation',
     'ui.voice_global.end': 'End Voice conversation', 'ui.voice_global.set_muted': 'Set Voice microphone mute',
     'ui.voice_global.recover': 'Recover Voice conversation', 'ui.voice_global.dismiss': 'Dismiss ended or failed Voice attempt',
@@ -238,7 +254,7 @@ export const VOICE_CONVERSATION_ACTION_SPECS = VOICE_CONVERSATION_ACTION_IDS.map
     || id === 'ui.voice_global.setup.microphone.permission.request'
     || id === 'ui.voice_global.history.clear'
     || id === 'ui.voice_global.brief.request' || id === 'ui.voice_global.brief.retry' ? 'danger' : 'safe',
-  sideEffectClass: id === 'ui.voice_global.get' || (isVoiceHistoryActionId(id) && id !== 'ui.voice_global.history.clear') ? 'read' : 'write',
+  sideEffectClass: id === 'ui.voice_global.get' || id === 'ui.voice_global.conversations.list' || (isVoiceHistoryActionId(id) && id !== 'ui.voice_global.history.clear') ? 'read' : 'write',
   requiredAuthority: 'account_automation', executionPlacement: 'client', placements: ['command_palette'],
   bindings: { mcpToolName: id.replaceAll('.', '_') },
   surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },

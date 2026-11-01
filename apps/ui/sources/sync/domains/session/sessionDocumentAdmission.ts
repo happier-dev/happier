@@ -5,7 +5,7 @@ import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import { isSessionContentReadable, readSessionContentAvailability, type SessionContentAvailabilitySubject } from './encryptedContentAvailability';
 import { SESSION_OWNER_METADATA_PROJECTION, type SessionOwnerMetadataProjection } from './readSessionOwnerMetadataView';
-import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
+import { compareSessionMetadataRevisions, readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 /** Memory-only custody of decrypted Session/display documents. Never serialized as authority. */
 export const SESSION_LIST_DOCUMENT_ADMISSION = Symbol('sessionListDocumentAdmission');
@@ -20,6 +20,7 @@ export type SessionListDocumentAdmission = Readonly<{
     openedMetadataVersion?: number;
     openedAgentStateVersion?: number;
     observedMetadataVersion?: number;
+    observedMetadataLayoutVersion?: number;
     observedAgentStateVersion?: number;
 }>;
 
@@ -87,20 +88,46 @@ export function admitOpenedSessionListAgentState(admission: SessionListDocumentA
 export function mergeSessionListDocumentObservations(admission: SessionListDocumentAdmission,
     previous: SessionListDocumentAdmission | undefined): SessionListDocumentAdmission {
     if (!previous || !areSessionListDocumentAdmissionsEqual(previous, admission)) return admission;
-    const observedMetadataVersion = Math.max(previous.observedMetadataVersion ?? 0, admission.observedMetadataVersion ?? 0);
+    const usePreviousMetadata = compareSessionMetadataRevisions({
+        incomingLayoutVersion: previous.observedMetadataLayoutVersion ?? previous.metadataLayoutVersion,
+        incomingMetadataVersion: previous.observedMetadataVersion,
+        storedLayoutVersion: admission.observedMetadataLayoutVersion ?? admission.metadataLayoutVersion,
+        storedMetadataVersion: admission.observedMetadataVersion,
+    }) > 0;
+    const observedMetadataVersion = usePreviousMetadata ? previous.observedMetadataVersion : admission.observedMetadataVersion;
+    const observedMetadataLayoutVersion = usePreviousMetadata
+        ? previous.observedMetadataLayoutVersion : admission.observedMetadataLayoutVersion;
     const observedAgentStateVersion = Math.max(previous.observedAgentStateVersion ?? 0, admission.observedAgentStateVersion ?? 0);
-    if (observedMetadataVersion === admission.observedMetadataVersion && observedAgentStateVersion === admission.observedAgentStateVersion) return admission;
-    const merged = { ...admission, observedMetadataVersion, observedAgentStateVersion };
+    if (observedMetadataVersion === admission.observedMetadataVersion
+        && observedMetadataLayoutVersion === admission.observedMetadataLayoutVersion
+        && observedAgentStateVersion === admission.observedAgentStateVersion) return admission;
+    const merged = { ...admission, observedMetadataVersion, observedMetadataLayoutVersion, observedAgentStateVersion };
     return admission.openedMetadataVersion === undefined ? Object.freeze(merged)
         : restoreSessionListCachedDisplayAdmission(merged, admission.openedMetadataVersion);
 }
 
 export function observeSessionListDocumentVersions(admission: SessionListDocumentAdmission | undefined,
-    descriptor: Readonly<{ metadataVersion?: number; agentStateVersion?: number }>): SessionListDocumentAdmission | undefined {
+    descriptor: Readonly<{ metadataVersion?: number; metadataLayoutVersion?: number; agentStateVersion?: number }>): SessionListDocumentAdmission | undefined {
     if (!admission) return undefined;
     return mergeSessionListDocumentObservations(admission, { ...admission,
         observedMetadataVersion: descriptor.metadataVersion ?? admission.observedMetadataVersion,
+        observedMetadataLayoutVersion: descriptor.metadataVersion === undefined ? admission.observedMetadataLayoutVersion
+            : descriptor.metadataLayoutVersion ?? admission.metadataLayoutVersion,
         observedAgentStateVersion: descriptor.agentStateVersion ?? admission.observedAgentStateVersion });
+}
+
+/** Layout transitions can reset the numeric revision; neither observation opens a document. */
+export function hasNewerObservedSessionMetadata(value: Readonly<{
+    metadataVersion?: number; metadataLayoutVersion?: number;
+    [SESSION_LIST_DOCUMENT_ADMISSION]?: SessionListDocumentAdmission;
+}>): boolean {
+    const admission = value[SESSION_LIST_DOCUMENT_ADMISSION];
+    return !!admission && compareSessionMetadataRevisions({
+        incomingLayoutVersion: admission.observedMetadataLayoutVersion ?? admission.metadataLayoutVersion,
+        incomingMetadataVersion: admission.observedMetadataVersion,
+        storedLayoutVersion: value.metadataLayoutVersion,
+        storedMetadataVersion: value.metadataVersion,
+    }) > 0;
 }
 
 /** Only a successful readable open can issue actual display-version custody. */

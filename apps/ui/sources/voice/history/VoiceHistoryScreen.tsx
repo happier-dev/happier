@@ -28,7 +28,6 @@ import {
   type VoiceHistoryRow,
   type VoiceHistorySnapshot,
 } from './voiceHistoryConsumer';
-import { registerSessionRealtimeTranscriptConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
 import { saveVoiceHistoryExportArtifact } from './voiceHistoryExportTarget';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
@@ -208,10 +207,6 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
     [consumer, loadState, appliedQuery, revision],
   );
 
-  React.useEffect(() => {
-    if (!snapshot.sessionId) return;
-    return registerSessionRealtimeTranscriptConsumer(snapshot.sessionId);
-  }, [snapshot.sessionId]);
 
   const showOperationError = React.useCallback((error: unknown, fallback: string) => {
     if (isVoiceHistoryOperationSupersededError(error)) {
@@ -419,7 +414,7 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
     );
   }
 
-  if (!snapshot.sessionId) {
+  if (!snapshot.sessionId && snapshot.loadedRowCount === 0) {
     return withPageState(
       <>
         <View style={[styles.header, headerMaxWidthStyle]}>

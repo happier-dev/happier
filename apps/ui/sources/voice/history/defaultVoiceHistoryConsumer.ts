@@ -1,5 +1,3 @@
-import { SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
-
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import type { Message } from "@happier-dev/session-core/messages";
 import { readStoredSessionMessages } from "@happier-dev/session-core/messages";
@@ -7,7 +5,6 @@ import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAc
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { storage } from '@/sync/domains/state/storage';
-import type { Session } from '@/sync/domains/state/storageTypes';
 import {
   sessionDeleteWithServerAccountAuthority,
   type SessionDeleteResult,
@@ -20,9 +17,8 @@ import {
 import { t, tLoose } from '@/text';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
-import {
-  runVoiceTranscriptHistoryCarrierOperation,
-} from '@/voice/persistence/voiceTranscriptHistorySession';
+import { executeVoiceConversationHistoryListAction } from './voiceHistoryActions';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 
 import {
   createVoiceHistoryConsumer,
@@ -30,8 +26,8 @@ import {
   type VoiceHistoryPageResult,
   type VoiceHistoryProviderSource,
   isVoiceHistoryOperationSupersededError,
+  VoiceHistoryOperationSupersededError,
 } from './voiceHistoryConsumer';
-import { discoverVoiceHistorySession } from './voiceHistorySessionDiscovery';
 
 type VoiceHistoryLoadStage =
   | 'capture_scope'
@@ -147,15 +143,13 @@ type DefaultVoiceHistoryCapturedScope = VoiceHistoryCapturedScope & Readonly<{
 export type DefaultVoiceHistoryRuntime = Readonly<{
   readActiveScope(): ServerAccountScope | null;
   captureAuthority(scope: ServerAccountScope): Promise<ServerAccountRequestAuthority>;
-  lookupByTags(
-    tags: readonly string[],
+  listConversations(
     authority: ServerAccountRequestAuthority,
   ): Promise<readonly { id: string }[]>;
   hydrateSession(
     sessionId: string,
     authority: ServerAccountRequestAuthority,
   ): Promise<Readonly<{ kind: string; sessionId?: string }>>;
-  readHydratedSession(sessionId: string): Session | null;
   refreshSessionMessages(
     sessionId: string,
     authority: ServerAccountRequestAuthority,
@@ -166,7 +160,7 @@ export type DefaultVoiceHistoryRuntime = Readonly<{
   ): Promise<VoiceHistoryPageResult>;
   readMessages(sessionId: string): readonly Message[];
   readMessagesRevision(sessionId: string): number;
-  subscribeMessages(listener: () => void): () => void;
+  subscribeMessages(listener: () => void, sessionId: string | null): () => void;
   /**
    * The canonical scoped client result, not a narrowed copy of it: the typed
    * `session_absent` / `session_delete_conflict` outcome is what decides whether
@@ -201,23 +195,19 @@ export function createDefaultVoiceHistoryConsumerFromRuntime(
         };
       },
     ),
-    discoverHistorySession: (scope) => discoverVoiceHistorySession({
-      lookupByTags: (tags) => runVoiceHistoryLoadStage(
+    discoverHistorySession: async scope => {
+      const candidates = await runVoiceHistoryLoadStage(
         'lookup',
-        () => runtime.lookupByTags(tags, scope.authority),
-      ),
-      hydrateSession: (sessionId) => runVoiceHistoryLoadStage(
-        'hydrate',
-        () => runtime.hydrateSession(sessionId, scope.authority),
-      ),
-      readHydratedSession: (sessionId) => {
-        try {
-          return runtime.readHydratedSession(sessionId);
-        } catch (error) {
-          return rethrowVoiceHistoryLoadFailure('hydrate', error);
-        }
-      },
-    }),
+        () => runtime.listConversations(scope.authority),
+      );
+      const sessions: string[] = [];
+      for (const { id } of candidates) {
+        const hydration = await runVoiceHistoryLoadStage('hydrate',
+          () => runtime.hydrateSession(id, scope.authority));
+        if (hydration.kind === 'available' && hydration.sessionId === id) sessions.push(id);
+      }
+      return sessions;
+    },
     refreshSessionMessages: (sessionId, scope) =>
       runVoiceHistoryLoadStage(
         'refresh',
@@ -228,8 +218,8 @@ export function createDefaultVoiceHistoryConsumerFromRuntime(
     readMessages: runtime.readMessages,
     readMessagesRevision: runtime.readMessagesRevision,
     readProjectionRevision: () => providerRegistry.getRevision?.() ?? 0,
-    subscribeHistorySources: (listener) => {
-      const unsubscribeMessages = runtime.subscribeMessages(listener);
+    subscribeHistorySources: (listener, sessionId) => {
+      const unsubscribeMessages = runtime.subscribeMessages(listener, sessionId);
       const unsubscribeRegistry = providerRegistry.subscribe?.(listener);
       return () => {
         unsubscribeMessages();
@@ -244,7 +234,7 @@ export function createDefaultVoiceHistoryConsumerFromRuntime(
     deleteSession: (sessionId, scope) =>
       runtime.deleteSession(sessionId, scope.authority),
     retireLocalSession: (sessionId, scope) => runtime.retireLocalSession(sessionId, scope.authority.scope.serverId),
-    runCarrierOperation: runVoiceTranscriptHistoryCarrierOperation,
+    runCarrierOperation: operation => operation(),
     now: () => new Date(),
   });
 }
@@ -259,27 +249,24 @@ export function createDefaultVoiceHistoryConsumer() {
         scope,
         activeRequest: (path, init) => apiSocket.request(path, init),
       }),
-    lookupByTags: async (tags, authority) => {
-      const response = await authority.request('/v2/sessions/lookup-by-tags', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tags }),
-      });
-      if (!response.ok) {
-        throw new VoiceHistoryLoadError('lookup', response.status);
-      }
-      const parsed = SessionLookupByTagsResponseV2Schema.safeParse(await response.json());
-      if (!parsed.success) {
-        throw new VoiceHistoryLoadError('lookup');
-      }
-      return parsed.data.sessions;
+    listConversations: async authority => {
+      const isCurrent = () => areServerAccountScopesEqual(getActiveServerAccountScope(), authority.scope);
+      const sessions = new Map<string, { id: string }>();
+      let cursor: unknown;
+      do {
+        const page = await executeVoiceConversationHistoryListAction(cursor ? { cursor } : {}, isCurrent,
+          { scope: authority.scope });
+        if ('ok' in page) throw new VoiceHistoryOperationSupersededError();
+        for (const row of page.conversations) sessions.set(row.address.sessionId, { id: row.address.sessionId });
+        cursor = 'nextCursor' in page ? page.nextCursor : null;
+      } while (cursor);
+      return [...sessions.values()];
     },
     hydrateSession: (sessionId, authority) =>
       sync.ensureSessionVisibleForMessageRoute(sessionId, {
         forceRefresh: true,
         authority,
       }),
-    readHydratedSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
     refreshSessionMessages: (sessionId, authority) =>
       sync.refreshSessionMessages(sessionId, { authority }),
     loadOlderMessages: (sessionId, authority) =>
@@ -291,9 +278,9 @@ export function createDefaultVoiceHistoryConsumer() {
     // of `readStoredSessionMessages`, which materializes a new array per call.
     readMessagesRevision: (sessionId) =>
       storage.getState().sessionMessages[sessionId]?.messagesVersion ?? 0,
-    // One store subscription, filtered downstream by the History revision: an
-    // unrelated session's write costs a revision comparison and stops there.
-    subscribeMessages: (listener) => storage.subscribe(() => { listener(); }),
+    subscribeMessages: (listener, sessionId) => storage.subscribe(() => { listener(); }, {
+      sessionMessages: sessionId ? [sessionId] : [], profileScope: true,
+    }),
     deleteSession: sessionDeleteWithServerAccountAuthority,
     retireLocalSession: (sessionId, serverId) => sync.retireLocalSession(sessionId, serverId),
   };

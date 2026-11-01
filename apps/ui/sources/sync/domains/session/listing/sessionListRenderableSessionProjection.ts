@@ -1,6 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
-import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
+import { compareSessionMetadataRevisions, readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { isSessionAccessOwner, isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { classifySessionTupleApplyCurrentness } from '@/sync/domains/session/sessionTupleApplyCurrentness';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
@@ -18,7 +18,7 @@ import { readSessionPresentationCompletedRequests } from '../presentation/readSe
 import { readPendingRequestFactsFromSession } from '../pending/listPendingSessionRequests';
 import { readSessionFullPublicationUpdatedAt } from '../sessionRuntimeObservation';
 import { SESSION_LIST_DOCUMENT_ADMISSION, areSessionListDocumentAdmissionsEqual,
-    mergeSessionListDocumentObservations } from '../sessionDocumentAdmission';
+    mergeSessionListDocumentObservations, hasNewerObservedSessionMetadata } from '../sessionDocumentAdmission';
 
 export type SessionPresentationRecord = Session | SessionListRenderableSession;
 export type SessionPresentationInput = Readonly<{ record: SessionPresentationRecord; baseSession?: Session; serverId?: string }>;
@@ -95,9 +95,16 @@ function normalizeProjectionSeq(value: unknown): number {
 
 export function isSessionListRenderableNewerThanSession(
     renderable: SessionListRenderableSession,
-    session: Pick<Session, 'seq' | 'agentStateVersion'>,
+    session: Pick<Session, 'seq' | 'agentStateVersion' | 'metadataVersion' | 'metadataLayoutVersion'>,
 ): boolean {
+    const observation = hasNewerObservedSessionMetadata(renderable) ? renderable[SESSION_LIST_DOCUMENT_ADMISSION] : undefined;
     return normalizeProjectionSeq(renderable.seq) > normalizeProjectionSeq(session.seq)
+        || compareSessionMetadataRevisions({
+            incomingLayoutVersion: observation?.observedMetadataLayoutVersion ?? renderable.metadataLayoutVersion,
+            incomingMetadataVersion: observation?.observedMetadataVersion ?? renderable.metadataVersion,
+            storedLayoutVersion: session.metadataLayoutVersion,
+            storedMetadataVersion: session.metadataVersion,
+        }) > 0
         || !classifySessionTupleApplyCurrentness(renderable, {
             ...renderable,
             agentStateVersion: session.agentStateVersion,

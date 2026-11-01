@@ -1,4 +1,5 @@
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { Session } from '@/sync/domains/state/storageTypes';
 import { useSession } from '@/sync/domains/state/storage';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
@@ -16,8 +17,7 @@ export type VoiceHistoryPendingRecovery = Readonly<{
  * the person-facing coding target. Only that Session's pushed summary is needed here; opening
  * the incumbent Session route lets Pending load its own rows and recovery Actions on demand.
  */
-export function useVoiceHistoryPendingRecovery(address: SessionAddress | null): VoiceHistoryPendingRecovery | null {
-    const session = useSession(address?.sessionId ?? '', address?.serverId);
+export function readVoiceHistoryPendingRecovery(address: SessionAddress | null, session: Session | null): VoiceHistoryPendingRecovery | null {
     if (!address || !session
         || !isVoiceConversationCustodySessionMetadata(readSessionOwnerMetadataView(session))) return null;
     const awareness = projectUiSessionAwareness(session, Date.now(), { includeTitle: false, includeWorkspace: false });
@@ -28,4 +28,9 @@ export function useVoiceHistoryPendingRecovery(address: SessionAddress | null): 
     return { address, openAction: { actionId: 'workspace.tabs.open', input: {
         href: buildScopedSessionRouteHref({ sessionId: address.sessionId, serverId: address.serverId }),
     } } };
+}
+
+export function useVoiceHistoryPendingRecovery(address: SessionAddress | null): VoiceHistoryPendingRecovery | null {
+    const session = useSession(address?.sessionId ?? '', address?.serverId);
+    return readVoiceHistoryPendingRecovery(address, session);
 }

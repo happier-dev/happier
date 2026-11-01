@@ -20,7 +20,25 @@ installHomeGovernanceBoundaries(http);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { buildVoiceTranscriptHistorySessionMetadata, VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG } = await import('@/voice/persistence/voiceTranscriptHistorySession');
-const { createDefaultVoiceHistoryConsumer } = await import('./defaultVoiceHistoryConsumer');
+const { discoverVoiceHistorySession } = await import('./voiceHistorySessionDiscovery');
+const { apiSocket } = await import('@/sync/api/session/apiSocket');
+const { sync } = await import('@/sync/sync');
+const discover = async () => {
+  const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+  const { captureServerRequestAuthorityForServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope');
+  const scope = getActiveServerAccountScope();
+  if (!scope) throw new Error('Discovery Account scope missing');
+  const authority = await captureServerRequestAuthorityForServerAccountScope({ scope,
+    activeRequest: (path, init) => apiSocket.request(path, init) });
+  try { return await discoverVoiceHistorySession({
+  lookupByTags: async tags => {
+    const response = await authority.request('/v2/sessions/lookup-by-tags', { method: 'POST', body: JSON.stringify({ tags }) });
+    return SessionLookupByTagsResponseV2Schema.parse(await response.json()).sessions;
+  },
+  hydrateSession: sessionId => sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, authority }),
+  readHydratedSession: sessionId => storage.getState().sessions[sessionId] ?? null,
+  }); } finally { await authority.release(); }
+};
 const { storage } = await import('@/sync/domains/state/storage');
 const { switchConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
 const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
@@ -66,12 +84,10 @@ afterEach(async () => {
 const expectCanonicalTag = () => expect(http.requestsFor('/v2/sessions/lookup-by-tags').at(-1)?.input)
   .toEqual({ tags: [VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG] });
 
-describe('discoverVoiceHistorySession through its canonical Account consumer', () => {
+describe('direct-media provider-state carrier discovery', () => {
   it('performs the cold carrier lookup without a server-version preflight', async () => {
     await installCandidates([]);
-    const consumer = createDefaultVoiceHistoryConsumer();
-    await consumer.open();
-    expect(consumer.read().sessionId).toBeNull();
+    expect(await discover()).toBeNull();
     expectCanonicalTag();
     expect(http.requests.some(request => request.path.includes('/server-version'))).toBe(false);
   });
@@ -79,9 +95,7 @@ describe('discoverVoiceHistorySession through its canonical Account consumer', (
   it('looks up only the canonical fixed tag and accepts only its hydrated inactive hidden marker', async () => {
     await installCandidates([carrierSession({ id: 'currently-recording', active: true }),
       carrierSession({ id: 'wrong-marker', key: 'voice_conversation' }), carrierSession({ id: 'history' })]);
-    const consumer = createDefaultVoiceHistoryConsumer();
-    await consumer.open();
-    expect(consumer.read().sessionId).toBe('history');
+    expect(await discover()).toBe('history');
     expectCanonicalTag();
     // Lookup rows already carry a canonical Session projection. Sync may use
     // that admitted record without another HTTP detail read.
@@ -106,18 +120,16 @@ describe('discoverVoiceHistorySession through its canonical Account consumer', (
       if (!response) throw new Error('Missing migrated Session detail');
       return { status: response.status, body: await response.json() };
     } });
-    const consumer = createDefaultVoiceHistoryConsumer();
-    await consumer.open();
-    expect(consumer.read().sessionId).toBe('history');
-    expect(storage.getState().sessions.history?.metadataLayoutVersion).toBe(1);
+    const discovered = await discover();
+    expect(storage.getState().sessions.history).toMatchObject({ metadataLayoutVersion: 1,
+      ownerMetadataView: { systemSessionV1: { key: 'voice_transcript_history', hidden: true } } });
+    expect(discovered).toBe('history');
   });
 
   it('returns empty without creating when lookup has no exact carrier or hydration is unavailable', async () => {
     await installCandidates([carrierSession({ id: 'history' })]);
     http.answer(homeId, '/v2/sessions/history', { status: 404, body: { error: 'not_found' } });
-    const consumer = createDefaultVoiceHistoryConsumer();
-    await consumer.open();
-    expect(consumer.read().sessionId).toBeNull();
+    expect(await discover()).toBeNull();
     expect(http.requestsFor('/v1/sessions/history/messages')).toEqual([]);
     expect(http.requestsFor('/v1/sessions').some(request =>
       request.input !== null && typeof request.input === 'object' && 'tag' in request.input,

@@ -19,7 +19,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { SessionCurrentProjectionRecordV1Schema, SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol';
+import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
 import { SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 
 import type { DefaultVoiceHistoryRuntime } from './defaultVoiceHistoryConsumer';
@@ -30,7 +30,8 @@ installHomeGovernanceBoundaries(historyHttp);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { createVoiceProviderRegistry } = await import('@/voice/registry/providerRegistry');
-const { buildVoiceTranscriptHistorySessionMetadata } = await import('@/voice/persistence/voiceTranscriptHistorySession');
+const { buildSystemSessionMetadataV1 } = await import('@happier-dev/protocol/sessions/control/contract');
+const buildVoiceConversationMetadata = () => buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true });
 const { buildRealtimeConversationRawRecord } = await import('@/voice/transcript/VoiceTranscriptProjector');
 const { createDefaultVoiceHistoryConsumerFromRuntime, createDefaultVoiceHistoryConsumer,
   resolveVoiceHistoryProviderLabel } = await import('./defaultVoiceHistoryConsumer');
@@ -65,7 +66,7 @@ describe('canonical History Account boundary', () => {
   setRuntimeFetch(createSessionReadBatchFetchBoundary(historyHttp.request));
     const sessionId = 'history-carrier';
     const session = createSessionFixture({ id: sessionId, serverId: homeId, seq: 20, active: false,
-      metadata: { ...fixtureMetadata, ...buildVoiceTranscriptHistorySessionMetadata() },
+      metadata: { ...fixtureMetadata, ...buildVoiceConversationMetadata() },
     });
     const metadata = createSessionMetadataHttpBoundary(() => ({ [sessionId]: session }));
     const response = metadata.handle(`https://history-owner.test/v2/sessions/${sessionId}`);
@@ -75,7 +76,8 @@ describe('canonical History Account boundary', () => {
     const wire = SessionCurrentProjectionRecordV1Schema.parse(detail.session);
     historyHttp.answer(homeId, '/v1/auth/ping', { body: {} });
     historyHttp.answer(homeId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
-    historyHttp.answer(homeId, '/v2/sessions/lookup-by-tags', { body: SessionLookupByTagsResponseV2Schema.parse({ sessions: [wire] }) });
+    historyHttp.answer(homeId, '/v2/sessions', { body: { sessions: [wire], hasNext: false, nextCursor: null } });
+    historyHttp.answer(homeId, '/v2/sessions/archived', { body: { sessions: [], hasNext: false, nextCursor: null } });
     historyHttp.answer(homeId, `/v2/sessions/${sessionId}`, { body: { session: wire } });
     historyHttp.answer(homeId, `DELETE /v1/sessions/${sessionId}`, { body: { success: true } });
     const page = (seq: number, hasMore: boolean) => SessionMessagesPageV1Schema.parse({ messages: [{
@@ -163,13 +165,8 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
     ): DefaultVoiceHistoryRuntime => ({
       readActiveScope: () => scope,
       captureAuthority: async () => authority,
-      lookupByTags: async () => [{ id: 'voice-history' }],
+      listConversations: async () => [{ id: 'voice-history' }],
       hydrateSession: async (sessionId) => ({ kind: 'available', sessionId }),
-      readHydratedSession: (sessionId) => createSessionFixture({
-        id: sessionId,
-        active: false,
-        metadata: { ...fixtureMetadata, ...buildVoiceTranscriptHistorySessionMetadata() },
-      }),
       refreshSessionMessages: async () => undefined,
       loadOlderMessages: async () => ({
         loaded: 0,
@@ -199,7 +196,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
       {
         stage: 'lookup',
         runtime: createRuntime({
-          lookupByTags: async () => {
+          listConversations: async () => {
             throw Object.assign(new Error('lookup response body'), { status: 503 });
           },
         }),
@@ -235,7 +232,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
 
     const outOfRangeStatusConsumer = createDefaultVoiceHistoryConsumerFromRuntime(
       createRuntime({
-        lookupByTags: async () => {
+        listConversations: async () => {
           throw Object.assign(new Error('lookup response body'), { status: 700 });
         },
       }),
@@ -251,7 +248,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
     const superseded = new VoiceHistoryOperationSupersededError();
     await expect(createDefaultVoiceHistoryConsumerFromRuntime(
       createRuntime({
-        lookupByTags: async () => {
+        listConversations: async () => {
           throw superseded;
         },
       }),
@@ -263,7 +260,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
     } as const;
     await expect(createDefaultVoiceHistoryConsumerFromRuntime(
       createRuntime({
-        lookupByTags: async () => {
+        listConversations: async () => {
           throw codeCompatibleSuperseded;
         },
       }),
@@ -279,7 +276,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
     const captureGate = new Promise<void>((resolve) => {
       releaseCapture = resolve;
     });
-    const lookupByTags = vi.fn(async () => []);
+    const listConversations = vi.fn(async () => []);
     const runtime: DefaultVoiceHistoryRuntime = {
       readActiveScope: () => activeScope,
       captureAuthority: async (requestedScope) => {
@@ -289,9 +286,8 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
         }
         throw new Error('unreachable');
       },
-      lookupByTags,
+      listConversations,
       hydrateSession: async () => ({ kind: 'missing' }),
-      readHydratedSession: () => null,
       refreshSessionMessages: async () => undefined,
       loadOlderMessages: async () => ({
         loaded: 0,
@@ -316,7 +312,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
       stage: 'capture_scope',
       message: 'Voice History failed to load',
     });
-    expect(lookupByTags).not.toHaveBeenCalled();
+    expect(listConversations).not.toHaveBeenCalled();
   });
 
   it('rejects a same-server account switch while every in-flight request remains bound to the captured account', async () => {
@@ -332,7 +328,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
     const runtime: DefaultVoiceHistoryRuntime = {
       readActiveScope: () => activeScope,
       captureAuthority: async () => authorityA,
-      lookupByTags: async (_tags, authority) => {
+      listConversations: async (authority) => {
         seenAuthorities.push(authority);
         return await lookup;
       },
@@ -340,11 +336,6 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
         seenAuthorities.push(authority);
         return { kind: 'available', sessionId };
       },
-      readHydratedSession: (sessionId) => createSessionFixture({
-        id: sessionId,
-        active: false,
-        metadata: { ...fixtureMetadata, ...buildVoiceTranscriptHistorySessionMetadata() },
-      }),
       refreshSessionMessages: async (_sessionId, authority) => {
         seenAuthorities.push(authority);
       },

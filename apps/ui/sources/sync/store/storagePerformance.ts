@@ -1,7 +1,13 @@
 import type { StoreApi, UseBoundStore } from 'zustand';
 import type { SyncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
+import type { StorageSubscriptionScope } from '../domains/state/storageSubscriptions';
 
-export function observeStoragePerformance<T>(store: UseBoundStore<StoreApi<T>>, telemetry: SyncPerformanceTelemetry): UseBoundStore<StoreApi<T>> {
+type ObservedStore<T> = UseBoundStore<StoreApi<T>> & {
+    <U>(selector: (state: T) => U, scope?: StorageSubscriptionScope, equal?: (a: U, b: U) => boolean): U;
+    subscribe(listener: (state: T, previous: T) => void, scope?: StorageSubscriptionScope): () => void;
+};
+
+export function observeStoragePerformance<T>(store: ObservedStore<T>, telemetry: SyncPerformanceTelemetry): ObservedStore<T> {
     const selectors = new WeakMap<(state: T) => unknown, (state: T) => unknown>();
     const identity = (state: T) => state;
 
@@ -14,10 +20,10 @@ export function observeStoragePerformance<T>(store: UseBoundStore<StoreApi<T>>, 
     });
 
     function useObservedStore(): T;
-    function useObservedStore<U>(selector: (state: T) => U): U;
-    function useObservedStore<U>(selector?: (state: T) => U): T | U {
+    function useObservedStore<U>(selector: (state: T) => U, scope?: StorageSubscriptionScope, equal?: (a: U, b: U) => boolean): U;
+    function useObservedStore<U>(selector?: (state: T) => U, scope?: StorageSubscriptionScope, equal?: (a: T | U, b: T | U) => boolean): T | U {
         const select: (state: T) => T | U = selector ?? identity;
-        if (!telemetry.isEnabled()) return store(select);
+        if (!telemetry.isEnabled()) return store(select, scope, equal);
         let observed = selectors.get(select);
         if (!observed) {
             // Weak keys preserve wrapper identity without retaining abandoned closures.
@@ -38,7 +44,7 @@ export function observeStoragePerformance<T>(store: UseBoundStore<StoreApi<T>>, 
             selectors.set(select, observed);
         }
         // Each cached wrapper is paired with exactly this typed selector key.
-        return store(observed as (state: T) => T | U);
+        return store(observed as (state: T) => T | U, scope, equal);
     }
 
     return Object.assign(useObservedStore, store);

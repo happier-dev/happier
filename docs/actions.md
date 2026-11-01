@@ -4939,11 +4939,13 @@ is created by the Action adapter.
 In 0.3 development source, `ui.voice_global.history.search`, `.load_older`,
 `.export` and `.clear` use the answering client's existing History consumer.
 Search filters loaded text and provider names; explicit refresh rediscovers the
-direct-media History carrier. Export streams the loaded or complete history,
+owned Voice conversations through the ordinary active and archived Session-list
+owner. Ordinary user and Agent text belongs to that conversation's history;
+direct-media provenance is not a second membership rule. Export streams the loaded or complete history,
 optionally filtered, to the client's download/share target and returns file
-metadata. Clear retains destructive approval and deletes only that History
-carrier. Session-scoped Voice and executable Voice Agent conversations keep
-their ordinary Session history. The History page uses the same Actions and
+metadata. Clear retains destructive approval and deletes the discovered owned
+Voice conversations through ordinary Session deletion. The legacy direct-media
+carrier is no longer a History search/export source. The History page uses the same Actions and
 consumer, including Account currentness, pagination and delete-wins retirement.
 
 The 0.3 development `settings.invoke` operations `voiceConversations.readiness`

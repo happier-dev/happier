@@ -1789,6 +1789,13 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       throwIfAborted(context.signal);
       if (!accountContext?.readLiveSettings()) return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
       accountContext.assertCurrent();
+      if (actionId === 'ui.voice_global.conversations.list') {
+        const { executeVoiceConversationHistoryListAction } = await import('@/voice/history/voiceHistoryActions');
+        return executeVoiceConversationHistoryListAction(input,
+          () => accountContext.accountLifetime.isCurrent() && !context.signal?.aborted, {
+            scope: accountContext.accountLifetime.scope, lifetime: accountContext.accountLifetime, signal: context.signal,
+          });
+      }
       if (isVoiceHistoryActionId(actionId)) {
         const [{ executeVoiceHistoryAction }, { getDefaultVoiceHistoryConsumer }, { saveVoiceHistoryExportArtifact }] = await Promise.all([
           import('@/voice/history/voiceHistoryActions'), import('@/voice/history/defaultVoiceHistoryConsumer'),

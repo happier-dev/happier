@@ -73,10 +73,6 @@ import {
 
 import * as realtimeMicSession from '@/voice/runtime/mic/createRealtimeMicSession';
 import { createVoiceHistoryConsumer } from '@/voice/history/voiceHistoryConsumer';
-import {
-  createDefaultVoiceHistoryConsumerFromRuntime,
-  type DefaultVoiceHistoryRuntime,
-} from '@/voice/history/defaultVoiceHistoryConsumer';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { getVoiceAdapterRegistry } from '@/voice/session/voiceAdapterRegistry';
 import { VoiceSessionRuntime } from '@/voice/session/VoiceSessionRuntime';
@@ -2036,112 +2032,6 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         composed.controlSessionId,
       )).toBeNull();
     } finally {
-      await composed.runtime.dispose();
-      composed.hostLease.revoke();
-      browser.restore();
-    }
-  });
-
-  it('serializes same-device carrier acquisition behind an in-flight whole-history clear', async () => {
-    const browser = installVoiceWebRtcBrowserBoundary();
-    const composed = await environment.createRuntime(browser);
-    const recreatedSessionId = 'voice-history-openai-recreated';
-    const deleteStarted = createDeferredVoid();
-    const releaseDelete = createDeferredVoid();
-    let deleteFinished = false;
-    let discoveredSessionId: string | null = OPENAI_HISTORY_SESSION_ID;
-    const scope = {
-      serverId: getActiveServerSnapshot().serverId,
-      accountId: 'openai-composed-account',
-    } as const satisfies ServerAccountScope;
-    const ensureHistorySession = vi.fn(async (init: RequestInit) => {
-        const sessionId = deleteFinished
-          ? recreatedSessionId
-          : OPENAI_HISTORY_SESSION_ID;
-        return sessionHttp.createSessionFromPost(sessionId, init);
-      });
-    environment.historySessionPost = ensureHistorySession;
-    const deleteSession = vi.fn(async () => {
-      deleteStarted.resolve();
-      await releaseDelete.promise;
-      deleteFinished = true;
-      discoveredSessionId = null;
-      return { success: true };
-    });
-    const runtime: DefaultVoiceHistoryRuntime = {
-      readActiveScope: () => scope,
-      captureAuthority: (capturedScope) =>
-        captureServerRequestAuthorityForServerAccountScope({
-          scope: capturedScope,
-          activeRequest: (path, init, options) => apiSocket.request(path, init, options),
-        }),
-      lookupByTags: async () => (
-        discoveredSessionId ? [{ id: discoveredSessionId }] : []
-      ),
-      hydrateSession: async (sessionId) => ({ kind: 'available', sessionId }),
-      readHydratedSession: (sessionId) =>
-        storage.getState().sessions[sessionId] ?? null,
-      refreshSessionMessages: async () => undefined,
-      loadOlderMessages: async () => ({
-        loaded: 0,
-        hasMore: false,
-        status: 'no_more',
-      }),
-      readMessages: (sessionId) =>
-        readStoredSessionMessages(storage.getState(), sessionId),
-      readMessagesRevision: (sessionId) =>
-        storage.getState().sessionMessages[sessionId]?.messagesVersion ?? 0,
-      subscribeMessages: (listener) => storage.subscribe(() => { listener(); }),
-      deleteSession,
-      retireLocalSession: (sessionId) =>
-        storage.getState().deleteSession(sessionId),
-    };
-    const providerRegistry = {
-      list: () => [],
-      get: () => null,
-    } as unknown as VoiceProviderRegistry;
-    const consumer = createDefaultVoiceHistoryConsumerFromRuntime(
-      runtime,
-      providerRegistry,
-    );
-
-    try {
-      voiceSessionBindingStore.getState().unbind(OPENAI_HISTORY_SESSION_ID);
-      await consumer.open();
-
-      const clearing = consumer.clear();
-      await deleteStarted.promise;
-      const acquiring = composed.hostLease.host.acquireDirectMediaConversation({
-        adapterId: 'happier.voice.openai/realtime-openai',
-        controlSessionId: composed.controlSessionId,
-        requestedTargetSessionAddress: null,
-      });
-
-      expect(ensureHistorySession).not.toHaveBeenCalled();
-      expect(voiceSessionBindingStore.getState().getByControlSessionId(
-        composed.controlSessionId,
-      )).toBeNull();
-
-      releaseDelete.resolve();
-      await expect(clearing).resolves.toEqual({ cleared: true });
-      await expect(acquiring).resolves.toEqual({
-        conversationSessionId: recreatedSessionId,
-      });
-      expect(ensureHistorySession).toHaveBeenCalledTimes(1);
-      expect(voiceSessionBindingStore.getState().getByControlSessionId(
-        composed.controlSessionId,
-      )?.conversationSessionId).toBe(recreatedSessionId);
-      expect(storage.getState().sessions[OPENAI_HISTORY_SESSION_ID])
-        .toBeUndefined();
-      expect(storage.getState().sessions[recreatedSessionId]).toBeDefined();
-    } finally {
-      releaseDelete.resolve();
-      const binding = voiceSessionBindingStore.getState().getByControlSessionId(
-        composed.controlSessionId,
-      );
-      if (binding) {
-        voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
-      }
       await composed.runtime.dispose();
       composed.hostLease.revoke();
       browser.restore();

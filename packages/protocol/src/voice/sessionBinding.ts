@@ -8,6 +8,17 @@ export const VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY = 'voice_conversation
 /** Legacy hidden carrier marker retained by the existing Voice lookup owner. */
 export const VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY = 'voice_carrier';
 
+/** Retired carriers retain Activity custody, but never become reusable Voice sessions. */
+export function isVoiceConversationCustodySessionMetadata(metadata: unknown): boolean {
+  const systemSession = readSystemSessionMetadataFromMetadata({ metadata });
+  const key = String(systemSession?.key ?? '').trim();
+  return systemSession?.hidden === true && (
+    key === VOICE_CONVERSATION_SYSTEM_SESSION_KEY
+    || key === VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY
+    || key === VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY
+  );
+}
+
 export function isVoiceConversationSystemSessionMetadata(metadata: unknown): boolean {
   const systemSession = readSystemSessionMetadataFromMetadata({ metadata });
   const key = String(systemSession?.key ?? '').trim();

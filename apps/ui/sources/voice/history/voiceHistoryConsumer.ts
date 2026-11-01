@@ -6,8 +6,9 @@ import {
 import type { Message } from "@happier-dev/session-core/messages";
 import { prepareTranscriptMessageBody } from '@/components/sessions/transcript/messageDisplayText';
 import type { SessionDeleteResult } from '@/sync/ops/sessions';
-import { compareTranscriptMessagesOldestFirst } from "@happier-dev/session-core/messages";
+import { sortTranscriptMessagesOldestFirst } from "@happier-dev/session-core/messages";
 import type { TranscriptOlderPageLoadResult } from "@happier-dev/session-core/messages";
+import { registerSessionRealtimeTranscriptConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
 
 export type VoiceHistoryProviderSource = NonNullable<ConversationTurnOriginV1['source']>;
 
@@ -76,7 +77,7 @@ export type VoiceHistoryConsumerDeps<
 > = Readonly<{
   readScopeKey(): string | null;
   captureScope(): Promise<TScope | null>;
-  discoverHistorySession(scope: TScope): Promise<string | null>;
+  discoverHistorySession(scope: TScope): Promise<string | readonly string[] | null>;
   refreshSessionMessages(sessionId: string, scope: TScope): Promise<void>;
   loadOlderMessages(sessionId: string, scope: TScope): Promise<VoiceHistoryPageResult>;
   readMessages(sessionId: string): readonly Message[];
@@ -97,7 +98,7 @@ export type VoiceHistoryConsumerDeps<
    * The consumer republishes it as its own revision, so an open History
    * observes live writes instead of showing whatever the last read returned.
    */
-  subscribeHistorySources(listener: () => void): () => void;
+  subscribeHistorySources(listener: () => void, sessionId: string | null): () => void;
   resolveProviderLabel(source: VoiceHistoryProviderSource | null): string;
   deleteSession(
     sessionId: string,
@@ -118,19 +119,14 @@ export function projectVoiceHistoryRows(
   resolveProviderLabel: VoiceHistoryConsumerDeps['resolveProviderLabel'],
   query = '',
 ): readonly VoiceHistoryRow[] {
-  const rows = [...messages]
-    .sort(compareTranscriptMessagesOldestFirst)
+  const rows = sortTranscriptMessagesOldestFirst(messages)
     .flatMap((message): VoiceHistoryRow[] => {
       if (message.kind !== 'user-text' && message.kind !== 'agent-text') return [];
       if (message.kind === 'agent-text' && message.isThinking === true) return [];
       const origin = readConversationTurnOriginV1FromMessageMeta(message.meta);
-      if (
-        origin?.channel !== 'realtime_conversation'
-        || origin.modality !== 'voice'
-      ) {
-        return [];
-      }
-      const source = origin.source ?? null;
+      // Membership is decided by the conversation owner, not by a message's
+      // transport provenance. Executable Voice uses ordinary Agent turns.
+      const source = origin?.source ?? null;
       return [{
         id: message.id,
         role: message.kind === 'user-text' ? 'user' : 'assistant',
@@ -207,6 +203,8 @@ export function createVoiceHistoryConsumer<
   TScope extends VoiceHistoryCapturedScope,
 >(deps: VoiceHistoryConsumerDeps<TScope>): VoiceHistoryConsumer {
   let sessionId: string | null = null;
+  let sessionIds: readonly string[] = [];
+  const pagesBySession = new Map<string, boolean | null>();
   let scopeKey: string | null = null;
   let capturedScope: TScope | null = null;
   let hasMore: boolean | null = null;
@@ -217,6 +215,7 @@ export function createVoiceHistoryConsumer<
   let projectedRevision: string | number | null = null;
   let projectedRows: readonly VoiceHistoryRow[] = Object.freeze([]);
   const listeners = new Set<() => void>();
+  let unsubscribeSources: (() => void) | undefined;
 
   /*
    * Emitted only from an operation's own continuation, never from `read()`.
@@ -226,6 +225,15 @@ export function createVoiceHistoryConsumer<
    */
   const emit = (): void => {
     for (const listener of [...listeners]) listener();
+  };
+
+  const updateSourceDemand = (): void => {
+    unsubscribeSources?.();
+    if (!listeners.size) { unsubscribeSources = undefined; return; }
+    const subscriptions = (sessionIds.length ? sessionIds : [null])
+      .flatMap(id => [deps.subscribeHistorySources(emit, id),
+        ...(id ? [registerSessionRealtimeTranscriptConsumer(id)] : [])]);
+    unsubscribeSources = () => { for (const unsubscribe of subscriptions) unsubscribe(); };
   };
 
   const resetProjection = (): void => {
@@ -243,9 +251,12 @@ export function createVoiceHistoryConsumer<
   const resetBinding = () => {
     capturedScope?.release?.();
     sessionId = null;
+    sessionIds = [];
+    pagesBySession.clear();
     scopeKey = null;
     capturedScope = null;
     hasMore = null;
+    updateSourceDemand();
     resetProjection();
   };
 
@@ -283,7 +294,7 @@ export function createVoiceHistoryConsumer<
 
   const read = (query = ''): VoiceHistorySnapshot => {
     if (!sessionId || !isScopeCurrent()) return empty();
-    const messagesRevision = deps.readMessagesRevision(sessionId);
+    const messagesRevision = JSON.stringify(sessionIds.map(id => deps.readMessagesRevision(id)));
     const revision = deps.readProjectionRevision?.() ?? 0;
     const projectionIsDeferredForExport = deferredExportProjectionEpoch !== null;
     if (
@@ -297,12 +308,12 @@ export function createVoiceHistoryConsumer<
       projectedMessagesRevision = messagesRevision;
       projectedRevision = revision;
       projectedRows = projectVoiceHistoryRows(
-        deps.readMessages(sessionId),
+        sessionIds.flatMap(id => [...deps.readMessages(id)]),
         deps.resolveProviderLabel,
       );
     }
     return {
-      sessionId,
+      sessionId: sessionIds.length === 1 ? sessionId : null,
       rows: filterVoiceHistoryRows(projectedRows, query),
       loadedRowCount: projectedRows.length,
       hasMore,
@@ -318,7 +329,9 @@ export function createVoiceHistoryConsumer<
     }
     let retained = false;
     try {
-      const discoveredSessionId = String(await deps.discoverHistorySession(nextScope) ?? '').trim();
+      const discovered = await deps.discoverHistorySession(nextScope);
+      const discoveredSessionIds = [...new Set((typeof discovered === 'string' ? [discovered] : discovered ?? [])
+        .map(id => id.trim()).filter(Boolean))];
       assertOperationCurrent(epoch);
       if (deps.readScopeKey() !== nextScope.key) {
         resetBinding();
@@ -328,8 +341,12 @@ export function createVoiceHistoryConsumer<
       scopeKey = nextScope.key;
       capturedScope = nextScope;
       retained = true;
-      sessionId = discoveredSessionId || null;
+      sessionIds = discoveredSessionIds;
+      sessionId = sessionIds[0] ?? null;
+      pagesBySession.clear();
+      for (const id of sessionIds) pagesBySession.set(id, null);
       hasMore = null;
+      updateSourceDemand();
       emit();
       return sessionId;
     } finally {
@@ -345,33 +362,41 @@ export function createVoiceHistoryConsumer<
     assertOperationCurrent(epoch);
     if (sessionId !== expectedSessionId || !capturedScope || !isScopeCurrent()) return null;
     const operationScope = capturedScope;
-    const result = await deps.loadOlderMessages(expectedSessionId, operationScope);
-    assertOperationCurrent(epoch);
-    if (sessionId !== expectedSessionId) {
-      throw new VoiceHistoryOperationSupersededError();
+    let loaded = 0;
+    for (const id of sessionIds) {
+      if (pagesBySession.get(id) === false) continue;
+      const result = await deps.loadOlderMessages(id, operationScope);
+      assertOperationCurrent(epoch);
+      if (sessionId !== expectedSessionId) throw new VoiceHistoryOperationSupersededError();
+      if (!isScopeCurrent()) return null;
+      if (result.status === 'retryable_error') {
+        // The canonical pager ATTEMPTED the read and it FAILED, retaining rows and
+        // the older cursor so the same read can be retried. Returning it as an
+        // ordinary unchanged page made "Load older" look like a successful no-op
+        // and silently truncated an all-history export. Nothing changed, so the
+        // pagination ceiling and the projection are left exactly as they were.
+        throw new Error('Voice History could not load an older page');
+      }
+      if (result.status === 'not_ready' || result.status === 'in_flight') return result;
+      pagesBySession.set(id, result.hasMore);
+      loaded += result.loaded;
     }
-    if (!isScopeCurrent()) return null;
-    if (result.status === 'retryable_error') {
-      // The canonical pager ATTEMPTED the read and it FAILED, retaining rows and
-      // the older cursor so the same read can be retried. Returning it as an
-      // ordinary unchanged page made "Load older" look like a successful no-op
-      // and silently truncated an all-history export. Nothing changed, so the
-      // pagination ceiling and the projection are left exactly as they were.
-      throw new Error('Voice History could not load an older page');
-    }
-    hasMore = result.hasMore;
+    hasMore = [...pagesBySession.values()].some(value => value !== false);
     // The canonical message owner may append into its existing array while
     // paging. This operation is the mutation boundary, so invalidate here
     // without imposing a second message-version owner on History.
     if (publish) publishProjection();
-    return result;
+    return { loaded, hasMore, status: hasMore ? 'loaded' : 'no_more' };
   };
 
   const open = async (query = ''): Promise<VoiceHistorySnapshot> => {
     const epoch = beginOperation();
     const discoveredSessionId = await discover(epoch);
     if (!discoveredSessionId || !capturedScope) return empty();
-    await deps.refreshSessionMessages(discoveredSessionId, capturedScope);
+    for (const id of sessionIds) {
+      await deps.refreshSessionMessages(id, capturedScope);
+      assertOperationCurrent(epoch);
+    }
     assertOperationCurrent(epoch);
     if (sessionId !== discoveredSessionId) throw new VoiceHistoryOperationSupersededError();
     if (!isScopeCurrent()) return empty();
@@ -382,13 +407,16 @@ export function createVoiceHistoryConsumer<
   return Object.freeze({
     subscribe(listener: () => void) {
       listeners.add(listener);
-      const unsubscribeSources = deps.subscribeHistorySources(listener);
+      if (listeners.size === 1) updateSourceDemand();
       return () => {
         listeners.delete(listener);
-        unsubscribeSources();
-        if (listeners.size === 0 && capturedScope) {
-          operationEpoch += 1;
-          resetBinding();
+        if (listeners.size === 0) {
+          unsubscribeSources?.();
+          unsubscribeSources = undefined;
+          if (capturedScope) {
+            operationEpoch += 1;
+            resetBinding();
+          }
         }
       };
     },
@@ -396,7 +424,7 @@ export function createVoiceHistoryConsumer<
       return [
         deps.readScopeKey() ?? '',
         sessionId ?? '',
-        sessionId ? deps.readMessagesRevision(sessionId) : '',
+        ...sessionIds.map(id => `${id}:${deps.readMessagesRevision(id)}`),
         deps.readProjectionRevision?.() ?? 0,
         hasMore === null ? '' : String(hasMore),
       ].join('\u0001');
@@ -498,49 +526,54 @@ export function createVoiceHistoryConsumer<
         }
         assertOperationCurrent(epoch);
         if (!sessionId || !capturedScope || !isScopeCurrent()) return { cleared: false };
-        const deletingSessionId = sessionId;
         const deletingScope = capturedScope;
-        const result = await deps.deleteSession(deletingSessionId, deletingScope);
-        // `session_absent` is the server confirming that this exact carrier is
-        // gone or was never ours, so it joins the deleted path: the binding and
-        // its decrypted rows must be retired even when no socket deletion update
-        // ever reaches this device. Every other failure — a lost delete
-        // condition above all — leaves the carrier alive and retryable, so local
-        // history is preserved rather than discarded on a transient conflict.
-        if (!result.success && result.code !== 'session_absent') {
-          assertOperationCurrent(epoch);
-          throw new Error(result.message || 'Voice History could not be cleared');
-        }
-        const isExactDeletedBindingCurrent = () => (
-          sessionId === deletingSessionId
-          && scopeKey === deletingScope.key
-          && capturedScope?.key === deletingScope.key
-          && deps.readScopeKey() === deletingScope.key
-        );
-        const retireExactDeletedBinding = (): boolean => {
-          if (!isExactDeletedBindingCurrent()) return false;
-          try {
-            deps.retireLocalSession(deletingSessionId, deletingScope);
-          } finally {
-            if (isExactDeletedBindingCurrent()) {
-              resetBinding();
-            }
-            emit();
+        for (const deletingSessionId of [...sessionIds]) {
+          const result = await deps.deleteSession(deletingSessionId, deletingScope);
+          // `session_absent` is the server confirming that this exact carrier is
+          // gone or was never ours, so it joins the deleted path: the binding and
+          // its decrypted rows must be retired even when no socket deletion update
+          // ever reaches this device. Every other failure — a lost delete
+          // condition above all — leaves the carrier alive and retryable, so local
+          // history is preserved rather than discarded on a transient conflict.
+          if (!result.success && result.code !== 'session_absent') {
+            assertOperationCurrent(epoch);
+            throw new Error(result.message || 'Voice History could not be cleared');
           }
-          return true;
-        };
+          const isExactDeletedBindingCurrent = () => (
+            sessionIds.includes(deletingSessionId)
+            && scopeKey === deletingScope.key
+            && capturedScope?.key === deletingScope.key
+            && deps.readScopeKey() === deletingScope.key
+          );
+          const retireExactDeletedBinding = (): boolean => {
+            if (!isExactDeletedBindingCurrent()) return false;
+            try {
+              deps.retireLocalSession(deletingSessionId, deletingScope);
+            } finally {
+              if (isExactDeletedBindingCurrent()) {
+                sessionIds = sessionIds.filter(id => id !== deletingSessionId);
+                pagesBySession.delete(deletingSessionId);
+                sessionId = sessionIds[0] ?? null;
+                if (!sessionId) resetBinding();
+                else { resetProjection(); updateSourceDemand(); }
+              }
+              emit();
+            }
+            return true;
+          };
 
-        if (epoch !== operationEpoch) {
+          if (epoch !== operationEpoch) {
+            retireExactDeletedBinding();
+            assertOperationCurrent(epoch);
+          }
+          if (deps.readScopeKey() !== deletingScope.key) {
+            resetBinding();
+            return { cleared: true };
+          }
+          // The server-side carrier is already gone. Never retain authority to
+          // page, export, or delete that exact id if local cache cleanup fails.
           retireExactDeletedBinding();
-          assertOperationCurrent(epoch);
         }
-        if (deps.readScopeKey() !== deletingScope.key) {
-          resetBinding();
-          return { cleared: true };
-        }
-        // The server-side carrier is already gone. Never retain authority to
-        // page, export, or delete that exact id if local cache cleanup fails.
-        retireExactDeletedBinding();
         return { cleared: true };
       });
     },

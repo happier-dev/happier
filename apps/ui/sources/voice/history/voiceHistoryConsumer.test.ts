@@ -6,6 +6,7 @@ import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/c
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { resolveVoiceHistoryProviderLabel } from './defaultVoiceHistoryConsumer';
 import { tLoose } from '@/text';
+import { storage } from '@/sync/domains/state/storageStore';
 
 import {
   createVoiceHistoryConsumer,
@@ -45,6 +46,7 @@ const providerRegistry = createVoiceProviderRegistry({ bundledContributions: [
   selectionOptions: [{ id: 'byo', modeId: 'byo', order: 1, titleKey: 'unused.fixture.title' }],
 })) });
 const readProviderLabel = (source: VoiceHistoryProviderSource | null) => {
+  if (!source) return 'Voice';
   const label = resolveVoiceHistoryProviderLabel(providerRegistry, source, tLoose);
   if (label === null) throw new Error('Expected a declared Voice History fixture provider');
   return label;
@@ -103,7 +105,29 @@ function createDeps(overrides: Partial<VoiceHistoryConsumerDeps> = {}): VoiceHis
 }
 
 describe('projectVoiceHistoryRows', () => {
-  it('projects only exact Voice provenance in canonical chronology and searches loaded decrypted rows locally', () => {
+  it('subscribes only to the discovered carrier and releases its message demand on clear', async () => {
+    const messages = storage.getState().sessionMessages;
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      subscribeHistorySources: (listener, sessionId) => storage.subscribe(listener,
+        { sessionMessages: sessionId ? [sessionId] : [] }),
+    }));
+    const notified = vi.fn();
+    const stop = consumer.subscribe(notified);
+    try {
+      await consumer.open();
+      notified.mockClear();
+      storage.getState().applyMessagesLoaded('unrelated-history-session');
+      expect(notified).not.toHaveBeenCalled();
+      storage.getState().applyMessagesLoaded('voice-history-session');
+      expect(notified).toHaveBeenCalledTimes(1);
+      await consumer.clear();
+      notified.mockClear();
+      storage.getState().applyMessagesLoaded('voice-history-session');
+      expect(notified).not.toHaveBeenCalled();
+    } finally { stop(); storage.setState({ sessionMessages: messages }); }
+  });
+
+  it('projects ordinary and realtime text in an owned Voice conversation in canonical chronology', () => {
     const messages = [
       voiceMessage({
         id: 'assistant-2',
@@ -112,7 +136,7 @@ describe('projectVoiceHistoryRows', () => {
         createdAt: 300,
         source: XAI_SOURCE,
       }),
-      agentMessage('coding-row', 'must stay in the coding transcript', 50),
+      agentMessage('ordinary-row', 'ordinary executable Voice answer', 50),
       {
         ...agentMessage('malformed-origin', 'must fail closed', 75),
         // Deliberately malformed persisted boundary fixture: channel/modality literals disagree.
@@ -144,6 +168,8 @@ describe('projectVoiceHistoryRows', () => {
       }),
     ];
     expect(projectVoiceHistoryRows(messages, readProviderLabel)).toEqual([
+      expect.objectContaining({ id: 'ordinary-row', role: 'assistant', providerLabel: 'Voice' }),
+      expect.objectContaining({ id: 'malformed-origin', role: 'assistant', providerLabel: 'Voice' }),
       expect.objectContaining({
         id: 'user-1',
         role: 'user',

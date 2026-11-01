@@ -1,5 +1,6 @@
 import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/control/contract';
 import {
+    isVoiceConversationCustodySessionMetadata as isFullVoiceConversationCustodySessionMetadata,
     isVoiceConversationSystemSessionMetadata,
     VOICE_CONVERSATION_SYSTEM_SESSION_KEY,
     VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY,
@@ -33,13 +34,10 @@ export type VoiceConversationSystemSessionCandidate = Readonly<{
  */
 export function isVoiceConversationCustodySessionMetadata(metadata: unknown): boolean {
     const systemSession = readSystemSessionMetadataFromMetadata({ metadata });
-    const key = String(systemSession?.key ?? '').trim();
-    return systemSession?.hidden === true
-        && (
-            key === VOICE_CONVERSATION_SYSTEM_SESSION_KEY
-            || key === VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY
-            || key === VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY
-        );
+    if (systemSession) return isFullVoiceConversationCustodySessionMetadata(metadata);
+    return typeof metadata === 'object' && metadata !== null
+        && 'hiddenSystemSession' in metadata && metadata.hiddenSystemSession === true
+        && 'systemSessionKind' in metadata && metadata.systemSessionKind === 'voice_custody';
 }
 
 function hasLegacyVoiceConversationSystemSessionKey(metadata: unknown): boolean {

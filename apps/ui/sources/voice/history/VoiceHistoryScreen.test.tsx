@@ -223,6 +223,17 @@ describe('VoiceHistoryScreen', () => {
     expect(plan().evictSessionIds).toEqual(['ordinary-session', 'voice-history-session']);
   });
 
+  it('keeps transcript controls available for multiple ordinary Voice conversations', async () => {
+    const consumer = createVoiceHistoryConsumer(createDeps([
+      voiceMessage({ id: 'question', role: 'user', text: 'My conversation', createdAt: 1, source: OPENAI_SOURCE }),
+    ], { discoverHistorySession: async () => ['first-conversation', 'second-conversation'] }));
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const screen = await renderScreen(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
+    await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-search')).not.toBeNull());
+    expect(screen.findByTestId('voice-history-export')).not.toBeNull();
+    expect(readMountedSessionRealtimeTranscriptConsumerSessionIds()).toEqual(['first-conversation', 'second-conversation']);
+  });
+
   it('does not apply a search that the shared Action policy refuses', async () => {
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     const consumer = createVoiceHistoryConsumer(createDeps([
