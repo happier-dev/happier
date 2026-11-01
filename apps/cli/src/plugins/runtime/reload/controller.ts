@@ -751,9 +751,13 @@ export function createPluginReloadController(params?: Readonly<{
                     + `is not newer than observed revision ${observedDurableRevision}`,
                 );
             }
-            // Durable currentness does not roll back while cold initialization or
-            // later publication work is pending or fails.
-            if (adoption.durableRevision !== undefined) {
+            // A refresh of an already-known commit must not claim its Machine
+            // adoption: the commit's prepared registry may still be publishing.
+            // A previously unseen revision still advances durable currentness.
+            if (adoption.durableRevision !== undefined && (
+                adoption.admissionRefresh !== true
+                || adoption.durableRevision > observedDurableRevision
+            )) {
                 highestObservedDurableRevision = adoption.durableRevision;
             }
 

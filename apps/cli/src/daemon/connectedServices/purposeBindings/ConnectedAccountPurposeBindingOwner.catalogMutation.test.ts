@@ -7,6 +7,9 @@ import * as persistence from '@/persistence';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createActiveAccountSettingsConnectedAccountPurposeBindingStore, createConnectedAccountPurposeBindingOwner } from './ConnectedAccountPurposeBindingOwner';
 import { createCliConnectedAccountCatalogStore } from '@/settings/connectedAccounts/connectedAccountCatalogStore';
+import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 const credentials = { token: 'purpose-row-writer', encryption: null };
 const purpose = { consumer: { pluginId: 'happier.voice.test', localId: 'speech' }, purpose: 'voice-api' };
@@ -223,6 +226,55 @@ describe('connected purpose row mutation', () => {
     await expect(store.read()).rejects.toMatchObject({ code: 'plugin_connected_account_settings_unavailable' });
     expect(server.read().record).toEqual({ key: 'purposes', value: { v: 1, bindings: [binding, concurrentBinding] } });
   });
+
+  it.each(['unavailable', 'outcome-unknown'] as const)(
+    'releases the consumer after deferred pruning and superseded registry publication (%s)', async failure => {
+      const server = boundary(failure === 'unavailable' ? 'concurrent-reconciliation' : 'reconciliation-unknown');
+      if (failure === 'unavailable') {
+        vi.mocked(axios.post).mockResolvedValueOnce({ status: 429, data: { error: 'unavailable' } });
+      }
+      const unexpected = async (): Promise<never> => { throw new Error('No credential selection or materialization'); };
+      const owner = createConnectedAccountPurposeBindingOwner({
+        store: createActiveAccountSettingsConnectedAccountPurposeBindingStore({ credentials }),
+        selectTarget: unexpected, resolveTarget: unexpected, materializeAccount: unexpected,
+        projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected,
+      });
+      const consumerScopes = [{ consumer: purpose.consumer, authorizedPurposes: [] }];
+      const signal = new AbortController().signal;
+      const controller = createPluginReloadController();
+      try {
+        const superseded = await resolveExecutablePluginRuntimeRegistry({ contributes: createResolvedContributionRegistry({}) });
+        await expect(controller.adoptPreparedRuntimeRegistry({
+          registry: superseded, changedPluginIds: [purpose.consumer.pluginId],
+          durableRevision: 1, runningSessionDisposition: 'retainRunningSessions',
+          beforePublish: async (_registry, publish) => owner.reconcileAuthorizedPurposes({
+            consumerScopes, signal,
+            publish: () => {
+              controller.publishDurableRunningSessionDisposition({
+                durableRevision: 2, changedPluginIds: [purpose.consumer.pluginId],
+                runningSessionDisposition: 'retainRunningSessions',
+              });
+              publish();
+            },
+          }),
+        })).rejects.toThrow(/superseded by newer durable revision 2/);
+        expect(server.read().record.value).toMatchObject({ bindings: expect.arrayContaining([binding]) });
+
+        const current = await resolveExecutablePluginRuntimeRegistry({ contributes: createResolvedContributionRegistry({}) });
+        await expect(controller.adoptPreparedRuntimeRegistry({
+          registry: current, changedPluginIds: [purpose.consumer.pluginId],
+          durableRevision: 2, runningSessionDisposition: 'retainRunningSessions',
+          beforePublish: async (_registry, publish) => owner.reconcileAuthorizedPurposes({
+            consumerScopes, signal, publish,
+          }),
+        })).resolves.toMatchObject({ ok: true, registry: current });
+        expect(controller.getState().activeRegistry).toBe(current);
+        expect(server.read().record.value).toEqual({ v: 1, bindings: [concurrentBinding] });
+      } finally {
+        await controller.shutdown();
+      }
+    },
+  );
 
   it('publishes startup reconciliation when the purpose-row write is temporarily unreachable, retaining explicit bindings', async () => {
     const server = boundary('concurrent-reconciliation');

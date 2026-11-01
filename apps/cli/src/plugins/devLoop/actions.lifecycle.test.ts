@@ -9,6 +9,7 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentSetActionInputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { createCliPluginAdministrationActionDeps } from '@/session/actions/cliActionDeps/pluginAdministration';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { projectPluginMutationResult } from '../../../../ui/sources/components/settings/plugins/model/pluginMarketplaceModel';
 
 const daemon = vi.hoisted(() => ({ request: vi.fn(), ensure: vi.fn(async () => {}) }));
 // The daemon control channel is the genuine process boundary. Action admission,
@@ -53,6 +54,12 @@ describe('plugin lifecycle Actions', () => {
       for (const actionId of ['plugins.disable', 'plugins.enable'] as const) {
         const result = await executor.execute(actionId, { pluginId, scope: 'account' }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
         expect(result).toMatchObject({ ok: true, result: { ok: true, pluginId, scope: 'account', enabled: actionId === 'plugins.enable' } });
+        if (!result.ok) throw new Error('Account enablement Action failed');
+        const method = actionId === 'plugins.enable' ? 'enable' : 'disable';
+        expect(projectPluginMutationResult(result.result, method, pluginId).kind).toBe('committed');
+        expect(projectPluginMutationResult(result.result, method, 'another.plugin').kind).toBeNull();
+        expect(projectPluginMutationResult(result.result, method === 'enable' ? 'disable' : 'enable', pluginId).kind).toBeNull();
+        expect(projectPluginMutationResult(Object.assign({}, result.result, { ok: false }), method, pluginId).kind).toBeNull();
       }
       expect(intent).toMatchObject({ enabled: true, desiredVersion: null, revision: '2' });
       expect(daemon.request).not.toHaveBeenCalled();

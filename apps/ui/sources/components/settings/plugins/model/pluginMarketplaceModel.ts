@@ -1,3 +1,4 @@
+import { PluginAccountPluginIntentV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { z } from 'zod/mini';
 import type { DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import type { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -495,86 +496,58 @@ export function readPendingPluginChangeReview(
     return readPluginInstallationReviewChange(value.change, expectedPluginId);
 }
 
-/**
- * The registry selection a marketplace install or update owes before the
- * daemon will fetch anything, read from the change owner's typed result.
- */
-export function readPluginRegistryProfileRequirement(
-    value: unknown,
-    action: 'install' | 'update',
-    expectedPluginId: string,
-): MarketplaceRegistryProfileRequirementV1 | null {
-    if (
-        !isRecord(value)
-        || value.action !== action
-        || value.pluginId !== expectedPluginId
-    ) return null;
-    const parsed = MarketplaceRegistryProfileRequiredResultV1Schema.safeParse(value.change);
-    if (!parsed.success) return null;
-    const { kind: _kind, ...requirement } = parsed.data;
-    return requirement;
-}
+export type PluginMutationResult = Readonly<{
+    kind: string | null;
+    failureReason: string | null;
+    managedResources: readonly ManagedResourceDependencyV1[] | null;
+    registryRequirement: MarketplaceRegistryProfileRequirementV1 | null;
+    disabledNoop: boolean;
+}>;
 
-export function readPluginChangeKind(
+/** Interpret one native response once, retaining its exact requested Action and Plugin identity. */
+export function projectPluginMutationResult(
     value: unknown,
     action: PluginMarketplaceActionRequest['method'],
     expectedPluginId: string,
-): string | null {
-    if (
-        !isRecord(value)
-        || value.action !== action
-        || value.pluginId !== expectedPluginId
-        || !isRecord(value.change)
-        || ('pluginId' in value.change && value.change.pluginId !== expectedPluginId)
-    ) return null;
-    return readNonEmptyString(value.change.kind);
-}
-
-/**
- * The daemon's safe, value-redacted reason for a refused change (plugin,
- * contribution and field identity), when the change owner supplied one.
- */
-export function readPluginChangeFailureReason(
-    value: unknown,
-    action: PluginMarketplaceActionRequest['method'],
-    expectedPluginId: string,
-): string | null {
-    if (readPluginChangeKind(value, action, expectedPluginId) !== 'failed'
-        || !isRecord(value) || !isRecord(value.change)) return null;
-    return readNonEmptyString(value.change.message);
-}
-
-/** Projects the installed owner's Action result into the existing UI mutation reader. */
-export function projectPluginInstallActionResult(value: unknown, action: 'install' | 'update', pluginId: string) {
-    const change = isRecord(value) && isRecord(value.change)
-        ? value.change
-        : isRecord(value) && 'outcome' in value
-            ? value.outcome === 'applied'
-                ? { kind: 'committed' as const }
-                : { kind: 'failed' as const, code: 'plugin_install_failed' }
-            : null;
-    return { action, pluginId, change };
-}
-
-/** Only the daemon's exact, strict recovery census can become a removal acknowledgment. */
-export function readPluginManagedResourceRemovalReview(
-    value: unknown,
-    action: 'disable' | 'uninstall',
-    expectedPluginId: string,
-): readonly ManagedResourceDependencyV1[] | null {
-    if (readPluginChangeKind(value, action, expectedPluginId) !== 'managedResourcesReviewRequired'
-        || !isRecord(value) || !isRecord(value.change)
-        || value.change.pluginId !== expectedPluginId
-        || !hasOnlyKeys(value.change, ['kind', 'pluginId', 'resources'])) return null;
-    const parsed = z.array(ManagedResourceDependencyV1Schema).safeParse(value.change.resources);
-    return parsed.success ? parsed.data : null;
-}
-
-/** The canonical capability owner returns its current disabled entry when no change was needed. */
-export function isPluginDisableNoopResult(value: unknown, expectedPluginId: string): boolean {
-    return isRecord(value) && value.action === 'disable' && value.pluginId === expectedPluginId
-        && value.change === null && isRecord(value.entry)
-        && value.entry.pluginId === expectedPluginId && value.entry.enabled === false;
+): PluginMutationResult {
+    const empty: PluginMutationResult = { kind: null, failureReason: null, managedResources: null,
+        registryRequirement: null, disabledNoop: false };
+    if (!isRecord(value)) return empty;
+    if ((action === 'enable' || action === 'disable') && value.scope === 'account') {
+        const intent = PluginAccountPluginIntentV1Schema.safeParse(value.intent);
+        return value.ok === true && value.kind === `plugins_${action}` && value.pluginId === expectedPluginId
+            && intent.success && intent.data.pluginId === expectedPluginId
+            && intent.data.enabled === (action === 'enable') && value.enabled === intent.data.enabled
+            ? { ...empty, kind: 'committed' }
+            : empty;
+    }
+    const nativeInstall = (action === 'install' || action === 'update') && value.kind === 'plugins_install';
+    if (!nativeInstall && (value.action !== action || value.pluginId !== expectedPluginId)) return empty;
+    if (action === 'disable' && value.change === null && isRecord(value.entry)
+        && value.entry.pluginId === expectedPluginId && value.entry.enabled === false) {
+        return { ...empty, disabledNoop: true };
+    }
+    const change = nativeInstall && !isRecord(value.change)
+        ? value.outcome === 'applied' ? { kind: 'committed' } : { kind: 'failed' }
+        : value.change;
+    if (!isRecord(change) || 'pluginId' in change && change.pluginId !== expectedPluginId) return empty;
+    const kind = readNonEmptyString(change.kind);
+    let managedResources: PluginMutationResult['managedResources'] = null;
+    let registryRequirement: PluginMutationResult['registryRequirement'] = null;
+    if ((action === 'disable' || action === 'uninstall') && kind === 'managedResourcesReviewRequired'
+        && change.pluginId === expectedPluginId && hasOnlyKeys(change, ['kind', 'pluginId', 'resources'])) {
+        const parsed = z.array(ManagedResourceDependencyV1Schema).safeParse(change.resources);
+        if (parsed.success) managedResources = parsed.data;
+    }
+    if ((action === 'install' || action === 'update') && kind === 'registryProfileRequired') {
+        const parsed = MarketplaceRegistryProfileRequiredResultV1Schema.safeParse(change);
+        if (parsed.success) {
+            const { kind: _kind, ...requirement } = parsed.data;
+            registryRequirement = requirement;
+        }
+    }
+    return { kind, failureReason: kind === 'failed' ? readNonEmptyString(change.message) : null,
+        managedResources, registryRequirement, disabledNoop: false };
 }
 
 function readMarketplaceCapabilityData(

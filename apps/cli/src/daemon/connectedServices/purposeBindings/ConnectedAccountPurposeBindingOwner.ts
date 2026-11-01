@@ -1916,10 +1916,8 @@ export function createConnectedAccountPurposeBindingOwner(
           }
         }
         input.publish();
-        release();
       } catch (error) {
         if (!isPurposeReconciliationDeferred(error)) {
-          release();
           throw error;
         }
         // The Account Settings boundary is the same missing truth the startup
@@ -1949,6 +1947,7 @@ export function createConnectedAccountPurposeBindingOwner(
           },
         );
         input.publish();
+      } finally {
         release();
       }
     },

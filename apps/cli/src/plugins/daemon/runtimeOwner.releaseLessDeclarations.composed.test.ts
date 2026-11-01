@@ -6,6 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema, PluginManifestV2Schema } from '@happier-dev/protocol';
 import { PLUGIN_MANIFEST as LIMA_MANIFEST } from '@happier-dev/plugins-machine-lima/manifest';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
+import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
+import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime/context/accountPluginDataStorage';
 import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { logger } from '@/ui/logger';
@@ -72,21 +75,22 @@ describe('daemon release-less declaration publication', () => {
                 getBinding: unused, requestSelection: unused, materialize: unused,
                 listAccounts: unused, materializeListedAccount: unused, watch: () => { throw new Error('Unexpected Connected Account watch'); },
             };
-            owner = createDaemonPluginRuntimeOwner({ happyHomeDir, startupMode, staleCandidateCleanup: 'disabled', reloadController: controller,
-                connectedAccounts, availabilityReporter: reporter, accountStorageDependencies: {
-                    readCredentials: async () => credentials, isCurrentAccount: () => true,
-                    resolveAccountScopeKey: () => resolveAccountSettingsScopeKey(credentials),
-                    resolveBaseUrl: () => 'https://declaration.example.test',
-                    http: {
-                        get: async () => { throw new Error('Declaration publication must not read Account data'); },
-                        post: async (url, body) => {
-                            expect(url).toBe('https://declaration.example.test/v1/plugins/availability/collection-writers/claim');
-                            const claim = JSON.parse(body);
-                            if (claim.manifest.id === manifest.id) { claims.push(claim); events.push('lima-claim'); }
-                            return { status: 200, data: {} };
-                        },
+            const accountStorageDependencies: AccountPluginDataStorageHostDependencies = {
+                readCredentials: async () => credentials, isCurrentAccount: () => true,
+                resolveAccountScopeKey: () => resolveAccountSettingsScopeKey(credentials),
+                resolveBaseUrl: () => 'https://declaration.example.test',
+                http: {
+                    get: async () => { throw new Error('Declaration publication must not read Account data'); },
+                    post: async (url, body) => {
+                        expect(url).toBe('https://declaration.example.test/v1/plugins/availability/collection-writers/claim');
+                        const claim = JSON.parse(body);
+                        if (claim.manifest.id === manifest.id) { claims.push(claim); events.push('lima-claim'); }
+                        return { status: 200, data: {} };
                     },
-                } });
+                },
+            };
+            owner = createDaemonPluginRuntimeOwner({ happyHomeDir, startupMode, staleCandidateCleanup: 'disabled', reloadController: controller,
+                connectedAccounts, availabilityReporter: reporter, accountStorageDependencies });
             await owner.initialize();
             const runtime = controller.getState().activeRegistry;
             expect(runtime).not.toBeNull();
@@ -115,6 +119,29 @@ describe('daemon release-less declaration publication', () => {
                 expect(events.indexOf('lima-claim')).toBeGreaterThan(events.indexOf('materializations'));
             } else expect(claims).toEqual([]);
             expect(controller.getState().activeRegistry?.activatedPluginIds.has(manifest.id)).toBe(false);
+            const assertServingAvailability = async () => {
+                expect((await owner!.readCatalog()).find(entry => entry.pluginId === manifest.id))
+                    .toMatchObject({ accountEnabled: accountPluginEnabled, machineEnabled: true, enabled: accountPluginEnabled });
+                const current = controller.getState();
+                const serving = current.activeRegistry;
+                if (!serving) throw new Error('Expected a serving daemon registry');
+                const servingProjection = buildPluginProjectionV2({ registry: serving.contributes, generation: current.generation });
+                const entries = Object.values(servingProjection.familiesById)
+                    .flatMap(family => Object.values(family.entriesById))
+                    .filter(entry => entry.pluginId === manifest.id);
+                if (accountPluginEnabled) expect(entries.length).toBeGreaterThan(0);
+                else expect(entries).toEqual([]);
+            };
+            await assertServingAvailability();
+            // Availability/materialization hints reach this same finite refresh
+            // owner; unchanged intent must not publish another serving registry.
+            const refreshStore = createPluginRegistryStateStore({ happyHomeDir,
+                runtimeLifecycle: createDaemonPluginRegistryRuntimeLifecycle({ happyHomeDir, startupMode,
+                    reloadController: controller, connectedAccounts, accountStorageDependencies }) });
+            const beforeUnchangedRefresh = controller.getState();
+            await refreshStore.refreshRuntime([manifest.id]);
+            expect(controller.getState().generation).toBe(beforeUnchangedRefresh.generation);
+            expect(controller.getState().activeRegistry).toBe(beforeUnchangedRefresh.activeRegistry);
             const beforeRefresh = controller.getState();
             const change = { cursor: 17, kind: 'pluginDomain' as const, entityId: `pluginDomain/${manifest.id}/availability`, changedAt: 1,
                 hint: { pluginDomain: 'availability' as const, pluginId: manifest.id } };
@@ -127,6 +154,7 @@ describe('daemon release-less declaration publication', () => {
             expect(controller.getState().activeRegistry?.contributes.pluginEnablementById?.[manifest.id])
                 .toEqual({ accountEnabled: accountPluginEnabled, machineEnabled: true, enabled: accountPluginEnabled });
             expect(controller.getState().activeRegistry?.contributes.pluginDeclarations?.some(plugin => plugin.pluginId === manifest.id)).toBe(accountPluginEnabled);
+            await assertServingAvailability();
             const changedGeneration = controller.getState().generation;
             accountPluginEnabled = !accountPluginEnabled;
             // A cursor-gone reconnect has no exact plugin hints, so its existing
@@ -137,6 +165,7 @@ describe('daemon release-less declaration publication', () => {
             expect(controller.getState().activeRegistry?.contributes.pluginEnablementById?.[manifest.id])
                 .toEqual({ accountEnabled: accountPluginEnabled, machineEnabled: true, enabled: accountPluginEnabled });
             expect(controller.getState().activeRegistry?.contributes.pluginDeclarations?.some(plugin => plugin.pluginId === manifest.id)).toBe(accountPluginEnabled);
+            await assertServingAvailability();
             await controller.getState().activeRegistry?.claimReleaseLessDeclarations();
             // Disable/re-enable rebuilds the real registry and storage host. The
             // unchanged declaration keeps this daemon's successful admission.

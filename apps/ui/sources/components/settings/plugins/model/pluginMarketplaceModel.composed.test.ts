@@ -21,7 +21,7 @@ import {
   readPendingPluginChangeReview,
   readPendingPluginChangeStatus,
   readPendingPluginChanges,
-  readPluginChangeKind,
+  projectPluginMutationResult,
   resolvePluginDaemonOperationsAvailability,
   resolvePluginReadOnlySnapshotNotice,
   resolvePluginTruthReadState,
@@ -1158,11 +1158,11 @@ describe('installed marketplace catalog formatting', () => {
     expect(
       readPendingPluginChangeReview(updateReview, 'update', 'other.plugin'),
     ).toBeNull();
-    expect(readPluginChangeKind(updateReview, 'update', 'example.plugin')).toBe(
+    expect(projectPluginMutationResult(updateReview, 'update', 'example.plugin').kind).toBe(
       'reviewRequired',
     );
     expect(
-      readPluginChangeKind(
+      projectPluginMutationResult(
         {
           action: 'update',
           pluginId: 'example.plugin',
@@ -1170,13 +1170,13 @@ describe('installed marketplace catalog formatting', () => {
         },
         'update',
         'example.plugin',
-      ),
+      ).kind,
     ).toBe('committed');
     expect(
-      readPluginChangeKind(updateReview, 'install', 'example.plugin'),
+      projectPluginMutationResult(updateReview, 'install', 'example.plugin').kind,
     ).toBeNull();
     expect(
-      readPluginChangeKind(updateReview, 'update', 'other.plugin'),
+      projectPluginMutationResult(updateReview, 'update', 'other.plugin').kind,
     ).toBeNull();
   });
 

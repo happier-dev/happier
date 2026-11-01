@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { MarketplaceRegistryProfileRequiredResultV1Schema } from '@happier-dev/protocol/marketplace';
-import { projectPluginInstallActionResult, readPluginChangeFailureReason, readPluginChangeKind, readPluginRegistryProfileRequirement } from './pluginMarketplaceModel';
+import { projectPluginMutationResult } from './pluginMarketplaceModel';
 
 describe('plugin install Action result adaptation', () => {
     it('keeps the requested update identity and the daemon committed result', () => {
@@ -9,9 +9,7 @@ describe('plugin install Action result adaptation', () => {
         const outputSchema = getActionSpec('plugins.install').outputSchema;
         if (!outputSchema) throw new Error('Expected the plugin install Action output schema');
         const emitted = outputSchema.parse({ ok: true, kind: 'plugins_install', outcome: 'applied', change });
-        const result = projectPluginInstallActionResult(emitted, 'update', 'acme.plugin');
-        expect(readPluginChangeKind(result, 'update', 'acme.plugin')).toBe('committed');
-        expect(result.change).toEqual(change);
+        expect(projectPluginMutationResult(emitted, 'update', 'acme.plugin').kind).toBe('committed');
     });
 
     it('preserves an ambiguous daemon result for the existing exact-target reconciler', () => {
@@ -19,9 +17,7 @@ describe('plugin install Action result adaptation', () => {
         const outputSchema = getActionSpec('plugins.install').outputSchema;
         if (!outputSchema) throw new Error('Expected the plugin install Action output schema');
         const emitted = outputSchema.parse({ ok: false, kind: 'plugins_install', outcome: 'failed', change });
-        const result = projectPluginInstallActionResult(emitted, 'install', 'acme.plugin');
-        expect(readPluginChangeKind(result, 'install', 'acme.plugin')).toBe('outcomeUnknown');
-        expect(result.change).toEqual(change);
+        expect(projectPluginMutationResult(emitted, 'install', 'acme.plugin').kind).toBe('outcomeUnknown');
     });
 
     it('preserves the installing Home’s registry selection requirement', () => {
@@ -30,8 +26,7 @@ describe('plugin install Action result adaptation', () => {
         const outputSchema = getActionSpec('plugins.install').outputSchema;
         if (!outputSchema) throw new Error('Expected the plugin install Action output schema');
         const emitted = outputSchema.parse({ ok: false, kind: 'plugins_install', outcome: 'failed', change });
-        const result = projectPluginInstallActionResult(emitted, 'install', 'acme.plugin');
-        expect(readPluginRegistryProfileRequirement(result, 'install', 'acme.plugin')).toEqual({
+        expect(projectPluginMutationResult(emitted, 'install', 'acme.plugin').registryRequirement).toEqual({
             registryOrigin: 'https://registry.example', packageName: '@acme/plugin', registryProfileId: null,
         });
     });
@@ -42,13 +37,14 @@ describe('plugin install Action result adaptation', () => {
         const message = 'Plugin acme.plugin Settings group "general" field "enabled" has an invalid default.';
         const emitted = outputSchema.parse({ ok: false, kind: 'plugins_install', outcome: 'failed',
             change: { kind: 'failed', code: 'PLUGIN_SETTINGS_DEFAULT_INVALID', message } });
-        const result = projectPluginInstallActionResult(emitted, 'install', 'acme.plugin');
-        expect(readPluginChangeFailureReason(result, 'install', 'acme.plugin')).toBe(message);
-        expect(readPluginChangeFailureReason(result, 'install', 'other.plugin')).toBeNull();
-        const generic = projectPluginInstallActionResult(outputSchema.parse({ ok: false, kind: 'plugins_install', outcome: 'failed' }), 'install', 'acme.plugin');
-        expect(readPluginChangeFailureReason(generic, 'install', 'acme.plugin')).toBeNull();
-        const blank = projectPluginInstallActionResult(outputSchema.parse({ ok: false, kind: 'plugins_install', outcome: 'failed',
-            change: { kind: 'failed', code: 'x', message: '   ' } }), 'install', 'acme.plugin');
-        expect(readPluginChangeFailureReason(blank, 'install', 'acme.plugin')).toBeNull();
+        expect(projectPluginMutationResult(emitted, 'install', 'acme.plugin').failureReason).toBe(message);
+        const mismatched = outputSchema.parse({ ok: true, kind: 'plugins_install', outcome: 'applied',
+            change: { kind: 'committed', pluginId: 'other.plugin', desiredGeneration: 'new', appliedGeneration: 'new', pendingSurfaces: [] } });
+        expect(projectPluginMutationResult(mismatched, 'install', 'acme.plugin').kind).toBeNull();
+        const generic = outputSchema.parse({ ok: false, kind: 'plugins_install', outcome: 'failed' });
+        expect(projectPluginMutationResult(generic, 'install', 'acme.plugin').failureReason).toBeNull();
+        const blank = outputSchema.parse({ ok: false, kind: 'plugins_install', outcome: 'failed',
+            change: { kind: 'failed', code: 'x', message: '   ' } });
+        expect(projectPluginMutationResult(blank, 'install', 'acme.plugin').failureReason).toBeNull();
     });
 });

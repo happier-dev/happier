@@ -329,18 +329,6 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
               ),
             )
           : await resolveCandidateContributes(candidate!, params.startupMode ?? 'normal', params.happyHomeDir, params.accountStorageDependencies);
-      const generationAuthority = developmentCandidate || developmentRemoval
-        ? Object.freeze({
-            commit: null,
-            generations: new Map(),
-            rejectedGenerations: new Map(),
-            isCurrent: async () => valid,
-          })
-        : await createCandidateGenerationAuthority({
-            happyHomeDir: params.happyHomeDir,
-            candidate: candidate!,
-            isValid: () => valid,
-          });
       const changedPluginIdList = developmentCandidate
         ? Object.freeze([developmentCandidate.pluginId])
         : developmentRemoval
@@ -355,6 +343,24 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
                 || before?.unavailableCode !== after?.unavailableCode;
             })
           : candidate!.changedPluginIds;
+      if (candidate?.admissionRefresh && activeRegistry && changedPluginIdList.length === 0) {
+        return Object.freeze({
+          abort: async () => undefined,
+          adopt: async () => undefined,
+        });
+      }
+      const generationAuthority = developmentCandidate || developmentRemoval
+        ? Object.freeze({
+            commit: null,
+            generations: new Map(),
+            rejectedGenerations: new Map(),
+            isCurrent: async () => valid,
+          })
+        : await createCandidateGenerationAuthority({
+            happyHomeDir: params.happyHomeDir,
+            candidate: candidate!,
+            isValid: () => valid,
+          });
       const changedPluginIds = new Set(changedPluginIdList);
       const candidatePluginGenerations: PluginRegistryRuntimeCandidate['pluginOccurrenceIds'] =
         candidate?.pluginOccurrenceIds ?? Object.freeze({});

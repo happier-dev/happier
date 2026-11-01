@@ -65,17 +65,13 @@ import {
     readInstalledPlugins,
     projectAccountInstalledPlugins,
     isPluginMutationVisibleAfterRefresh,
-    readPluginChangeFailureReason,
-    readPluginChangeKind,
-    projectPluginInstallActionResult,
-    readPluginManagedResourceRemovalReview,
-    isPluginDisableNoopResult,
+    projectPluginMutationResult,
+    type PluginMutationResult,
     readPluginCreateResult,
     readPluginEditTargetResult,
     readPendingPluginChanges,
     resolvePluginDaemonOperationsAvailability,
     readPluginInstallationReviewChange,
-    readPluginRegistryProfileRequirement,
     resolvePluginReadOnlySnapshotNotice,
     resolvePluginTruthReadState,
     type DevelopmentPluginEntry,
@@ -847,7 +843,8 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                 };
                 const requestChange = async (managedResourceDispositions?: readonly ManagedResourceDispositionV1[]): Promise<
                     | { supported: false; reason: 'cancelled' }
-                    | { supported: true; response: CapabilitiesInvokeResponse }
+                    | { supported: true; response: Extract<CapabilitiesInvokeResponse, { ok: false }>
+                        | Readonly<{ ok: true; result: PluginMutationResult }> }
                 > => {
                     const actionFailure = (execution: ActionExecuteFailure, actionId: PluginDevLoopActionIdV1) => {
                         if (isActionApprovalDeclinedErrorCode(execution.errorCode) || !isAuthorityCurrent()) {
@@ -877,13 +874,12 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                             const execution = await execute('plugins.install', actionInput,
                                 { signal: installLifetime.controller.signal });
                             if (!execution.ok) return actionFailure(execution, 'plugins.install');
-                            const result = execution.result;
                             // `plugins.install` resumes only after its ordinary
                             // approval Artifact settles. Project that terminal
                             // Action outcome into the existing mutation reader;
                             // daemon review ids never become a second UI decision.
                             return { supported: true as const, response: { ok: true as const,
-                                result: projectPluginInstallActionResult(result, params.method, params.pluginId),
+                                result: projectPluginMutationResult(execution.result, params.method, params.pluginId),
                             } };
                         }
                         const actionId = {
@@ -898,7 +894,8 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                             ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
                         }, { signal: installLifetime.controller.signal });
                         if (!execution.ok) return actionFailure(execution, actionId[params.method]);
-                        return { supported: true as const, response: { ok: true as const, result: execution.result } };
+                        return { supported: true as const, response: { ok: true as const,
+                            result: projectPluginMutationResult(execution.result, params.method, params.pluginId) } };
                     } catch {
                         if (installLifetime.controller.signal.aborted || !isAuthorityCurrent()) {
                             return { supported: false, reason: 'cancelled' };
@@ -913,7 +910,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                 if (!isAuthorityCurrent()) return;
                 while ((params.method === 'disable' || params.method === 'uninstall')
                     && 'response' in response && response.response.ok) {
-                    const resources = readPluginManagedResourceRemovalReview(response.response.result, params.method, params.pluginId);
+                    const resources = response.response.result.managedResources;
                     if (!resources) break;
                     const dispositions = await reviewManagedResourceRemoval(resources);
                     if (!dispositions || !isAuthorityCurrent()) return;
@@ -931,11 +928,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                     && 'response' in response
                     && response.response.ok
                 ) {
-                    const registryRequirement = readPluginRegistryProfileRequirement(
-                        response.response.result,
-                        params.method,
-                        params.pluginId,
-                    );
+                    const registryRequirement = response.response.result.registryRequirement;
                     if (!registryRequirement) break;
                     const proceed = await showPluginRegistryProfileSelectionDialog({
                         requirement: registryRequirement,
@@ -974,17 +967,16 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                     return;
                 }
 
-                const changeKind = readPluginChangeKind(response.response.result, params.method, params.pluginId);
+                const changeKind = response.response.result.kind;
                 if (changeKind === 'cancelled') return;
-                const disabledNoop = params.method === 'disable'
-                    && isPluginDisableNoopResult(response.response.result, params.pluginId);
+                const disabledNoop = response.response.result.disabledNoop;
                 if (changeKind !== 'committed' && !disabledNoop) {
                     if (changeKind === 'outcomeUnknown') {
                         await reconcileAmbiguousMutation(exactInstallEntry?.version ?? null);
                     } else {
                         showMutationFailure(
                             changeKind ?? 'invalid-response',
-                            readPluginChangeFailureReason(response.response.result, params.method, params.pluginId),
+                            response.response.result.failureReason,
                         );
                         if (changeKind === 'dataRemovalPartial') {
                             machineCapabilities.refresh({ bypassCache: true });
