@@ -41,19 +41,15 @@ type SourceDevSharedDepsProgress = Readonly<{
 type RunSyncProcess = (input: Readonly<{
   scriptPath: string;
   signal?: AbortSignal;
-  checkOnly?: boolean;
-  timeoutMs: number;
-  lockTimeoutMs: number;
-  workspaceBuildTimeoutMs: number;
+  timeoutMs?: number;
+  lockTimeoutMs?: number;
+  workspaceBuildTimeoutMs?: number;
   progressIntervalMs: number;
   workspaceNames?: readonly string[];
   processEnv: SourceDevSharedDepsProcessEnv;
   onProgress: (progress: SourceDevSharedDepsProgress) => void;
 }>) => Promise<void>;
 
-const SOURCE_DEV_PREFLIGHT_PROCESS_TIMEOUT_MS = 300_000;
-const SOURCE_DEV_PREFLIGHT_LOCK_TIMEOUT_MS = 240_000;
-const SOURCE_DEV_PREFLIGHT_WORKSPACE_BUILD_TIMEOUT_MS = 60_000;
 const SOURCE_DEV_PREFLIGHT_PROGRESS_INTERVAL_MS = 15_000;
 const MAX_SOURCE_DEV_PREFLIGHT_OUTPUT_CHARS = 4_000;
 const SOURCE_DEV_SHARED_DEPS_PROGRESS_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_PROGRESS';
@@ -167,8 +163,8 @@ function createProgressLineConsumer(onProgress: (progress: SourceDevSharedDepsPr
 
 function buildSourceDevSharedDepsProcessEnv(params: Readonly<{
   processEnv: SourceDevSharedDepsProcessEnv;
-  lockTimeoutMs: number;
-  workspaceBuildTimeoutMs: number;
+  lockTimeoutMs?: number;
+  workspaceBuildTimeoutMs?: number;
   workspaceNames?: readonly string[];
 }>): NodeJS.ProcessEnv {
   const workspaceNames = (params.workspaceNames ?? [])
@@ -177,8 +173,12 @@ function buildSourceDevSharedDepsProcessEnv(params: Readonly<{
   return {
     ...params.processEnv,
     [SOURCE_DEV_SHARED_DEPS_PROGRESS_ENV]: SOURCE_DEV_SHARED_DEPS_PROGRESS_VALUE,
-    [SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_ENV]: String(params.lockTimeoutMs),
-    [SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_ENV]: String(params.workspaceBuildTimeoutMs),
+    ...(params.lockTimeoutMs === undefined ? {} : {
+      [SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_ENV]: String(params.lockTimeoutMs),
+    }),
+    ...(params.workspaceBuildTimeoutMs === undefined ? {} : {
+      [SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_ENV]: String(params.workspaceBuildTimeoutMs),
+    }),
     ...(workspaceNames.length > 0
       ? { [SOURCE_DEV_SHARED_DEPS_WORKSPACES_ENV]: workspaceNames.join(',') }
       : {}),
@@ -205,10 +205,9 @@ function formatSourceDevPreflightProcessError(params: Readonly<{
 async function runSourceDevSharedDepsSyncProcess(params: Readonly<{
   scriptPath: string;
   signal?: AbortSignal;
-  checkOnly?: boolean;
-  timeoutMs: number;
-  lockTimeoutMs: number;
-  workspaceBuildTimeoutMs: number;
+  timeoutMs?: number;
+  lockTimeoutMs?: number;
+  workspaceBuildTimeoutMs?: number;
   progressIntervalMs: number;
   workspaceNames?: readonly string[];
   processEnv: SourceDevSharedDepsProcessEnv;
@@ -218,7 +217,7 @@ async function runSourceDevSharedDepsSyncProcess(params: Readonly<{
   await new Promise<void>((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      [params.scriptPath, ...(params.checkOnly ? ['--check'] : [])],
+      [params.scriptPath],
       {
         env: buildSourceDevSharedDepsProcessEnv({
           processEnv: params.processEnv,
@@ -244,7 +243,7 @@ async function runSourceDevSharedDepsSyncProcess(params: Readonly<{
       lastProgress = progress;
       params.onProgress(progress);
     });
-    const timeoutTimer = setTimeout(() => {
+    const timeoutTimer = params.timeoutMs === undefined ? null : setTimeout(() => {
       timedOut = true;
       killChild();
     }, params.timeoutMs);
@@ -252,7 +251,7 @@ async function runSourceDevSharedDepsSyncProcess(params: Readonly<{
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeoutTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       params.signal?.removeEventListener('abort', killChild);
       callback();
     };
@@ -302,12 +301,11 @@ async function runSourceDevSharedDepsSyncProcess(params: Readonly<{
 async function runSourceDevSharedDepsSync(params: Readonly<{
   scriptPath: string;
   signal?: AbortSignal;
-  checkOnly?: boolean;
   runSyncProcess: RunSyncProcess;
   processEnv: SourceDevSharedDepsProcessEnv;
-  timeoutMs: number;
-  lockTimeoutMs: number;
-  workspaceBuildTimeoutMs: number;
+  timeoutMs?: number;
+  lockTimeoutMs?: number;
+  workspaceBuildTimeoutMs?: number;
   progressIntervalMs: number;
   workspaceNames?: readonly string[];
   logDebug?: (message: string, payload?: unknown) => void;
@@ -344,7 +342,6 @@ async function runSourceDevSharedDepsSync(params: Readonly<{
     await params.runSyncProcess({
       scriptPath: params.scriptPath,
       ...(params.signal ? { signal: params.signal } : {}),
-      ...(params.checkOnly ? { checkOnly: true } : {}),
       timeoutMs: params.timeoutMs,
       lockTimeoutMs: params.lockTimeoutMs,
       workspaceBuildTimeoutMs: params.workspaceBuildTimeoutMs,
@@ -729,18 +726,17 @@ export async function prepareSourceDevSharedDepsForHappyCliSpawn(params: Readonl
     return await runSourceDevSharedDepsSync({
       scriptPath,
       ...(params.signal ? { signal: params.signal } : {}),
-      checkOnly: true,
       runSyncProcess,
       processEnv: process.env,
-      timeoutMs: params.timeoutMs ?? SOURCE_DEV_PREFLIGHT_PROCESS_TIMEOUT_MS,
-      lockTimeoutMs: params.lockTimeoutMs ?? SOURCE_DEV_PREFLIGHT_LOCK_TIMEOUT_MS,
-      workspaceBuildTimeoutMs: params.workspaceBuildTimeoutMs ?? SOURCE_DEV_PREFLIGHT_WORKSPACE_BUILD_TIMEOUT_MS,
+      timeoutMs: params.timeoutMs,
+      lockTimeoutMs: params.lockTimeoutMs,
+      workspaceBuildTimeoutMs: params.workspaceBuildTimeoutMs,
       progressIntervalMs: params.progressIntervalMs ?? SOURCE_DEV_PREFLIGHT_PROGRESS_INTERVAL_MS,
       ...(params.workspaceNames && params.workspaceNames.length > 0
         ? { workspaceNames: params.workspaceNames }
         : {}),
       logDebug: params.logDebug,
-      beforeLogMessage: '[DAEMON RUN] Checking source-dev CLI shared deps before source child spawn',
+      beforeLogMessage: '[DAEMON RUN] Preparing source-dev CLI shared deps before source child spawn',
       afterLogMessage: '[DAEMON RUN] Source-dev CLI shared deps admission completed',
       errorPrefix: 'Source-dev CLI shared dependency admission failed before spawn',
       readyReason: 'current',
@@ -800,9 +796,9 @@ export async function prepareSourceDevSharedDepsForBundledPluginRuntimeLoad(para
     ...(params.signal ? { signal: params.signal } : {}),
     runSyncProcess: params.runSyncProcess ?? runSourceDevSharedDepsSyncProcess,
     processEnv: params.processEnv ?? process.env,
-    timeoutMs: params.timeoutMs ?? SOURCE_DEV_PREFLIGHT_PROCESS_TIMEOUT_MS,
-    lockTimeoutMs: params.lockTimeoutMs ?? SOURCE_DEV_PREFLIGHT_LOCK_TIMEOUT_MS,
-    workspaceBuildTimeoutMs: params.workspaceBuildTimeoutMs ?? SOURCE_DEV_PREFLIGHT_WORKSPACE_BUILD_TIMEOUT_MS,
+    timeoutMs: params.timeoutMs,
+    lockTimeoutMs: params.lockTimeoutMs,
+    workspaceBuildTimeoutMs: params.workspaceBuildTimeoutMs,
     progressIntervalMs: params.progressIntervalMs ?? SOURCE_DEV_PREFLIGHT_PROGRESS_INTERVAL_MS,
     ...(params.workspaceNames && params.workspaceNames.length > 0
       ? { workspaceNames: params.workspaceNames }

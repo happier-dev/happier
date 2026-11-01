@@ -142,18 +142,26 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
     expect(runSyncProcess).not.toHaveBeenCalled();
   });
 
-  it('checks source-dev shared-deps read-only before source child launches', async () => {
-    const runSyncProcess = vi.fn(async () => undefined);
-
+  it('publishes stale source-dev shared deps before source child launches', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-source-dev-publish-'));
+    tempDirs.push(tempDir);
+    const cliProjectPath = join(tempDir, 'apps', 'cli');
+    const publishedPath = join(tempDir, 'published');
+    await mkdir(join(cliProjectPath, 'scripts'), { recursive: true });
+    // The process boundary models the helper's real contract: check-only cannot
+    // publish stale output; its default invocation owns convergence and locking.
+    await writeFile(join(cliProjectPath, 'scripts', 'syncSharedDepsForDev.mjs'), [
+      "import { writeFileSync } from 'node:fs';",
+      "if (process.argv.includes('--check')) throw new Error('shared dependencies are stale with no publisher');",
+      `writeFileSync(${JSON.stringify(publishedPath)}, 'current');`,
+    ].join('\n'));
     const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
       args: ['opencode'],
-      cliProjectPath: '/repo/apps/cli',
-      existsSync: () => true,
+      cliProjectPath,
       resolveInvocation: () => ({
         runtime: 'node',
-        argv: ['--import', '/repo/node_modules/tsx/dist/esm/index.mjs', '/repo/apps/cli/src/index.ts', 'opencode'],
+        argv: [join(cliProjectPath, 'src', 'index.ts'), 'opencode'],
       }),
-      runSyncProcess,
     });
 
     expect(result).toEqual({
@@ -161,16 +169,41 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
       checked: true,
       reason: 'current',
     });
-    expect(runSyncProcess).toHaveBeenCalledWith({
-      scriptPath: '/repo/apps/cli/scripts/syncSharedDepsForDev.mjs',
-      checkOnly: true,
-      timeoutMs: 300_000,
-      lockTimeoutMs: 240_000,
-      workspaceBuildTimeoutMs: 60_000,
-      progressIntervalMs: 15_000,
-      processEnv: process.env,
-      onProgress: expect.any(Function),
+    expect(await readFile(publishedPath, 'utf8')).toBe('current');
+  });
+
+  it('waits for canonical publication without a shorter default preflight deadline', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-source-dev-publish-wait-'));
+    tempDirs.push(tempDir);
+    const cliProjectPath = join(tempDir, 'apps', 'cli');
+    const releasePath = join(tempDir, 'release');
+    await mkdir(join(cliProjectPath, 'scripts'), { recursive: true });
+    await writeFile(join(cliProjectPath, 'scripts', 'syncSharedDepsForDev.mjs'), [
+      "import { existsSync, watch, writeSync } from 'node:fs';",
+      `const releasePath = ${JSON.stringify(releasePath)};`,
+      `const watcher = watch(${JSON.stringify(tempDir)}, () => { if (existsSync(releasePath)) { watcher.close(); } });`,
+      "writeSync(1, '[happier-source-dev-shared-deps-progress] {\"stage\":\"publication-pending\"}\\n');",
+    ].join('\n'));
+    let started!: () => void;
+    const publicationStarted = new Promise<void>(resolve => { started = resolve; });
+    vi.useFakeTimers();
+    const preparation = prepareSourceDevSharedDepsForHappyCliSpawn({
+      args: ['opencode'],
+      cliProjectPath,
+      resolveInvocation: () => ({ runtime: 'node', argv: [join(cliProjectPath, 'src', 'index.ts')] }),
+      progressIntervalMs: 0,
+      logDebug: (_message, payload) => {
+        if (payload && typeof payload === 'object' && 'stage' in payload && payload.stage === 'publication-pending') started();
+      },
     });
+    try {
+      await publicationStarted;
+      await vi.advanceTimersByTimeAsync(300_001);
+    } finally {
+      vi.useRealTimers();
+      await writeFile(releasePath, 'release');
+    }
+    await expect(preparation).resolves.toEqual({ type: 'ready', checked: true, reason: 'current' });
   });
 
   it('keeps a valid admitted copy local after unrelated live dist and stamp publication', async () => {
@@ -454,7 +487,7 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
       '[DAEMON RUN] Source-dev CLI shared deps preflight still running',
       expect.objectContaining({
         elapsedMs: expect.any(Number),
-        timeoutMs: 300_000,
+        timeoutMs: undefined,
         lastProgress: expect.objectContaining({
           stage: 'workspace-build',
           workspaceName: 'plugins-copilot',
@@ -773,9 +806,9 @@ describe('prepareSourceDevSharedDepsForBundledPluginRuntimeLoad', () => {
     });
     expect(runSyncProcess).toHaveBeenCalledWith({
       scriptPath: '/repo/apps/cli/scripts/syncSharedDepsForDev.mjs',
-      timeoutMs: 300_000,
-      lockTimeoutMs: 240_000,
-      workspaceBuildTimeoutMs: 60_000,
+      timeoutMs: undefined,
+      lockTimeoutMs: undefined,
+      workspaceBuildTimeoutMs: undefined,
       progressIntervalMs: 15_000,
       workspaceNames: ['plugins-scm-git'],
       processEnv: {},
