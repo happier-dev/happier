@@ -40,7 +40,10 @@ const http = vi.hoisted(() => ({
   failNextUpdateStatus: null as null | number,
   loseNextUpdateResponse: false as boolean | ((id: string) => void),
 }));
-vi.mock('axios', () => ({ default: { get: http.get, post: http.post, request: http.request } }));
+vi.mock('axios', async importOriginal => ({ default: {
+  ...(await importOriginal<typeof import('axios')>()).default,
+  get: http.get, post: http.post, request: http.request,
+} }));
 vi.mock('@/configuration', () => ({ configuration: {
   apiServerUrl: 'http://approval-settlement.invalid',
   activeServerId: 'home-1',

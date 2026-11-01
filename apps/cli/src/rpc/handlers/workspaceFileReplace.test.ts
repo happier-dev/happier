@@ -3,7 +3,7 @@ import * as filesystem from 'node:fs/promises';
 import { access, chmod, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import fastify from 'fastify';
 import { accountSettingsParse, createActionExecutor, decodePlainArtifactStoredContent, getActionSpec, StoredApprovalRequestSchema } from '@happier-dev/protocol';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -27,6 +27,7 @@ import { registerAccountHomeHttp, registerPlainArtifactRoutes } from '@/session/
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 
 // Keep the filesystem real while exposing its write boundary as a configurable spy.
 vi.mock('node:fs/promises', async () => {
@@ -78,7 +79,7 @@ describe('registered workspace replace transport', () => {
       'workspace.files.replace.preview': { approvalRequiredSurfaces: [surface] },
     } });
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-      // The physical implementation is real; an approval refusal must prevent reaching it.
+      // The physical implementation is real; creating an Ask must prevent reaching it.
       workspaceFilesReplacePreview: ({ machineId: _machineId, ...request }, context) =>
         previewWorkspaceFileReplace(request, root, { kind: 'osUser' }, context.signal ? { signal: context.signal } : undefined),
       approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'preview-approval' }; },
@@ -101,9 +102,8 @@ describe('registered workspace replace transport', () => {
       verifyMachineAdmissionCurrent: async () => true,
       localActionContext: { surface, authority: surface === 'ui' ? 'present_user' : 'account_automation', actionRequestId: 'preview-request' },
     });
-    expect(outcome).toMatchObject(surface === 'ui'
-      ? { kind: 'approval_request_created', actionId: 'workspace.files.replace.preview', artifactId: 'preview-approval' }
-      : { ok: false, errorCode: 'approval_rejected' });
+    expect(outcome).toMatchObject({ kind: 'approval_request_created',
+      actionId: 'workspace.files.replace.preview', artifactId: 'preview-approval' });
     expect(requests).toEqual([expect.objectContaining({ actionId: 'workspace.files.replace.preview',
       actionArgs: { machineId: 'machine', rootPath: root, ...matcher } })]);
   });
@@ -163,7 +163,8 @@ describe('registered workspace replace transport', () => {
     expect(await executor.execute('workspace.files.replace', input, {
       surface: 'agent', authority: 'account_automation', actionRequestId: 'replace-request',
       serverId: 'home', runtimeAccountId: 'account', externalActionTarget: { kind: 'machine', machineId: 'machine' },
-    })).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created',
+      actionId: 'workspace.files.replace', artifactId: 'replace-approval' } });
     expect(requests).toEqual([expect.objectContaining({ actionId: 'workspace.files.replace', actionArgs: input })]);
     expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe(kind === 'replace' ? 'old' : 'new');
   });
@@ -272,6 +273,10 @@ describe('registered workspace replace transport', () => {
       } });
       const accountSettings = accountSettingsParse({ actionsSettingsV1: actionsSettings });
       const features = registerAccountHomeHttp(app, { accountId, serverId: serverIdentityId, settings: accountSettings });
+      // Native Machine reads attach the Account observer. Its receipt writer
+      // needs the same live Home channel as the real authenticated runtime.
+      const channel = await createRequesterCurrentnessSocketHarness();
+      onTestFinished(() => channel.close());
       let readingNativeWitness = false;
       let nativeWitnessRequests = 0;
       vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
