@@ -7,7 +7,7 @@
 //   node scripts/workspaces/checkCommitTypeCoherence.mjs --base=<rev> --tree=<tree-ish>
 //   node scripts/workspaces/checkCommitTypeCoherence.mjs <commit>...     (each against its first parent)
 //
-// Exit status: 0 coherent, 1 new diagnostics, 2 usage or runtime failure. It reads Git objects, so it
+// Exit status: 0 coherent, 1 new diagnostics or unowned sources, 2 usage or runtime failure. It reads Git objects, so it
 // runs on the machine that owns the repository (`./apps/stack/bin/hstack-exec --local -- node ...`).
 //
 // The checkout is read through a request-filesystem layer of the Microsoft compiler's API: compiler
@@ -24,6 +24,8 @@ import { fileURLToPath } from 'node:url';
 import { API } from '@typescript/native/sync';
 import ts from 'typescript';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
+import { diagnosticHunks, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
+import { uiTypedRoutesDeclaration } from '../../apps/ui/scripts/deriveTypecheckProjects.mjs';
 
 const TYPESCRIPT_SOURCE = /\.(?:[cm]?ts|tsx)$/u;
 const COMPILER_INPUT = /\.(?:[cm]?[jt]sx?|json)$/u;
@@ -37,7 +39,6 @@ const redirectDist = (target) =>
     /(^|\/)(packages\/[^/]+)\/dist\/(.*?)(?:\.d\.ts)?$/u,
     '$1$2/src/$3',
   );
-const keyOf = (row) => `${row.file}\0${row.line}\0${row.code}`;
 
 // Parse only grep candidates: imports in comments or fixture strings are not consumers.
 function importSpecifiers(file, text) {
@@ -258,6 +259,13 @@ function repository(repo) {
     return { groups, unowned };
   }
 
+  function typedRouteInputs(groups, entries) {
+    if (!groups.has('apps/ui')) return {};
+    const routes = uiTypedRoutesDeclaration(abs('apps/ui'), [...entries.keys()]
+      .filter(path => path.startsWith('apps/ui/')).map(abs));
+    return routes ? { [routes.path]: routes.declaration } : {};
+  }
+
   // Slice diagnostics, but preserve the owning project's complete configured membership.
   // Adding excluded files as roots would also add all of their ambient declarations.
   function virtualConfigs(membership, groups) {
@@ -313,7 +321,7 @@ function repository(repo) {
           line: (diagnostic.startPosition?.line ?? -1) + 1,
           column: (diagnostic.startPosition?.character ?? -1) + 1,
           code: diagnostic.code,
-          text: diagnostic.text.split('\n')[0],
+          text: diagnostic.text,
         });
       }
     }
@@ -321,12 +329,14 @@ function repository(repo) {
   }
 
   return {
+    gitText,
     treeEntries,
     readBlobs,
     layerFor,
     sliceOf,
     importersOf,
     groupRoots,
+    typedRouteInputs,
     virtualConfigs,
     collect,
     abs,
@@ -353,6 +363,7 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
   const api = new API({ cwd: repo, tsserverPath: compiler.apiExecutable });
   try {
     const layer = git.layerFor(tree, treeIndex);
+    Object.assign(layer.files, git.typedRouteInputs(groups, treeIndex));
     // Changed files and discovered importers both belong to their configured program.
     // In an aggregate, a renamed composed test is changed but is still excluded.
     const membership = api.createSnapshot({
@@ -394,7 +405,7 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
     // Newly added source content has no baseline diagnostics.
     const baseRoots = [...new Set(roots.map(file => renamedFrom.get(file) ?? file))]
       .filter((file) => baseIndex.has(file));
-    const seen = new Set();
+    const baseRows = [];
     if (baseRoots.length) {
       const revert = {
         kind: 'layer',
@@ -415,6 +426,7 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
         else revert.removedPaths.push(git.abs(path));
       }
       const baseGroups = git.groupRoots(baseRoots, baseIndex).groups;
+      Object.assign(revert.files, git.typedRouteInputs(baseGroups, baseIndex));
       const baseMembership = api.createSnapshot({
         openProjects: [...baseGroups.keys()].map(dir => git.abs(dir === '.' ? 'tsconfig.json' : `${dir}/tsconfig.json`)),
         fileSystem: { ...layer, files: { ...layer.files, ...revert.files }, removedPaths: [...layer.removedPaths, ...revert.removedPaths] },
@@ -431,12 +443,17 @@ export function checkCommitTypeCoherence({ repo, base, tree }) {
         },
       });
       for (const row of git.collect(baseSnapshot, prior.configs)) {
-        seen.add(keyOf(row));
-        for (const [file, previous] of renamedFrom)
-          if (row.file === previous) seen.add(keyOf({ ...row, file }));
+        const renamed = [...renamedFrom].find(([, previous]) => row.file === previous)?.[0];
+        baseRows.push(renamed ? { ...row, file: renamed } : row);
       }
     }
-    result.fresh = headRows.filter((row) => !seen.has(keyOf(row)));
+    const diagnosticFiles = new Set(baseRows.map(row => row.file));
+    const hunksByFile = new Map(slice
+      .filter(({ status, path }) => status === 'M' && diagnosticFiles.has(path))
+      .map(({ path }) => [path, diagnosticHunks(git.gitText([
+        'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--unified=0', base, tree, '--', path,
+      ]))]));
+    result.fresh = newDiagnostics(baseRows, headRows, hunksByFile);
     return { ...result, ms: Date.now() - started };
   } finally {
     api.close();
@@ -477,7 +494,7 @@ function main(argv) {
   let incoherent = 0;
   for (const target of targets) {
     const result = checkCommitTypeCoherence({ repo, ...target });
-    const verdict = result.fresh.length ? 'INCOHERENT' : 'coherent';
+    const verdict = result.fresh.length || result.unowned.length ? 'INCOHERENT' : 'coherent';
     console.log(
       `${verdict} ${target.label}: changed=${result.changed} roots=${result.roots} new=${result.fresh.length} unowned=${result.unowned.length} ${(result.ms / 1000).toFixed(1)}s`,
     );
@@ -485,7 +502,8 @@ function main(argv) {
       console.log(
         `  ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text}`,
       );
-    if (result.fresh.length) incoherent += 1;
+    for (const file of result.unowned) console.log(`  unowned source: ${file} (no ancestor tsconfig.json)`);
+    if (result.fresh.length || result.unowned.length) incoherent += 1;
   }
   return incoherent ? 1 : 0;
 }

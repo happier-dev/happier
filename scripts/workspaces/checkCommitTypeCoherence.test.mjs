@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import test from 'node:test';
 import { checkCommitTypeCoherence } from './checkCommitTypeCoherence.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
+import { installUiTypecheckFixtureDependencies } from '../testing/lib/typecheckProjectFixture.mjs';
 
 // A shared dirty checkout: the worktree holds both halves of a change, a commit takes only one.
 async function checkout(t) {
@@ -45,6 +48,101 @@ async function checkout(t) {
   };
   return { repo, write, commitOnly };
 }
+
+test('testing scripts have a strict compiler owner that reports new validator errors', async t => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await mkdir(join(repo, 'scripts/testing'), { recursive: true });
+  await rm(join(repo, 'tsconfig.json'));
+  const config = await readFile(new URL('../testing/tsconfig.json', import.meta.url), 'utf8').catch(() => null);
+  if (config) await write('scripts/testing/tsconfig.json', config);
+  await write('scripts/testing/validateUiActionParity.ts', 'export const value: number = 1;\n');
+  const base = commitOnly('scripts', 'tsconfig.json');
+  await write('scripts/testing/validateUiActionParity.ts', 'export const value: number = "wrong";\n');
+  const tree = commitOnly('scripts');
+  const result = checkCommitTypeCoherence({ repo, base, tree });
+  assert.deepEqual(result.unowned, []);
+  assert.deepEqual(result.fresh.map(({ file, code }) => ({ file, code })), [
+    { file: 'scripts/testing/validateUiActionParity.ts', code: 2322 },
+  ]);
+});
+
+test('UI coherence prepares typed routes from each Git tree despite empty live Expo declarations', async t => {
+  const { repo, write, commitOnly } = await checkout(t);
+  const ui = join(repo, 'apps/ui');
+  await mkdir(ui, { recursive: true });
+  await installUiTypecheckFixtureDependencies(t, ui);
+  const put = async (path, content) => {
+    await mkdir(join(ui, path, '..'), { recursive: true });
+    await write(`apps/ui/${path}`, content);
+  };
+  await put('.gitignore', 'node_modules/\n.expo/\n');
+  await put('package.json', JSON.stringify({ name: 'coherence-ui-fixture' }));
+  await put('app.json', JSON.stringify({ expo: { name: 'Coherence routes', slug: 'coherence-routes',
+    experiments: { typedRoutes: true }, extra: { router: { root: './src/routes' } } } }));
+  await put('metro.config.js', 'module.exports = { resolver: { blockList: [] } };\n');
+  await put('tsconfig.json', JSON.stringify({ compilerOptions: {
+    strict: true, noEmit: true, skipLibCheck: true, types: [],
+    module: 'esnext', moduleResolution: 'bundler', target: 'es2022',
+  }, include: ['src/**/*.ts', '.expo/types/**/*.ts'] }));
+  await put('src/routes/index.ts', 'export default function Route() { return null; }\n');
+  await put('src/consumer.ts', "import type { Href } from 'expo-router';\nexport const link: Href = '/';\n");
+  const require = createRequire(new URL('../../apps/ui/package.json', import.meta.url));
+  const { inMemoryContext } = require('expo-router/internal/testing');
+  const { getTypedRoutesDeclarationFile } = require('@expo/router-server/build/typed-routes/generate');
+  const emptyRoutes = getTypedRoutesDeclarationFile(inMemoryContext({}));
+  await put('.expo/types/router.d.ts', emptyRoutes);
+  const base = commitOnly('apps/ui');
+  await put('src/routes/plugins/index.ts', 'export default function Route() { return null; }\n');
+  await put('src/consumer.ts', "import type { Href } from 'expo-router';\nexport const link: Href = '/plugins';\n");
+  const tree = commitOnly('apps/ui');
+  await rm(join(ui, 'src/routes/plugins'), { recursive: true });
+  await put('src/routes/worktree-only.ts', 'export default function Route() { return null; }\n');
+  const result = checkCommitTypeCoherence({ repo, base, tree });
+  assert.deepEqual(result.fresh, [], 'the committed route is valid even when absent from disk');
+  assert.equal(await readFile(join(ui, '.expo/types/router.d.ts'), 'utf8'), emptyRoutes, 'live Expo output stays untouched');
+  await put('src/consumer.ts', "import type { Href } from 'expo-router';\nexport const link: Href = '/worktree-only';\n");
+  const invalid = commitOnly('apps/ui/src/consumer.ts');
+  const rejected = checkCommitTypeCoherence({ repo, base: tree, tree: invalid });
+  assert.deepEqual(rejected.fresh.map(({ file, code }) => ({ file, code })), [
+    { file: 'apps/ui/src/consumer.ts', code: 2322 },
+  ], 'uncommitted routes cannot authorize a committed navigation target');
+});
+
+test('inserted lines move inherited diagnostics without hiding a new changed-line error', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  const inherited = "export const inherited: string = 1;\n";
+  await write('consumer.ts', inherited);
+  const base = commitOnly('consumer.ts');
+  await write('consumer.ts', '// inserted\n// inserted again\n' + inherited + "export const fresh: boolean = 1;\n");
+  const tree = commitOnly('consumer.ts');
+  assert.deepEqual(checkCommitTypeCoherence({ repo, base, tree }).fresh.map(({ file, line, code }) => [file, line, code]),
+    [['consumer.ts', 4, 2322]]);
+});
+
+test('changed-line matching consumes inherited messages once and preserves new messages at the same position', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await write('consumer.ts', 'export const inherited: string = 1;\n');
+  const base = commitOnly('consumer.ts');
+  await write('consumer.ts', 'export const inherited: boolean = 1;\n');
+  const changed = commitOnly('consumer.ts');
+  assert.deepEqual(checkCommitTypeCoherence({ repo, base, tree: changed }).fresh.map(({ code }) => code), [2322]);
+  // One replaced hunk retains an identical diagnostic; its duplicate is still new.
+  await write('consumer.ts', 'export const renamed: string = 1; export const duplicate: string = 1;\n');
+  const duplicated = commitOnly('consumer.ts');
+  assert.equal(checkCommitTypeCoherence({ repo, base, tree: duplicated }).fresh.length, 1);
+});
+
+test('the checker CLI identifies and refuses source files without a compiler owner', async (t) => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await rm(join(repo, 'tsconfig.json'));
+  const base = commitOnly('tsconfig.json');
+  await write('consumer.ts', 'export const changed = 1;\n');
+  const tree = commitOnly('consumer.ts');
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./checkCommitTypeCoherence.mjs', import.meta.url)),
+    `--base=${base}`, `--tree=${tree}`], { cwd: repo, encoding: 'utf8' });
+  assert.match(result.stdout, /unowned[^\n]*consumer\.ts/u);
+  assert.equal(result.status, 1, result.stderr);
+});
 
 test('a consumer committed without its uncommitted producer is incoherent at the commit', async (t) => {
   const { repo, write, commitOnly } = await checkout(t);
@@ -206,7 +304,7 @@ test('a new diagnostic location is not hidden by an identical message elsewhere 
   const base = commitOnly('consumer.ts');
   await write(
     'consumer.ts',
-    "import { original } from './producer';\n\nexport const value: string = original;\n",
+    "import { original } from './producer';\nexport const value: string = original;\nexport const another: string = original;\n",
   );
   const tree = commitOnly('consumer.ts');
 
