@@ -126,7 +126,12 @@ export const ManagedCommittedIdleEvidenceV1Schema = lazyZodSchema(() => z.strict
   proof: MachineInstallationProofV1Schema,
 }));
 export type ManagedCommittedIdleEvidenceV1 = z.infer<typeof ManagedCommittedIdleEvidenceV1Schema>;
-export const ManagedControllerReportV1Schema = lazyZodSchema(() => z.strictObject({ ...current(), result: AcquireResultV1Schema, observation: mini.optional(ProviderObservationV1Schema) }));
+export const ManagedControllerReportV1Schema = lazyZodSchema(() => z.strictObject({ ...current(), result: AcquireResultV1Schema,
+  configurationFacts: mini.optional(ManagedConfigurationFactsV1Schema),
+  bootstrapInstalled: z.optional(z.literal(true)), observation: mini.optional(ProviderObservationV1Schema),
+}).check(z.superRefine((value, context) => {
+  if (value.bootstrapInstalled && value.result.kind !== 'bound') context.addIssue({ code: 'custom', path: ['bootstrapInstalled'], message: 'Installation completes on a bound resource.' });
+})));
 export const ManagedEnrollmentCorrelationV1Schema = lazyZodSchema(() => z.strictObject({ ...current(), resource: ManagedResourceV1Schema }));
 /** Controller admission never receives ordinary composer text or startup instructions. */
 export const ManagedAdmissionComputeInputV1Schema = lazyZodSchema(() => z.union([

@@ -1711,9 +1711,13 @@ describe('managed acquisition durable custody', () => {
             if (path.endsWith('/actions/get')) return { status: 200, data: retained };
             if (path.endsWith('/submit')) retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'may-exist' });
             if (path.endsWith('/report')) {
-                events.push('report');
-                expect(body).toMatchObject({ result: { kind: 'bound', resource } });
+                const report = ManagedControllerReportV1Schema.parse(body);
+                const bootstrapDiagnostic = report.observation?.availability === 'unavailable'
+                    && report.observation.reason?.startsWith('bootstrap.');
+                if (!bootstrapDiagnostic) events.push('report');
+                expect(report).toMatchObject({ result: { kind: 'bound', resource } });
                 retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'bound', resource,
+                    ...(report.observation ? { observation: report.observation } : {}),
                     ...(scenario === 'withdrawn' ? { creationState: 'canceled', desired: 'delete', intentRevision: 1 } : {}),
                 });
             }
@@ -1739,12 +1743,12 @@ describe('managed acquisition durable custody', () => {
             } });
             if (scenario === 'unknown') await expect(work).rejects.toMatchObject({ code: 'native_acquisition_unconfirmed' });
             else if (scenario === 'mismatch') await expect(work).rejects.toMatchObject({ code: 'resource_mismatch' });
-            else if (scenario === 'withdrawn') await expect(work).rejects.toMatchObject({ code: 'intent_changed' });
+            else if (scenario === 'withdrawn') await expect(work).rejects.toMatchObject({ code: 'plugin_action_execution_failed' });
             else await expect(work).rejects.toBeInstanceOf(Error);
             await operations.handlers.getV2({ operationId: 'acquisition-continuation', waitForTerminal: true });
         }
-        expect(events).toEqual(scenario === 'inspect' ? ['reconcile', 'report', 'report']
-            : scenario === 'withdrawn' ? ['reconcile', 'report']
+        expect(events).toEqual(scenario === 'inspect' ? ['reconcile', 'report']
+            : scenario === 'withdrawn' ? ['reconcile', 'report', 'acquire', 'bootstrap']
             : scenario === 'fresh' ? ['acquire', 'report', 'bootstrap']
             : scenario === 'bound' ? ['acquire', 'bootstrap']
             : scenario === 'unknown' || scenario === 'mismatch' ? ['reconcile', 'report', 'acquire'] : ['reconcile', 'report', 'acquire', 'bootstrap']);
@@ -1862,7 +1866,7 @@ describe('managed acquisition durable custody', () => {
         expect(retained).toMatchObject({ creationState: retirement === 'operation-cancel' ? 'canceled' : 'active',
             ...(resultKind === 'bound' ? { allocation: 'bound', resource } : { allocation: 'may-exist', nativeOperationRef }) });
         if (retirement === 'operation-cancel') expect(retained.cleanup).toMatchObject({ disposition: 'pending' });
-        expect(nativeCalls).toEqual(['acquire']);
+        expect(nativeCalls).toEqual(resultKind === 'bound' && retirement !== 'operation-cancel' ? ['acquire', 'bootstrap'] : ['acquire']);
         expect(await operations.handlers.getV2({ operationId: 'late-resource', waitForTerminal: true })).toMatchObject({ kind: 'found', operation: {
             cancellation: 'supported', domainRef: { kind: 'managedMachine', id: retained.id },
         } });
@@ -1886,12 +1890,16 @@ describe('managed acquisition durable custody', () => {
             // installer task emits its first observed setup step.
             if (role === 'exec' && failure === 'exception') throw new Error('Guest process unavailable');
         } });
-        const retained = ManagedMachineV1Schema.parse({ ...machine, homeId: nativeHomeId, allocation: 'bound', resource: {
+        let retained = ManagedMachineV1Schema.parse({ ...machine, homeId: nativeHomeId, allocation: 'bound', resource: {
             contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {},
         } });
-        vi.spyOn(axios, 'post').mockImplementation(async (url) => ({ status: 200,
-            data: String(url).endsWith('/admit') ? { machine: retained, replayed: false } : { machine: retained },
-        }));
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            if (String(url).endsWith('/report')) {
+                const report = ManagedControllerReportV1Schema.parse(body);
+                retained = ManagedMachineV1Schema.parse({ ...retained, observation: report.observation ?? retained.observation });
+            }
+            return { status: 200, data: String(url).endsWith('/admit') ? { machine: retained, replayed: false } : { machine: retained } };
+        });
         const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: nativeHomeId,
             canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' });
         const nativeDriver = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: nativeHomeId,
@@ -1925,6 +1933,9 @@ describe('managed acquisition durable custody', () => {
             expect(task).toMatchObject({ result: { error: { code: 'provider_unavailable', message: expect.stringContaining(fact) } } });
             expect(JSON.stringify({ result, task })).not.toMatch(/PRIVATE_NATIVE_|PRIVATE_SIGNAL/);
         }
+        expect(retained.observation).toMatchObject({ availability: 'unavailable',
+            reason: failure === 'exception' ? 'bootstrap.plugin_action_execution_failed' : 'bootstrap.provider_unavailable' });
+        expect(JSON.stringify(retained.observation)).not.toMatch(/PRIVATE_NATIVE_|PRIVATE_SIGNAL/);
         expect(nativeCalls).toEqual(['bootstrap', 'exec']);
         expect(retained).toMatchObject({ allocation: 'bound', resource: { value: {} } });
     });

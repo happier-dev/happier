@@ -162,10 +162,12 @@ export const MachineProvisionerNativeCauseV1Schema = lazyDefinition(() => z.unio
 export type MachineProvisionerNativeCauseV1 = z.infer<typeof MachineProvisionerNativeCauseV1Schema>;
 export const ManagedRecoveryHintV1Schema = lazyDefinition(() => z.strictObject({ reference: id(), reason: id(), consoleUrl: z.optional(z.url().check(z.refine((value) => { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password; }))) }));
 export const AcquireResultV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('bound'), resource: ManagedResourceV1Schema }),
-  z.strictObject({ kind: z.literal('pending'), nativeOperationRef: ManagedNativeOperationReferenceV1Schema }),
-  z.strictObject({ kind: z.literal('unknown'), recovery: ManagedRecoveryHintV1Schema }),
-  z.strictObject({ kind: z.literal('rejected'), code: ManagedRefusalCodeV1Schema }),
+  z.strictObject({ kind: z.literal('bound'), resource: ManagedResourceV1Schema,
+    /** This acquire accepted a native start; transient until the first exact Running observation. */
+    startPending: z.optional(z.literal(true)) }),
+  z.strictObject({ kind: z.literal('pending'), nativeOperationRef: ManagedNativeOperationReferenceV1Schema, nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema) }),
+  z.strictObject({ kind: z.literal('unknown'), recovery: ManagedRecoveryHintV1Schema, nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema) }),
+  z.strictObject({ kind: z.literal('rejected'), code: ManagedRefusalCodeV1Schema, nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema) }),
 ]));
 export type BillingCapabilitiesV1 = z.infer<typeof BillingCapabilitiesV1Schema>;
 export type RetentionCapabilitiesV1 = z.infer<typeof RetentionCapabilitiesV1Schema>;

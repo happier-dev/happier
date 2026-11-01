@@ -77,6 +77,8 @@ export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Nat
       devcontainerObservation: z.optional(DevcontainerNativeObservationV1Schema) })),
     devcontainerChild: z.optional(DevcontainerChildProjectionV1Schema),
     enrolledMachineId: z.optional(id()), desired: SupportedNativeIntentSchema,
+    /** Successful CLI installation on the retained resource; absence is unknown. */
+    bootstrapInstalled: z.optional(z.literal(true)),
     desiredWhen: z.enum(['now', 'after-idle']), desiredAfterMs: z.optional(z.number().check(z.gt(0))),
     intentRevision: z.int().check(z.gte(0)), archivedAt: z.optional(z.number().check(z.gte(0))),
     submittedNativeEffect: z.optional(SubmittedNativeEffectV1Schema),

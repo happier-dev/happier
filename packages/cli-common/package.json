@@ -467,6 +467,12 @@
       "types": "./dist/plugins/registration/cleanupTimeout.d.ts",
       "import": "./dist/plugins/registration/cleanupTimeout.js",
       "default": "./dist/plugins/registration/cleanupTimeout.js"
+    },
+    "./machines/managed": {
+      "happier-source": "./src/machines/managed/index.ts",
+      "types": "./dist/machines/managed/index.d.ts",
+      "import": "./dist/machines/managed/index.js",
+      "default": "./dist/machines/managed/index.js"
     }
   },
   "scripts": {

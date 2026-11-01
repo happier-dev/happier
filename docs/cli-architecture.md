@@ -1,5 +1,19 @@
 # CLI Architecture
 
+## Managed bootstrap settlement (0.3 development)
+
+The portable driver saves `bootstrap.incomplete` through the existing Home
+report before guest IO. Typed installation, daemon-start, pairing and enrollment
+expiry failures replace it with `bootstrap.<producer code>` and any existing
+privacy-projected native cause; raw exception text is never stored. These facts
+live in the managed row's durable `observation`, independently of the host's
+in-memory operation. Successful enrollment retains its `enrolledMachineId` and
+clears the diagnostic. Check now refreshes native facts without replaying guest
+setup: an unenrolled guest retains its bootstrap cause; a running guest reports
+incomplete when no prior cause exists. A native absence or newer native failure
+still takes precedence. This is 0.3 development behavior.
+
+
 This document describes the Happier CLI (`apps/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.
 
 ## Managed Linux Computer desktop (0.3 development)
