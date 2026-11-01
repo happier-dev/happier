@@ -11,12 +11,21 @@ import { StoredAppPresetInputV1Schema, type StoredAppPresetInputV1 } from '../..
 export type MachinePresetItemV1 =
   | Readonly<{ kind: 'setupRecipe'; selection: MachineRecipeSelectionV1 }>
   | Readonly<{ kind: 'softwareRecipe'; selection: MachineRecipeSelectionV1 }>
-  | Readonly<{ kind: 'app'; definition: StoredAppPresetInputV1 }>;
+  | Readonly<{ kind: 'app'; definition: StoredAppPresetInputV1; authoredKey?: string }>;
 export const MachinePresetItemV1Schema: z.ZodMiniType<MachinePresetItemV1> = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('setupRecipe'), selection: MachineRecipeSelectionV1Schema }),
   z.strictObject({ kind: z.literal('softwareRecipe'), selection: MachineRecipeSelectionV1Schema }),
-  z.strictObject({ kind: z.literal('app'), definition: StoredAppPresetInputV1Schema }),
+  z.strictObject({ kind: z.literal('app'), definition: StoredAppPresetInputV1Schema,
+    authoredKey: z.optional(z.string().check(z.trim(), z.minLength(1))) }),
 ]));
+
+/** A catalog pin changes a deployment version, not which authored app it is. */
+export function readMachineSetupAppIdentityV1(item: Extract<MachinePresetItemV1, { kind: 'app' }>): string | undefined {
+  const definition = item.definition.definition;
+  return definition.from === 'catalogApp'
+    ? createCanonicalJsonSigningInput(['catalog', definition.templateRef.sourceId, definition.templateRef.itemId])
+    : item.authoredKey ? createCanonicalJsonSigningInput(['authored', item.authoredKey]) : undefined;
+}
 
 /** Stable public value type keeps nested Preset/Action declarations finite. */
 export type MachineSetupScriptV1 = Readonly<{
