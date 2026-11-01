@@ -133,6 +133,8 @@ export const MACHINE_ADD_SSH_INPUT_SCHEMAS = {
 } as const;
 
 const clientSurfaces = { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false } as const;
+// SSH and setup-command Actions run in the client's SSH bridge / web command; the CLI adds Machines through its own native installer (58d §D3).
+const setupClientSurfaces = { ...clientSurfaces, cli: false } as const;
 export const MACHINE_CONNECTION_ACTION_SPECS = [
   {
     id: 'machines.metadata.update', approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp', 'plugin'] }, approval: {result: 'required'}, title: 'Update machine details',
@@ -228,7 +230,7 @@ export const MACHINE_CONNECTION_ACTION_SPECS = [
   {
     id: 'machines.add.ssh.start', approval: {result: 'required'}, title: 'Add machine over SSH',
     description: 'Start SSH setup on the focused signed-in Home using a target or saved host. Credentials stay in private task custody or are resolved from the captured saved host; they are never Action arguments.',
-    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'client', placements: [], surfaces: clientSurfaces, cli: { commands: [] },
+    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'client', placements: [], surfaces: setupClientSurfaces,
     bindings: { mcpToolName: 'machines_add_ssh_start' }, inputSchema: MachineAddSshStartInputSchema, outputSchema: MachineAddSshTaskOutputSchema,
     inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text', required: true }, { path: 'host', title: 'SSH host', widget: 'text' },
       { path: 'savedHostId', title: 'Saved host ID', widget: 'text' }, { path: 'expectedHostRevision', title: 'Saved host catalog revision', widget: 'text' },
@@ -237,19 +239,19 @@ export const MACHINE_CONNECTION_ACTION_SPECS = [
   },
   {
     id: 'machines.add.ssh.status', approval: {result: 'required'}, title: 'Read SSH machine setup', description: 'Read the retained SSH setup task and its current prompt. Task success is not proof of Home feed arrival.',
-    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'client', placements: [], surfaces: clientSurfaces, cli: { commands: [] },
+    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'client', placements: [], surfaces: setupClientSurfaces,
     bindings: { mcpToolName: 'machines_add_ssh_status' }, inputSchema: MachineAddSshTaskInputSchema, outputSchema: MachineAddSshStatusOutputSchema,
     inputHints: { fields: [{ path: 'taskId', title: 'Task ID', widget: 'text', required: true }] },
   },
   {
     id: 'machines.add.ssh.respond', approval: {result: 'required'}, title: 'Answer SSH setup prompt', description: 'Answer the exact current SSH setup prompt; trust and service changes are never accepted implicitly.',
-    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'client', placements: [], surfaces: clientSurfaces, cli: { commands: [] },
+    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'client', placements: [], surfaces: setupClientSurfaces,
     bindings: { mcpToolName: 'machines_add_ssh_respond' }, inputSchema: MachineAddSshRespondInputSchema, outputSchema: MachineAddSshTaskOutputSchema,
     inputHints: { fields: [{ path: 'taskId', title: 'Task ID', widget: 'text', required: true }, { path: 'answer', title: 'Prompt answer', widget: 'json', required: true }] },
   },
   {
     id: 'machines.add.ssh.cancel', approval: {result: 'required'}, title: 'Cancel SSH machine setup', description: 'Cancel the retained SSH task through its existing system-task owner. Omit taskId to cancel its pending native start.',
-    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'client', placements: [], surfaces: clientSurfaces, cli: { commands: [] },
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'client', placements: [], surfaces: setupClientSurfaces,
     bindings: { mcpToolName: 'machines_add_ssh_cancel' }, inputSchema: MachineAddSshCancelInputSchema, outputSchema: MachineAddSshCancelOutputSchema,
     inputHints: { fields: [{ path: 'taskId', title: 'Task ID', widget: 'text' }] },
   },
@@ -273,7 +275,7 @@ export const MACHINE_CONNECTION_ACTION_SPECS = [
   {
     id: 'machines.add.command', approval: {result: 'required'}, title: 'Prepare machine setup command',
     description: 'Get the existing SSH or another-computer setup command for a saved Home. This does not install or connect the machine.',
-    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'client', placements: [], surfaces: clientSurfaces, cli: { commands: [] },
+    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'client', placements: [], surfaces: setupClientSurfaces,
     bindings: { mcpToolName: 'machines_add_command' }, inputSchema: MachineAddCommandInputSchema, outputSchema: MachineAddCommandOutputSchema,
     inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text', required: true },
       { path: 'method', title: 'Setup method', widget: 'select', required: true, options: [{ value: 'another_computer', label: 'Another computer' }, { value: 'ssh', label: 'SSH' }] },
