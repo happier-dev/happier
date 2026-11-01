@@ -81,6 +81,7 @@ const desktopFiles = new ElectronDesktopFiles({
 
 const registry = createCommandRegistry({
     eventBus,
+    getAppVersion: () => app.getVersion(),
     quitLifecycle: {
         finishShutdown: (outcome) => quitLifecycle?.finishShutdown(outcome),
         rendererListening: (eventName) => quitLifecycle?.rendererListening(eventName),

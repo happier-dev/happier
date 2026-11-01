@@ -46,6 +46,8 @@ function readStorageKey(args: CommandArgs): string | null {
 
 export type RegistryDependencies = Readonly<{
     eventBus: DesktopEventBus;
+    /** Installed wrapper version from Electron's app boundary, independent of renderer assets. */
+    getAppVersion: () => string;
     quitLifecycle: Pick<DesktopQuitLifecycle, 'finishShutdown' | 'rendererListening'>;
     /** Presents the main window, mirroring `desktop_show_main_window`. Returns whether it existed. */
     showMainWindow: () => boolean;
@@ -90,6 +92,8 @@ export type RegistryDependencies = Readonly<{
 export function createCommandRegistry(dependencies: RegistryDependencies): CommandRegistry {
     const platform = dependencies.platform ?? process.platform;
     const registry = new Map<string, CommandHandler>();
+
+    registry.set('plugin:app|version', () => dependencies.getAppVersion());
 
     // Every http(s) request the app makes on desktop goes through this plugin, so it is part of
     // the boot path rather than an optional capability.

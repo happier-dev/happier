@@ -29,6 +29,7 @@ export function createHarness(options: Readonly<{
     isPackaged?: boolean;
     development?: boolean;
     rejectLoginItemWrite?: boolean;
+    appVersion?: string;
 }> = {}) {
     const eventBus = new DesktopEventBus();
     const shown: number[] = [];
@@ -52,6 +53,7 @@ export function createHarness(options: Readonly<{
     });
     const registry = createCommandRegistry({
         eventBus,
+        getAppVersion: () => options.appVersion ?? '0.3.electron-wrapper',
         quitLifecycle,
         showMainWindow: () => {
             shown.push(1);

@@ -7,6 +7,13 @@ import { TAURI_DESKTOP_COMMANDS } from './inventory';
 import { describeNotImplemented, resolveWindowChromeStrategy, runCommand } from './registry';
 import { createHarness } from './registry.testkit';
 
+test('the shared app version command returns the installed Electron wrapper version', async () => {
+    const { registry, context } = createHarness({ appVersion: '0.3.wrapper-748' });
+    assert.deepEqual(await runCommand(registry, 'plugin:app|version', {}, context), {
+        kind: 'implemented', value: '0.3.wrapper-748',
+    });
+});
+
 test('secure storage commands share the Tauri schema and roundtrip through the injected OS boundary', async () => {
     const { registry, context, secureValues } = createHarness();
     const key = 'home:token';
