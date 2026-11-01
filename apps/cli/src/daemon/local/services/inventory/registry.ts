@@ -22,6 +22,10 @@ export type LocalServiceInventorySubscriber = (event: LocalServiceInventoryRegis
 
 export type LocalServiceInventoryRegistry = Readonly<{
     getSnapshot(): NormalizedLocalServiceInventorySnapshot;
+    /** Native projection input, including hidden entries; never a visible inventory response. */
+    readScannedEntries(): readonly NormalizedLocalServiceInventoryEntry[];
+    /** Wake derived projections without replacing listener or forgotten-entry facts. */
+    invalidate(): void;
     replaceSnapshot(snapshot: NormalizedLocalServiceInventorySnapshot, options?: Readonly<{
         /** A material launcher change shares this Machine's existing inventory watch. */
         invalidate?: boolean;
@@ -173,6 +177,13 @@ export function createLocalServiceInventoryRegistry(
     return {
         getSnapshot() {
             return snapshot;
+        },
+        readScannedEntries() {
+            return scannedEntries;
+        },
+        invalidate() {
+            snapshot = { ...snapshot, generatedAt: snapshot.generatedAt + 1 };
+            publish(createLocalServiceInventorySnapshotEvent(snapshot));
         },
         replaceSnapshot(nextSnapshot, replaceOptions) {
             scannedEntries = nextSnapshot.entries;

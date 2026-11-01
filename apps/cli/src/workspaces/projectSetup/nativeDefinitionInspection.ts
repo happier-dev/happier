@@ -5,7 +5,7 @@ import { collectNativePackageDirectories, isNativeDefinitionRecord, parseNativeP
 import { readProjectDefinitionFile, type ProjectDefinitionFileRead } from './nativeDefinitionFiles';
 
 
-const NATIVE_FILES = [
+export const NATIVE_PROJECT_DEFINITION_FILES = [
     'package.json', 'mise.toml', '.mise.toml', '.config/mise/config.toml',
     'Makefile', 'makefile', 'GNUmakefile', 'justfile', 'Justfile', '.justfile',
     'Taskfile.yml', 'Taskfile.yaml', 'Taskfile.dist.yml', 'Taskfile.dist.yaml',
@@ -16,9 +16,12 @@ const NATIVE_FILES = [
 type NativeTool = Extract<ProjectNativeRefV1, { kind: 'native' }>['tool'];
 function literalName(name: string): boolean { return name.length > 0 && !/[\n\r\0]/.test(name); }
 
-export async function inspectProjectDefinitions(root: string): Promise<ProjectDefinitionDetectionV1> {
-    const files = new Set<string>(NATIVE_FILES);
-    for (const cwd of await collectNativePackageDirectories(root)) files.add(relative(root, join(cwd, 'package.json')).replaceAll('\\', '/'));
+export async function inspectProjectDefinitions(root: string, observation?: Readonly<{
+    /** Package discovery from this same operation; contained-file reads stay fresh below. */
+    packageDirectories: readonly string[];
+}>): Promise<ProjectDefinitionDetectionV1> {
+    const files = new Set<string>(NATIVE_PROJECT_DEFINITION_FILES);
+    for (const cwd of observation?.packageDirectories ?? await collectNativePackageDirectories(root)) files.add(relative(root, join(cwd, 'package.json')).replaceAll('\\', '/'));
     for (const entry of await readdir(join(root, '.devcontainer'), { withFileTypes: true }).catch(() => [])) {
         if (entry.isDirectory()) files.add(`.devcontainer/${entry.name}/devcontainer.json`);
     }

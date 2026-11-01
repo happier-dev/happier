@@ -12704,6 +12704,10 @@ const enLocalServices = {
     emptyTitle: 'No local services detected',
     errorTitle: 'Local service scan needs attention',
     scanCause: {
+      /** The daemon cannot watch this Project root: the root and its cause, short enough for a phone's two lines. */
+      rootDenied: ({ path }: { path: string }) => `No permission to read ${path}`,
+      rootMissing: ({ path }: { path: string }) => `Can't find ${path}`,
+      rootUnreadable: ({ path }: { path: string }) => `Couldn't read ${path}`,
       workspacesUnavailable: 'Couldn\'t read which projects are open on this machine, so some services may be missing.',
       partial: 'The scan ran out of time on this machine, so some running services may be missing.',
       failed: 'This machine couldn\'t list its running processes, so running services can\'t be found.',

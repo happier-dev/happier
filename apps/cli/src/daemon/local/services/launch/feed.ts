@@ -5,7 +5,8 @@ import { isWorkspacePathWithin } from '../inventory/provenance';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
 import { buildLocalServicePreviewBrowserTarget, listLocalServicePreviewResources, type LocalServicePreviewRegistry } from '../preview/registry';
-import type { LocalServiceLauncherRunTarget } from './runTargets';
+import { waitForChangeOrDeadline } from '@/daemon/lifecycle/waitForChangeOrDeadline';
+import type { LocalServiceLauncherRunTarget, LocalServiceRunTargetDiscoveryOptions } from './runTargets';
 import type { LocalServiceLauncherHistoryStore } from './leaves';
 import { buildLocalServiceLauncherSnapshot, formatLocalServiceLauncherTitle } from './suggestions';
 import type { createManagedServicesOwner, ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
@@ -18,6 +19,8 @@ export type LocalServiceLauncherFeedSnapshotRequest = Readonly<{
     /** Host-only mutation read: an unresolved Workspace must not broaden to Machine scope. */
     requireWorkspaceScope?: true;
     projection?: 'managed_bindings';
+    /** Host-only material update: use admitted discovery facts and live supervisor state. */
+    discovery?: 'cached';
     /** Explicit scope: `machine` skips workspace scoping; `workspace` (default) keeps it. */
     scope?: 'workspace' | 'machine';
     /** Session-less project scoping by repo root (canonicalized at this daemon boundary). */
@@ -30,7 +33,7 @@ export type LocalServiceLauncherFeed = Readonly<{
 }>;
 
 export type LocalServiceRunTargetsProvider =
-    () => readonly LocalServiceLauncherRunTarget[] | Promise<readonly LocalServiceLauncherRunTarget[]>;
+    (workspaceRoots?: readonly string[], options?: LocalServiceRunTargetDiscoveryOptions) => readonly LocalServiceLauncherRunTarget[] | Promise<readonly LocalServiceLauncherRunTarget[]>;
 
 /**
  * Resolves the workspace PATH(s) a session id is anchored to. The feed turns a
@@ -131,15 +134,17 @@ function sortTargets(targets: readonly LocalServiceLaunchTargetV1[]): LocalServi
 async function resolveRunTargets(
     value: CreateLocalServiceLauncherFeedInput['runTargets'],
     onError: CreateLocalServiceLauncherFeedInput['onRunTargetsError'],
-): Promise<readonly LocalServiceLauncherRunTarget[]> {
+    workspaceRoots?: readonly string[],
+    options?: LocalServiceRunTargetDiscoveryOptions,
+): Promise<readonly LocalServiceLauncherRunTarget[] | undefined> {
     if (!value) return [];
     if (typeof value !== 'function') return value;
 
     try {
-        return await value();
+        return await value(workspaceRoots, options);
     } catch (error) {
         onError?.(error);
-        return [];
+        return undefined;
     }
 }
 
@@ -166,13 +171,52 @@ async function resolveScopePaths(input: Readonly<{
 
 export function createLocalServiceLauncherFeed(
     input: CreateLocalServiceLauncherFeedInput,
-): LocalServiceLauncherFeed {
+): LocalServiceLauncherFeed & Readonly<{
+    refreshRunTargets(workspaceRoots?: readonly string[], signal?: AbortSignal, options?: LocalServiceRunTargetDiscoveryOptions): Promise<void>;
+}> {
     const now = input.now ?? (() => Date.now());
     // Custody can settle before the next scan. Retain only correlations proven
     // against native roots for the cached provenance object, never an address or
     // PID tombstone that could hide a fresh listener after process reuse.
     const cachedInventoryOwners = new WeakMap<NonNullable<NormalizedLocalServiceInventoryEntry['provenance']>, string>();
+    // Discovery and native lifecycle advance independently. A native readiness/exit
+    // publication projects the last discovery observation without repeating its I/O.
+    // Keep suggestions separate at ingestion so Machine reads never walk the retained
+    // checkout × script collection, including after a Workspace read or watch update.
+    let observedDeclarations: readonly LocalServiceLauncherRunTarget[] = [];
+    let observedPackageScripts: readonly LocalServiceLauncherRunTarget[] = [];
+    let discovery = Promise.resolve();
+    const refreshRunTargets = (workspaceRoots?: readonly string[], signal?: AbortSignal, options?: LocalServiceRunTargetDiscoveryOptions): Promise<void> => {
+        const read = discovery.then(async () => {
+            if (signal?.aborted) return;
+            const observation = resolveRunTargets(input.runTargets, input.onRunTargetsError, workspaceRoots, options).then(targets => {
+                // A retired read can finish native I/O, but may neither hold a
+                // fresh viewer nor replace its admitted declarations afterward.
+                if (signal?.aborted || targets === undefined) return;
+                const declarations: LocalServiceLauncherRunTarget[] = [];
+                const packageScripts: LocalServiceLauncherRunTarget[] = [];
+                for (const target of targets) {
+                    if ('launchIntent' in target || target.packageScript) packageScripts.push(target);
+                    else declarations.push(target);
+                }
+                const replaceObservation = (current: readonly LocalServiceLauncherRunTarget[], next: readonly LocalServiceLauncherRunTarget[]) => workspaceRoots ? [
+                    ...current.filter(target => !workspaceRoots.some(root => isWorkspacePathWithin(root, target.cwd))),
+                    ...next.filter(target => workspaceRoots.some(root => isWorkspacePathWithin(root, target.cwd))),
+                ] : next;
+                observedDeclarations = replaceObservation(observedDeclarations, declarations);
+                // A declarations-only read has no new observation of Workspace suggestions.
+                if (options?.includePackageScripts !== false) {
+                    observedPackageScripts = replaceObservation(observedPackageScripts, packageScripts);
+                }
+            });
+            if (signal) await waitForChangeOrDeadline({ signal, waitForChange: () => observation });
+            else await observation;
+        });
+        discovery = read.catch(() => undefined);
+        return read;
+    };
     return {
+        refreshRunTargets,
         async getSnapshot(request, observedInventoryEntries) {
             if (request?.projection === 'managed_bindings' && !input.projectManagedServices) {
                 throw Object.assign(new Error('Project Service binding owner is unavailable'), {
@@ -192,9 +236,14 @@ export function createLocalServiceLauncherFeed(
                 });
             }
             const bindingsOnly = request?.projection === 'managed_bindings';
+            const includePackageScripts = request?.scope !== 'machine';
             // Complete bindings read cached listener evidence without waiting for discovery.
             // Both projections must retain the same managed identity and preview presentation.
-            const runTargets = bindingsOnly ? [] : await resolveRunTargets(input.runTargets, input.onRunTargetsError);
+            if (!bindingsOnly && request?.discovery !== 'cached') {
+                await refreshRunTargets(workspaceScopePaths, undefined, { includePackageScripts });
+            }
+            const runTargets = bindingsOnly ? [] : includePackageScripts
+                ? [...observedDeclarations, ...observedPackageScripts] : observedDeclarations;
             // The scan publisher projects this same observation before deciding whether to wake
             // readers. Ordinary reads use the registry's annotated, visible inventory.
             const inventoryEntries = observedInventoryEntries ?? input.inventoryRegistry.getSnapshot().entries;

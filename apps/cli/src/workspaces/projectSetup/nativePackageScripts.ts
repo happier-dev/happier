@@ -1,5 +1,5 @@
 import { readdir, stat } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { readProjectDefinitionFile } from './nativeDefinitionFiles';
 
 export type NativePackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
@@ -11,6 +11,14 @@ const LOCKFILES = [
     ['pnpm-lock.yaml', 'pnpm'], ['yarn.lock', 'yarn'], ['bun.lock', 'bun'], ['bun.lockb', 'bun'],
     ['package-lock.json', 'npm'], ['npm-shrinkwrap.json', 'npm'],
 ] as const;
+
+export function isNativePackageDiscoveryDirectory(name: string): boolean {
+    return !IGNORED_DIRECTORY_NAMES.has(name);
+}
+
+export function isNativePackageDeclarationFile(name: string): boolean {
+    return name === 'package.json' || LOCKFILES.some(([file]) => file === name);
+}
 
 export function isNativeDefinitionRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -61,15 +69,23 @@ export async function resolveNativePackageManager(cwd: string, projectRoot?: str
 }
 
 /** Shared passive inventory; never follows directory symlinks or traverses dependency/build output. */
-export async function collectNativePackageDirectories(root: string): Promise<string[]> {
+export async function collectNativePackageDirectories(root: string | readonly string[]): Promise<string[]> {
     const out: string[] = [];
+    const visited = new Set<string>();
     const visit = async (directory: string): Promise<void> => {
-        if (await isFile(join(directory, 'package.json'))) out.push(directory);
-        const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
-        for (const entry of entries) {
-            if (entry.isDirectory() && !IGNORED_DIRECTORY_NAMES.has(entry.name)) await visit(join(directory, entry.name));
+        const identity = resolve(directory);
+        if (visited.has(identity)) return;
+        visited.add(identity);
+        const entries = await readdir(directory, { withFileTypes: true }).catch(() => null);
+        const packageEntry = entries?.find(entry => entry.name === 'package.json');
+        // The listing already proves ordinary file presence/absence. Only a
+        // symlink (or an unreadable listing) needs the previous followed stat.
+        if (packageEntry?.isFile() || ((!entries || packageEntry?.isSymbolicLink())
+            && await isFile(join(directory, 'package.json')))) out.push(directory);
+        for (const entry of entries ?? []) {
+            if (entry.isDirectory() && isNativePackageDiscoveryDirectory(entry.name)) await visit(join(directory, entry.name));
         }
     };
-    await visit(root);
+    for (const directory of typeof root === 'string' ? [root] : root) await visit(directory);
     return out;
 }

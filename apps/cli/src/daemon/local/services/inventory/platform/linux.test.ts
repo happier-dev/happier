@@ -125,6 +125,17 @@ function boundaryFor(fixture: ProcfsFixture, readPaths: string[] = []) {
 }
 
 describe('readLinuxLocalServiceListeners', () => {
+    it('accepts an absent optional IPv6 socket table while retaining IPv4 listeners', async () => {
+        const boundary = boundaryFor(procfsFixture());
+        const result = await readLinuxLocalServiceListeners({ ...boundary, includeProcessFacts: false,
+            readFile: async path => {
+                if (path === '/proc/net/tcp6') throw Object.assign(new Error('IPv6 is unavailable'), { code: 'ENOENT' });
+                return boundary.readFile(path);
+            } });
+        expect(result.diagnostics).toEqual([]);
+        expect(result.listeners).toEqual(expect.arrayContaining([expect.objectContaining({ port: 5173, pid: 321 })]));
+    });
+
     it('defers process census for listener-only demand without losing its later detailed observation', async () => {
         const opened = vi.spyOn(fs, 'open');
         const result = await readLinuxLocalServiceListeners({ ...boundaryFor(procfsFixture()), includeProcessFacts: false });

@@ -208,6 +208,7 @@ const LOCAL_SERVICE_LAUNCHER_KEYS = {
  */
 const LOCAL_SERVICE_INVENTORY_KEYS = {
     local_services_accepted_workspaces_unavailable: 'localServices.inventory.scanCause.workspacesUnavailable',
+    local_services_inventory_scan_failed: 'localServices.inventory.scanCause.failed',
     linux_procfs_scan_deadline_exceeded: 'localServices.inventory.scanCause.partial',
     darwin_lsof_scan_partial: 'localServices.inventory.scanCause.partial',
     linux_procfs_scan_failed: 'localServices.inventory.scanCause.failed',
@@ -814,6 +815,8 @@ export function resolveReasonCopy(input: Readonly<{
     establishmentFailure?: LocalServiceEstablishmentFailureV1;
     machineName?: string;
     serviceName?: string;
+    /** Declaration diagnostic metadata; the root uses the source Machine's path display owner. */
+    inventoryObservation?: Readonly<{ root: string | null; code: string | null }>;
     /** True only when this presentation offers a Services control. */
     servicesActionOffered?: boolean;
     /** The surrounding title already names the Service, so the body does not repeat it as a prefix. */
@@ -831,7 +834,14 @@ export function resolveReasonCopy(input: Readonly<{
     const serviceKey = input.kind === 'localServiceAction' && rawCode
         ? LOCAL_SERVICE_ACTION_KEYS[rawCode as keyof typeof LOCAL_SERVICE_ACTION_KEYS] : undefined;
     const stoppedService = serviceKey === 'localServices.actions.failure.serviceNotRunning';
-    const body = startFailed && input.serviceName
+    const observation = input.kind === 'localServiceInventory' && rawCode === 'local_services_declaration_observation_unavailable'
+        ? input.inventoryObservation : undefined;
+    const body = observation?.root
+        // The root and its cause in plain words (never a raw errno word); the rows below it are what it affects.
+        ? t(observation.code === 'EACCES' || observation.code === 'EPERM' ? 'localServices.inventory.scanCause.rootDenied'
+            : observation.code === 'ENOENT' ? 'localServices.inventory.scanCause.rootMissing'
+            : 'localServices.inventory.scanCause.rootUnreadable', { path: observation.root })
+        : startFailed && input.serviceName
         ? t('localServices.actions.failure.namedStartFailed', { service: input.serviceName })
         : stoppedService ? input.serviceName
         ? t('localServices.actions.failure.namedServiceNotRunning', { service: input.serviceName, servicesActionOffered: input.servicesActionOffered })

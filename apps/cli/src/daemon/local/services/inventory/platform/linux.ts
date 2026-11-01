@@ -247,8 +247,13 @@ export async function readLinuxLocalServiceListeners(boundary: LinuxProcfsBounda
     const deadlineAt = boundary.deadlineMs === undefined ? Number.POSITIVE_INFINITY : now() + boundary.deadlineMs;
     try {
         const [tcp4, tcp6, procEntries] = await Promise.all([
-            boundary.readFile(joinProcPath(procRoot, 'net', 'tcp'), 'utf8').catch(() => ''),
-            boundary.readFile(joinProcPath(procRoot, 'net', 'tcp6'), 'utf8').catch(() => ''),
+            boundary.readFile(joinProcPath(procRoot, 'net', 'tcp'), 'utf8'),
+            boundary.readFile(joinProcPath(procRoot, 'net', 'tcp6'), 'utf8').catch((error: unknown) => {
+                // Linux omits this table when IPv6 is unavailable; I/O and permission
+                // failures must reach the scan's nonauthoritative failure result.
+                if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return '';
+                throw error;
+            }),
             boundary.listenerOwnerPids === undefined ? boundary.readdir(procRoot) : [],
         ]);
         const rows = [

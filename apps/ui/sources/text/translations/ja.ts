@@ -11178,6 +11178,9 @@ localTailscale: {
       emptyTitle: 'ローカルサービスが検出されません',
       errorTitle: 'ローカルサービスのスキャンに注意が必要です',
       scanCause: {
+        rootDenied: ({ path }: { path: string }) => `${path} を読み取る権限がありません`,
+        rootMissing: ({ path }: { path: string }) => `${path} が見つかりません`,
+        rootUnreadable: ({ path }: { path: string }) => `${path} を読み取れませんでした`,
         workspacesUnavailable: 'このマシンで開いているプロジェクトを読み取れなかったため、一部のサービスが表示されない場合があります。',
         partial: 'このマシンでスキャンが時間切れになったため、実行中のサービスの一部が表示されない場合があります。',
         failed: 'このマシンは実行中のプロセスを一覧できなかったため、実行中のサービスを見つけられません。',

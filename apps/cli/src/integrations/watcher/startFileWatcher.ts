@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { statSync, watch } from 'node:fs';
 import { lstat, stat } from 'node:fs/promises';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, relative, resolve, sep } from 'node:path';
 
 import { logger } from '@/ui/logger';
 
@@ -9,8 +9,10 @@ const WATCH_RECOVERY_DELAY_MS = 1_000;
 
 export type StartFileWatcherOptions = Readonly<{
     emitInitial?: boolean;
+    /** Declaration observers recover from native entry/ancestor events only. */
+    recovery?: 'events';
     reportEventPath?: boolean;
-    onWatcherAttached?: () => void;
+    onWatcherAttached?: () => void | Promise<void>;
     onWatcherUnavailable?: (error: Error) => void;
 }>;
 
@@ -244,6 +246,7 @@ export function startFileWatcher(
     void (async () => {
         while (!abortController.signal.aborted) {
             let closeWatcher: (() => void) | undefined;
+            let reattachFromEvent = false;
             try {
                 const currentEntry = await readEntry(file);
                 if (currentEntry) isDirectory = currentEntry.isDirectory();
@@ -251,6 +254,31 @@ export function startFileWatcher(
                 const watchedDirectory = isDirectory ? file : dirname(file);
                 const directoryVersion = await readVersion(watchedDirectory);
                 if (directoryVersion === null) {
+                    if (options?.recovery === 'events') {
+                        // A contained directory alias may not have its fixed-file
+                        // parents yet. Observe the nearest existing ancestor rather
+                        // than testing for its creation on a timer.
+                        let ancestor = dirname(watchedDirectory);
+                        let ancestorVersion = await readVersion(ancestor);
+                        while (ancestorVersion === null && dirname(ancestor) !== ancestor) {
+                            ancestor = dirname(ancestor);
+                            ancestorVersion = await readVersion(ancestor);
+                        }
+                        if (ancestorVersion === null) throw new Error('File watcher ancestor unavailable');
+                        const child = relative(ancestor, watchedDirectory).split(sep)[0];
+                        const parent = observeDirectory(ancestor, ancestorVersion, child);
+                        closeWatcher = () => parent.close();
+                        const events = fileWatcherEvents(parent.events, abortController.signal);
+                        abortController.signal.addEventListener('abort', closeWatcher, { once: true });
+                        if (abortController.signal.aborted) return;
+                        await options.onWatcherAttached?.();
+                        // Close creation between the failed stat and attachment.
+                        if (await readVersion(watchedDirectory) === null) {
+                            for await (const _event of events) break;
+                        }
+                        continue;
+                    }
+
                     if (!unavailable) logger.debug('[FILE_WATCHER] Parent directory missing; waiting for recovery');
                     reportUnavailable(new Error('File watcher parent directory missing'));
                     await delayUnrefAbortable(WATCH_RECOVERY_DELAY_MS, abortController.signal);
@@ -311,7 +339,7 @@ export function startFileWatcher(
                 if (abortController.signal.aborted) return;
                 attachmentCount += 1;
                 unavailable = false;
-                options?.onWatcherAttached?.();
+                await options?.onWatcherAttached?.();
                 for await (const rawEvent of events) {
                     if (abortController.signal.aborted) return;
                     // EventEmitter's untyped boundary is narrowed immediately.
@@ -323,6 +351,7 @@ export function startFileWatcher(
                     if (identity(currentDirectoryVersion) !== identity(directoryVersion)) {
                         reportUnavailable(new Error('File watcher directory replaced'));
                         await onFileChange(file);
+                        reattachFromEvent = true;
                         break;
                     }
                     if (!isDirectory && name && name !== targetName) continue;
@@ -333,6 +362,7 @@ export function startFileWatcher(
                     );
                     if (!isDirectory && event[0] === 'rename' && (await readEntry(file))?.isDirectory()) {
                         reportUnavailable(new Error('File watcher directory appeared'));
+                        reattachFromEvent = true;
                         break;
                     }
                     if (!isDirectory && (
@@ -340,6 +370,7 @@ export function startFileWatcher(
                         || (event[0] === 'rename' && await isFileSymlink(file) !== isSymlink)
                     )) {
                         reportUnavailable(new Error('File watcher symlink target changed'));
+                        reattachFromEvent = true;
                         break;
                     }
                 }
@@ -347,6 +378,7 @@ export function startFileWatcher(
             } catch (error) {
                 if (abortController.signal.aborted) return;
                 reportUnavailable(error);
+                if (options?.recovery === 'events') return;
                 logger.debug(`[FILE_WATCHER] Watch error; restarting watcher in ${WATCH_RECOVERY_DELAY_MS}ms`);
             } finally {
                 if (closeWatcher) {
@@ -354,7 +386,9 @@ export function startFileWatcher(
                     closeWatcher();
                 }
             }
-            await delayUnrefAbortable(WATCH_RECOVERY_DELAY_MS, abortController.signal);
+            if (options?.recovery === 'events') {
+                if (!reattachFromEvent) return;
+            } else await delayUnrefAbortable(WATCH_RECOVERY_DELAY_MS, abortController.signal);
         }
     })();
 

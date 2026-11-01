@@ -32,7 +32,9 @@ import {
     createTerminateDetectedService,
 } from './actions/terminate';
 import { createOsProcessControl } from './actions/osProcessControl';
-import { createLocalServiceLauncherFeed } from './launch/feed';
+import { createLocalServiceLauncherFeed, type LocalServiceRunTargetsProvider } from './launch/feed';
+import { createLocalServiceDeclarationWatch } from './launch/declarationWatch';
+import { isWorkspacePathWithin } from './inventory/provenance';
 import {
     createLocalServiceLauncherLeafRoutes,
     createLocalServiceLauncherHistoryStore,
@@ -392,6 +394,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         if (workspaceFacts) {
             try {
                 const source = await readWorkspaceFacts();
+                declarationWatch.updateWorkspaceFacts(source);
                 daemonWorkspaces = source.facts;
                 workspaceDiagnostics.push(...source.diagnostics);
             } catch (error) {
@@ -561,8 +564,8 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     const updateInventoryDemand = (): void => {
         if (activeInventoryWatchers > 0) loop?.resume();
         else loop?.pause();
+        declarationWatch.setDemand(activeInventoryWatchers > 0);
     };
-    updateInventoryDemand();
 
     const inventoryRoutes = createLocalServiceInventoryRoutes({
         registry: inventoryRegistry,
@@ -574,39 +577,18 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
             updateInventoryDemand();
         },
     });
-    // Workspace-scoped package-script discovery (LSV-6). Reads package.json files only
-    // (binary-safe: no node/package-manager spawn). Single-flighted + short-TTL cached so
-    // the recursive fs walk does not re-run on every launcher snapshot request.
-    const RUN_TARGETS_CACHE_TTL_MS = 5_000;
-    let runTargetsCache: { value: readonly LocalServiceLauncherRunTarget[]; at: number } | null = null;
-    let runTargetsInFlight: Promise<readonly LocalServiceLauncherRunTarget[]> | null = null;
-    const defaultRunTargetsProvider = async (): Promise<readonly LocalServiceLauncherRunTarget[]> => {
-        const fresh = runTargetsCache && now() - runTargetsCache.at < RUN_TARGETS_CACHE_TTL_MS;
-        if (fresh && runTargetsCache) {
-            return runTargetsCache.value;
-        }
-        if (runTargetsInFlight) {
-            return runTargetsInFlight;
-        }
-        runTargetsInFlight = (async () => {
-            try {
-                const source = await readWorkspaceFacts();
-                const workspaceRoots = source.facts
-                    .map((fact) => fact.path)
-                    .filter((root) => root.length > 0);
-                const value = workspaceRoots.length > 0
-                    ? await discoverLocalServiceRunTargets({ roots: workspaceRoots, acceptedWorkspaceRefs: source.acceptedWorkspaceRefs })
-                    : [];
-                runTargetsCache = { value, at: now() };
-                return value;
-            } catch (error) {
-                params.onError?.(error);
-                return runTargetsCache?.value ?? [];
-            } finally {
-                runTargetsInFlight = null;
-            }
-        })();
-        return runTargetsInFlight;
+    const defaultRunTargetsProvider: LocalServiceRunTargetsProvider = async (roots, options) => {
+        const source = await readWorkspaceFacts();
+        const knownRoots = [...new Set([
+            ...source.facts.map(fact => fact.path), ...source.acceptedWorkspaceRefs.map(ref => ref.rootPath),
+        ])].filter(Boolean);
+        // Scope narrows the workspace authority already supplied by the daemon;
+        // a caller-selected path must not enroll another filesystem root.
+        const requestedRoots = roots ? [...new Set(roots.flatMap(root => knownRoots.flatMap(known =>
+            isWorkspacePathWithin(known, root) ? [root] : isWorkspacePathWithin(root, known) ? [known] : [])))] : knownRoots;
+        return await discoverLocalServiceRunTargets({ ...options, roots: requestedRoots,
+            acceptedWorkspaceRefs: source.acceptedWorkspaceRefs.filter(ref => requestedRoots.some(root =>
+                isWorkspacePathWithin(root, ref.rootPath) || isWorkspacePathWithin(ref.rootPath, root))) });
     };
     const runTargetsProvider = params.runTargets ?? defaultRunTargetsProvider;
     const defaultResolveSessionWorkspacePaths = async (sessionId: string): Promise<readonly string[]> =>
@@ -637,17 +619,50 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         now,
     });
     let publishedLauncherTargets: Awaited<ReturnType<typeof scannedLauncherFeed.getSnapshot>>['targets'] = [];
-    const publishInventorySnapshot = async (snapshot: NormalizedLocalServiceInventorySnapshot): Promise<NormalizedLocalServiceInventorySnapshot> => {
-        // Scan ticks also discover declarations and endpoint-free managed occurrences. Reuse
+    let declarationObservationFailure: LocalServiceInventoryDiagnostic | undefined;
+    const publishInventorySnapshot = async (snapshot?: NormalizedLocalServiceInventorySnapshot): Promise<NormalizedLocalServiceInventorySnapshot> => {
+        // Scan ticks project admitted declarations and endpoint-free managed occurrences. Reuse
         // the real launcher projection so suppressing observation metadata cannot hide those
         // changes, or give a second implementation authority over its material fields.
-        const launcher = await scannedLauncherFeed.getSnapshot({ scope: 'machine' }, snapshot.entries);
+        // Compare the same native input on both paths. Visible inventory omits
+        // forgotten listeners; switching to it here would manufacture a change
+        // when the next unchanged native scan includes those listeners again.
+        // The shared watch also serves Workspace readers, whose package changes must wake it.
+        const launcher = await scannedLauncherFeed.getSnapshot({ discovery: 'cached' },
+            snapshot?.entries ?? inventoryRegistry.readScannedEntries());
         const invalidate = !isDeepStrictEqual(publishedLauncherTargets, launcher.targets);
         publishedLauncherTargets = launcher.targets;
-        inventoryRegistry.replaceSnapshot(snapshot, { invalidate });
-        lastInventoryObservationAt = snapshot.generatedAt;
+        // Only native scans replace listener facts. The registry's public snapshot
+        // omits forgotten entries and cannot replace its retained scan authority.
+        if (snapshot) inventoryRegistry.replaceSnapshot({ ...snapshot, diagnostics: [
+            ...snapshot.diagnostics.filter(item => item.code !== 'local_services_declaration_observation_unavailable'),
+            ...(declarationObservationFailure ? [declarationObservationFailure] : []),
+        ] }, { invalidate });
+        else if (invalidate) inventoryRegistry.invalidate();
+        if (snapshot) lastInventoryObservationAt = snapshot.generatedAt;
         return inventoryRegistry.getSnapshot();
     };
+    const declarationWatch = createLocalServiceDeclarationWatch({
+        readWorkspaceFacts,
+        async onChanged(roots, signal) {
+            await scannedLauncherFeed.refreshRunTargets(roots, signal);
+            if (signal.aborted) return;
+            declarationObservationFailure = undefined;
+            const snapshot = inventoryRegistry.getSnapshot();
+            const diagnostics = snapshot.diagnostics.filter(item => item.code !== 'local_services_declaration_observation_unavailable');
+            await publishInventorySnapshot(diagnostics.length !== snapshot.diagnostics.length ? { ...snapshot, diagnostics } : undefined);
+        },
+        onError(error, diagnostic) {
+            params.onError?.(error);
+            declarationObservationFailure = diagnostic;
+            const snapshot = inventoryRegistry.getSnapshot();
+            if (!isDeepStrictEqual(snapshot.diagnostics.find(item => item.code === diagnostic.code), diagnostic)) {
+                inventoryRegistry.replaceSnapshot({ ...snapshot,
+                    diagnostics: [...snapshot.diagnostics.filter(item => item.code !== diagnostic.code), diagnostic] });
+            }
+        },
+    });
+    updateInventoryDemand();
     // The launcher folds inventory entries into its targets but never watches, so it is the one
     // reader that could observe an unscanned inventory once the loop follows watchers. It demands
     // freshness through the same coalescing single flight instead of owning a second cadence.
@@ -656,8 +671,10 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         async getSnapshot(request) {
             // Exact managed custody is read from its supervisor, not listener evidence.
             // Ordinary launch targets still require the canonical fresh inventory scan.
-            if (request?.projection !== 'managed_bindings') await ensureFreshInventory();
-            return await scannedLauncherFeed.getSnapshot(request);
+            if (request?.projection !== 'managed_bindings' && request?.discovery !== 'cached') await ensureFreshInventory();
+            const snapshot = await scannedLauncherFeed.getSnapshot(request);
+            if (request?.projection !== 'managed_bindings' && request?.discovery !== 'cached') await publishInventorySnapshot();
+            return snapshot;
         },
     };
     // Launcher leaf actions (LSV-1): openPreview/registerPreview reuse the canonical launcher
@@ -726,6 +743,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         },
         async stop() {
             endpointCancellation.abort();
+            declarationWatch.setDemand(false);
             loop?.stop();
             unsubscribeInventorySummary();
             summarySubscribers.clear();

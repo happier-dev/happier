@@ -22,7 +22,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
-import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SurfaceFreshnessLine, type SurfaceFreshnessAction } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useLocalServiceInventory } from '@/sync/domains/local/services/inventory/useLocalServiceInventory';
@@ -46,6 +46,7 @@ import type { LocalServicePublicPreviewState } from '@/sync/domains/local/servic
 import { useLocalServicePublicPreviewStateController, type LocalServicePublicPreviewStatusClient } from '@/sync/domains/local/services/publicPreview/useLocalServicePublicPreviewState';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
@@ -268,40 +269,44 @@ function ServicesScopeBar(props: Readonly<{
     );
 }
 
+/** The one scan cause the pane names: a failed scan outranks a partial one; the rest stay on the marker. */
+function leadInventoryDiagnostic(diagnostics: readonly unknown[]) {
+    const read = readLocalServiceDiagnostics(diagnostics);
+    return read.find((diagnostic) => diagnostic.severity === 'error') ?? read[0] ?? null;
+}
+
 function DiagnosticsBanner(props: Readonly<{
     diagnostics: readonly unknown[];
+    homeDir?: string | null;
     testID: string;
+    checkAgain?: SurfaceFreshnessAction;
 }>): React.ReactElement | null {
-    const diagnostics = readLocalServiceDiagnostics(props.diagnostics);
-    const styles = stylesheet;
-    if (diagnostics.length === 0) {
-        return null;
-    }
-
+    const copy = firstInventoryDiagnosticCopy(props.diagnostics, props.homeDir);
+    if (!copy) return null;
+    // A scan diagnostic is a scan-level fact, not a per-service failure: the rows stay at full strength
+    // under one quiet line in the OWNER-COPY mapper's words, with the existing refresh as its recovery.
+    // The raw code stays on the diagnostics-only testID, never in visible text.
     return (
-        <View testID={props.testID} style={styles.offlineLine}>
-            {diagnostics.map((diagnostic) => {
-                // Scan diagnostics are scan-level facts, not per-service failures: the rows stay at
-                // full strength under the canonical quiet line (the offline line's own primitive),
-                // in the OWNER-COPY mapper's neutral words; the raw scan code stays on the
-                // diagnostics-only testID — never in visible text.
-                const copy = resolveReasonCopy({ reasonCode: diagnostic.code, kind: 'localServiceInventory' });
-                return (
-                    <SurfaceFreshnessLine
-                        key={diagnostic.code}
-                        testID={`${props.testID}-code-${diagnostic.code}`}
-                        tone="warning"
-                        reason={copy.body}
-                    />
-                );
-            })}
+        <View testID={props.testID} style={stylesheet.offlineLine}>
+            <SurfaceFreshnessLine
+                testID={`${props.testID}-code-${copy.diagnosticCode}`}
+                tone="warning"
+                reason={copy.body}
+                {...(props.checkAgain ? { action: { ...props.checkAgain, testID: `${props.testID}-check-again` } } : {})}
+            />
         </View>
     );
 }
 
-function firstInventoryDiagnosticCopy(diagnostics: readonly unknown[]): ReturnType<typeof resolveReasonCopy> | null {
-    const [diagnostic] = readLocalServiceDiagnostics(diagnostics);
-    return diagnostic ? resolveReasonCopy({ reasonCode: diagnostic.code, kind: 'localServiceInventory' }) : null;
+function firstInventoryDiagnosticCopy(diagnostics: readonly unknown[], homeDir?: string | null): ReturnType<typeof resolveReasonCopy> | null {
+    const diagnostic = leadInventoryDiagnostic(diagnostics);
+    return diagnostic ? resolveReasonCopy({
+        reasonCode: diagnostic.code, kind: 'localServiceInventory',
+        inventoryObservation: diagnostic.observation ? {
+            ...diagnostic.observation,
+            root: diagnostic.observation.root ? formatPathRelativeToHome(diagnostic.observation.root, homeDir) : null,
+        } : undefined,
+    }) : null;
 }
 
 export function DetectedLocalServicesPane(props: Readonly<{
@@ -637,7 +642,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
     }
 
     if (viewModel.status === 'error' && !hasLauncherTargets) {
-        const diagnosticCopy = firstInventoryDiagnosticCopy(viewModel.diagnostics);
+        const diagnosticCopy = firstInventoryDiagnosticCopy(viewModel.diagnostics, props.machine?.homeDir);
         // G16: a failed first read used to be terminal. The card's own primary-action slot is the
         // retry, so the failure recovers through the same invalidation the refresh control uses.
         return withFooter(
@@ -680,7 +685,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
                                 />
                             </View>
                         ) : null}
-                        <DiagnosticsBanner diagnostics={viewModel.diagnostics} testID={`${testID}-error`} />
+                        <DiagnosticsBanner diagnostics={viewModel.diagnostics} homeDir={props.machine?.homeDir} testID={`${testID}-error`} checkAgain={checkAgain} />
                         {props.onChangeScope ? (
                             <ServicesScopeBar
                                 scope={scope}

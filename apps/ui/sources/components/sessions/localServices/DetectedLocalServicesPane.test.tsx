@@ -427,6 +427,57 @@ describe('DetectedLocalServicesPane', () => {
         expect(text).not.toContain('linux_procfs_scan_failed');
     });
 
+    it.each([
+        { retainedRows: true, root: '/tmp/QAR90S-R3', displayedRoot: '/tmp/QAR90S-R3' },
+        { retainedRows: true, root: '/home/alice/project', displayedRoot: '~/project' },
+        { retainedRows: false, root: '/tmp/QAR90S-R3', displayedRoot: '/tmp/QAR90S-R3' },
+    ])('names the unreadable root and permission cause, then clears on recovery ($retainedRows, $root)', async ({ retainedRows, root, displayedRoot }) => {
+        const onRefresh = vi.fn();
+        const rows = retainedRows ? [buildLocalServiceInventoryRow({ id: 'openable-row', state: 'listening' })] : [];
+        const launcherState = launcherStateWith(retainedRows ? [openableTarget] : []);
+        const machine = { ...MACBOOK_ONLINE, homeDir: '/home/alice' };
+        const render = (failed: boolean) => <DetectedLocalServicesPane
+            inventoryState={buildLocalServiceInventoryState({
+                rows,
+                refreshState: failed ? 'error' : 'idle',
+                diagnostics: failed ? [{
+                    code: 'local_services_declaration_observation_unavailable', severity: 'warning',
+                    message: JSON.stringify({ root, role: 'project_root', syscall: 'watch', code: 'EACCES' }),
+                }] : [],
+            })}
+            launcherState={launcherState} machine={machine} onRefresh={onRefresh} testID="scan-root"
+        />;
+        const screen = await renderScreen(render(true));
+        expect(screen.getTextContent()).toContain(displayedRoot);
+        expect(screen.getTextContent().toLowerCase()).toContain('no permission');
+        expect(screen.getTextContent()).not.toContain('EACCES');
+        expect(screen.getTextContent()).not.toContain('project_root');
+        if (retainedRows) {
+            expect(screen.findByTestId('scan-root-row:inventory:openable-row')).toBeTruthy();
+            await pressTestInstanceAsync(screen.findByTestId('scan-root-error-check-again'), 'check again');
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        }
+        await screen.update(render(false));
+        expect(screen.getTextContent()).not.toContain(displayedRoot);
+        expect(screen.getTextContent().toLowerCase()).not.toContain('no permission');
+    });
+
+    it.each([
+        'native error: private diagnostic text',
+        JSON.stringify({ root: 42, code: 'EACCES', message: 'private diagnostic text' }),
+    ])('keeps unstructured or invalid observation metadata out of the scan banner (%s)', async message => {
+        const screen = await renderScreen(<DetectedLocalServicesPane
+            inventoryState={buildLocalServiceInventoryState({
+                rows: [buildLocalServiceInventoryRow({ id: 'openable-row' })], refreshState: 'error',
+                diagnostics: [{ code: 'local_services_declaration_observation_unavailable', severity: 'warning', message }],
+            })}
+            launcherState={launcherStateWith([openableTarget])} testID="scan-root"
+        />);
+        expect(screen.getTextContent()).toContain('Local service scan needs attention');
+        expect(screen.getTextContent()).not.toContain('private diagnostic text');
+        expect(screen.getTextContent()).not.toContain('EACCES');
+    });
+
     it('renders error diagnostics without clearing cached row state', async () => {
         const screen = await renderScreen(
             <DetectedLocalServicesPane
@@ -454,6 +505,33 @@ describe('DetectedLocalServicesPane', () => {
         expect(screen.getTextContent()).not.toContain('scanner_permission_denied');
         expect(screen.getTextContent()).toContain('Local service scan needs attention');
         expect(screen.findByTestId('local-services-pane-error-code-scanner_permission_denied')).toBeTruthy();
+    });
+
+    it('keeps declared rows under one typed scan reason that can check again', async () => {
+        const onRefresh = vi.fn();
+        const screen = await renderScreen(
+            <DetectedLocalServicesPane
+                inventoryState={buildLocalServiceInventoryState({
+                    refreshState: 'error',
+                    rows: [buildLocalServiceInventoryRow({ id: 'openable-row', state: 'listening' })],
+                    diagnostics: [
+                        { code: 'local_services_accepted_workspaces_unavailable', severity: 'warning' },
+                        { code: 'local_services_inventory_scan_failed', severity: 'error' },
+                    ],
+                })}
+                launcherState={launcherStateWith([openableTarget], 'session-a')}
+                onRefresh={onRefresh}
+                testID="local-services-pane"
+            />,
+        );
+        expect(screen.findByTestId(`local-services-pane-row:${openableTarget.id}`)).toBeTruthy();
+        // One cause, one line: the failed scan leads; the code stays on the diagnostics-only marker.
+        expect(screen.findByTestId('local-services-pane-error-code-local_services_inventory_scan_failed')).toBeTruthy();
+        expect(screen.findAllByTestId('local-services-pane-error-code-local_services_accepted_workspaces_unavailable')).toHaveLength(0);
+        expect(screen.getTextContent()).toContain("This machine couldn't list its running processes");
+        expect(screen.getTextContent()).not.toContain('local_services_inventory_scan_failed');
+        await act(async () => { screen.pressByTestId('local-services-pane-error-check-again'); });
+        expect(onRefresh).toHaveBeenCalledTimes(1);
     });
 
     it('publishes how many run on which machine and a refresh to the pane header, with no count in the body', async () => {

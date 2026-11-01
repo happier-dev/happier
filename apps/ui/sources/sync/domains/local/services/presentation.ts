@@ -7,6 +7,7 @@ type UnknownRecord = Record<string, unknown>;
 export type LocalServiceDisplayDiagnostic = Readonly<{
     code: string;
     severity: 'info' | 'warning' | 'error';
+    observation?: Readonly<{ root: string | null; code: string | null }>;
 }>;
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -30,6 +31,19 @@ export function readLocalServiceDiagnostics(value: readonly unknown[]): readonly
             const severity = entry.severity === 'warning' || entry.severity === 'error'
                 ? entry.severity
                 : 'info';
+            if (code === 'local_services_declaration_observation_unavailable' && typeof entry.message === 'string') {
+                try {
+                    const observation: unknown = JSON.parse(entry.message);
+                    if (isRecord(observation)) {
+                        return { code, severity, observation: {
+                            root: typeof observation.root === 'string' && observation.root.trim() ? observation.root : null,
+                            code: readString(observation.code),
+                        } };
+                    }
+                } catch {
+                    // Older or malformed diagnostics retain the generic copy; never display raw messages.
+                }
+            }
             return { code, severity };
         })
         .filter((entry): entry is LocalServiceDisplayDiagnostic => Boolean(entry));
