@@ -8,6 +8,7 @@ import { createSessionImageMediaWriter } from '@/session/media/createSessionImag
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { configuration } from '@/configuration';
 import { openComputerPrivacySettings } from './privacySettings';
+import { createComputerDesktop } from './desktop';
 
 export type ComputerRoutes = Readonly<{
   dispatch(actionId: RuntimeActionIdV1, input: unknown, context: ActionExecutorContext): Promise<Awaited<ReturnType<RuntimeActionExecute>>>;
@@ -24,6 +25,19 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
   const nativeFailure = (error: unknown) => error instanceof ComputerDriverError ? failure(error.code, error.message)
     : failure(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'native_capture_failed');
   const selected = (sessionId: string) => input.registry.list().find(entry => entry.computer?.sessionId === sessionId)?.computer;
+  const desktop = createComputerDesktop();
+  const resolveConnection = async (requestedDisplayId?: string): Promise<Readonly<{
+    displayId: string; environment?: Readonly<Record<string, string>>;
+  }>> => {
+    const current = desktop.current();
+    const displayId = resolveComputerDisplayId(requestedDisplayId, input.defaultDisplayId) ?? current?.displayId;
+    if (!displayId && process.platform === 'linux') return await desktop.ensure();
+    if (!displayId) throw new ComputerDriverError('computer_display_unavailable');
+    if (current && displayId.replace(/\.0$/, '') === current.displayId) {
+      return { ...await desktop.ensure(), displayId };
+    }
+    return { displayId };
+  };
   const inputDisplayKey = (displayId: string) => {
     // X11 :N and :N.0 address the same screen. Wire source identities stay exact,
     // but aliases cannot admit a second controller for the same physical input.
@@ -89,7 +103,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
           // The selection read already knows whether an unshared Machine has a
           // desktop connection. Viewers need no picker enumeration or thumbnails.
           const currentSelection = selection(sessionId);
-          if (!currentSelection.sourceId && !resolveComputerDisplayId(undefined, input.defaultDisplayId)) {
+          if (!currentSelection.sourceId && !resolveComputerDisplayId(undefined, input.defaultDisplayId) && !desktop.current()) {
             return failure('computer_display_unavailable');
           }
           return currentSelection;
@@ -97,11 +111,9 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
       }
       if (list) {
         const request = ComputerTargetsListRequestV1Schema.parse(parsed.data);
-        const displayId = resolveComputerDisplayId(request.displayId, input.defaultDisplayId);
-        if (!displayId) return failure('computer_display_unavailable');
         let driver: Awaited<ReturnType<typeof createManagedComputerDriver>>;
         try {
-          driver = await createManagedComputerDriver({ displayId, executablePath: input.executablePath });
+          driver = await createManagedComputerDriver({ ...await resolveConnection(request.displayId), executablePath: input.executablePath });
         } catch (error) {
           // An unsupported desktop or a missing driver is the picker's typed explanation, not a thrown RPC.
           return nativeFailure(error);
@@ -130,10 +142,12 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
           existing = undefined;
         }
         if (request.target && existing && access === existing.access && computerTargetKey(request.target) === computerTargetKey(existing.target)) return selection(sessionId);
-        const displayId = resolveComputerDisplayId(request.target?.displayId, input.defaultDisplayId);
-        if (!displayId) return failure('computer_display_unavailable');
+        let connection: Awaited<ReturnType<typeof resolveConnection>>;
         let driver: Awaited<ReturnType<typeof createManagedComputerDriver>>;
-        try { driver = await createManagedComputerDriver({ displayId, executablePath: input.executablePath }); }
+        try {
+          connection = await resolveConnection(request.target?.displayId);
+          driver = await createManagedComputerDriver({ ...connection, executablePath: input.executablePath });
+        }
         catch (error) { return nativeFailure(error); }
         let target: ComputerTargetV1;
         let title: string | undefined;
@@ -165,7 +179,8 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
         // Native enumeration may await: recheck the single owning registry before replacement.
         if (selected(sessionId)) return failure('computer_target_selection_changed');
         if (conflictingSelection(sessionId, target)) return failure('computer_target_in_use');
-        const source = createComputerCaptureSource({ sessionId, target, title, appName, access, executablePath: input.executablePath });
+        const source = createComputerCaptureSource({ sessionId, target, title, appName, access, executablePath: input.executablePath,
+          environment: connection.environment });
         const sourceId = source.sourceId;
         input.registry.register({ sourceId, streamFamily: 'screen', computer: source, adapter: source.adapter,
           capabilities: { v: 1, sourceId, sourceKind: 'screen', supportedCodecs: ['image.frame.v1'], inputMode: 'shared', sidebands: [], health: { status: 'available' } } });
@@ -232,6 +247,6 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
       }
     },
     closeSession,
-    dispose: () => closeSession(),
+    async dispose() { try { await closeSession(); } finally { await desktop.dispose(); } },
   };
 }

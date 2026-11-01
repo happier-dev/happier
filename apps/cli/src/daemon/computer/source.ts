@@ -19,12 +19,13 @@ export function createComputerCaptureSource(input: Readonly<{
   appName?: string;
   access?: ComputerAccessV1;
   executablePath?: string;
+  environment?: Readonly<Record<string, string>>;
 }>) {
   // A stream source is one selection lifetime; revoked approvals cannot bind a later reselection.
   const sourceId = `computer:${randomUUID()}`;
   const control = createSurfaceInputControl({ requireObservation: true, onStatusChange: publishStatus });
   let driver: ReturnType<typeof createManagedComputerDriver> | null = null;
-  const getDriver = () => driver ??= createManagedComputerDriver({ displayId: input.target.displayId, executablePath: input.executablePath });
+  const getDriver = () => driver ??= createManagedComputerDriver({ displayId: input.target.displayId, executablePath: input.executablePath, environment: input.environment });
   type Capture = Awaited<ReturnType<Awaited<ReturnType<typeof createManagedComputerDriver>>['capture']>>;
   let latest: Pick<Capture, 'png' | 'geometry'> | null = null;
   let modelCaptureId: string | null = null;

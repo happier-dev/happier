@@ -47,7 +47,11 @@ export function captureResult() {
   } };
 }
 
-beforeEach(() => { native.instances.length = 0; native.tools.length = 0; native.call.mockReset();
+beforeEach(async () => {
+  // Resolve the process-boundary mock before concurrent connections import it.
+  // Vitest's concurrent dynamic-import interception can otherwise load the real subprocess transport.
+  await import('@modelcontextprotocol/sdk/client/stdio.js');
+  native.instances.length = 0; native.tools.length = 0; native.call.mockReset();
   native.initialize.mockReset().mockResolvedValue({ protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'cua-driver', version: COMPUTER_CUA_DRIVER_VERSION } });
   native.close.mockReset().mockImplementation(async (transport: { onclose?: () => void }) => { transport.onclose?.(); }); });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });

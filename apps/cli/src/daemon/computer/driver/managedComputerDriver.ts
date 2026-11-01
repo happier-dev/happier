@@ -61,7 +61,8 @@ function capturePng(result: NativeToolResult, width: number, height: number): Bu
 }
 
 /** One installed-native executor for the selected native desktop connection. */
-export async function createManagedComputerDriver(params: Readonly<{ displayId: string; executablePath?: string }>): Promise<ManagedComputerDriver> {
+export async function createManagedComputerDriver(params: Readonly<{ displayId: string; executablePath?: string;
+  environment?: Readonly<Record<string, string>> }>): Promise<ManagedComputerDriver> {
   const wayland = process.platform === 'linux' && Boolean(process.env.WAYLAND_DISPLAY?.trim())
     && params.displayId === process.env.WAYLAND_DISPLAY?.trim();
   if (!(process.platform === 'linux' && /^:\d+(?:\.\d+)?$/.test(params.displayId))
@@ -77,7 +78,7 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
   }
   if (!executablePath || !isAbsolute(executablePath)) throw new ComputerDriverError('driver_executable_invalid');
   const resolvedExecutablePath = executablePath;
-  const native = await openNativeComputerTransport(resolvedExecutablePath, params.displayId);
+  const native = await openNativeComputerTransport(resolvedExecutablePath, params.displayId, { environment: params.environment });
   let frameNative: ReturnType<typeof openNativeComputerTransport> | undefined;
   const frameInitialization = new AbortController();
   let closing = false;
@@ -112,6 +113,9 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
       ? { capture: grant(result.structuredContent?.screen_recording), input: grant(result.structuredContent?.accessibility) }
       : { capture: grant(result.structuredContent?.x11), input: grant(result.structuredContent?.xsend_event) };
   };
+  // X11 grants belong to this native connection. Admit once; native input still
+  // enforces the OS boundary. Status reads remain fresh and reselection reconnects.
+  let x11InputAdmission: ReturnType<ManagedComputerDriver['checkPermissions']> | undefined;
   const requireCaptureGrant = async (target: ComputerTargetV1) => {
     if (process.platform !== 'darwin' && target.kind !== 'display') return;
     const grants = await checkPermissions();
@@ -179,7 +183,8 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
     let admitted = false;
     try {
       if (process.platform === 'darwin' || target.kind === 'display') {
-        const grant = (await checkPermissions()).input;
+        const grant = (await (process.platform === 'linux' && !wayland
+          ? x11InputAdmission ??= checkPermissions() : checkPermissions())).input;
         if (context?.signal?.aborted) return { status: 'interrupted', completion: 'known' };
         if (grant !== 'granted') return { status: 'failed', code: grant === 'denied' ? 'input_permission_denied' : 'input_permission_unknown' };
       }
@@ -248,7 +253,7 @@ export async function createManagedComputerDriver(params: Readonly<{ displayId: 
     assertTarget(target);
     await requireCaptureGrant(target);
     // Viewer and preview images cannot evict the model's one-shot action token.
-    frameNative ??= openNativeComputerTransport(resolvedExecutablePath, params.displayId, { signal: frameInitialization.signal });
+    frameNative ??= openNativeComputerTransport(resolvedExecutablePath, params.displayId, { signal: frameInitialization.signal, environment: params.environment });
     const frameTransport = await frameNative;
     if (closing) throw new ComputerDriverError('driver_unavailable');
     const result = target.kind === 'display' ? await frameTransport.call('get_desktop_state', { max_image_dimension: options?.maxImageDimension ?? 0 })

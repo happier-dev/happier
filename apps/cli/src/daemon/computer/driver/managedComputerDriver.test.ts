@@ -15,6 +15,19 @@ import { ComputerSelectedTargetResponseV1Schema } from '@happier-dev/protocol/co
 
 
 describe('native primary-display and macOS contract', () => {
+  it('admits X11 input permissions once per connection and leaves later refusals to the native operation', async () => {
+    const display = { kind: 'display', displayId: ':73' } as const;
+    native.call.mockImplementation(async ({ name }) => name === 'check_permissions'
+      ? { structuredContent: { x11: true, xsend_event: true } }
+      : { structuredContent: { effect: 'unverifiable' } });
+    const driver = await createManagedComputerDriver({ displayId: ':73', executablePath: '/managed/native-driver' });
+    try {
+      expect(await driver.input(display, null, { kind: 'press', key: 'a' })).toEqual({ status: 'dispatched' });
+      expect(await driver.input(display, null, { kind: 'type', text: 'hello' })).toEqual({ status: 'dispatched' });
+      expect(native.tools.filter(tool => tool.name === 'check_permissions')).toHaveLength(1);
+      expect(native.tools.filter(tool => tool.name === 'press_key' || tool.name === 'type_text')).toHaveLength(2);
+    } finally { await driver.close(); }
+  });
   function desktopResult(platform: 'linux' | 'macos' = 'linux') {
     return { content: [{ type: 'image', mimeType: 'image/png', data: png }], structuredContent: {
       platform, display: 'primary', capture_id: 'desktop-capture', screenshot_width: 200, screenshot_height: 100,

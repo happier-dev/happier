@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createComputerRoutes } from './routes';
 import { createMachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
 import { createDaemonRuntimeActionExecutor } from '../runtimeActionExecutor';
@@ -50,14 +50,18 @@ describe('native computer route authority', () => {
   });
 
   it('lists the machine’s own display for the person, and says plainly when there is no screen to share', async () => {
+    // Missing optional OS packages settle with the recipe remedy; discovery never installs them.
+    vi.stubEnv('PATH', '');
+    vi.stubEnv('WAYLAND_DISPLAY', '');
     const headless = createComputerRoutes({ machineId: 'machine', registry: createMachineLiveStreamCaptureRegistry() });
     expect(await headless.dispatch('computer.target.get', { machineId: 'machine' },
       { authority: 'present_user', defaultSessionId: 'session' }))
       .toEqual({ ok: false, errorCode: 'computer_display_unavailable', error: 'computer_display_unavailable' });
     expect(await headless.dispatch('computer.targets.list', { machineId: 'machine' },
       { authority: 'present_user', defaultSessionId: 'session' }))
-      .toEqual({ ok: false, errorCode: 'computer_display_unavailable', error: 'computer_display_unavailable' });
+      .toMatchObject({ ok: false, errorCode: 'computer_display_unavailable', error: expect.stringContaining('virtual-display') });
     await headless.dispose();
+    vi.unstubAllEnvs();
     // An unsupported desktop is a typed refusal the picker can explain, never a thrown RPC.
     const unsupported = createComputerRoutes({ machineId: 'machine', defaultDisplayId: 'not-an-x11-display',
       registry: createMachineLiveStreamCaptureRegistry() });

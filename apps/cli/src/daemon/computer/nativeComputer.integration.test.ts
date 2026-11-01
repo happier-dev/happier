@@ -1,7 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
-import { describe, expect, it } from 'vitest';
-import { ActionIdSchema, ComputerCaptureResponseV1Schema, createActionExecutor, type ActionExecutorDeps, type ApprovalRequest, type MachineLiveStreamFrameV1 } from '@happier-dev/protocol';
+import { access } from 'node:fs/promises';
+import { describe, expect, it, vi } from 'vitest';
+import { ActionIdSchema, ComputerCaptureResponseV1Schema, ComputerTargetsListResponseV1Schema, createActionExecutor, type ActionExecutorDeps, type ApprovalRequest, type MachineLiveStreamFrameV1 } from '@happier-dev/protocol';
+import { ComputerSelectedTargetResponseV1Schema } from '@happier-dev/protocol/computer/v1';
 import { createComputerRoutes } from './routes';
 import { createDaemonRuntimeActionExecutor } from '../runtimeActionExecutor';
 import { createMachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
@@ -25,7 +27,85 @@ async function stop(child: ChildProcess): Promise<void> {
 }
 const executablePath = process.env.HAPPIER_TEST_NATIVE_EXECUTABLE;
 const fixturePath = process.env.HAPPIER_TEST_NATIVE_FIXTURE;
+const accessibilityFixturePath = process.env.HAPPIER_TEST_NATIVE_ACCESSIBILITY_FIXTURE;
 describe.skipIf(!executablePath || !fixturePath || process.platform !== 'linux')('isolated native computer journey', () => {
+  it.skipIf(!accessibilityFixturePath)('starts from selection and exposes accessibility for apps launched with only the explicit display', async () => {
+    vi.stubEnv('DISPLAY', undefined);
+    vi.stubEnv('WAYLAND_DISPLAY', undefined);
+    vi.stubEnv('DBUS_SESSION_BUS_ADDRESS', undefined);
+    const routes = createComputerRoutes({ machineId: 'native-machine', registry: createMachineLiveStreamCaptureRegistry(), executablePath });
+    const machine = { machineId: 'native-machine' };
+    const context = { authority: 'account_automation' as const, defaultSessionId: 'native-session', bypassApprovals: true };
+    let fixture: ChildProcess | undefined;
+    try {
+      const selected = ComputerSelectedTargetResponseV1Schema.parse(await routes.dispatch('computer.target.select',
+        { ...machine, requestedTarget: 'primary', access: 'use' }, context));
+      expect(selected).toMatchObject({ selectedTarget: { kind: 'display' } });
+      if (!selected.selectedTarget) throw new Error('No desktop selected');
+      fixture = spawn(accessibilityFixturePath!, [], { env: { ...process.env, DISPLAY: selected.selectedTarget.displayId }, stdio: ['ignore', 'pipe', 'pipe'] });
+      await line(fixture.stdout!);
+      expect(await routes.dispatch('computer.target.select', { ...machine, requestedTarget: 'CU Desktop element probe', access: 'use' }, context))
+        .toMatchObject({ selectedTarget: { kind: 'window' } });
+      expect(await routes.dispatch('computer.query', machine, context)).toMatchObject({ status: 'queried', accessibility: {
+        status: 'complete', nodes: expect.arrayContaining([expect.objectContaining({ name: 'Probe click' })]),
+      } });
+    } finally {
+      if (fixture) await stop(fixture);
+      await routes.dispose();
+      vi.unstubAllEnvs();
+    }
+  });
+  it('provisions one headless desktop on demand, captures and controls it, and stops it only on daemon disposal', async () => {
+    const installedPath = process.env.PATH;
+    vi.stubEnv('DISPLAY', '');
+    vi.stubEnv('WAYLAND_DISPLAY', '');
+    vi.stubEnv('PATH', '');
+    const registry = createMachineLiveStreamCaptureRegistry();
+    const routes = createComputerRoutes({ machineId: 'native-machine', registry, executablePath });
+    const machine = { machineId: 'native-machine' };
+    const context = { authority: 'account_automation' as const, defaultSessionId: 'native-session', bypassApprovals: true };
+    let fixture: ChildProcess | undefined;
+    let displaySocket: string | undefined;
+    try {
+      expect(await routes.dispatch('computer.targets.list', machine, context)).toMatchObject({
+        ok: false, errorCode: 'computer_display_unavailable', error: expect.stringContaining('virtual-display'),
+      });
+      // Installing the recipe makes the next explicit discovery usable; no automatic retry.
+      vi.stubEnv('PATH', installedPath);
+      const listings = await Promise.all([routes.dispatch('computer.targets.list', machine, context),
+        routes.dispatch('computer.targets.list', machine, context)]);
+      const targets = listings.map(result => ComputerTargetsListResponseV1Schema.parse(result).targets);
+      const target = targets[0]!.find(entry => entry.target.kind === 'display')!.target;
+      expect(target.displayId).toMatch(/^:\d+$/);
+      expect(targets[1]!.find(entry => entry.target.kind === 'display')?.target).toEqual(target);
+      expect(process.env.DISPLAY).toBe('');
+      displaySocket = `/tmp/.X11-unix/X${target.displayId.slice(1)}`;
+      const preview = ComputerTargetsListResponseV1Schema.parse(await routes.dispatch('computer.targets.list', machine,
+        { ...context, authority: 'present_user' }));
+      expect(preview.targets.find(entry => entry.target.kind === 'display')?.thumbnail).toMatchObject({ mimeType: 'image/png' });
+      fixture = spawn(fixturePath!, [], { env: { ...process.env, DISPLAY: target.displayId }, stdio: ['ignore', 'pipe', 'pipe'] });
+      await line(fixture.stdout!);
+      expect(await routes.dispatch('computer.target.select', { ...machine, target, access: 'use' }, context))
+        .toMatchObject({ selectedTarget: target });
+      const capture = ComputerCaptureResponseV1Schema.parse(await routes.dispatch('computer.capture', machine, context));
+      if (capture.status !== 'captured') throw new Error(capture.status);
+      expect(capture.geometry.captureWidth).toBeGreaterThan(0);
+      const click = line(fixture.stdout!);
+      expect(await routes.dispatch('computer.input', { ...machine, captureId: capture.captureId,
+        operation: { kind: 'click', x: 50, y: 70 } }, context)).toMatchObject({ status: 'dispatched' });
+      expect(await click).toBe('clicks:1');
+      await routes.closeSession(context.defaultSessionId);
+      await expect(access(displaySocket)).resolves.toBeUndefined();
+      await stop(fixture);
+      fixture = undefined;
+      await routes.dispose();
+      await expect(access(displaySocket)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      if (fixture) await stop(fixture);
+      await routes.dispose();
+      vi.unstubAllEnvs();
+    }
+  });
   it('selects the actual X11 primary display and dispatches one capture-bound click', async () => {
     const xvfb = spawn('Xvfb', ['-displayfd', '3', '-screen', '0', '1024x768x24', '-nolisten', 'tcp'], { stdio: ['ignore', 'ignore', 'pipe', 'pipe'] });
     let fixture: ChildProcess | undefined;

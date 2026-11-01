@@ -2,6 +2,27 @@
 
 This document describes the Happier CLI (`apps/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.
 
+## Managed Linux Computer desktop (0.3 development)
+
+The existing Computer route owner starts one desktop on demand when Linux has no
+resolved X11 or Wayland display. The `virtual-display` Machine recipe supplies
+Xvfb, Openbox, AT-SPI, D-Bus and GLib tools; discovery resolves these installed
+executables without installing software. Missing prerequisites settle as
+`computer_display_unavailable` with the recipe name.
+
+Xvfb chooses a free display through `-displayfd` with TCP disabled. A private
+session D-Bus and runtime/config directory enable accessibility; Openbox starts
+when installed. List and select use this display as an ordinary Computer target,
+including its explicit display id. Apps must target that display deliberately:
+Agent shells do not inherit `DISPLAY` or the private bus environment. The desktop
+survives Session closure and ends with daemon disposal, including its D-Bus
+activation children. Restarting the daemon loses its windows. Existing displays,
+Windows and macOS retain their current paths.
+
+Linux X11 input checks OS grants once per native driver connection; native input
+still enforces the OS boundary, capture-bound geometry stays checked, and explicit
+permission/status reads stay fresh. Reselection opens a new connection.
+
 Standing Session/turn ownership is documented in [runtime core](runtime-core.md); declaration, activation and projection ownership is in [plugin platform and SDK](plugin-platform.md). Those pages describe the current 0.3 development source rather than release readiness.
 
 In 0.3 development, automatic Guard stops re-admit the selected target and current policy before
