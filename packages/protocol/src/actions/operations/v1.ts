@@ -191,6 +191,15 @@ export const ProjectCommandAttachmentV1Schema = lazyZodSchema(() => z.strictObje
 })));
 export type ProjectCommandAttachmentV1 = Readonly<z.infer<typeof ProjectCommandAttachmentV1Schema>>;
 
+/** Existing managed installation decisions retain their exact displayed question. */
+export const ManagedMachineBootstrapApprovalPromptV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('auth.approveRemoteProvisioning'), message: ActionOperationProgressLabelV1Schema }),
+  z.strictObject({ kind: z.enum(['ssh.trustHost', 'ssh.replaceHostKey']), message: ActionOperationProgressLabelV1Schema,
+    host: z.string().check(z.trim(), z.minLength(1)), keyType: z.nullable(z.string()),
+    fingerprint: z.string().check(z.trim(), z.minLength(1)), existingFingerprint: z.nullable(z.string()),
+  }),
+  z.strictObject({ kind: z.literal('daemon.replaceRemoteBackgroundServices'), message: ActionOperationProgressLabelV1Schema }),
+]));
 export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('forkRequest'),
