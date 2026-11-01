@@ -7,6 +7,16 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./plugins/contributions/accessProviders": {
+      "happier-source": "./src/plugins/contributions/accessProviders.ts",
+      "types": "./dist/plugins/contributions/accessProviders.d.ts",
+      "default": "./dist/plugins/contributions/accessProviders.js"
+    },
+    "./machines/setup/machineRecipeV1": {
+      "happier-source": "./src/machines/setup/machineRecipeV1.ts",
+      "types": "./dist/machines/setup/machineRecipeV1.d.ts",
+      "default": "./dist/machines/setup/machineRecipeV1.js"
+    },
     "./agents/claude/connected-account-materialization": {
       "happier-source": "./src/agents/claude/connectedAccountMaterialization.ts",
       "types": "./dist/agents/claude/connectedAccountMaterialization.d.ts",

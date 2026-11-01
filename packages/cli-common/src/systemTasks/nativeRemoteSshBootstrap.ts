@@ -23,3 +23,6 @@ export {
 export {
   createOpenSshHappierJsonExecutor,
 } from './executors/openSshHappierJsonExecutor.js';
+export * from '../machineSetup/effectInternalProtocol.js';
+export { MANAGED_SUDOERS_PATH, buildManagedSudoersSteps, recognizeManagedSudoersDropIn } from '../machineSetup/managedSudoers.js';
+export { buildUserManagerGroupRefreshStep } from '../machineSetup/userManagerGroups.js';

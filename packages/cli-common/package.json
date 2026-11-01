@@ -6,6 +6,12 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./machineSetup": {
+      "happier-source": "./src/machineSetup/index.ts",
+      "types": "./dist/machineSetup/index.d.ts",
+      "import": "./dist/machineSetup/index.js",
+      "default": "./dist/machineSetup/index.js"
+    },
     "./plugins/registration/staticCapture": {
       "happier-source": "./src/plugins/registration/staticCapture.ts",
       "types": "./dist/plugins/registration/staticCapture.d.ts",
