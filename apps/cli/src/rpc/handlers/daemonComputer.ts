@@ -25,11 +25,14 @@ export function registerDaemonComputerHandler(
         async (raw: unknown, context?: RpcHandlerContext): Promise<DaemonComputerActionExecuteResponseV1> => {
             const request = DaemonComputerActionExecuteRequestV1Schema.parse(raw);
             const computer = options.resolveComputer();
-            const result = computer
+            // This raw route is the person's. Agents use the Computer Actions, whose approval policy owns Ask.
+            const result = context?.callerAuthority !== 'present_user'
+                ? { ok: false, errorCode: 'approval_required', error: 'approval_required' }
+                : computer
                 ? await computer.dispatch(request.actionId, request.input, {
                     surface: 'ui',
-                    authority: context?.callerAuthority ?? 'account_automation',
-                    signal: context?.signal,
+                    authority: context.callerAuthority,
+                    signal: context.signal,
                     defaultSessionId: request.sessionId,
                 })
                 : { ok: false, errorCode: 'computer_unavailable', error: 'computer_unavailable' };

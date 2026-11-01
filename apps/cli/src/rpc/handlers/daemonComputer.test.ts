@@ -63,8 +63,11 @@ describe('daemon computer present-user RPC', () => {
         registerDaemonComputerHandler(registrar, { resolveComputer: () => routes });
         const before = source.status();
         try {
-            expect(await invoke({ sessionId: 'session_1', actionId: 'computer.control.interrupt', input: { machineId: 'machine_1' } },
-                { callerAuthority, signal: new AbortController().signal })).toMatchObject({ ok: false, errorCode: 'approval_required' });
+            // This raw route is the person's; agents use the Computer Actions, whose policy owns Ask.
+            for (const actionId of ['computer.control.interrupt', 'computer.control.status', 'computer.target.get', 'computer.targets.list'] as const) {
+                expect(await invoke({ sessionId: 'session_1', actionId, input: { machineId: 'machine_1' } },
+                    { callerAuthority, signal: new AbortController().signal })).toMatchObject({ ok: false, errorCode: 'approval_required' });
+            }
             expect(source.status()).toEqual(before);
         } finally { await routes.dispose(); }
     });
@@ -90,7 +93,8 @@ describe('daemon computer present-user RPC', () => {
         registerDaemonComputerHandler(registrar, { resolveComputer: () => null });
         await expect(invoke({ sessionId: 'session_1', actionId: 'computer.input',
             input: { machineId: 'machine_1', captureId: 'c', operation: { kind: 'type', text: 'x' } } })).rejects.toThrow();
-        expect(await invoke({ sessionId: 'session_1', actionId: 'computer.control.status', input: { machineId: 'machine_1' } }))
+        expect(await invoke({ sessionId: 'session_1', actionId: 'computer.control.status', input: { machineId: 'machine_1' } },
+            { callerAuthority: 'present_user', signal: new AbortController().signal }))
             .toEqual({ ok: false, errorCode: 'computer_unavailable', error: 'computer_unavailable' });
     });
 });
