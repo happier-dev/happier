@@ -147,7 +147,7 @@ describe('the session-link writer Action', () => {
         expect(sourceReads).toBe(1);
     });
 
-    it.each(['cli', 'agent', 'self'] as const)('returns healthy source links and explicit unavailable coverage to %s callers', async (caller) => {
+    it.each(['ui', 'voice', 'cli', 'agent', 'self'] as const)('returns healthy source links and explicit unavailable coverage to %s callers', async (caller) => {
         const { collections, control } = createTestkitCorpusCollections();
         const configured = testkitConfiguredInstance();
         const unavailable = { ...configured,

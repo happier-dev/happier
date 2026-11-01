@@ -592,22 +592,22 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         const registeredRootId = await realpath(request.sourceRootPath).catch(() => null);
         if (registeredRootId && !options?.signal?.aborted && !baseChangeService.isQuiescing()
           && !baseChangeService.hasPendingDevelopmentSourceChange(registeredRootId)) {
-          let observation = developmentRoots!.resolveRegisteredSourceObservation(registeredRootId);
-          if (!observation) {
-            // Direct development installs enter the same custody owner as
-            // author submissions; its initial observation owns the review.
-            const registration = await developmentRoots!.control({
-              kind: 'registerExplicit', rootPath: registeredRootId,
-              ...(request.sdkRegistryOrigin ? { sdkRegistryOrigin: request.sdkRegistryOrigin } : {}),
-            });
-            if (baseChangeService.hasPendingDevelopmentSourceChange(registeredRootId)) {
-              return await baseChangeService.requestPluginChange(request, options);
-            }
-            if (registration.kind === 'failed') {
-              return Object.freeze({ kind: 'failed' as const, code: registration.code, message: registration.message });
-            }
-            observation = developmentRoots!.resolveRegisteredSourceObservation(registeredRootId);
+          // Re-adoption refreshes through the same observation owner as a
+          // watched edit before capturing its revision. Preparing directly
+          // against the previous observation races that edit's watcher.
+          const registration = await developmentRoots!.control(
+            developmentRoots!.resolveRegisteredSourceObservation(registeredRootId)
+              ? { kind: 'reload', rootPath: registeredRootId }
+              : { kind: 'registerExplicit', rootPath: registeredRootId,
+                  ...(request.sdkRegistryOrigin ? { sdkRegistryOrigin: request.sdkRegistryOrigin } : {}) },
+          );
+          if (baseChangeService.hasPendingDevelopmentSourceChange(registeredRootId)) {
+            return await baseChangeService.requestPluginChange(request, options);
           }
+          if (registration.kind === 'failed') {
+            return Object.freeze({ kind: 'failed' as const, code: registration.code, message: registration.message });
+          }
+          const observation = developmentRoots!.resolveRegisteredSourceObservation(registeredRootId);
           if (observation) {
             return await baseChangeService.requestPluginChange({
               ...request,

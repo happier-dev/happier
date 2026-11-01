@@ -8,7 +8,7 @@ import { buildApprovalRequestArtifactHeaderV1, decodePlainArtifactStoredContent,
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema,
-    SharedSavedSecretUpdateInputV1Schema, SharedSavedSecretGrantsSetInputV1Schema,
+    SharedSavedSecretUpdateInputV1Schema, SharedSavedSecretGrantsSetInputV1Schema, SharedSavedSecretDeleteInputV1Schema,
     SavedSecretResourceEnvelopeRepairInputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
@@ -39,6 +39,8 @@ import { createSavedSecretResource, promotePersonalSavedSecretResource, updateSa
     deleteSavedSecretResource, setSavedSecretResourceGrants, repairCustodiedSavedSecretResourceEnvelopesBestEffort,
     captureSavedSecretReferenceStateInContext, importLegacySavedSecretsInContext } from './savedSecretResourceOperations';
 import { withProfileAccount } from '@/sync/api/account/apiProfileCatalog';
+import { createUiPersonalSavedSecretActionExecute } from './personalSavedSecretActionHost';
+import { createHomeDomainActionExecutorForScope } from '@/sync/api/home/homeDomainActions';
 import { sealPromptLibraryContentV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { RegistrySourcesRecordV1Schema } from '@happier-dev/protocol/registries';
 import { prepareConnectedAccountCatalogMutationInContext, readConnectedAccountCatalogInContext } from '@/sync/api/account/apiConnectedAccountCatalog';
@@ -2228,6 +2230,30 @@ describe('Saved Secret operations through their real Account and Action owners',
             await deletion;
             await hook.unmount();
         }
+    });
+    it.each(['plain', 'e2ee'] as const)('private %s deletion checks references without rewriting retained Account settings', async mode => {
+        const account = await openAccount(mode);
+        // A retained source root can still need ordinary Settings normalization.
+        // A reference census must leave that independent write to its owner.
+        account.raw = { ...account.raw, pinnedSessionKeysV1: [] };
+        const resourceId = 'unreferenced-private-key';
+        const settingsVersion = account.settingsVersion;
+        account.setEffect((_path, body) => {
+            const input = SharedSavedSecretDeleteInputV1Schema.parse(body);
+            if (input.expectedSettingsVersion !== account.settingsVersion) {
+                return Response.json({ error: 'settings_conflict' }, { status: 409 });
+            }
+            expect(input).toMatchObject({ resourceId, expectedRevision: 1 });
+            return Response.json({ resourceId });
+        });
+        const context = await captureLazyActionAccountContext(account.scope.serverId);
+        try {
+            const execute = createUiPersonalSavedSecretActionExecute(context, createHomeDomainActionExecutorForScope(account.scope));
+            expect(await execute({ actionId: 'secrets.delete', input: { secretId: resourceId, expectedUpdatedAt: 1 },
+                context: { surface: 'ui' } })).toEqual({ deleted: true });
+            expect(account.settingsVersion).toBe(settingsVersion);
+            expect(account.writes.map(write => write.path)).toEqual([SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.delete']]);
+        } finally { context.dispose(); }
     });
     it('publishes an acknowledged deletion to the catalog even when its read-back is unavailable', async () => {
         const account = await openAccount();

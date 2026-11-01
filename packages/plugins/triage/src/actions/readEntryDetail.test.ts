@@ -166,7 +166,7 @@ async function seedTwoConnections(): Promise<Readonly<{ collections: CorpusColle
 }
 
 describe('the entry detail read', () => {
-    it.each(['agent', 'mcp', 'cli', 'api'] as const)('returns the exact admitted configured connection to a host %s caller', async (hostSurface) => {
+    it.each(['ui', 'voice', 'agent', 'mcp', 'cli', 'api'] as const)('returns the exact admitted configured connection to a host %s caller', async (hostSurface) => {
         const { collections } = await seedTwoConnections();
         const handler = createTriageReadEntryDetailActionHandler();
         const context = createContext({ collections, hostSurface });

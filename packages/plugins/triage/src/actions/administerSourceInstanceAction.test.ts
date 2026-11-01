@@ -180,7 +180,7 @@ describe('the source administration Action handler', () => {
         expect(JSON.stringify(rows)).not.toContain('credential');
     });
 
-    it.each(['agent', 'api'] as const)('lets a host %s caller configure an admitted source and remove its existing instance without spoofing provenance', async (surface) => {
+    it.each(['ui', 'voice', 'agent', 'api'] as const)('lets a host %s caller configure an admitted source and remove its existing instance without spoofing provenance', async (surface) => {
         const { collections } = createTestkitCorpusCollections();
         const handler = createTriageAdministerSourceInstanceActionHandler({
             mintSourceInstanceId: () => INSTANCE_ID,

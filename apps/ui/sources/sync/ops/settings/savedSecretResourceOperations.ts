@@ -1791,25 +1791,9 @@ export async function deleteSavedSecretResource(params: Readonly<{
                 expectedSettingsVersion: params.expectedSettingsVersion,
             });
             if (!captured.ok) return captured;
-            const { profiles, catalogs, referenceCensus } = captured;
-            const { encryption } = await context.resolveAccountEncryption();
-            const settingsSecretsKeys = await resolveSettingsSecretsKeySet({ credentials: context.credentials, scope: params.scope });
-            context.assertCurrent();
-            const census = await syncSettings({ credentials: context.credentials, encryption,
-                settingsSecretsKey: settingsSecretsKeys?.writeKey ?? null, settingsSecretsReadKeys: settingsSecretsKeys?.readKeys ?? [],
-                settingsScope: params.scope, requestContext: { scope: params.scope, endpointUrl: context.endpointUrl, request: context.request },
-                pendingSettings: {}, clearPendingSettings: () => {}, oneShotServerSettingsMutation: {
-                    expectedSettingsVersion: params.expectedSettingsVersion,
-                    expectedProfileTransferRevision: profiles.controlRevision,
-                    rebaseOnConflict: false,
-                    mutate(raw) {
-                        context.assertCurrent();
-                        return { settings: { ...raw }, value: listAccountSettingsSavedSecretReferences(raw, resourceRef, catalogs) };
-                    },
-                } });
-            if (census?.status === 'invalid') requireOneShotAccountSettingsMutationApplied(census);
-            if (census?.status !== 'applied') return { ok: false, reason: 'changed' };
-            if (census.value.length > 0) return { ok: false, reason: 'in_use', references: census.value };
+            const { baseline, catalogs, referenceCensus } = captured;
+            const references = listAccountSettingsSavedSecretReferences(baseline.source.raw, resourceRef, catalogs);
+            if (references.length > 0) return { ok: false, reason: 'in_use', references };
             context.assertCurrent();
             const outcome = await (params.executeAdmittedMutation ?? runTeamAction)({ scope: params.scope, actionId: 'secrets.shared.delete',
                 input: { resourceId: params.resourceId, expectedRevision: params.expectedRevision,

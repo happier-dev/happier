@@ -175,7 +175,7 @@ describe('the caller-scoped configured-instance read', () => {
         const retained = await readActiveConfiguredSourceRows(collections.sourceInstances);
         expect(retained.rows.map(row => row.configured.instance.source)).toEqual([FORGE, TRACKER]);
     });
-    it.each(['ui', 'voice', 'background', 'plugin'] as const)('does not treat an absent-caller %s surface as host Action authority', async (surface) => {
+    it.each(['background', 'plugin'] as const)('does not treat an absent-caller %s surface as host Action authority', async (surface) => {
         const { collections } = createTestkitCorpusCollections();
         expect(await createTriageReadConfiguredSourceInstancesActionHandler()(
             INPUT, createContext({ collections, surface }),
@@ -193,7 +193,7 @@ describe('the caller-scoped configured-instance read', () => {
         )).toEqual({ kind: 'invalidCaller' });
     });
 
-    it.each(['agent', 'mcp', 'cli', 'api'] as const)('lets a host %s caller discover admitted configured sources without granting a plugin the same scope', async (surface) => {
+    it.each(['ui', 'voice', 'agent', 'mcp', 'cli', 'api'] as const)('lets a host %s caller discover admitted configured sources without granting a plugin the same scope', async (surface) => {
         const { collections, control } = createTestkitCorpusCollections();
         control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: FORGE, seed: 1 })));
         control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: TRACKER, seed: 2 })));
