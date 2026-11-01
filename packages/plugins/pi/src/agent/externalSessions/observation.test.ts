@@ -277,10 +277,13 @@ describe('Pi External Session observation', () => {
       purpose: 'observation_evidence' as const,
       resourceKey: descriptor.resourceKey,
       signal: new AbortController().signal,
+      // Pi file observation does not acquire a managed endpoint.
+      managedEndpointRead: async () => { throw new Error('Managed endpoint unavailable in file observation fixture'); },
       links: [{ linkKey: descriptor.linkKey, linkedSource: linked }],
     };
 
     const beforeReplacement = await contribution.reconcileResource(request);
+    if (beforeReplacement.purpose !== 'observation_evidence') throw new Error('Expected observation evidence');
     expect(beforeReplacement.outcomes[0]?.facts).toEqual([
       expect.objectContaining({ kind: 'successful_empty', emptyTurnPhase: 'unsupported' }),
       expect.objectContaining({ kind: 'unsupported', axis: 'liveness' }),
@@ -290,6 +293,7 @@ describe('Pi External Session observation', () => {
     state = fileState({ ino: 99 });
     expect(contribution.describeResource(linked)).toEqual(descriptor);
     const result = await contribution.reconcileResource(request);
+    if (result.purpose !== 'observation_evidence') throw new Error('Expected observation evidence');
 
     expect(result.outcomes[0]?.facts).toEqual([
       expect.objectContaining({ kind: 'recent_activity' }),
