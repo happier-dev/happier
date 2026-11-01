@@ -34,7 +34,7 @@ function locator(
             id: 'happier.provider.fixture',
             version: '1.0.0',
             displayName: 'Fixture',
-            engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+            engines: createPluginManifestV2Fixture().engines, runtime: { apiVersion: 1 },
             hostAccess: { required: [], optional: [] },
             contributes: {},
         },
@@ -72,8 +72,15 @@ describe('bundled plugin locators', () => {
             const fileLocator = { ...metadata, manifestRelativePath: 'manifest.json' };
             expect(loadBundledPluginLocators([fileLocator])[0]?.manifest.id).toBe(metadata.pluginId);
             writeFileSync(join(root, 'manifest.json'), '{invalid');
-            const failed = loadBundledPluginLocatorResult([fileLocator]);
-            expect(failed.loadedPlugins).toEqual([]);
+            const healthyPluginId = 'happier.provider.healthy';
+            writeFileSync(join(root, 'healthy.json'), JSON.stringify(createPluginManifestV2Fixture({
+                id: healthyPluginId, entrypoints: {}, contributes: {},
+            })));
+            const healthyLocator = { ...fileLocator, pluginId: healthyPluginId,
+                manifestRelativePath: 'healthy.json', manifestPath: `bundled:${healthyPluginId}`,
+                sourceSpec: { ...fileLocator.sourceSpec, locator: '@happier-dev/plugins-healthy' } };
+            const failed = loadBundledPluginLocatorResult([fileLocator, healthyLocator]);
+            expect(failed.loadedPlugins.map(plugin => plugin.pluginId)).toEqual([healthyPluginId]);
             expect(failed.pluginFailures).toEqual([expect.objectContaining({
                 pluginId: metadata.pluginId, diagnostic: expect.objectContaining({ code: 'plugin_manifest_invalid' }),
             })]);

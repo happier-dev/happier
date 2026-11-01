@@ -46,6 +46,11 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown): str
     const code = readConnectedServiceSettingsErrorCode(error);
 
     switch (code) {
+        case 'plugin_account_execution_unavailable':
+        case 'plugin_ui_declaration_pending':
+        case 'plugin_ui_declaration_invalid':
+        case 'plugin_release_unavailable':
+            return t('sessionDrafts.availability.pluginUnavailable');
         case 'connected_account_runtime_generation_changed':
         case 'connected_account_producer_result_stale':
             return t('connectedServices.errors.accountRuntimeChanged');

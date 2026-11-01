@@ -61,6 +61,7 @@ import '../../../../packages/cli-common/registerSourceRuntime.mjs';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { stripTypeScriptTypes } from 'node:module';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -3123,6 +3124,40 @@ function readSerializedBundledPluginPackages(
   });
 }
 
+/** Read the last admitted catalog, without reopening foreign source or package artifacts. */
+async function readPublishedBundledPluginPackages(
+  repoRoot: string,
+  selectedPackageNames: ReadonlySet<string>,
+): Promise<readonly BundledPluginPackage[]> {
+  const metadataPath = resolve(repoRoot,
+    'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
+  if (!existsSync(metadataPath)) return [];
+  // The generated module is data-only. Node's existing source-tool syntax
+  // stripper avoids creating an authored-plugin inspection process for it.
+  const metadataSource = stripTypeScriptTypes(readFileSync(metadataPath, 'utf8'));
+  const metadataModule = readRequiredRecord(await import(
+    `data:text/javascript;base64,${Buffer.from(metadataSource).toString('base64')}`
+  ), metadataPath);
+  const metadata = metadataModule.BUNDLED_FIRST_PARTY_PLUGIN_METADATA;
+  if (!Array.isArray(metadata)) throw new Error(`Missing published bundled plugin metadata: ${metadataPath}`);
+  return metadata.flatMap((value): BundledPluginPackage[] => {
+    const row = readRequiredRecord(value, metadataPath);
+    const packageName = readRequiredString(row, 'packageName', metadataPath);
+    if (selectedPackageNames.has(packageName)) return [];
+    const pluginPackageId = pluginPackageNameToPackageId(packageName);
+    const manifestPath = resolve(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(pluginPackageId));
+    // These bytes were admitted by this publisher. Re-parsing them with today's
+    // schema would make foreign in-flight schema changes a second admission gate.
+    const manifest = readJson(manifestPath) as BundledPluginManifestJson;
+    const pluginId = readRequiredString(row, 'pluginId', metadataPath);
+    if (manifest.id !== pluginId) throw new Error(`Published bundled plugin identity mismatch: ${manifestPath}`);
+    return [{ pluginPackageId, pluginId, packageName,
+      packageVersion: readRequiredString(row, 'packageVersion', metadataPath), manifest,
+      ...(typeof row.agentId === 'string' ? { agentId: row.agentId } : {}),
+    }];
+  });
+}
+
 export function collectBuiltInLegacyConnectedAccountCompatibility(
   repoRoot: string,
   pluginPackages: readonly BundledPluginPackage[],
@@ -3576,6 +3611,9 @@ export async function publishBundledPluginSemanticProjection(
   const failures = mergeBundledPluginFailures(publicationFailures, serialized.failures);
   assertNoBundledPluginPublicationFailures(failures, options.mode);
   const pluginPackages = serialized.pluginPackages;
+  const selectedPackageNames = options.mode === 'write' && options.workspaceNames.length > 0
+    ? new Set(resolveSelectedBundledPluginPackageNames(bundledPluginPackageNames, options.workspaceNames))
+    : undefined;
   const cliOutPath = resolve(
     options.rootDir,
     'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts',
@@ -3590,7 +3628,11 @@ export async function publishBundledPluginSemanticProjection(
     'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts',
   );
   const cliManifestOut = renderCliBundledPluginManifestEntriesTs({ pluginPackages });
-  const cliManifestAssetOutputs = [...renderCliBundledPluginManifestAssets({ pluginPackages }), ...renderCliBundledActionCliHelpAssets({ pluginPackages })].map((asset) => ({
+  // Retained peers keep their published bytes. Re-admitting them here would
+  // make a scoped publication depend on unrelated peers' current schema validity.
+  const manifestAssetPackages = selectedPackageNames
+    ? pluginPackages.filter(entry => selectedPackageNames.has(entry.packageName)) : pluginPackages;
+  const cliManifestAssetOutputs = [...renderCliBundledPluginManifestAssets({ pluginPackages: manifestAssetPackages }), ...renderCliBundledActionCliHelpAssets({ pluginPackages })].map((asset) => ({
     outPath: resolve(options.rootDir, 'apps/cli', asset.relativePath), out: asset.out,
   }));
   // Serialized declaration facts suffice for executable roots; never inspect
@@ -4350,7 +4392,9 @@ async function generateBundledPluginEntries(
         cliOutPath,
         new Set(),
       );
-      const sourceResult = await collectBundledPluginSourcePackages({
+      const sourceResult = options.mode === 'write'
+        ? { sourcePluginPackages: await readPublishedBundledPluginPackages(options.rootDir, new Set(selectedPackageNames)), failures: [] }
+        : await collectBundledPluginSourcePackages({
         repoRoot: options.rootDir,
         // Selected declarations already passed the same source admission above.
         // Reuse those facts instead of starting a second inspection graph.

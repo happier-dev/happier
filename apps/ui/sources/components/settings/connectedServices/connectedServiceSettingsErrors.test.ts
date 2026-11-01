@@ -8,6 +8,13 @@ import {
 } from './connectedServiceSettingsErrors';
 
 describe('connected-service settings errors', () => {
+    it.each(['plugin_account_execution_unavailable', 'plugin_ui_declaration_pending',
+      'plugin_ui_declaration_invalid', 'plugin_release_unavailable'])(
+      'explains unavailable sign-in plugin preparation (%s)', code => {
+        expect(resolveConnectedServiceSettingsErrorMessage({ code }))
+          .toBe(t('sessionDrafts.availability.pluginUnavailable'));
+      });
+
   // Current daemon, authentication/configuration owners and UI/API adapter errors
   // share recovery categories; raw diagnostics never become user-facing copy.
   const accountErrorCategories = [
