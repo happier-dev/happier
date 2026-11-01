@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AutomationEventAdmitInputV1Schema, type AutomationEventAdmitItemResultV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { runRepositoryPushObserver } from '../../examples/automation-event-source/src/index.js';
 import type { BackgroundServiceContext } from '../backgroundServices.js';
+import type { HostEventEnvelope } from '../events.js';
 import { readCheckpointedPluginEventSourcesV1, runCheckpointedPluginEventObserverV1, type PluginCheckpointedEventAttemptContextV1, type PluginCheckpointedEventAttemptResultV1, type PluginCheckpointedEventSourceAdapterV1, type PluginCheckpointedEventSourceDefinitionV1 } from '../background-services/index.js';
 
 const materialization = { pluginId: 'com.example.events', machineId: 'machine-1', materializationId: 'installation-1' };
@@ -16,7 +17,9 @@ function fixture() {
     const controller = new AbortController();
     let definitions: readonly PluginCheckpointedEventSourceDefinitionV1[] = [definition()];
     let revision = '1';
-    let invalidate: (() => void) | undefined;
+    let invalidate: ((event: HostEventEnvelope<'@happier/automation/event-sources-invalidated'>) => void) | undefined;
+    const invalidated = (payload: HostEventEnvelope<'@happier/automation/event-sources-invalidated'>['payload'] = {}) =>
+        invalidate?.({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' }, payload });
     let safe = true;
     let failCurrentRead = false;
     let failCatalogStatus = false;
@@ -58,7 +61,7 @@ function fixture() {
     // Actions and authenticated Host Events are genuine host boundaries. Internal SDK admission stays real.
     const context = { plugin: { id: materialization.pluginId, version: '1.0.0' }, contribution: { id: 'observe', qualifiedId: `${materialization.pluginId}/backgroundServices/observe` },
         surface: 'background', invokedAtMs: 1000, materialization, signal: controller.signal,
-        services: { actions: { execute }, events: { host: { subscribe: (_target: unknown, listener: () => void) => { invalidate = listener; return { dispose() {} }; } } } },
+        services: { actions: { execute }, events: { host: { subscribe: (_target: unknown, listener: typeof invalidate) => { invalidate = listener; return { dispose() {} }; } } } },
     } as unknown as BackgroundServiceContext;
     const observation = (): PluginCheckpointedEventAttemptResultV1<string> => ({ observations: [{ eventRef: definition().eventRef, sourceInstanceId: 'source:1', sourceContractVersion: 1,
         occurrenceId: 'event-1', occurredAt: 1000, observationReceivedAt: 1000, observedDelta: 1 as const, payload: { changed: true } }],
@@ -73,8 +76,8 @@ function fixture() {
             skippedAdmissions.set(`${triggerId}/${occurrenceId}`, reason);
         },
         runCount() { return runs.size; },
-        replace(next: readonly PluginCheckpointedEventSourceDefinitionV1[]) { definitions = next; revision = String(Number(revision) + 1); invalidate?.(); },
-        invalidate() { invalidate?.(); },
+        replace(next: readonly PluginCheckpointedEventSourceDefinitionV1[]) { definitions = next; revision = String(Number(revision) + 1); invalidated(); },
+        invalidate: invalidated,
         empty() { definitions = []; },
         failBoundary(kind: 'current read' | 'catalog status') {
             if (kind === 'current read') failCurrentRead = true;
@@ -351,14 +354,35 @@ describe('checkpointed observer ownership', () => {
             await vi.waitFor(() => expect(f.execute.mock.calls.some(([, value]) => value.code === 'credentialRevoked')).toBe(true));
             expect(sleep).not.toHaveBeenCalled();
             expect(f.runCount()).toBe(0);
-            f.invalidate();
+            f.invalidate({ definitionsChanged: false });
             await vi.waitFor(() => expect(f.save).toHaveBeenCalledOnce());
             expect(f.observe).toHaveBeenCalledTimes(2);
             expect(f.runCount()).toBe(1);
+            expect(f.executions.filter(id => id === 'automation.event.sources.list')).toHaveLength(1);
         } finally {
             f.controller.abort();
             await running;
         }
+    });
+
+    it('does not re-confirm adopted definitions on provider deadlines or wakes', async () => {
+        const f = fixture();
+        let clock = 1000;
+        let resume: (() => void) | undefined;
+        let providerWake: ((sourceInstanceId?: string) => Promise<void>) | undefined;
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context,
+            source: { ...f.source, subscribeWake: listener => { providerWake = listener; return { dispose() {} }; } },
+            now: () => clock, sleep: (_delay, signal) => new Promise<void>(resolve => {
+                resume = resolve; signal.addEventListener('abort', () => resolve(), { once: true });
+            }),
+        });
+        try {
+            await vi.waitFor(() => expect(resume).toBeTypeOf('function'));
+            for (let n = 0; n < 5; n += 1) await providerWake?.('source:1');
+            clock = 2000; resume?.();
+            await vi.waitFor(() => expect(f.observe).toHaveBeenCalledTimes(7));
+            expect(f.executions.filter(id => id === 'automation.event.sources.list')).toHaveLength(1);
+        } finally { f.controller.abort(); await running; }
     });
 
     it('backs off after unavailable catalog admission instead of hot retrying', async () => {

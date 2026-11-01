@@ -6049,7 +6049,20 @@ SDK Events broker. Automation definition changes and completeness recovery wake
 the GitHub observation owner; source-status reports do not feed back into catalog
 invalidation. A healthy empty pull catalog parks rather than taking a periodic
 census. Provider eligibility and failure-recovery deadlines still drive explicit
-pull/check observations, whose source-list Actions remain authoritative.
+pull/check observations. Explicit source-list Actions remain authoritative;
+provider cycles use the observer's already adopted catalog until the producer
+invalidates definitions.
+
+The Account change-feed producer marks credential/settings-only Host Event wakes
+with `definitionsChanged: false`. The observer retains its existing adopted
+catalog for those wakes and provider eligibility cycles; it confirms definitions
+on initial adoption, definition/release/endpoint changes and reconnect or gap
+recovery. Failed catalog reads retain the refresh obligation for the existing
+retry owner. An omitted flag retains full invalidation semantics. This optional
+closed Host Event field is an unreleased 0.3 same-daemon Protocol/SDK contract;
+matching development readers are required, with no server wire or stored-format
+change. Credential wakes still unpark unavailable sources without shortening a
+numeric provider deadline, and withdrawals apply at the next catalog boundary.
 
 Exact `SessionHandle.watch` observations also wake on AgentState revision changes
 (including permission-only updates). A failed retained read keeps its frontier

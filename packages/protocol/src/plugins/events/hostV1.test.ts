@@ -23,6 +23,8 @@ describe('Host Events V1 catalog', () => {
     expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'account' } }).success).toBe(true);
     expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'session', sessionId: 'session-1' } }).success).toBe(false);
     expect(parseHostEventPayloadV1(eventId, {})).toEqual({});
+    expect(parseHostEventPayloadV1(eventId, { definitionsChanged: false })).toEqual({ definitionsChanged: false });
+    expect(() => parseHostEventPayloadV1(eventId, { definitionsChanged: 'false' })).toThrow();
     expect(() => parseHostEventPayloadV1(eventId, { sourceConfig: {} })).toThrow();
   });
 

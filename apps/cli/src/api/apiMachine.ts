@@ -4,6 +4,7 @@
  */
 
 import axios from 'axios';
+import type { AutomationEventSourcesInvalidatedHostEventV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import { readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
@@ -652,7 +653,7 @@ export class ApiMachineClient {
     private accountSettingsVersionHintListeners = new Set<(hint: AccountSettingsVersionHintNotification) => void | Promise<void>>();
     private readonly sessionFollowRulesChangedListeners = new Set<(change?: SessionFollowSourceInvalidation) => void | Promise<void>>();
     private accountProjectRowsChangeListeners = new Set<(change: AccountProjectRowsChangeNotification) => void | Promise<void>>();
-    private automationEventSourcesInvalidationListeners = new Set<() => void | Promise<void>>();
+    private automationEventSourcesInvalidationListeners = new Set<(payload: AutomationEventSourcesInvalidatedHostEventV1) => void | Promise<void>>();
     private pluginWebhookInvalidationListeners = new Set<() => void | Promise<void>>();
     private managedMachinePolicyInvalidationListeners = new Set<(change?: ManagedMachinePolicyInvalidation) => void | Promise<void>>();
     private pendingSessionActivationHintListeners = new Set<(
@@ -2487,15 +2488,15 @@ export class ApiMachineClient {
         return () => { this.accountProjectRowsChangeListeners.delete(listener); };
     }
 
-    onAutomationEventSourcesInvalidated(listener: () => void | Promise<void>): () => void {
+    onAutomationEventSourcesInvalidated(listener: (payload: AutomationEventSourcesInvalidatedHostEventV1) => void | Promise<void>): () => void {
         this.automationEventSourcesInvalidationListeners.add(listener);
         return () => { this.automationEventSourcesInvalidationListeners.delete(listener); };
     }
 
-    private async notifyAutomationEventSourcesInvalidated(signal: AbortSignal): Promise<void> {
+    private async notifyAutomationEventSourcesInvalidated(signal: AbortSignal, payload: AutomationEventSourcesInvalidatedHostEventV1 = {}): Promise<void> {
         for (const listener of this.automationEventSourcesInvalidationListeners) {
             signal.throwIfAborted();
-            await listener();
+            await listener(payload);
         }
     }
 
@@ -5230,7 +5231,7 @@ export class ApiMachineClient {
                     signal,
                     facts: ['all'],
                 });
-                await this.notifyAutomationEventSourcesInvalidated(signal);
+                await this.notifyAutomationEventSourcesInvalidated(signal, opts.reason === 'reconnect' ? { reason: 'reconnect' } : {});
                 await this.notifyPluginWebhookInvalidated(signal);
                 await this.notifyManagedMachinePolicyInvalidated(signal);
                 signal.throwIfAborted();
@@ -5595,8 +5596,15 @@ export class ApiMachineClient {
 
             if (reason !== 'live'
                 || hasAutomationSourceChange || hasConnectedServicesChange || hasConnectedAccountCatalogChange
+                || hasWebhookAdmissionChange
                 || highestAccountSettingsVersion !== null) {
-                await this.notifyAutomationEventSourcesInvalidated(signal);
+                // Credential/settings wakes can unpark observers without changing
+                // the admitted definition set. Only the feed owner classifies this.
+                await this.notifyAutomationEventSourcesInvalidated(signal, {
+                    ...(reason === 'reconnect' ? { reason: 'reconnect' as const } : {}),
+                    ...(reason === 'live' && !hasAutomationSourceChange && !hasWebhookAdmissionChange
+                        ? { definitionsChanged: false } : {}),
+                });
             }
             if (reason !== 'live'
                 || hasWebhookAdmissionChange || hasTeamChange) {

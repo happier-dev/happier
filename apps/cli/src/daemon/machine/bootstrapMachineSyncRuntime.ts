@@ -1897,11 +1897,11 @@ export async function bootstrapMachineSyncRuntime(
         pendingSessionActivationRecovery.recoverAfterConnect;
     }
 
-    connectedApiMachine.onAutomationEventSourcesInvalidated(() => {
+    connectedApiMachine.onAutomationEventSourcesInvalidated(payload => {
       publishDaemonHostEvent({
         eventId: HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
         scope: { kind: 'account' },
-        payload: {},
+        payload,
       }, params.isShuttingDown);
     });
     connectedApiMachine.onUpdate((update) => {

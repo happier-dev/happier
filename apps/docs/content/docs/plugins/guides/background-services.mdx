@@ -79,6 +79,19 @@ the host starts that runner after plugin adoption. The same lifecycle owner
 supports either placement and activation choice. A finite demand runner needs
 no polling loop or guessed idle delay.
 
+## Observe a checkpointed Event source
+
+The unreleased 0.3 development SDK supplies the observation lifecycle through
+`runCheckpointedPluginEventObserverV1` from the daemon-only
+`@happier-dev/plugin-sdk/background-services` entrypoint.
+
+The runner confirms definitions on adoption, definition changes and reconnect
+or gap recovery. Provider wakes and eligibility deadlines use the already
+adopted catalog. Credential or Settings wakes still let unavailable sources
+recover, without rereading definitions or shortening a numeric provider
+deadline. The host marks these wakes with `definitionsChanged: false`; plugin
+adapters do not need their own catalog cache or refresh timer.
+
 ## Services in the child
 
 The first process-service contract supplies local logging, filesystem, HTTP and

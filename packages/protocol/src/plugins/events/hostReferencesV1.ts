@@ -35,7 +35,11 @@ export type HostEventScopeV1 =
 export type AutomationHostEventScopeV1 = Readonly<{ kind: 'account' }>;
 
 /** Lossy wake only: definitions and credentials remain behind their authorized readers. */
-export const AutomationEventSourcesInvalidatedHostEventV1Schema = lazyZodSchema(() => z.strictObject({}));
+export const AutomationEventSourcesInvalidatedHostEventV1Schema = lazyZodSchema(() => z.strictObject({
+  reason: z.optional(z.literal('reconnect')),
+  /** False for credential/settings wakes; absent means definitions may have changed. */
+  definitionsChanged: z.optional(z.boolean()),
+}));
 export type AutomationEventSourcesInvalidatedHostEventV1 = z.infer<
   typeof AutomationEventSourcesInvalidatedHostEventV1Schema
 >;

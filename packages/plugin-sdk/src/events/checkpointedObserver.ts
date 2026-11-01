@@ -6,6 +6,7 @@ import { arePluginMachineMaterializationRefsEqual } from '../executionOrigin.js'
 import { createCanonicalJsonSigningInput } from '../identity.js';
 import type { PluginInvocationContext } from '../invocation.js';
 import type { Disposable } from '../lifecycle.js';
+import type { HostEventEnvelope } from '../events.js';
 
 export type PluginCheckpointedEventSourceDefinitionV1 = Extract<
     PluginActionResultById['automation.event.sources.list'], { kind: 'page' }
@@ -185,10 +186,12 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
     const state: ObserverState = { catalogs: new Map(), nextEligibleAt: new Map(), pendingObservations: new Map(), retiredRevision: null, owner: null,
         adoptedRevision: null, reconciliationStartedAt: null };
     let changed = false;
+    let definitionsInvalidated = true;
     let wake: (() => void) | undefined;
     let pendingWake: Readonly<{ promise: Promise<void>; resolve(): void; reject(error: unknown): void }> | undefined;
     const wokenSources = new Set<string | undefined>();
-    const invalidated = () => {
+    const invalidated = (event: HostEventEnvelope<'@happier/automation/event-sources-invalidated'>) => {
+        if (event.payload.definitionsChanged !== false) definitionsInvalidated = true;
         changed = true;
         // Credential/endpoint changes can unpark an unavailable source. They
         // do not shorten an unchanged source's numeric provider deadline;
@@ -212,6 +215,8 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
         });
         do {
             changed = false;
+            const refreshDefinitions = definitionsInvalidated;
+            definitionsInvalidated = false;
             const cycleWake = pendingWake;
             pendingWake = undefined;
             const requestedSources = new Set(wokenSources);
@@ -236,14 +241,22 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                         nextRetryAt: current ? null : eligibility(source.retryAt({ error: new Error('Event source catalog is reconciling'), now: now() })),
                     });
                 };
-                for (const kind of transports) {
-                    const catalog = await readCurrentSourceDefinitions(cycleContext, { kind }, state.catalogs.get(kind), async (observedRevision, pageDefinitions) => {
-                        if (state.retiredRevision !== observedRevision) await reportCatalog(observedRevision, pageDefinitions, false);
-                    });
-                    if (catalog === null || (revision !== undefined && catalog.revision !== revision)) throw new Error('Event source catalog is not current');
-                    revision = catalog.revision;
-                    state.catalogs.set(kind, catalog);
-                    definitions.push(...catalog.definitions);
+                try {
+                    for (const kind of transports) {
+                        const adopted = state.catalogs.get(kind);
+                        const catalog = refreshDefinitions || adopted === undefined
+                            ? await readCurrentSourceDefinitions(cycleContext, { kind }, adopted, async (observedRevision, pageDefinitions) => {
+                                if (state.retiredRevision !== observedRevision) await reportCatalog(observedRevision, pageDefinitions, false);
+                            })
+                            : adopted;
+                        if (catalog === null || (revision !== undefined && catalog.revision !== revision)) throw new Error('Event source catalog is not current');
+                        revision = catalog.revision;
+                        state.catalogs.set(kind, catalog);
+                        definitions.push(...catalog.definitions);
+                    }
+                } catch (error) {
+                    definitionsInvalidated = true;
+                    throw error;
                 }
                 const currentRevision = revision;
                 if (currentRevision === undefined) throw new Error('Event observer requires a source transport');
